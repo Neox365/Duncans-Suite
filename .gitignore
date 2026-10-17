@@ -1,0 +1,9 @@
+build/
+installer/Output/
+*.obj
+*.o
+*.exe
+.vs/
+/DuncansDriverUpdater.exe
+/vendor_releases.json
+*.lnk

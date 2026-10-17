@@ -1,0 +1,29 @@
+{
+  "_comment": "Neueste bekannte Hersteller-Treiber fuer den Update-Abgleich der Grafikkarten. 'version' = Windows-Treiberversion (a.b.c.d) wie im Geraete-Manager. Leere 'version' = Eintrag inaktiv. Datei neben DuncansDriverUpdater.exe ablegen; sie ueberschreibt die eingebauten Werte (Abgleich ueber 'ven').",
+  "releases": [
+    {
+      "vendor": "NVIDIA",
+      "ven": "VEN_10DE",
+      "name": "GeForce Game Ready Treiber 617.42",
+      "version": "32.0.16.1742",
+      "date": "2026-10-06",
+      "url": "https://www.nvidia.com/en-us/geforce/drivers/"
+    },
+    {
+      "vendor": "AMD",
+      "ven": "VEN_1002",
+      "name": "Radeon Software Adrenalin Edition",
+      "version": "",
+      "date": "",
+      "url": "https://www.amd.com/en/support/download/drivers.html"
+    },
+    {
+      "vendor": "Intel",
+      "ven": "VEN_8086",
+      "name": "Intel Arc & Core Ultra Grafiktreiber 32.0.101.9150",
+      "version": "32.0.101.9150",
+      "date": "2026-10-12",
+      "url": "https://www.intel.com/content/www/us/en/download-center/home.html"
+    }
+  ]
+}
