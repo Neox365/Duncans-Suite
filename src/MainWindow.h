@@ -255,6 +255,9 @@ private:
     std::wstring m_filterText;
     std::vector<size_t> m_visible;  // Indizes in m_drivers nach Filter/Suche
     bool m_buttonHover = false;
+    RECT m_aboutRect{};             // Fusszeile "© 2026 Duncan · vX.Y.Z" (Klick oeffnet "Ueber")
+    bool m_aboutHover = false;
+    void ShowAbout();
     bool m_trackingMouse = false;
     int  m_scroll = 0;
 };

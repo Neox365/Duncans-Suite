@@ -42,7 +42,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.6"
+#define SUITE_VERSION L"1.1.7"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -1188,10 +1188,10 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         DrawCard(dc, 2);
 
     // Footer: Version links, Hinweis in der Mitte, Ordner-Button rechts
-    DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(120), m_footer.bottom },
-              std::wstring(L"v") + SUITE_VERSION);
+    DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(176), m_footer.bottom },
+              std::wstring(L"© 2026 Duncan · v") + SUITE_VERSION);
     if (!m_note.empty())
-        DrawLabel(dc, m_fontSmall, kText, { m_footer.left + S(120), m_footer.top + S(13), m_folderRect.left - S(16), m_footer.bottom },
+        DrawLabel(dc, m_fontSmall, kText, { m_footer.left + S(176), m_footer.top + S(13), m_folderRect.left - S(16), m_footer.bottom },
                   m_note, DT_CENTER);
     {
         const bool hover = m_hover == 2 && !m_modal;

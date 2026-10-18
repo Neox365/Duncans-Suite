@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DuncansDriverUpdater VERSION 1.1.6 LANGUAGES CXX RC)
+project(DuncansDriverUpdater VERSION 1.1.7 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -23,7 +23,8 @@ add_executable(DuncansDriverUpdater WIN32
     resources/app.rc
 )
 
-target_compile_definitions(DuncansDriverUpdater PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
+target_compile_definitions(DuncansDriverUpdater PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"${PROJECT_VERSION}\")
 
 if(MSVC)
     # Quellen sind UTF-8; statische CRT, damit keine VC++-Redistributable noetig ist
@@ -74,7 +75,8 @@ add_executable(DuncansPdfReader WIN32
     resources/pdf.rc
 )
 set_target_properties(DuncansPdfReader PROPERTIES OUTPUT_NAME DuncansPdf)
-target_compile_definitions(DuncansPdfReader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
+target_compile_definitions(DuncansPdfReader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"${PROJECT_VERSION}\")
 if(MSVC)
     target_compile_options(DuncansPdfReader PRIVATE /utf-8 /W4 /permissive-)
     set_property(TARGET DuncansPdfReader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")

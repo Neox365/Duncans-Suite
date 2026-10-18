@@ -22,6 +22,10 @@ using std::min;
 
 #include "PdfDocument.h"
 
+#ifndef APP_VERSION
+#define APP_VERSION L"1.1.7"   // normalerweise aus CMake (PROJECT_VERSION)
+#endif
+
 #ifdef _MSC_VER
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "comdlg32.lib")
@@ -80,6 +84,8 @@ struct App {
     std::vector<Item> items;
     int hot = -1, down = -1;
     bool trackingMain = false;
+    RECT aboutRc{};                        // Fusszeile "© 2026 Duncan · vX.Y.Z" (Klick oeffnet "Ueber")
+    bool aboutHot = false;
 
     // Seitenleiste
     bool sideVisible = true;
@@ -129,6 +135,7 @@ int S(int v) { return MulDiv(v, g.dpi, 96); }
 int ToolbarH() { return S(56); }
 int TabHeaderH() { return S(38); }
 int SideW() { return g.sideVisible ? S(210) : 0; }
+int FooterH() { return S(26); }   // schmale Fusszeile unter Seitenleiste und Canvas
 const int kMargin = 24;
 
 ULONG_PTR g_gdipToken = 0;
@@ -768,6 +775,8 @@ bool PickFiles(HWND owner, std::vector<std::wstring>& out, const wchar_t* title)
 // ---------- Kleiner Eingabedialog (Notiztext) im Dark-Stil ----------
 struct PromptState {
     std::wstring title, text;
+    bool about = false;             // "Ueber"-Fenster: Text statt Eingabefeld, Knoepfe "GitHub oeffnen" / "Schliessen"
+    std::wstring body;
     bool done = false, ok = false;
     HWND edit = nullptr;
     RECT btnOk{}, btnCancel{};
@@ -801,6 +810,7 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CREATE: {
         BOOL dark = TRUE;
         DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+        if (g_prompt->about) return 0;
         g_prompt->edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
                                          0, 0, 10, 10, hwnd, reinterpret_cast<HMENU>(1), g.inst, nullptr);
         SendMessageW(g_prompt->edit, WM_SETFONT, reinterpret_cast<WPARAM>(g.font), TRUE);
@@ -830,13 +840,17 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         DrawTextC(mem, g.fontBold, g_prompt->title, t, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         RECT card{ S(20), S(58), cr.right - S(20), cr.bottom - S(20) - S(38) - S(20) };
         FillRound(mem, card, S(10), kCardRaised, kBorder);
+        if (g_prompt->about) {
+            RECT bt{ card.left + S(16), card.top + S(12), card.right - S(16), card.bottom - S(10) };
+            DrawTextC(mem, g.font, g_prompt->body, bt, kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        }
         auto button = [&](const RECT& r, bool primary, bool hot, const wchar_t* label) {
             COLORREF fill = primary ? (hot ? RGB(96, 176, 255) : kAccent) : (hot ? kCardHover : kCardRaised);
             FillRound(mem, r, S(10), fill, primary ? fill : (hot ? RGB(96, 104, 126) : kBorder));
             DrawTextC(mem, g.font, label, r, primary ? RGB(8, 20, 36) : kText);
         };
-        button(g_prompt->btnCancel, false, g_prompt->hot == 2, L"Abbrechen");
-        button(g_prompt->btnOk, true, g_prompt->hot == 1, L"Hinzufügen");
+        button(g_prompt->btnCancel, false, g_prompt->hot == 2, g_prompt->about ? L"GitHub öffnen" : L"Abbrechen");
+        button(g_prompt->btnOk, true, g_prompt->hot == 1, g_prompt->about ? L"Schließen" : L"Hinzufügen");
         BitBlt(dc, 0, 0, cr.right, cr.bottom, mem, 0, 0, SRCCOPY);
         SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem);
         EndPaint(hwnd, &ps);
@@ -850,6 +864,11 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_LBUTTONUP: {
         POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (g_prompt->about) {
+            if (PtInRect(&g_prompt->btnOk, p)) g_prompt->done = true;
+            else if (PtInRect(&g_prompt->btnCancel, p)) ShellExecuteW(hwnd, L"open", L"https://github.com/Neox365/Duncans-Suite", nullptr, nullptr, SW_SHOWNORMAL);
+            return 0;
+        }
         if (PtInRect(&g_prompt->btnOk, p)) PromptCommit(hwnd);
         else if (PtInRect(&g_prompt->btnCancel, p)) g_prompt->done = true;
         return 0;
@@ -860,9 +879,10 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 // Zeigt den Dialog modal (verschachtelte Nachrichtenschleife). true = Text eingegeben und bestaetigt.
-bool PromptText(HWND owner, const wchar_t* title, std::wstring& text) {
+bool PromptText(HWND owner, const wchar_t* title, std::wstring& text, const wchar_t* aboutBody = nullptr) {
     PromptState st;
     st.title = title;
+    if (aboutBody) { st.about = true; st.body = aboutBody; }
     g_prompt = &st;
     RECT cr{ 0, 0, S(460), S(300) };
     const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU, ex = WS_EX_DLGMODALFRAME;
@@ -875,15 +895,15 @@ bool PromptText(HWND owner, const wchar_t* title, std::wstring& text) {
     PromptLayout(hwnd);
     EnableWindow(owner, FALSE);
     ShowWindow(hwnd, SW_SHOW);
-    SetFocus(st.edit);
+    if (st.edit) SetFocus(st.edit);
     MSG m;
     while (!st.done) {
         const BOOL r = GetMessageW(&m, nullptr, 0, 0);
         if (r == 0) { PostQuitMessage(static_cast<int>(m.wParam)); break; }   // WM_QUIT weiterreichen
         if (r < 0) break;
         if (m.message == WM_KEYDOWN) {
-            if (m.wParam == VK_ESCAPE) { st.done = true; continue; }
-            if (m.wParam == VK_RETURN && GetKeyState(VK_CONTROL) < 0) { PromptCommit(hwnd); continue; }
+            if (m.wParam == VK_ESCAPE || (st.about && m.wParam == VK_RETURN)) { st.done = true; continue; }
+            if (!st.about && m.wParam == VK_RETURN && GetKeyState(VK_CONTROL) < 0) { PromptCommit(hwnd); continue; }
         }
         TranslateMessage(&m);
         DispatchMessageW(&m);
@@ -894,6 +914,17 @@ bool PromptText(HWND owner, const wchar_t* title, std::wstring& text) {
     g_prompt = nullptr;
     if (st.ok) text = st.text;
     return st.ok;
+}
+
+// "Ueber"-Fenster im selben Dark-Stil
+void ShowAbout() {
+    const std::wstring body = std::wstring(L"Duncan's PDF Reader\n") +
+        L"Version v" + APP_VERSION + L"\n\n" +
+        L"Entwickler: Duncan  ·  © 2026\n\n" +
+        L"Teil von Duncan's Suite (Driver Updater, PDF Reader, Tidy).\n" +
+        L"Quellcode: github.com/Neox365/Duncans-Suite";
+    std::wstring unused;
+    PromptText(g.main, L"Über Duncan's PDF Reader", unused, body.c_str());
 }
 
 // Obere linke Ecke der angezeigten Seite im Canvas (Client-Koordinaten)
@@ -1399,9 +1430,10 @@ void LayoutChildren() {
     const int top = ToolbarH(), sw = SideW();
     if (g.side) {
         ShowWindow(g.side, g.sideVisible ? SW_SHOW : SW_HIDE);
-        MoveWindow(g.side, 0, top + TabHeaderH(), sw, Max(0, cr.bottom - top - TabHeaderH()), TRUE);
+        MoveWindow(g.side, 0, top + TabHeaderH(), sw, Max(0, cr.bottom - top - TabHeaderH() - FooterH()), TRUE);
     }
-    if (g.canvas) MoveWindow(g.canvas, sw, top, Max(0, cr.right - sw), Max(0, cr.bottom - top), TRUE);
+    if (g.canvas) MoveWindow(g.canvas, sw, top, Max(0, cr.right - sw), Max(0, cr.bottom - top - FooterH()), TRUE);
+    g.aboutRc = RECT{ S(12), cr.bottom - FooterH() + S(4), S(12) + S(210), cr.bottom - S(4) };
     const int tw = (sw - S(24)) / 2;
     g.tabRc[0] = RECT{ S(12), top + S(6), S(12) + tw, top + TabHeaderH() - S(4) };
     g.tabRc[1] = RECT{ S(12) + tw, top + S(6), S(12) + 2 * tw, top + TabHeaderH() - S(4) };
@@ -1413,8 +1445,19 @@ void PaintMain(HDC dc, RECT cr) {
     FillRect(dc, &cr, bg);
     DeleteObject(bg);
     DrawToolbar(dc, cr.right);
+    {   // Fusszeile: Urheber und Version, Klick oeffnet "Ueber"
+        RECT strip{ 0, cr.bottom - FooterH(), cr.right, cr.bottom };
+        HBRUSH fb = CreateSolidBrush(kBackground);
+        FillRect(dc, &strip, fb);
+        DeleteObject(fb);
+        HPEN fp = CreatePen(PS_SOLID, 1, kBorder);
+        HGDIOBJ fo = SelectObject(dc, fp);
+        MoveToEx(dc, 0, strip.top, nullptr); LineTo(dc, cr.right, strip.top);
+        SelectObject(dc, fo); DeleteObject(fp);
+        DrawTextC(dc, g.fontSmall, std::wstring(L"© 2026 Duncan · v") + APP_VERSION, g.aboutRc, g.aboutHot ? kText : kTextDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
     if (g.sideVisible) {
-        RECT col{ 0, ToolbarH(), SideW(), cr.bottom };
+        RECT col{ 0, ToolbarH(), SideW(), cr.bottom - FooterH() };
         HBRUSH pb = CreateSolidBrush(kPanel);
         FillRect(dc, &col, pb);
         DeleteObject(pb);
@@ -1426,7 +1469,7 @@ void PaintMain(HDC dc, RECT cr) {
         }
         HPEN pen = CreatePen(PS_SOLID, 1, kBorder);
         HGDIOBJ o = SelectObject(dc, pen);
-        MoveToEx(dc, SideW() - 1, ToolbarH(), nullptr); LineTo(dc, SideW() - 1, cr.bottom);
+        MoveToEx(dc, SideW() - 1, ToolbarH(), nullptr); LineTo(dc, SideW() - 1, cr.bottom - FooterH());
         SelectObject(dc, o); DeleteObject(pen);
     }
 }
@@ -1484,11 +1527,17 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         int h = HitToolbar(p);
         if (h != g.hot) { g.hot = h; InvalidateToolbar(); }
+        const bool about = PtInRect(&g.aboutRc, p) != FALSE;
+        if (about != g.aboutHot) { g.aboutHot = about; InvalidateRect(hwnd, &g.aboutRc, FALSE); }
         return 0;
     }
+    case WM_SETCURSOR:
+        if (g.aboutHot && LOWORD(lp) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
+        break;
     case WM_MOUSELEAVE:
         g.trackingMain = false;
         if (g.hot != -1) { g.hot = -1; InvalidateToolbar(); }
+        if (g.aboutHot) { g.aboutHot = false; InvalidateRect(hwnd, &g.aboutRc, FALSE); }
         return 0;
     case WM_LBUTTONDOWN: {
         POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -1502,6 +1551,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
         }
+        if (PtInRect(&g.aboutRc, p)) { ShowAbout(); return 0; }
         int h = HitToolbar(p);
         if (h >= 0 && ItemEnabled(g.items[h])) { g.down = h; SetCapture(hwnd); InvalidateToolbar(); }
         return 0;

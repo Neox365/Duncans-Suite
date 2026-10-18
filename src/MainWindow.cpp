@@ -15,6 +15,10 @@
 #include "Icons.h"
 #include "Utils.h"
 
+#ifndef APP_VERSION
+#define APP_VERSION L"1.1.7"   // normalerweise aus CMake (PROJECT_VERSION)
+#endif
+
 #ifdef _MSC_VER
 #pragma comment(lib, "user32.lib")
 #pragma comment(lib, "gdi32.lib")
@@ -321,6 +325,11 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             m_buttonHover = false;
             InvalidateRect(m_hwnd, &m_buttonRect, FALSE);
         }
+        if (m_aboutHover)
+        {
+            m_aboutHover = false;
+            InvalidateRect(m_hwnd, &m_aboutRect, FALSE);
+        }
         if (m_gearHover || m_setHover != 0)
         {
             m_gearHover = false;
@@ -350,7 +359,7 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
                 SetCursor(LoadCursorW(nullptr, IDC_HAND));
                 return TRUE;
             }
-            bool clickable = (m_buttonHover && !Busy()) || m_installHover || m_gearHover || m_dragThumb ||
+            bool clickable = (m_buttonHover && !Busy()) || m_installHover || m_gearHover || m_aboutHover || m_dragThumb ||
                              PtInRect(&m_sortRect, cur) || PtInRect(&m_exportRect, cur) || m_hoverAction != 0 || m_hoverHeader != -1;
             for (int i = 0; i < 3; ++i)
                 clickable = clickable || PtInRect(&m_chipRect[i], cur);
@@ -997,6 +1006,14 @@ void MainWindow::OnMouseMove(int x, int y)
         return;
     }
     UpdateHover(POINT{ x, y });
+    {
+        const bool about = PtInRect(&m_aboutRect, POINT{ x, y }) != FALSE;
+        if (about != m_aboutHover)
+        {
+            m_aboutHover = about;
+            InvalidateRect(m_hwnd, &m_aboutRect, FALSE);
+        }
+    }
     if (!m_trackingMouse)
     {
         TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, m_hwnd, 0 };
@@ -1113,6 +1130,11 @@ void MainWindow::OnLButtonDown(int x, int y)
     if (PtInRect(&m_gearRect, pt))
     {
         m_gearPress = true;
+        return;
+    }
+    if (PtInRect(&m_aboutRect, pt))
+    {
+        ShowAbout();
         return;
     }
 
@@ -1279,6 +1301,22 @@ void MainWindow::ConfirmInstall(std::vector<std::wstring> ids, int count)
         else if (!RelaunchElevated())
             ShowToast(L"Neustart mit Administratorrechten abgebrochen", 1);
     });
+}
+
+void MainWindow::ShowAbout()
+{
+    std::vector<ModalRow> rows;
+    rows.push_back({ L"Programm", L"Duncan's Driver Updater", 0, false });
+    rows.push_back({ L"Version", std::wstring(L"v") + APP_VERSION, 0, false });
+    rows.push_back({ L"Entwickler", L"Duncan  ·  © 2026", 0, false });
+    rows.push_back({ L"Teil von", L"Duncan's Suite (Driver Updater, PDF Reader, Tidy)", 0, false });
+    rows.push_back({ L"Quellcode", L"github.com/Neox365/Duncans-Suite", 0, false });
+    ShowModal(L"Über Duncan's Driver Updater", L"", std::move(rows), { L"GitHub öffnen", L"Schließen" }, 0,
+              [this](int button)
+              {
+                  if (button == 0)
+                      OpenUrl(L"https://github.com/Neox365/Duncans-Suite");
+              });
 }
 
 void MainWindow::OpenUrl(const std::wstring& url)
@@ -1533,6 +1571,7 @@ void MainWindow::Layout()
         }
     }
     m_listRect = { m, m_listTitleRect.bottom + S(8), rc.right - m, std::max<LONG>(rc.bottom - m, m_listTitleRect.bottom + S(8)) };
+    m_aboutRect = { m, rc.bottom - S(22), m + S(200), rc.bottom - S(4) };   // im unteren Rand unter der Liste
 }
 
 int MainWindow::CardHeight() const { return S(100); }
@@ -1698,6 +1737,9 @@ void MainWindow::Draw(HDC dc, int width, int height)
     }
     DrawScrollbar(dc);
     RestoreDC(dc, -1);
+
+    // Fusszeile: Urheber und Version, Klick oeffnet "Ueber"
+    DrawLabel(dc, m_fontSmall, m_aboutHover ? kText : kTextDim, m_aboutRect, std::wstring(L"© 2026 Duncan · v") + APP_VERSION);
 
     if (m_settingsOpen)
         DrawSettings(dc, width, height);
