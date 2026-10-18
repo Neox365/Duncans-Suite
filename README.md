@@ -24,6 +24,14 @@ und den **Driver Updater** (`DuncansDriverUpdater.exe`). Gesucht wird zuerst im 
 und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
 und ins Startmenü.
 
+### Automatische Updates der Suite
+
+Beim Start fragt die Suite im Hintergrund die GitHub-Releases (`Neox365/Duncans-Suite`) ab. Gibt es einen neueren
+`DuncansSuite_Setup_X.Y.Z.exe`, erscheint oben im Banner **„Update verfügbar (vX.Y.Z)“**. Ein Klick lädt den Installer in den
+Temp-Ordner (mit Fortschritt), prüft die SHA-256-Summe (`digest` des GitHub-Assets), startet ihn (UAC) und beendet die Suite.
+Es wird die Release-**Liste** abgefragt statt `/releases/latest`, weil `latest` Pre-Releases ignoriert. Ist man offline
+oder GitHub nicht erreichbar, bleibt die Prüfung still.
+
 ## Hersteller-Tabelle (`vendor_releases.json`)
 
 Die SetupAPI kennt nur den *installierten* Treiber. Welche Version der Hersteller zuletzt veröffentlicht hat,
@@ -59,7 +67,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.2.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.3.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 

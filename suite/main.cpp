@@ -38,7 +38,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.0.2"
+#define SUITE_VERSION L"1.0.3"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -194,6 +194,9 @@ namespace
         return s;
     }
 
+    bool DownloadFileVerified(HINTERNET session, HWND hwnd, int index, const std::wstring& url, const std::string& expected,
+                              const std::wstring& dir, const std::wstring& fileName, const std::atomic<bool>& cancel, std::wstring& error);
+
     // Laedt exeName samt Pruefsumme nach dir\exeName. Rueckgabe false + error bei jedem Problem.
     bool DownloadVerified(HWND hwnd, int index, const std::wstring& base, const std::wstring& exeName,
                           const std::wstring& dir, const std::atomic<bool>& cancel, std::wstring& error)
@@ -232,15 +235,21 @@ namespace
             std::transform(expected.begin(), expected.end(), expected.begin(), [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
         }
 
-        // 2) Datei laden und dabei hashen
+        return DownloadFileVerified(session.h, hwnd, index, base + exeName, expected, dir, exeName, cancel, error);
+    }
+
+    // Laedt url nach dir\fileName und prueft dabei die SHA-256 (expected: 64 Hex, klein).
+    bool DownloadFileVerified(HINTERNET session, HWND hwnd, int index, const std::wstring& url, const std::string& expected,
+                              const std::wstring& dir, const std::wstring& fileName, const std::atomic<bool>& cancel, std::wstring& error)
+    {
         InetHandle h;
         DWORD total = 0;
-        if (!OpenHttps(session.h, base + exeName, h, total, error))
+        if (!OpenHttps(session, url, h, total, error))
             return false;
 
         CreateDirectoryW(dir.c_str(), nullptr);
-        const std::wstring tmp = dir + L"\\" + exeName + L".download";
-        const std::wstring dest = dir + L"\\" + exeName;
+        const std::wstring tmp = dir + L"\\" + fileName + L".download";
+        const std::wstring dest = dir + L"\\" + fileName;
         HANDLE file = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (file == INVALID_HANDLE_VALUE)
         {
@@ -322,9 +331,188 @@ namespace
             DeleteFileW(tmp.c_str());
         return ok;
     }
+
+    // ---- Update-Pruefung (GitHub Releases) -------------------------------------------------------
+    // Hinweis: /releases/latest liefert nur Releases ohne Pre-Release-Markierung. Da die Suite-Releases
+    // als Pre-Release erscheinen koennen, wird die Liste /releases abgefragt und der hoechste
+    // DuncansSuite_Setup_X.Y.Z.exe gewaehlt. Pruefsumme = "digest" des Assets aus der API-Antwort.
+
+    constexpr UINT WM_UPD_CHECKED = WM_APP + 3;   // wParam = 1 neuere Version gefunden, 0 keine/Fehler
+
+    struct Version
+    {
+        int major = 0, minor = 0, patch = 0;
+        bool valid = false;
+    };
+
+    std::wstring Widen(const std::string& s)
+    {
+        return std::wstring(s.begin(), s.end());   // nur ASCII (Versionen, URLs)
+    }
+
+    Version ParseVer(const std::wstring& text)
+    {
+        Version v;
+        const wchar_t* s = text.c_str();
+        if (*s == L'v' || *s == L'V')
+            ++s;
+        int parts[3] = { 0, 0, 0 };
+        int count = 0;
+        while (*s && count < 3)
+        {
+            wchar_t* end = nullptr;
+            const long n = wcstol(s, &end, 10);
+            if (end == s || n < 0 || n > 9999)
+                return Version{};
+            parts[count++] = static_cast<int>(n);
+            if (*end != L'.')
+                break;
+            s = end + 1;
+        }
+        if (count == 0)
+            return Version{};
+        v.major = parts[0];
+        v.minor = parts[1];
+        v.patch = parts[2];
+        v.valid = true;
+        return v;
+    }
+
+    bool IsNewer(const Version& a, const Version& b)
+    {
+        if (a.major != b.major) return a.major > b.major;
+        if (a.minor != b.minor) return a.minor > b.minor;
+        return a.patch > b.patch;
+    }
+
+    struct UpdateInfo
+    {
+        std::wstring version;    // z. B. "1.0.3"
+        std::wstring url;        // Download-Adresse des Installers
+        std::wstring fileName;   // DuncansSuite_Setup_1.0.3.exe
+        std::string sha;         // 64 Hex, klein ("" = unbekannt)
+    };
+
+    // Sucht im JSON der Release-Liste den neuesten Suite-Installer (nur Assets aus dem eigenen Repository).
+    bool FindNewestInstaller(const std::string& json, UpdateInfo& best)
+    {
+        const std::string key = "\"browser_download_url\":\"";
+        const std::string prefix = "https://github.com/Neox365/Duncans-Suite/releases/download/";
+        const std::string head = "DuncansSuite_Setup_", tail = ".exe";
+        const std::string digestKey = "\"digest\":\"sha256:";
+
+        Version bestVer;
+        bool found = false;
+        size_t pos = 0, prevEnd = 0;
+        while ((pos = json.find(key, pos)) != std::string::npos)
+        {
+            const size_t urlStart = pos + key.size();
+            const size_t urlEnd = json.find('"', urlStart);
+            if (urlEnd == std::string::npos)
+                break;
+            const std::string url = json.substr(urlStart, urlEnd - urlStart);
+            const size_t blockLow = prevEnd;   // alles davor gehoert zum vorherigen Asset
+            prevEnd = urlEnd;
+            pos = urlEnd;
+
+            if (url.rfind(prefix, 0) != 0)
+                continue;
+            const std::string file = url.substr(url.find_last_of('/') + 1);
+            if (file.size() <= head.size() + tail.size() || file.rfind(head, 0) != 0 ||
+                file.compare(file.size() - tail.size(), tail.size(), tail) != 0)
+                continue;
+            const std::string ver = file.substr(head.size(), file.size() - head.size() - tail.size());
+            const Version v = ParseVer(Widen(ver));
+            if (!v.valid)
+                continue;
+
+            // "digest" steht im Asset-Objekt vor browser_download_url
+            std::string sha;
+            const size_t d = json.rfind(digestKey, urlStart);
+            if (d != std::string::npos && d >= blockLow)
+            {
+                sha = json.substr(d + digestKey.size(), 64);
+                const bool hex = sha.size() == 64 &&
+                                 std::all_of(sha.begin(), sha.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
+                if (!hex)
+                    sha.clear();
+                std::transform(sha.begin(), sha.end(), sha.begin(), [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+            }
+
+            if (!found || IsNewer(v, bestVer))
+            {
+                found = true;
+                bestVer = v;
+                best.version = Widen(ver);
+                best.url = Widen(url);
+                best.fileName = Widen(file);
+                best.sha = sha;
+            }
+        }
+        return found;
+    }
+
+    // Fragt GitHub ab. true = Antwort erhalten (best ggf. gefuellt), Fehler werden still ignoriert.
+    bool FetchLatestSuiteInstaller(UpdateInfo& best)
+    {
+        InetHandle session(InternetOpenW(L"DuncansSuite/" SUITE_VERSION, INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0));
+        if (!session.h)
+            return false;
+        DWORD timeout = 10000;
+        InternetSetOptionW(session.h, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+        InternetSetOptionW(session.h, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+
+        InetHandle h;
+        DWORD total = 0;
+        std::wstring error;
+        if (!OpenHttps(session.h, L"https://api.github.com/repos/Neox365/Duncans-Suite/releases?per_page=10", h, total, error))
+            return false;
+
+        std::string body;
+        char buf[8192];
+        DWORD n = 0;
+        while (body.size() < 1024 * 1024 && InternetReadFile(h.h, buf, sizeof(buf), &n) && n > 0)
+            body.append(buf, n);
+        return FindNewestInstaller(body, best);
+    }
+
+    // Laedt den Installer in den Temp-Ordner und prueft die SHA-256 aus der API-Antwort.
+    bool DownloadInstaller(HWND hwnd, const UpdateInfo& info, std::wstring& installerPath, const std::atomic<bool>& cancel, std::wstring& error)
+    {
+        if (info.sha.size() != 64)
+        {
+            error = L"Für dieses Release liegt keine Prüfsumme vor. Bitte den Installer manuell von GitHub laden.";
+            return false;
+        }
+        InetHandle session(InternetOpenW(L"DuncansSuite/" SUITE_VERSION, INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0));
+        if (!session.h)
+        {
+            error = L"Internet-Zugriff konnte nicht initialisiert werden.";
+            return false;
+        }
+        DWORD timeout = 20000;
+        InternetSetOptionW(session.h, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+        InternetSetOptionW(session.h, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+
+        wchar_t temp[MAX_PATH + 2] = {};
+        const DWORD len = GetTempPathW(MAX_PATH, temp);
+        if (len == 0 || len > MAX_PATH)
+        {
+            error = L"Der Temp-Ordner ist nicht verfügbar.";
+            return false;
+        }
+        std::wstring dir = temp;
+        while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/'))
+            dir.pop_back();
+        if (!DownloadFileVerified(session.h, hwnd, 2, info.url, info.sha, dir, info.fileName, cancel, error))
+            return false;
+        installerPath = dir + L"\\" + info.fileName;
+        return true;
+    }
 }
 
 struct Tool
+
 {
     const wchar_t* exe;
     const wchar_t* title;
@@ -363,6 +551,9 @@ private:
     void ShowModal(const std::wstring& title, const std::wstring& text);
     void SetNote(const std::wstring& text);
     void StartDownload(int index);
+    void StartUpdateCheck();
+    void StartUpdateDownload();
+    void RunInstaller();
     std::wstring InstallDir(const Tool& t) const;
 
     HWND m_hwnd = nullptr;
@@ -388,6 +579,14 @@ private:
 
     std::thread m_dlThread;
     std::atomic<bool> m_dlCancel{ false };
+    bool m_dlBusy = false;      // ein Download (Tidy oder Suite-Update) laeuft
+    std::shared_ptr<UpdateInfo> m_checkResult;
+    UpdateInfo m_upd;
+    bool m_updAvailable = false;
+    bool m_updDownloading = false;
+    int  m_updProgress = 0;
+    std::wstring m_updInstallerPath;   // fertig geladener Installer (leer = noch nicht geladen)
+    RECT m_updateRect{};
     std::wstring m_dlMessage;   // Fehlertext des letzten Downloads (vom Worker gesetzt, vor WM_DL_DONE)
 
     bool m_modal = false;
@@ -626,6 +825,34 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     DrawLabel(dc, m_fontSmall, kTextDim, { titleX, m_banner.top + S(46), m_banner.right - S(20), m_banner.top + S(66) },
               L"System- & Treiber-Optimierung");
 
+    // Update-Badge oben rechts im Banner
+    m_updateRect = RECT{};
+    if (m_updAvailable)
+    {
+        const bool ready = !m_updInstallerPath.empty() && !m_updDownloading;
+        const std::wstring label = m_updDownloading
+            ? (m_updProgress <= 100 ? L"Lade Update … " + std::to_wstring(m_updProgress) + L" %" : std::wstring(L"Lade Update …"))
+            : (ready ? L"Installer starten (v" + m_upd.version + L")" : L"Update verfügbar (v" + m_upd.version + L")");
+        const int width = std::max(TextWidth(dc, m_fontBody, label), TextWidth(dc, m_fontBody, L"Lade Update … 100 %")) + S(44);
+        m_updateRect = { m_banner.right - S(22) - width, m_banner.top + S(18), m_banner.right - S(22), m_banner.top + S(18) + S(38) };
+        const bool hover = m_hover == 4 && !m_modal;
+        const bool pressed = m_press == 4 && hover;
+        const COLORREF fill = m_updDownloading ? Blend(RGB(27, 40, 36), kGreen, 25)
+                                               : (pressed ? Blend(kGreen, RGB(0, 0, 0), 25) : (hover ? Blend(kGreen, RGB(255, 255, 255), 14) : kGreen));
+        FillRound(dc, m_updateRect, S(12), fill, m_updDownloading ? kBorder : fill);
+        if (m_updDownloading && m_updProgress <= 100)
+        {
+            RECT part = m_updateRect;
+            part.right = m_updateRect.left + (m_updateRect.right - m_updateRect.left) * m_updProgress / 100;
+            SaveDC(dc);
+            IntersectClipRect(dc, part.left, part.top, part.right, part.bottom);
+            FillRound(dc, m_updateRect, S(12), Blend(RGB(27, 40, 36), kGreen, 60), Blend(RGB(27, 40, 36), kGreen, 60));
+            RestoreDC(dc, -1);
+        }
+        DrawLabel(dc, m_fontBody, m_updDownloading ? kText : RGB(6, 30, 18),
+                  { m_updateRect.left, m_updateRect.top + S(9), m_updateRect.right, m_updateRect.bottom }, label, DT_CENTER);
+    }
+
     DrawCard(dc, 0);
     DrawCard(dc, 1);
 
@@ -757,6 +984,11 @@ std::wstring SuiteWindow::InstallDir(const Tool& t) const
 void SuiteWindow::StartDownload(int index)
 {
     Tool& t = m_tools[index];
+    if (m_dlBusy)
+    {
+        SetNote(L"Es läuft bereits ein Download …");
+        return;
+    }
     if (m_dlThread.joinable())
         m_dlThread.join();   // vorheriger, beendeter Download
     if (LocalAppData().empty())
@@ -766,6 +998,7 @@ void SuiteWindow::StartDownload(int index)
     }
     t.downloading = true;
     t.progress = 0;
+    m_dlBusy = true;
     m_dlCancel = false;
     const std::wstring base = t.downloadBase, exe = t.exe, dir = InstallDir(t);
     const HWND hwnd = m_hwnd;
@@ -779,6 +1012,90 @@ void SuiteWindow::StartDownload(int index)
     });
     SetNote(std::wstring(t.title) + L" wird heruntergeladen …");
     InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void SuiteWindow::StartUpdateCheck()
+{
+    // Pruefung im Hintergrund; Fehler (offline, Rate-Limit) bleiben still. Ergebnis ueber shared_ptr,
+    // damit der Thread auch nach dem Schliessen des Fensters gefahrlos auslaufen kann.
+    m_checkResult = std::make_shared<UpdateInfo>();
+    const HWND hwnd = m_hwnd;
+    const std::shared_ptr<UpdateInfo> result = m_checkResult;
+    std::thread([hwnd, result]()
+    {
+        bool newer = false;
+        UpdateInfo best;
+        if (FetchLatestSuiteInstaller(best))
+        {
+            const Version remote = ParseVer(best.version);
+            const Version local = ParseVer(SUITE_VERSION);
+            if (remote.valid && local.valid && IsNewer(remote, local))
+            {
+                *result = best;
+                newer = true;
+            }
+        }
+        if (IsWindow(hwnd))
+            PostMessageW(hwnd, WM_UPD_CHECKED, newer ? 1 : 0, 0);
+    }).detach();
+}
+
+void SuiteWindow::StartUpdateDownload()
+{
+    if (!m_updInstallerPath.empty() && FileExists(m_updInstallerPath))
+    {
+        RunInstaller();   // schon geladen (z. B. UAC-Abfrage vorher abgebrochen)
+        return;
+    }
+    if (m_dlBusy)
+    {
+        SetNote(L"Es läuft bereits ein Download …");
+        return;
+    }
+    if (m_dlThread.joinable())
+        m_dlThread.join();
+    m_dlBusy = true;
+    m_updDownloading = true;
+    m_updProgress = 0;
+    m_dlCancel = false;
+    const UpdateInfo info = m_upd;
+    const HWND hwnd = m_hwnd;
+    m_dlThread = std::thread([this, hwnd, info]()
+    {
+        std::wstring error, path;
+        const bool ok = DownloadInstaller(hwnd, info, path, m_dlCancel, error);
+        m_updInstallerPath = ok ? path : std::wstring();
+        m_dlMessage = error;
+        if (IsWindow(hwnd))
+            PostMessageW(hwnd, WM_DL_DONE, ok ? 1 : 0, static_cast<LPARAM>(2));
+    });
+    InvalidateRect(m_hwnd, &m_banner, FALSE);
+}
+
+void SuiteWindow::RunInstaller()
+{
+    if (m_updInstallerPath.empty() || !FileExists(m_updInstallerPath))
+    {
+        m_updInstallerPath.clear();
+        ShowModal(L"Update", L"Der heruntergeladene Installer wurde nicht gefunden. Bitte erneut auf das Update klicken.");
+        return;
+    }
+    SHELLEXECUTEINFOW sei{};
+    sei.cbSize = sizeof(sei);
+    sei.fMask = SEE_MASK_NOASYNC;
+    sei.hwnd = m_hwnd;
+    sei.lpVerb = L"open";   // der Installer fordert Administratorrechte selbst an (UAC)
+    sei.lpFile = m_updInstallerPath.c_str();
+    sei.nShow = SW_SHOWNORMAL;
+    if (ShellExecuteExW(&sei))
+    {
+        SetNote(L"Installer wird gestartet …");
+        PostMessageW(m_hwnd, WM_CLOSE, 0, 0);   // Suite beenden, damit das Update die Dateien ersetzen kann
+    }
+    else if (GetLastError() == ERROR_CANCELLED)
+        SetNote(L"Update abgebrochen");
+    else
+        ShowModal(L"Start fehlgeschlagen", L"Der Installer konnte nicht gestartet werden (Fehlercode " + std::to_wstring(GetLastError()) + L").\n\n" + m_updInstallerPath);
 }
 
 void SuiteWindow::OpenToolsFolder()
@@ -800,6 +1117,8 @@ void SuiteWindow::OnMouseMove(int x, int y)
     int hover = -1;
     if (m_modal)
         hover = PtInRect(&m_modalOk, pt) ? 3 : -1;
+    else if (m_updAvailable && PtInRect(&m_updateRect, pt))
+        hover = 4;
     else if (PtInRect(&m_tools[0].rect, pt))
         hover = 0;
     else if (PtInRect(&m_tools[1].rect, pt))
@@ -827,6 +1146,11 @@ void SuiteWindow::OnClick(int, int)
         m_modal = false;
         InvalidateRect(m_hwnd, nullptr, FALSE);
     }
+    else if (pressed == 4)
+    {
+        if (!m_updDownloading)
+            StartUpdateDownload();
+    }
     else if (pressed == 2)
         OpenToolsFolder();
     else
@@ -845,6 +1169,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
         CreateFonts();
         FindTools();
+        StartUpdateCheck();
         return 0;
     }
     case WM_ERASEBKGND:
@@ -928,11 +1253,22 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         m_note.clear();
         InvalidateRect(m_hwnd, &m_footer, FALSE);
         return 0;
+    case WM_UPD_CHECKED:
+        m_updAvailable = wp != 0;
+        if (m_updAvailable && m_checkResult)
+            m_upd = *m_checkResult;
+        InvalidateRect(m_hwnd, &m_banner, FALSE);
+        return 0;
     case WM_DL_PROGRESS:
         if (lp >= 0 && lp < 2)
         {
             m_tools[lp].progress = static_cast<int>(wp);
             InvalidateRect(m_hwnd, &m_tools[lp].rect, FALSE);
+        }
+        else if (lp == 2)
+        {
+            m_updProgress = static_cast<int>(wp);
+            InvalidateRect(m_hwnd, &m_banner, FALSE);
         }
         return 0;
     case WM_DL_DONE:
@@ -940,7 +1276,16 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         if (m_dlThread.joinable())
             m_dlThread.join();
         const int index = static_cast<int>(lp);
-        if (index >= 0 && index < 2)
+        m_dlBusy = false;
+        if (index == 2)
+        {
+            m_updDownloading = false;
+            if (wp)
+                RunInstaller();   // Installer starten, danach beendet sich die Suite
+            else
+                ShowModal(L"Update-Download fehlgeschlagen", m_dlMessage.empty() ? std::wstring(L"Unbekannter Fehler.") : m_dlMessage);
+        }
+        else if (index >= 0 && index < 2)
         {
             m_tools[index].downloading = false;
             FindTools();   // Button wechselt automatisch von "Herunterladen" auf "Starten"
