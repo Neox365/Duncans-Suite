@@ -67,7 +67,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.5.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.6.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 
@@ -92,3 +92,19 @@ Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im
 ein-/ausklappbare Seitenleiste (Thumbnails / Werkzeuge, `Strg+B`) und Canvas mit Scrollen, `Strg+Mausrad`-Zoom und Drag & Drop.
 Gerendert wird mit **PDFium**, das zur Laufzeit aus `pdfium.dll` geladen wird (64-Bit). Die DLL besorgt `pdf\third_party\get_pdfium.ps1`
 (offizielle Builds von bblanchon/pdfium-binaries) und legt sie neben die EXE. Ohne DLL startet die App und meldet es per Hinweis.
+
+## Signierte Downloads (Sicherheit)
+
+Die Suite führt nur Dateien aus, deren Signatur (ECDSA P-256 / SHA-256, `<Datei>.sig`) zum einkompilierten öffentlichen Schlüssel passt.
+Eine SHA-256-Summe allein reicht nicht, weil sie vom selben Server kommt wie die Datei.
+
+| Datei | Geprüft mit |
+| --- | --- |
+| `DuncansSuite_Setup_X.Y.Z.exe` (Suite-Update) | Suite-Schlüssel (`suite/public_key.inc`) |
+| `DuncansPdf.exe` (Duncans-PDF-Reader-Release) | Suite-Schlüssel |
+| `DuncansTidy.exe` | Tidy-Schlüssel (`suite/tidy_public_key.inc`, Kopie aus dem Tidy-Projekt) |
+
+Einmalig: `powershell -File tools\MakeSigningKey.ps1` erzeugt den privaten Schlüssel in `%USERPROFILE%\DuncansSuite-Signing\` (sichern, nie hochladen)
+und schreibt `suite/public_key.inc`; danach neu bauen.
+Pro Release: Installer bauen, `powershell -File tools\SignRelease.ps1 <Datei>` ausführen und die erzeugte `.sig` als zusätzliches Asset ins selbe GitHub-Release laden.
+Fehlt die `.sig`, lehnt die Suite die Datei ab.

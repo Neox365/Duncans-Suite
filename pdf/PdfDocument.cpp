@@ -43,13 +43,12 @@ bool PdfDocument::InitLibrary() {
     if (g_tried) return g_api.module != nullptr;
     g_tried = true;
 
-    // pdfium.dll neben der EXE (Installationsordner) bevorzugen, sonst ueber den normalen Suchpfad
+    // pdfium.dll nur aus dem Ordner der EXE laden (kein Fallback auf Arbeitsordner/PATH: DLL-Hijacking)
     wchar_t exe[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
     std::wstring dir = exe;
     dir.resize(dir.find_last_of(L'\\') == std::wstring::npos ? 0 : dir.find_last_of(L'\\'));
-    g_api.module = LoadLibraryW((dir + L"\\pdfium.dll").c_str());
-    if (!g_api.module) g_api.module = LoadLibraryW(L"pdfium.dll");
+    g_api.module = LoadLibraryExW((dir + L"\\pdfium.dll").c_str(), nullptr, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!g_api.module) {
         g_error = L"pdfium.dll fehlt – bitte neben DuncansPdf.exe legen (pdf\\third_party\\get_pdfium.ps1).";
         return false;

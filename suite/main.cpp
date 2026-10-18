@@ -26,6 +26,8 @@
 #include <vector>
 
 #include "../src/Icons.h"
+#include "public_key.inc"        // kSuitePublicKey: Suite-Installer und PDF Reader (erzeugt von tools\MakeSigningKey.ps1)
+#include "tidy_public_key.inc"   // kTidyPublicKey: DuncansTidy.exe
 
 #ifdef _MSC_VER
 #pragma comment(lib, "user32.lib")
@@ -38,7 +40,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.0.5"
+#define SUITE_VERSION L"1.0.6"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -194,8 +196,50 @@ namespace
         return s;
     }
 
+    // Signatur-Pruefung: <url>.sig (64 Byte, ECDSA P-256 ueber SHA-256) muss zum Schluessel passen.
+    struct SigCheck
+    {
+        const unsigned char* key;
+        size_t keyLen;
+    };
+
+    bool VerifyDigestSignature(HINTERNET session, const std::wstring& sigUrl, const SigCheck& check,
+                               const unsigned char (&digest)[32], std::wstring& error)
+    {
+        InetHandle h;
+        DWORD total = 0;
+        std::wstring ignored;
+        std::string sig;
+        if (OpenHttps(session, sigUrl, h, total, ignored))
+        {
+            char buf[128];
+            DWORD n = 0;
+            while (sig.size() <= 64 && InternetReadFile(h.h, buf, sizeof(buf), &n) && n > 0)
+                sig.append(buf, n);
+        }
+        bool valid = false;
+        if (sig.size() == 64)
+        {
+            BCRYPT_ALG_HANDLE ecc = nullptr;
+            BCRYPT_KEY_HANDLE key = nullptr;
+            valid = BCryptOpenAlgorithmProvider(&ecc, BCRYPT_ECDSA_P256_ALGORITHM, nullptr, 0) == 0 &&
+                    BCryptImportKeyPair(ecc, nullptr, BCRYPT_ECCPUBLIC_BLOB, &key, const_cast<PUCHAR>(check.key),
+                                        static_cast<ULONG>(check.keyLen), 0) == 0 &&
+                    BCryptVerifySignature(key, nullptr, const_cast<PUCHAR>(digest), sizeof(digest),
+                                          reinterpret_cast<PUCHAR>(&sig[0]), static_cast<ULONG>(sig.size()), 0) == 0;
+            if (key)
+                BCryptDestroyKey(key);
+            if (ecc)
+                BCryptCloseAlgorithmProvider(ecc, 0);
+        }
+        if (!valid)
+            error = L"Die Signatur der Datei fehlt oder ist ungültig. Aus Sicherheitsgründen wurde sie verworfen.";
+        return valid;
+    }
+
     bool DownloadFileVerified(HINTERNET session, HWND hwnd, int index, const std::wstring& url, const std::string& expected,
-                              const std::wstring& dir, const std::wstring& fileName, const std::atomic<bool>& cancel, std::wstring& error);
+                              const std::wstring& dir, const std::wstring& fileName, const std::atomic<bool>& cancel, std::wstring& error,
+                              const SigCheck& sigCheck);
 
     // Laedt exeName samt Pruefsumme nach dir\exeName. Rueckgabe false + error bei jedem Problem.
     bool DownloadVerified(HWND hwnd, int index, const std::wstring& base, const std::wstring& exeName,
@@ -235,7 +279,7 @@ namespace
             std::transform(expected.begin(), expected.end(), expected.begin(), [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
         }
 
-        return DownloadFileVerified(session.h, hwnd, index, base + exeName, expected, dir, exeName, cancel, error);
+        return DownloadFileVerified(session.h, hwnd, index, base + exeName, expected, dir, exeName, cancel, error, SigCheck{ kTidyPublicKey, sizeof(kTidyPublicKey) });
     }
 
     // Laedt eine EXE direkt von einer HTTPS-Adresse (das Release hat keine .sha256-Datei).
@@ -251,12 +295,13 @@ namespace
         DWORD timeout = 20000;
         InternetSetOptionW(session.h, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
         InternetSetOptionW(session.h, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
-        return DownloadFileVerified(session.h, hwnd, index, url, std::string(), dir, exeName, cancel, error);
+        return DownloadFileVerified(session.h, hwnd, index, url, std::string(), dir, exeName, cancel, error, SigCheck{ kSuitePublicKey, sizeof(kSuitePublicKey) });
     }
 
     // Laedt url nach dir\fileName und prueft dabei die SHA-256 (expected: 64 Hex, klein).
     bool DownloadFileVerified(HINTERNET session, HWND hwnd, int index, const std::wstring& url, const std::string& expected,
-                              const std::wstring& dir, const std::wstring& fileName, const std::atomic<bool>& cancel, std::wstring& error)
+                              const std::wstring& dir, const std::wstring& fileName, const std::atomic<bool>& cancel, std::wstring& error,
+                              const SigCheck& sigCheck)
     {
         InetHandle h;
         DWORD total = 0;
@@ -322,7 +367,7 @@ namespace
         if (ok)
         {
             unsigned char digest[32] = {};
-            // expected leer = Direkt-Download ohne Pruefsummen-Datei (nur HTTPS-Absicherung)
+            // expected leer = Direkt-Download ohne Pruefsummen-Datei (dann entscheidet allein die Signatur)
             if (BCryptFinishHash(hash, digest, sizeof(digest), 0) != 0 || (!expected.empty() && ToHex(digest, sizeof(digest)) != expected))
             {
                 error = L"Die Prüfsumme der heruntergeladenen Datei stimmt nicht. Die Datei wurde verworfen.";
@@ -333,6 +378,8 @@ namespace
                 error = L"Der Download ist unvollständig.";
                 ok = false;
             }
+            else if (!VerifyDigestSignature(session, url + L".sig", sigCheck, digest, error))
+                ok = false;   // Echtheit: nur von Duncan signierte Dateien werden abgelegt
         }
         if (hash)
             BCryptDestroyHash(hash);
@@ -438,6 +485,8 @@ namespace
             if (file.size() <= head.size() + tail.size() || file.rfind(head, 0) != 0 ||
                 file.compare(file.size() - tail.size(), tail.size(), tail) != 0)
                 continue;
+            if (file.find_first_of("\\:*?\"<>|") != std::string::npos)
+                continue;   // kein Pfad-Trick im Dateinamen
             const std::string ver = file.substr(head.size(), file.size() - head.size() - tail.size());
             const Version v = ParseVer(Widen(ver));
             if (!v.valid)
@@ -511,20 +560,53 @@ namespace
         InternetSetOptionW(session.h, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
         InternetSetOptionW(session.h, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
 
-        wchar_t temp[MAX_PATH + 2] = {};
-        const DWORD len = GetTempPathW(MAX_PATH, temp);
-        if (len == 0 || len > MAX_PATH)
+        // Privater Ordner des Nutzers statt des gemeinsamen %TEMP%: dort koennte ein anderer Prozess die Datei
+        // zwischen Pruefung und Start austauschen.
+        const std::wstring local = LocalAppData();
+        if (local.empty())
         {
-            error = L"Der Temp-Ordner ist nicht verfügbar.";
+            error = L"Der Ordner %LOCALAPPDATA% ist nicht verfügbar.";
             return false;
         }
-        std::wstring dir = temp;
-        while (!dir.empty() && (dir.back() == L'\\' || dir.back() == L'/'))
-            dir.pop_back();
-        if (!DownloadFileVerified(session.h, hwnd, 2, info.url, info.sha, dir, info.fileName, cancel, error))
+        CreateDirectoryW((local + L"\\DuncansSuite").c_str(), nullptr);
+        const std::wstring dir = local + L"\\DuncansSuite\\update";
+        if (!DownloadFileVerified(session.h, hwnd, 2, info.url, info.sha, dir, info.fileName, cancel, error, SigCheck{ kSuitePublicKey, sizeof(kSuitePublicKey) }))
             return false;
         installerPath = dir + L"\\" + info.fileName;
         return true;
+    }
+
+    // SHA-256 einer Datei als Hex (leer bei Fehler). Dient der erneuten Pruefung direkt vor dem Start des Installers.
+    std::string HashFileSha256(const std::wstring& path)
+    {
+        HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f == INVALID_HANDLE_VALUE)
+            return std::string();
+        std::string result;
+        BCRYPT_ALG_HANDLE alg = nullptr;
+        BCRYPT_HASH_HANDLE hash = nullptr;
+        if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0 &&
+            BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) == 0)
+        {
+            std::vector<char> buf(64 * 1024);
+            DWORD n = 0;
+            bool ok = true;
+            while (ReadFile(f, buf.data(), static_cast<DWORD>(buf.size()), &n, nullptr) && n > 0)
+                if (BCryptHashData(hash, reinterpret_cast<PUCHAR>(buf.data()), n, 0) != 0)
+                {
+                    ok = false;
+                    break;
+                }
+            unsigned char digest[32] = {};
+            if (ok && BCryptFinishHash(hash, digest, sizeof(digest), 0) == 0)
+                result = ToHex(digest, sizeof(digest));
+        }
+        if (hash)
+            BCryptDestroyHash(hash);
+        if (alg)
+            BCryptCloseAlgorithmProvider(alg, 0);
+        CloseHandle(f);
+        return result;
     }
 }
 
@@ -1164,6 +1246,14 @@ void SuiteWindow::RunInstaller()
     {
         m_updInstallerPath.clear();
         ShowModal(L"Update", L"Der heruntergeladene Installer wurde nicht gefunden. Bitte erneut auf das Update klicken.");
+        return;
+    }
+    // Vor dem Start erneut pruefen: die Datei liegt im Nutzerordner und koennte nach dem Download veraendert worden sein.
+    if (HashFileSha256(m_updInstallerPath) != m_upd.sha)
+    {
+        DeleteFileW(m_updInstallerPath.c_str());
+        m_updInstallerPath.clear();
+        ShowModal(L"Update", L"Der heruntergeladene Installer wurde verändert und wird nicht gestartet. Bitte erneut auf das Update klicken.");
         return;
     }
     SHELLEXECUTEINFOW sei{};

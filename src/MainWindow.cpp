@@ -812,7 +812,7 @@ void MainWindow::ShowDetails(const DriverInfo& d)
         if (button == 0 && !id.empty())
             CopyToClipboard(id);
         else if (button == openIndex && button >= 0)
-            ShellExecuteW(m_hwnd, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            OpenUrl(url);
     });
 }
 
@@ -1164,7 +1164,8 @@ void MainWindow::ConfirmInstall(std::vector<std::wstring> ids, int count)
 
 void MainWindow::OpenUrl(const std::wstring& url)
 {
-    if (!url.empty())
+    // Die URL kommt u. a. aus vendor_releases.json: nur https-Webadressen oeffnen, keine Dateipfade/Programme
+    if (url.rfind(L"https://", 0) == 0)
         ShellExecuteW(m_hwnd, L"open", url.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
