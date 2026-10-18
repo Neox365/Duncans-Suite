@@ -36,6 +36,14 @@ public:
 
     // Haengt alle Seiten von 'other' hinten an.
     bool Append(const std::wstring& otherPath);
+    // Loescht Seiten (Indizes in beliebiger Reihenfolge). Die letzte Seite bleibt immer erhalten (false, wenn alle gewaehlt waeren).
+    bool DeletePages(std::vector<int> indices);
+
+    // Textsuche (ohne Gross-/Kleinschreibung). Treffer = Zeichenbereich einer Seite.
+    struct TextHit { int page = 0, start = 0, count = 0; };
+    std::vector<TextHit> Search(const std::wstring& needle, size_t maxHits = 20000) const;
+    // Rechtecke (Pixel) eines Treffers fuer die Seite, gerendert in w x h Pixeln mit der aktuellen Drehung.
+    void HitRects(const TextHit& hit, int w, int h, std::vector<RECT>& out) const;
     // Speichert eine Kopie (inkl. Drehungen und angehaengter Seiten).
     bool SaveCopy(const std::wstring& path);
     bool Modified() const { return m_modified; }

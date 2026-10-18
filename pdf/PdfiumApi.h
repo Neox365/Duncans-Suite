@@ -45,4 +45,16 @@ struct PdfiumApi {
     void (*PageSetRotation)(FPDF_PAGE, int rotate) = nullptr;
     FPDF_BOOL (*ImportPages)(FPDF_DOCUMENT dest, FPDF_DOCUMENT src, const char* pageRange, int index) = nullptr;
     FPDF_BOOL (*SaveAsCopy)(FPDF_DOCUMENT, FPDF_FILEWRITE*, unsigned long flags) = nullptr;
+    void (*PageDelete)(FPDF_DOCUMENT, int index) = nullptr;
+    FPDF_BOOL (*PageToDevice)(FPDF_PAGE, int sx, int sy, int sw, int sh, int rotate, double px, double py, int* dx, int* dy) = nullptr;
+    // Textsuche (fpdf_text.h); der Textseiten- und der Such-Handle sind undurchsichtige Zeiger
+    void* (*TextLoadPage)(FPDF_PAGE) = nullptr;
+    void (*TextClosePage)(void* textPage) = nullptr;
+    void* (*TextFindStart)(void* textPage, const unsigned short* findWhat, unsigned long flags, int startIndex) = nullptr;
+    FPDF_BOOL (*TextFindNext)(void* search) = nullptr;
+    int (*TextGetSchResultIndex)(void* search) = nullptr;
+    int (*TextGetSchCount)(void* search) = nullptr;
+    void (*TextFindClose)(void* search) = nullptr;
+    int (*TextCountRects)(void* textPage, int startIndex, int count) = nullptr;
+    FPDF_BOOL (*TextGetRect)(void* textPage, int rectIndex, double* left, double* top, double* right, double* bottom) = nullptr;
 };

@@ -52,7 +52,7 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
-    C_ROTL, C_ROTR, C_PREV, C_NEXT
+    C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE
 };
 
 struct Item {
@@ -90,6 +90,20 @@ struct App {
     std::vector<int> thumbTop;
     int thumbW = 0, sideContentH = 0, sideScroll = 0, toolHot = -1;
     bool trackingSide = false;
+    std::vector<char> sel;                 // ausgewaehlte Seiten (Strg/Umschalt-Klick); die aktuelle Seite gehoert immer dazu
+    int selAnchor = 0;
+    bool selKeep = false;                  // GoToPage soll die Auswahl nicht auf die Zielseite zuruecksetzen
+
+    // Textsuche (Strg+F)
+    bool searchOpen = false;
+    HWND searchEdit = nullptr;
+    std::wstring lastQuery;                // Suchbegriff des letzten Suchlaufs
+    std::vector<PdfDocument::TextHit> hits;
+    int curHit = -1;
+    unsigned hitsVersion = 0;
+    std::vector<std::pair<int, RECT>> hlRects;   // Markierungen der aktuellen Seite (Trefferindex, Pixelrechteck)
+    int hlPage = -1, hlW = 0, hlH = 0, hlRot = -1;
+    unsigned hlVersion = ~0u;
 
     // Canvas
     HBITMAP pageBmp = nullptr;
@@ -168,6 +182,10 @@ void UpdateCanvas(bool resetBitmap);
 void GoToPage(int p, bool bottom = false);
 void ShowToast(const std::wstring& text, bool err = false);
 void HandleKey(UINT vk);
+void OpenSearch();
+void CloseSearch();
+void SearchStep(int dir);
+void ClearSearch();
 
 void InvalidateToolbar() {
     RECT r{ 0, 0, 100000, ToolbarH() };
@@ -187,6 +205,7 @@ void BuildItems() {
     add(C_OPEN, L"Öffnen", 0, false);
     add(C_SAVE, L"Speichern", 0, true);
     add(C_MERGE, L"Merge", 0, true);
+    add(C_FIND, L"Suchen", 0, true);
     add(C_NONE, L"", 0, false);
     add(C_ZOOMOUT, L"−", 40, true);
     add(C_ACTUAL, L"100 %", 64, true);
@@ -279,6 +298,7 @@ int HitToolbar(POINT p) {
 // ---------- Seitenleiste: Layout & Zeichnen ----------
 const struct { int cmd; const wchar_t* label; } kTools[] = {
     { C_ROTL, L"Seite nach links drehen" }, { C_ROTR, L"Seite nach rechts drehen" },
+    { C_DELETE, L"Seite(n) löschen  (Entf)" }, { C_FIND, L"Im Dokument suchen  (Strg+F)" },
     { C_MERGE, L"PDF anhängen (Merge)" }, { C_SAVE, L"Speichern unter …" },
     { C_FITW, L"Auf Seitenbreite einpassen" }, { C_ACTUAL, L"Originalgröße (100 %)" },
 };
@@ -287,6 +307,20 @@ int ToolRowH() { return S(42); }
 void ClearThumbs() {
     for (HBITMAP b : g.thumbs) if (b) DeleteObject(b);
     g.thumbs.clear();
+}
+
+void SelectOnly(int i) {
+    g.sel.assign(g.doc.PageCount(), 0);
+    if (i >= 0 && i < static_cast<int>(g.sel.size())) g.sel[i] = 1;
+    g.selAnchor = i;
+}
+
+// Seiten, auf die Drehen/Loeschen wirkt: die Auswahl, sonst die aktuelle Seite
+std::vector<int> TargetPages() {
+    std::vector<int> v;
+    for (int i = 0; i < static_cast<int>(g.sel.size()); ++i) if (g.sel[i]) v.push_back(i);
+    if (v.empty() && g.doc.IsOpen()) v.push_back(g.page);
+    return v;
 }
 
 void SideScrollbar() {
@@ -304,6 +338,7 @@ void LayoutSidebar() {
     const int n = g.doc.PageCount();
     g.aspect.resize(n, 1.4142);
     g.thumbs.resize(n, nullptr);
+    if (static_cast<int>(g.sel.size()) != n) SelectOnly(n > 0 ? std::min(g.page, n - 1) : -1);
     g.thumbTop.assign(n + 1, 0);
     int y = pad;
     for (int i = 0; i < n; ++i) {
@@ -357,7 +392,9 @@ void PaintSide(HDC dc, RECT cr) {
         if (top > cr.bottom) break;
         if (!g.thumbs[i]) g.thumbs[i] = g.doc.RenderPage(i, g.thumbW, Max(1, h));
         RECT frame{ pad - S(4), top - S(4), pad + g.thumbW + S(4), top + h + S(4) };
+        const bool selected = i < static_cast<int>(g.sel.size()) && g.sel[i];
         if (i == g.page) FillRound(dc, frame, S(6), kCardRaised, kAccent);
+        else if (selected) FillRound(dc, frame, S(6), kCardRaised, RGB(56, 104, 170));   // ausgewaehlt, aber nicht die angezeigte Seite
         if (g.thumbs[i]) {
             HDC mem = CreateCompatibleDC(dc);
             HGDIOBJ old = SelectObject(mem, g.thumbs[i]);
@@ -420,6 +457,7 @@ void GoToPage(int p, bool bottom) {
     if (n == 0) return;
     p = std::clamp(p, 0, n - 1);
     g.page = p;
+    if (!g.selKeep) SelectOnly(p);
     g.scrollX = 0;
     g.scrollY = bottom ? 1 << 28 : 0;
     UpdateCanvas(true);
@@ -454,6 +492,150 @@ void ShowToast(const std::wstring& text, bool err) {
     InvalidateRect(g.canvas, nullptr, FALSE);
 }
 
+// ---------- Textsuche ----------
+// Suchfeld oben rechts im Canvas: [Eingabe] [Treffer x / y] [‹] [›] [✕]
+struct SearchLayout { RECT panel, edit, count, prev, next, close; };
+
+SearchLayout GetSearchLayout(RECT cr) {
+    SearchLayout l{};
+    const int w = std::min(S(430), static_cast<int>(cr.right) - S(24)), h = S(46), btn = S(30);
+    l.panel = RECT{ cr.right - S(14) - w, S(12), cr.right - S(14), S(12) + h };
+    l.close = RECT{ l.panel.right - S(8) - btn, l.panel.top + (h - btn) / 2, l.panel.right - S(8), l.panel.top + (h - btn) / 2 + btn };
+    l.next = RECT{ l.close.left - S(4) - btn, l.close.top, l.close.left - S(4), l.close.bottom };
+    l.prev = RECT{ l.next.left - S(4) - btn, l.close.top, l.next.left - S(4), l.close.bottom };
+    l.count = RECT{ l.prev.left - S(8) - S(92), l.panel.top, l.prev.left - S(8), l.panel.bottom };
+    l.edit = RECT{ l.panel.left + S(14), l.panel.top + (h - S(22)) / 2, l.count.left - S(6), l.panel.top + (h - S(22)) / 2 + S(22) };
+    return l;
+}
+
+WNDPROC g_oldEditProc = nullptr;
+
+// Eingabefeld der Suche: Enter = naechster Treffer, Umschalt+Enter = vorheriger, Esc = schliessen;
+// Seitenwechsel und die wichtigsten Strg-Kuerzel funktionieren auch waehrend des Tippens.
+LRESULT CALLBACK SearchEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_KEYDOWN) {
+        const bool ctrl = GetKeyState(VK_CONTROL) < 0, shift = GetKeyState(VK_SHIFT) < 0;
+        if (wp == VK_ESCAPE) { CloseSearch(); return 0; }
+        if (wp == VK_RETURN) { SearchStep(shift ? -1 : 1); return 0; }
+        if (wp == VK_F3) { SearchStep(shift ? -1 : 1); return 0; }
+        if (wp == VK_PRIOR || wp == VK_NEXT) { HandleKey(static_cast<UINT>(wp)); return 0; }
+        if (ctrl && (wp == 'O' || wp == 'S' || wp == 'M' || wp == 'B')) { HandleKey(static_cast<UINT>(wp)); return 0; }
+        if (ctrl && wp == 'F') { SendMessageW(h, EM_SETSEL, 0, -1); return 0; }
+    }
+    if (msg == WM_CHAR && (wp == VK_RETURN || wp == VK_ESCAPE)) return 0;   // kein Signalton
+    return CallWindowProcW(g_oldEditProc, h, msg, wp, lp);
+}
+
+void PositionSearchEdit() {
+    if (!g.searchEdit) return;
+    RECT cr; GetClientRect(g.canvas, &cr);
+    const RECT e = GetSearchLayout(cr).edit;
+    MoveWindow(g.searchEdit, e.left, e.top, std::max(0L, e.right - e.left), e.bottom - e.top, TRUE);
+}
+
+void ClearSearch() {
+    g.hits.clear();
+    g.curHit = -1;
+    g.lastQuery.clear();
+    ++g.hitsVersion;
+}
+
+// Markierungen der angezeigten Seite neu berechnen, wenn sich Seite, Groesse, Drehung oder Treffer geaendert haben
+void UpdateHighlights() {
+    if (g.hlVersion == g.hitsVersion && g.hlPage == g.page && g.hlW == g.pageW && g.hlH == g.pageH && g.hlRot == g.doc.Rotation(g.page)) return;
+    g.hlRects.clear();
+    for (size_t k = 0; k < g.hits.size(); ++k) {
+        if (g.hits[k].page != g.page) continue;
+        std::vector<RECT> rs;
+        g.doc.HitRects(g.hits[k], g.pageW, g.pageH, rs);
+        for (const RECT& r : rs) g.hlRects.emplace_back(static_cast<int>(k), r);
+    }
+    g.hlVersion = g.hitsVersion; g.hlPage = g.page; g.hlW = g.pageW; g.hlH = g.pageH; g.hlRot = g.doc.Rotation(g.page);
+}
+
+void ScrollToCurrentHit() {
+    if (g.curHit < 0 || g.curHit >= static_cast<int>(g.hits.size())) return;
+    UpdateHighlights();
+    for (const auto& h : g.hlRects) {
+        if (h.first != g.curHit) continue;
+        RECT cr; GetClientRect(g.canvas, &cr);
+        g.scrollY = h.second.top + S(kMargin) - cr.bottom / 3;
+        g.scrollX = h.second.left + S(kMargin) - cr.right / 2;
+        CanvasScrollbars();
+        break;
+    }
+    InvalidateRect(g.canvas, nullptr, FALSE);
+}
+
+void GoToHit(int i) {
+    const int n = static_cast<int>(g.hits.size());
+    if (n == 0) { InvalidateRect(g.canvas, nullptr, FALSE); return; }
+    g.curHit = ((i % n) + n) % n;
+    if (g.hits[g.curHit].page != g.page) GoToPage(g.hits[g.curHit].page);
+    ScrollToCurrentHit();
+}
+
+void RunSearch() {
+    if (!g.searchEdit || !g.doc.IsOpen()) return;
+    wchar_t buf[256]{};
+    GetWindowTextW(g.searchEdit, buf, 256);
+    ClearSearch();
+    g.lastQuery = buf;
+    if (g.lastQuery.empty()) { InvalidateRect(g.canvas, nullptr, FALSE); return; }
+    HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    g.hits = g.doc.Search(g.lastQuery);
+    SetCursor(old);
+    ++g.hitsVersion;
+    int first = 0;                                           // erster Treffer ab der aktuellen Seite
+    for (size_t k = 0; k < g.hits.size(); ++k) if (g.hits[k].page >= g.page) { first = static_cast<int>(k); break; }
+    GoToHit(first);
+}
+
+void SearchStep(int dir) {
+    if (!g.searchOpen || !g.searchEdit) return;
+    wchar_t buf[256]{};
+    GetWindowTextW(g.searchEdit, buf, 256);
+    if (g.lastQuery != buf) { RunSearch(); return; }        // Begriff geaendert: erst suchen
+    GoToHit(g.curHit < 0 ? 0 : g.curHit + dir);
+}
+
+void OpenSearch() {
+    if (!g.doc.IsOpen()) return;
+    if (!g.searchEdit) {
+        g.searchEdit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | ES_AUTOHSCROLL, 0, 0, 10, 10, g.canvas, reinterpret_cast<HMENU>(100), g.inst, nullptr);
+        SendMessageW(g.searchEdit, WM_SETFONT, reinterpret_cast<WPARAM>(g.font), TRUE);
+        SendMessageW(g.searchEdit, EM_SETLIMITTEXT, 200, 0);
+        g_oldEditProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(g.searchEdit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&SearchEditProc)));
+    }
+    g.searchOpen = true;
+    PositionSearchEdit();
+    ShowWindow(g.searchEdit, SW_SHOW);
+    SetFocus(g.searchEdit);
+    SendMessageW(g.searchEdit, EM_SETSEL, 0, -1);
+    InvalidateRect(g.canvas, nullptr, FALSE);
+}
+
+void CloseSearch() {
+    if (!g.searchOpen) return;
+    g.searchOpen = false;
+    if (g.searchEdit) ShowWindow(g.searchEdit, SW_HIDE);
+    ClearSearch();
+    SetFocus(g.canvas);
+    InvalidateRect(g.canvas, nullptr, FALSE);
+}
+
+void DrawSearchPanel(HDC dc, RECT cr) {
+    const SearchLayout l = GetSearchLayout(cr);
+    FillRound(dc, l.panel, S(12), kCardRaised, kBorder);
+    std::wstring c;
+    if (g.lastQuery.empty()) c = L"";
+    else if (g.hits.empty()) c = L"Keine Treffer";
+    else c = std::to_wstring(g.curHit + 1) + L" / " + std::to_wstring(g.hits.size());
+    DrawTextC(dc, g.fontSmall, c, l.count, g.hits.empty() && !g.lastQuery.empty() ? kRed : kTextDim, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+    const struct { RECT r; const wchar_t* t; } btns[] = { { l.prev, L"‹" }, { l.next, L"›" }, { l.close, L"✕" } };
+    for (const auto& b : btns) DrawTextC(dc, g.font, b.t, b.r, kText);
+}
+
 void PaintCanvas(HDC dc, RECT cr) {
     HBRUSH bg = CreateSolidBrush(kCanvas);
     FillRect(dc, &cr, bg);
@@ -484,7 +666,23 @@ void PaintCanvas(HDC dc, RECT cr) {
             FillRect(dc, &t, w); DeleteObject(w);
             DrawTextC(dc, g.font, L"Seite konnte nicht gerendert werden", t, RGB(90, 90, 90));
         }
+        if (!g.hits.empty()) {                       // Treffer der Suche markieren (aktueller Treffer kraeftiger)
+            UpdateHighlights();
+            using namespace Gdiplus;
+            Graphics gr(dc);
+            gr.SetClip(Rect(x, y, g.pageW, g.pageH));
+            SolidBrush others(Color(110, 255, 214, 0)), current(Color(170, 255, 140, 0));
+            Pen outline(Color(255, 230, 110, 0), 1.5f);
+            for (const auto& h : g.hlRects) {
+                const RECT& r = h.second;
+                const bool cur = h.first == g.curHit;
+                Rect gr2(x + r.left - 1, y + r.top - 1, (r.right - r.left) + 2, (r.bottom - r.top) + 2);
+                gr.FillRectangle(cur ? &current : &others, gr2);
+                if (cur) gr.DrawRectangle(&outline, gr2);
+            }
+        }
     }
+    if (g.searchOpen) DrawSearchPanel(dc, cr);
 
     if (!g.toast.empty()) {
         const int w = Min(cr.right - S(40), TextW(g.toast, g.font) + S(48)), h = S(40);
@@ -512,6 +710,31 @@ bool PickFile(HWND owner, bool save, std::wstring& path, const wchar_t* title, c
     return true;
 }
 
+// Mehrfachauswahl: eine oder mehrere PDF-Dateien (Reihenfolge wie im Dialog)
+bool PickFiles(HWND owner, std::vector<std::wstring>& out, const wchar_t* title) {
+    std::vector<wchar_t> buf(32768, 0);
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = L"PDF-Dokumente (*.pdf)\0*.pdf\0Alle Dateien (*.*)\0*.*\0";
+    ofn.lpstrFile = buf.data();
+    ofn.nMaxFile = static_cast<DWORD>(buf.size());
+    ofn.lpstrTitle = title;
+    ofn.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_ALLOWMULTISELECT;
+    if (!GetOpenFileNameW(&ofn)) return false;
+    const wchar_t* p = buf.data();
+    const std::wstring first = p;
+    p += first.size() + 1;
+    if (*p == 0) { out.push_back(first); return true; }      // genau eine Datei: voller Pfad
+    const std::wstring dir = (!first.empty() && first.back() == L'\\') ? first : first + L"\\";
+    while (*p) {                                              // sonst: Ordner, danach die Dateinamen
+        const std::wstring name = p;
+        out.push_back(dir + name);
+        p += name.size() + 1;
+    }
+    return !out.empty();
+}
+
 void UpdateTitle() {
     std::wstring t = g.doc.IsOpen() ? FileName(g.doc.Path()) + (g.doc.Modified() ? L" *" : L"") + L" – " + kAppTitle : kAppTitle;
     SetWindowTextW(g.main, t.c_str());
@@ -521,6 +744,9 @@ void OpenPath(const std::wstring& path) {
     if (!g.doc.Open(path)) { ShowToast(PdfDocument::LastError(), true); return; }
     g.page = 0; g.zoom = 1.0; g.fitWidth = true; g.scrollX = g.scrollY = g.sideScroll = 0;
     ClearThumbs();
+    g.sel.clear();
+    ClearSearch();
+    if (g.searchEdit) SetWindowTextW(g.searchEdit, L"");
     LayoutSidebar();
     UpdateCanvas(true);
     UpdateTitle();
@@ -545,14 +771,37 @@ void RunCommand(int cmd) {
     }
     case C_MERGE: {
         if (!g.doc.IsOpen()) break;
-        std::wstring p;
-        if (!PickFile(g.main, false, p, L"PDF zum Anhängen auswählen")) break;
+        std::vector<std::wstring> files;
+        if (!PickFiles(g.main, files, L"PDF(s) zum Anhängen auswählen (mehrere mit Strg/Umschalt)")) break;
         const int before = g.doc.PageCount();
-        if (!g.doc.Append(p)) { ShowToast(PdfDocument::LastError(), true); break; }
+        int failed = 0;
+        std::wstring lastErr;
+        for (const std::wstring& f : files)
+            if (!g.doc.Append(f)) { ++failed; lastErr = FileName(f) + L": " + PdfDocument::LastError(); }
+        ClearSearch();
         LayoutSidebar();
         UpdateCanvas(false);
         UpdateTitle();
-        ShowToast(std::to_wstring(g.doc.PageCount() - before) + L" Seiten angehängt");
+        const int added = g.doc.PageCount() - before;
+        if (failed) ShowToast(std::to_wstring(added) + L" Seiten angehängt, " + std::to_wstring(failed) + L" Datei(en) fehlgeschlagen – " + lastErr, true);
+        else ShowToast(std::to_wstring(added) + L" Seiten aus " + std::to_wstring(files.size()) + L" Datei(en) angehängt");
+        break;
+    }
+    case C_FIND: OpenSearch(); break;
+    case C_DELETE: {
+        if (!g.doc.IsOpen()) break;
+        const std::vector<int> t = TargetPages();
+        if (!g.doc.DeletePages(t)) { ShowToast(PdfDocument::LastError(), true); break; }
+        ClearThumbs();
+        ClearSearch();
+        g.page = std::clamp(t.front(), 0, g.doc.PageCount() - 1);
+        SelectOnly(g.page);
+        g.scrollX = g.scrollY = 0;
+        LayoutSidebar();
+        UpdateCanvas(true);
+        EnsureThumbVisible();
+        UpdateTitle();
+        ShowToast(std::to_wstring(t.size()) + L" Seite(n) gelöscht – noch nicht gespeichert");
         break;
     }
     case C_ZOOMOUT: SetZoom(g.zoom / 1.2, false); break;
@@ -561,8 +810,10 @@ void RunCommand(int cmd) {
     case C_FITW:    SetZoom(g.zoom, true); break;
     case C_ROTL: case C_ROTR: {
         if (!g.doc.IsOpen()) break;
-        g.doc.SetRotation(g.page, g.doc.Rotation(g.page) + (cmd == C_ROTR ? 1 : 3));
-        if (g.page < static_cast<int>(g.thumbs.size()) && g.thumbs[g.page]) { DeleteObject(g.thumbs[g.page]); g.thumbs[g.page] = nullptr; }
+        for (int i : TargetPages()) {                 // alle ausgewaehlten Seiten (sonst die aktuelle)
+            g.doc.SetRotation(i, g.doc.Rotation(i) + (cmd == C_ROTR ? 1 : 3));
+            if (i < static_cast<int>(g.thumbs.size()) && g.thumbs[i]) { DeleteObject(g.thumbs[i]); g.thumbs[i] = nullptr; }
+        }
         LayoutSidebar();
         g.scrollX = g.scrollY = 0;
         UpdateCanvas(true);
@@ -582,6 +833,10 @@ void HandleKey(UINT vk) {
         case 'S': RunCommand(C_SAVE); return;
         case 'B': RunCommand(C_SIDE); return;
         case 'M': RunCommand(C_MERGE); return;
+        case 'F': RunCommand(C_FIND); return;
+        case 'A':
+            if (g.doc.IsOpen()) { g.sel.assign(g.doc.PageCount(), 1); InvalidateRect(g.side, nullptr, FALSE); }
+            return;
         case VK_OEM_PLUS: case VK_ADD: RunCommand(C_ZOOMIN); return;
         case VK_OEM_MINUS: case VK_SUBTRACT: RunCommand(C_ZOOMOUT); return;
         case '0': RunCommand(C_FITW); return;
@@ -591,6 +846,9 @@ void HandleKey(UINT vk) {
     }
     if (!g.doc.IsOpen()) return;
     switch (vk) {
+    case VK_ESCAPE: CloseSearch(); break;
+    case VK_F3: SearchStep(shift ? -1 : 1); break;
+    case VK_DELETE: RunCommand(C_DELETE); break;
     case 'R': RunCommand(shift ? C_ROTL : C_ROTR); break;
     case VK_PRIOR: RunCommand(C_PREV); break;
     case VK_NEXT: RunCommand(C_NEXT); break;
@@ -640,11 +898,22 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SIZE: {
         static bool busy = false;               // SetScrollInfo kann selbst wieder WM_SIZE ausloesen
         if (g.doc.IsOpen() && !busy) { busy = true; UpdateCanvas(g.fitWidth); busy = false; }
+        PositionSearchEdit();
         return 0;
     }
     case WM_TIMER:
         if (wp == 1) { KillTimer(hwnd, 1); g.toast.clear(); InvalidateRect(hwnd, nullptr, FALSE); }
+        else if (wp == 2) { KillTimer(hwnd, 2); RunSearch(); }       // kurz nach der letzten Eingabe suchen
         return 0;
+    case WM_COMMAND:
+        if (LOWORD(wp) == 100 && HIWORD(wp) == EN_CHANGE) SetTimer(hwnd, 2, 400, nullptr);
+        return 0;
+    case WM_CTLCOLOREDIT: {                                          // dunkles Suchfeld passend zum Panel
+        static HBRUSH br = CreateSolidBrush(kCardRaised);
+        SetTextColor(reinterpret_cast<HDC>(wp), kText);
+        SetBkColor(reinterpret_cast<HDC>(wp), kCardRaised);
+        return reinterpret_cast<LRESULT>(br);
+    }
     case WM_VSCROLL: {
         RECT cr; GetClientRect(hwnd, &cr);
         ScrollMessage(hwnd, SB_VERT, wp, g.scrollY, S(40), cr.bottom);
@@ -672,11 +941,30 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         CanvasScrollbars(); InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
-    case WM_LBUTTONDOWN: SetFocus(hwnd); return 0;
+    case WM_LBUTTONDOWN: {
+        POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (g.searchOpen) {
+            RECT cr; GetClientRect(hwnd, &cr);
+            const SearchLayout l = GetSearchLayout(cr);
+            if (PtInRect(&l.prev, p)) { SearchStep(-1); return 0; }
+            if (PtInRect(&l.next, p)) { SearchStep(1); return 0; }
+            if (PtInRect(&l.close, p)) { CloseSearch(); return 0; }
+            if (PtInRect(&l.panel, p)) { SetFocus(g.searchEdit); return 0; }
+        }
+        SetFocus(hwnd);
+        return 0;
+    }
     case WM_KEYDOWN: HandleKey(static_cast<UINT>(wp)); return 0;
     case WM_GETDLGCODE: return DLGC_WANTALLKEYS;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// Index der Seitenvorschau an der Client-Position y der Seitenleiste (-1 = keine)
+int ThumbAt(int y) {
+    for (int i = 0; i < g.doc.PageCount() && i + 1 < static_cast<int>(g.thumbTop.size()); ++i)
+        if (y + g.sideScroll >= g.thumbTop[i] - S(6) && y + g.sideScroll < g.thumbTop[i + 1] - S(6)) return i;
+    return -1;
 }
 
 LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -718,9 +1006,45 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             int row = (y - S(12)) / ToolRowH();
             if (row >= 0 && row < static_cast<int>(sizeof(kTools) / sizeof(kTools[0])) && g.doc.IsOpen()) RunCommand(kTools[row].cmd);
         } else if (g.doc.IsOpen()) {
-            for (int i = 0; i < g.doc.PageCount(); ++i)
-                if (y + g.sideScroll >= g.thumbTop[i] - S(6) && y + g.sideScroll < g.thumbTop[i + 1] - S(6)) { GoToPage(i); break; }
+            const int hit = ThumbAt(y);
+            if (hit >= 0) {
+                const int n = g.doc.PageCount();
+                if (GetKeyState(VK_SHIFT) < 0) {                       // Bereich vom Ankerpunkt bis hierher
+                    const int a = std::min(g.selAnchor, hit), b = std::max(g.selAnchor, hit);
+                    g.sel.assign(n, 0);
+                    for (int i = std::max(0, a); i <= b && i < n; ++i) g.sel[i] = 1;
+                } else if (GetKeyState(VK_CONTROL) < 0) {              // einzelne Seite an-/abwaehlen
+                    g.sel[hit] = !g.sel[hit];
+                    g.selAnchor = hit;
+                    if (std::find(g.sel.begin(), g.sel.end(), 1) == g.sel.end()) g.sel[hit] = 1;
+                } else SelectOnly(hit);
+                g.selKeep = true;
+                GoToPage(hit);
+                g.selKeep = false;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
         }
+        return 0;
+    }
+    case WM_RBUTTONUP: {                                               // Kontextmenue auf einer Vorschau
+        if (g.sideTab != 0 || !g.doc.IsOpen()) return 0;
+        const int hit = ThumbAt(GET_Y_LPARAM(lp));
+        if (hit < 0) return 0;
+        if (!g.sel[hit]) { SelectOnly(hit); g.selKeep = false; GoToPage(hit); }
+        HMENU menu = CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING, 1, L"Nach links drehen");
+        AppendMenuW(menu, MF_STRING, 2, L"Nach rechts drehen");
+        AppendMenuW(menu, MF_STRING, 3, L"Seite(n) löschen");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, 4, L"Alle auswählen");
+        POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        ClientToScreen(hwnd, &pt);
+        const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
+        DestroyMenu(menu);
+        if (cmd == 1) RunCommand(C_ROTL);
+        else if (cmd == 2) RunCommand(C_ROTR);
+        else if (cmd == 3) RunCommand(C_DELETE);
+        else if (cmd == 4) { g.sel.assign(g.doc.PageCount(), 1); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     }
     }
@@ -773,10 +1097,18 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g.dpi = static_cast<int>(GetDpiForWindow(hwnd));
         BOOL dark = TRUE;
         DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+        if (HMODULE ux = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)) {   // dunkle Kontextmenues (undokumentierte Ordinale 135/136)
+            using SetModeFn = int(WINAPI*)(int);
+            using FlushFn = void(WINAPI*)();
+            auto setMode = reinterpret_cast<SetModeFn>(reinterpret_cast<void*>(GetProcAddress(ux, MAKEINTRESOURCEA(135))));
+            auto flush = reinterpret_cast<FlushFn>(reinterpret_cast<void*>(GetProcAddress(ux, MAKEINTRESOURCEA(136))));
+            if (setMode) setMode(2);
+            if (flush) flush();
+        }
         MakeFonts();
         BuildItems();
         g.side = CreateWindowExW(0, L"DuncansPdfSide", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL, 0, 0, 10, 10, hwnd, nullptr, g.inst, nullptr);
-        g.canvas = CreateWindowExW(0, L"DuncansPdfCanvas", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL, 0, 0, 10, 10, hwnd, nullptr, g.inst, nullptr);
+        g.canvas = CreateWindowExW(0, L"DuncansPdfCanvas", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | WS_CLIPCHILDREN, 0, 0, 10, 10, hwnd, nullptr, g.inst, nullptr);
         SetDarkScrollbars(g.side);
         SetDarkScrollbars(g.canvas);
         DragAcceptFiles(hwnd, TRUE);
@@ -852,7 +1184,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_CLOSE:
         if (g.doc.IsOpen() && g.doc.Modified() &&
-            MessageBoxW(hwnd, L"Es gibt ungespeicherte Änderungen (gedrehte oder angehängte Seiten).\nTrotzdem schließen?",
+            MessageBoxW(hwnd, L"Es gibt ungespeicherte Änderungen (gedrehte, gelöschte oder angehängte Seiten).\nTrotzdem schließen?",
                         kAppTitle, MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
             return 0;
         DestroyWindow(hwnd);

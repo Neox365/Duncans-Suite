@@ -1,6 +1,8 @@
 #include "PdfDocument.h"
 #include "PdfiumApi.h"
 
+#include <algorithm>
+
 namespace {
     PdfiumApi g_api;
     bool g_tried = false;
@@ -70,7 +72,18 @@ bool PdfDocument::InitLibrary() {
         && Load("FPDFPage_GetRotation", g_api.PageGetRotation)
         && Load("FPDFPage_SetRotation", g_api.PageSetRotation)
         && Load("FPDF_ImportPages", g_api.ImportPages)
-        && Load("FPDF_SaveAsCopy", g_api.SaveAsCopy);
+        && Load("FPDF_SaveAsCopy", g_api.SaveAsCopy)
+        && Load("FPDFPage_Delete", g_api.PageDelete)
+        && Load("FPDF_PageToDevice", g_api.PageToDevice)
+        && Load("FPDFText_LoadPage", g_api.TextLoadPage)
+        && Load("FPDFText_ClosePage", g_api.TextClosePage)
+        && Load("FPDFText_FindStart", g_api.TextFindStart)
+        && Load("FPDFText_FindNext", g_api.TextFindNext)
+        && Load("FPDFText_GetSchResultIndex", g_api.TextGetSchResultIndex)
+        && Load("FPDFText_GetSchCount", g_api.TextGetSchCount)
+        && Load("FPDFText_FindClose", g_api.TextFindClose)
+        && Load("FPDFText_CountRects", g_api.TextCountRects)
+        && Load("FPDFText_GetRect", g_api.TextGetRect);
     if (!ok) {
         g_error = L"pdfium.dll ist nicht kompatibel (Funktionen fehlen). Bitte eine aktuelle 64-Bit-Version verwenden.";
         FreeLibrary(g_api.module);
@@ -179,6 +192,70 @@ bool PdfDocument::Append(const std::wstring& otherPath) {
     m_rot.resize(PageCount(), 0);
     m_modified = true;
     return true;
+}
+
+bool PdfDocument::DeletePages(std::vector<int> indices) {
+    if (!m_doc) return false;
+    const int n = PageCount();
+    std::sort(indices.begin(), indices.end());
+    indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
+    indices.erase(std::remove_if(indices.begin(), indices.end(), [n](int i) { return i < 0 || i >= n; }), indices.end());
+    if (indices.empty()) { g_error = L"Es ist keine Seite ausgewählt."; return false; }
+    if (static_cast<int>(indices.size()) >= n) { g_error = L"Die letzte Seite kann nicht gelöscht werden."; return false; }
+    for (auto it = indices.rbegin(); it != indices.rend(); ++it) {   // von hinten, damit die Indizes stimmen
+        g_api.PageDelete(m_doc, *it);
+        if (*it < static_cast<int>(m_rot.size())) m_rot.erase(m_rot.begin() + *it);
+    }
+    m_rot.resize(PageCount(), 0);
+    m_modified = true;
+    return true;
+}
+
+std::vector<PdfDocument::TextHit> PdfDocument::Search(const std::wstring& needle, size_t maxHits) const {
+    std::vector<TextHit> hits;
+    if (!m_doc || needle.empty()) return hits;
+    const int n = PageCount();
+    for (int i = 0; i < n && hits.size() < maxHits; ++i) {
+        void* page = g_api.LoadPage(m_doc, i);
+        if (!page) continue;
+        if (void* tp = g_api.TextLoadPage(page)) {
+            // wchar_t ist unter Windows UTF-16, wie es PDFium erwartet
+            if (void* find = g_api.TextFindStart(tp, reinterpret_cast<const unsigned short*>(needle.c_str()), 0, 0)) {
+                while (hits.size() < maxHits && g_api.TextFindNext(find)) {
+                    TextHit h;
+                    h.page = i;
+                    h.start = g_api.TextGetSchResultIndex(find);
+                    h.count = g_api.TextGetSchCount(find);
+                    if (h.count > 0) hits.push_back(h);
+                }
+                g_api.TextFindClose(find);
+            }
+            g_api.TextClosePage(tp);
+        }
+        g_api.ClosePage(page);
+    }
+    return hits;
+}
+
+void PdfDocument::HitRects(const TextHit& hit, int w, int h, std::vector<RECT>& out) const {
+    out.clear();
+    if (!m_doc || w <= 0 || h <= 0) return;
+    void* page = g_api.LoadPage(m_doc, hit.page);
+    if (!page) return;
+    if (void* tp = g_api.TextLoadPage(page)) {
+        const int rects = g_api.TextCountRects(tp, hit.start, hit.count);
+        for (int r = 0; r < rects; ++r) {
+            double l = 0, t = 0, rt = 0, b = 0;
+            if (!g_api.TextGetRect(tp, r, &l, &t, &rt, &b)) continue;
+            int x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+            // Seitenkoordinaten (Punkt, y nach oben) in Pixel der gerenderten Seite; beruecksichtigt Seiten- und Zusatzdrehung
+            g_api.PageToDevice(page, 0, 0, w, h, Rotation(hit.page), l, t, &x1, &y1);
+            g_api.PageToDevice(page, 0, 0, w, h, Rotation(hit.page), rt, b, &x2, &y2);
+            out.push_back(RECT{ std::min(x1, x2), std::min(y1, y2), std::max(x1, x2), std::max(y1, y2) });
+        }
+        g_api.TextClosePage(tp);
+    }
+    g_api.ClosePage(page);
 }
 
 bool PdfDocument::SaveCopy(const std::wstring& path) {
