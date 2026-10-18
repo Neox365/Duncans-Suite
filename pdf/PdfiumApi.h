@@ -22,8 +22,27 @@ struct FPDF_FILEWRITE {
     int (*WriteBlock)(FPDF_FILEWRITE* self, const void* data, unsigned long size);
 };
 
+struct FPDF_FILEACCESS {
+    unsigned long m_FileLen;
+    int (*m_GetBlock)(void* param, unsigned long position, unsigned char* buf, unsigned long size);
+    void* m_Param;
+};
+struct FS_RECTF { float left, top, right, bottom; };            // top > bottom (PDF-Koordinaten, y nach oben)
+struct FS_QUADPOINTSF { float x1, y1, x2, y2, x3, y3, x4, y4; };
+struct FS_MATRIX { float a, b, c, d, e, f; };
+struct FPDF_IMAGEOBJ_METADATA {
+    unsigned int width, height;
+    float horizontal_dpi, vertical_dpi;
+    unsigned int bits_per_pixel;
+    int colorspace;
+    int marked_content_id;
+};
+
 enum { FPDF_ANNOT = 0x01, FPDF_LCD_TEXT = 0x02 };
-enum { FPDFBitmap_BGRx = 3 };
+enum { FPDFBitmap_Gray = 1, FPDFBitmap_BGR = 2, FPDFBitmap_BGRx = 3, FPDFBitmap_BGRA = 4 };
+enum { FPDF_ANNOT_TEXT = 1, FPDF_ANNOT_HIGHLIGHT = 9 };
+enum { FPDF_PAGEOBJ_IMAGE = 3 };
+enum { FPDF_NO_INCREMENTAL = 2 };
 
 struct PdfiumApi {
     HMODULE module = nullptr;
@@ -57,4 +76,30 @@ struct PdfiumApi {
     void (*TextFindClose)(void* search) = nullptr;
     int (*TextCountRects)(void* textPage, int startIndex, int count) = nullptr;
     FPDF_BOOL (*TextGetRect)(void* textPage, int rectIndex, double* left, double* top, double* right, double* bottom) = nullptr;
+    int (*TextGetCharIndexAtPos)(void* textPage, double x, double y, double xTol, double yTol) = nullptr;
+    FPDF_BOOL (*DeviceToPage)(FPDF_PAGE, int sx, int sy, int sw, int sh, int rotate, int dx, int dy, double* px, double* py) = nullptr;
+    // Seiten verschieben / neues Dokument
+    FPDF_DOCUMENT (*CreateNewDocument)() = nullptr;
+    FPDF_BOOL (*MovePages)(FPDF_DOCUMENT, const int* pageIndices, unsigned long count, int destPageIndex) = nullptr;
+    // Anmerkungen (fpdf_annot.h)
+    void* (*PageCreateAnnot)(FPDF_PAGE, int subtype) = nullptr;
+    void (*PageCloseAnnot)(void* annot) = nullptr;
+    FPDF_BOOL (*AnnotSetColor)(void* annot, int colorType, unsigned R, unsigned G, unsigned B, unsigned A) = nullptr;
+    FPDF_BOOL (*AnnotAppendAttachmentPoints)(void* annot, const FS_QUADPOINTSF*) = nullptr;
+    FPDF_BOOL (*AnnotSetRect)(void* annot, const FS_RECTF*) = nullptr;
+    FPDF_BOOL (*AnnotSetStringValue)(void* annot, const char* key, const unsigned short* value) = nullptr;
+    // Seitenobjekte / Bilder (fpdf_edit.h) fuer das Verkleinern
+    int (*PageCountObjects)(FPDF_PAGE) = nullptr;
+    void* (*PageGetObject)(FPDF_PAGE, int index) = nullptr;
+    int (*PageObjGetType)(void* obj) = nullptr;
+    FPDF_BITMAP (*ImageObjGetBitmap)(void* image) = nullptr;
+    FPDF_BOOL (*ImageObjGetMetadata)(void* image, FPDF_PAGE, FPDF_IMAGEOBJ_METADATA*) = nullptr;
+    unsigned long (*ImageObjGetImageDataRaw)(void* image, void* buffer, unsigned long len) = nullptr;
+    FPDF_BOOL (*ImageObjLoadJpegFileInline)(FPDF_PAGE* pages, int count, void* image, FPDF_FILEACCESS*) = nullptr;
+    FPDF_BOOL (*PageGenerateContent)(FPDF_PAGE) = nullptr;
+    int (*BitmapGetWidth)(FPDF_BITMAP) = nullptr;
+    int (*BitmapGetHeight)(FPDF_BITMAP) = nullptr;
+    int (*BitmapGetStride)(FPDF_BITMAP) = nullptr;
+    void* (*BitmapGetBuffer)(FPDF_BITMAP) = nullptr;
+    int (*BitmapGetFormat)(FPDF_BITMAP) = nullptr;
 };

@@ -89,7 +89,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.3.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.4.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 
@@ -120,6 +120,9 @@ Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im
 - **Seitenleiste:** Vorschaubilder aller Seiten; Klick wählt, `Strg`-/`Umschalt`-Klick wählt mehrere. Drehen und Löschen wirken auf die Auswahl (Werkzeugleiste, Tab „Werkzeuge“ oder Rechtsklick-Menü).
 - **Merge:** Ein Dialog, in dem sich eine oder mehrere PDFs auswählen und hinten anhängen lassen.
 - **Suche:** `Strg+F` öffnet ein Suchfeld oben rechts, Treffer werden auf der Seite markiert (aktueller Treffer kräftiger), Anzeige „x / y“.
+- **Seiten umordnen:** Vorschauen in der Seitenleiste per Drag & Drop verschieben (auch mehrere ausgewählte Seiten zusammen); eine Linie zeigt die Einfügeposition.
+- **Anmerkungen:** *Marker* (`H`) hebt per Maus überstrichenen Text gelb hervor, *Notiz* (`N`) setzt an der angeklickten Stelle eine Notiz mit Text. Beides wird als echte PDF-Anmerkung gespeichert; `Esc` beendet das Werkzeug.
+- **Datei verkleinern** (Tab „Werkzeuge“): Bilder werden auf höchstens 150 dpi heruntergerechnet und mit JPEG-Qualität 70 neu kodiert, nur benutzte Objekte kommen in die neue Datei. Lesezeichen und Formularfelder gehen dabei verloren; das geöffnete Dokument bleibt unverändert.
 - **Speichern:** schreibt eine Kopie mit allen Änderungen (Drehungen, gelöschte und angehängte Seiten); das Original bleibt unverändert.
 
 | Kürzel | Aktion |
@@ -128,6 +131,7 @@ Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im
 | `Strg+F`, `Enter` / `Umschalt+Enter` oder `F3` / `Umschalt+F3` | Suchen, nächster / vorheriger Treffer; `Esc` schließt die Suche |
 | `Bild auf` / `Bild ab`, `Pos1` / `Ende` | Seiten blättern |
 | `Entf`, `R` / `Umschalt+R` | ausgewählte Seiten löschen / drehen |
+| `H` / `N` | Marker- bzw. Notiz-Werkzeug ein-/ausschalten |
 | `Strg+A`, `Strg+M`, `Strg+B` | alle Seiten wählen, Merge, Seitenleiste ein-/ausblenden |
 | `Strg+Plus` / `Strg+Minus`, `Strg+0`, `Strg+1` | Zoom, Seitenbreite, 100 % |
 

@@ -52,7 +52,7 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
-    C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE
+    C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS
 };
 
 struct Item {
@@ -93,6 +93,16 @@ struct App {
     std::vector<char> sel;                 // ausgewaehlte Seiten (Strg/Umschalt-Klick); die aktuelle Seite gehoert immer dazu
     int selAnchor = 0;
     bool selKeep = false;                  // GoToPage soll die Auswahl nicht auf die Zielseite zuruecksetzen
+
+    // Seiten per Drag & Drop umordnen
+    bool dragPending = false, dragging = false, dragDeferClick = false;
+    int dragHit = -1, dragStartY = 0, dragInsert = -1;
+    std::vector<int> dragPages;
+
+    // Anmerkungen: 0 = kein Werkzeug, 1 = Text markieren, 2 = Notiz setzen
+    int tool = 0;
+    bool selDrag = false;                  // Textauswahl beim Markieren laeuft
+    int selPage = -1, selA = -1, selB = -1;
 
     // Textsuche (Strg+F)
     bool searchOpen = false;
@@ -182,6 +192,7 @@ void UpdateCanvas(bool resetBitmap);
 void GoToPage(int p, bool bottom = false);
 void ShowToast(const std::wstring& text, bool err = false);
 void HandleKey(UINT vk);
+void UpdateTitle();
 void OpenSearch();
 void CloseSearch();
 void SearchStep(int dir);
@@ -206,6 +217,8 @@ void BuildItems() {
     add(C_SAVE, L"Speichern", 0, true);
     add(C_MERGE, L"Merge", 0, true);
     add(C_FIND, L"Suchen", 0, true);
+    add(C_HILITE, L"Marker", 0, true);
+    add(C_NOTE, L"Notiz", 0, true);
     add(C_NONE, L"", 0, false);
     add(C_ZOOMOUT, L"−", 40, true);
     add(C_ACTUAL, L"100 %", 64, true);
@@ -278,7 +291,7 @@ void DrawToolbar(HDC dc, int width) {
         const bool enabled = ItemEnabled(it);
         const bool hot = enabled && static_cast<int>(i) == g.hot;
         const bool pressed = hot && static_cast<int>(i) == g.down;
-        const bool active = it.cmd == C_SIDE && g.sideVisible;
+        const bool active = (it.cmd == C_SIDE && g.sideVisible) || (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2);
         COLORREF fill = pressed ? RGB(28, 31, 39) : hot ? kCardHover : (it.cmd == C_OPEN ? kAccent : kCardRaised);
         COLORREF txt = !enabled ? RGB(95, 100, 112) : (it.cmd == C_OPEN && !hot) ? RGB(8, 20, 36) : kText;
         if (it.cmd == C_OPEN && hot) txt = kText;
@@ -299,6 +312,7 @@ int HitToolbar(POINT p) {
 const struct { int cmd; const wchar_t* label; } kTools[] = {
     { C_ROTL, L"Seite nach links drehen" }, { C_ROTR, L"Seite nach rechts drehen" },
     { C_DELETE, L"Seite(n) löschen  (Entf)" }, { C_FIND, L"Im Dokument suchen  (Strg+F)" },
+    { C_HILITE, L"Text markieren  (H)" }, { C_NOTE, L"Notiz hinzufügen  (N)" }, { C_COMPRESS, L"Datei verkleinern …" },
     { C_MERGE, L"PDF anhängen (Merge)" }, { C_SAVE, L"Speichern unter …" },
     { C_FITW, L"Auf Seitenbreite einpassen" }, { C_ACTUAL, L"Originalgröße (100 %)" },
 };
@@ -404,6 +418,11 @@ void PaintSide(HDC dc, RECT cr) {
         wchar_t b[16]; swprintf(b, 16, L"%d", i + 1);
         RECT lr{ pad, top + h + S(4), pad + g.thumbW, top + h + S(26) };
         DrawTextC(dc, g.fontSmall, b, lr, i == g.page ? kAccent : kTextDim);
+    }
+    if (g.dragging && g.dragInsert >= 0 && g.dragInsert < static_cast<int>(g.thumbTop.size())) {   // Einfuegemarke beim Verschieben
+        const int ly = g.thumbTop[g.dragInsert] - g.sideScroll - S(9);
+        RECT line{ pad - S(4), ly - S(1), pad + g.thumbW + S(4), ly + S(2) };
+        FillRound(dc, line, S(2), kAccent);
     }
 }
 
@@ -666,6 +685,17 @@ void PaintCanvas(HDC dc, RECT cr) {
             FillRect(dc, &t, w); DeleteObject(w);
             DrawTextC(dc, g.font, L"Seite konnte nicht gerendert werden", t, RGB(90, 90, 90));
         }
+        if (g.selDrag && g.selPage == g.page) {      // laufende Textauswahl beim Markieren
+            std::vector<RECT> rs;
+            PdfDocument::TextHit th;
+            th.page = g.page; th.start = std::min(g.selA, g.selB); th.count = std::abs(g.selB - g.selA) + 1;
+            g.doc.HitRects(th, g.pageW, g.pageH, rs);
+            using namespace Gdiplus;
+            Graphics gr(dc);
+            gr.SetClip(Rect(x, y, g.pageW, g.pageH));
+            SolidBrush sel(Color(90, 64, 156, 255));
+            for (const RECT& r : rs) gr.FillRectangle(&sel, Rect(x + r.left, y + r.top, r.right - r.left, r.bottom - r.top));
+        }
         if (!g.hits.empty()) {                       // Treffer der Suche markieren (aktueller Treffer kraeftiger)
             UpdateHighlights();
             using namespace Gdiplus;
@@ -735,6 +765,160 @@ bool PickFiles(HWND owner, std::vector<std::wstring>& out, const wchar_t* title)
     return !out.empty();
 }
 
+// ---------- Kleiner Eingabedialog (Notiztext) im Dark-Stil ----------
+struct PromptState {
+    std::wstring title, text;
+    bool done = false, ok = false;
+    HWND edit = nullptr;
+    RECT btnOk{}, btnCancel{};
+    int hot = 0;                    // 1 = Hinzufuegen, 2 = Abbrechen
+};
+PromptState* g_prompt = nullptr;
+
+void PromptCommit(HWND hwnd) {
+    const int len = GetWindowTextLengthW(g_prompt->edit);
+    std::wstring t(static_cast<size_t>(len) + 1, L'\0');
+    GetWindowTextW(g_prompt->edit, &t[0], len + 1);
+    t.resize(static_cast<size_t>(len));
+    g_prompt->text = t;
+    g_prompt->ok = !t.empty();
+    g_prompt->done = true;
+    (void)hwnd;
+}
+
+void PromptLayout(HWND hwnd) {
+    RECT cr; GetClientRect(hwnd, &cr);
+    const int pad = S(20), bh = S(38), bw = S(130);
+    g_prompt->btnOk = RECT{ cr.right - pad - bw, cr.bottom - pad - bh, cr.right - pad, cr.bottom - pad };
+    g_prompt->btnCancel = RECT{ g_prompt->btnOk.left - S(10) - bw, g_prompt->btnOk.top, g_prompt->btnOk.left - S(10), g_prompt->btnOk.bottom };
+    if (g_prompt->edit)
+        MoveWindow(g_prompt->edit, pad + S(10), S(62), cr.right - 2 * pad - S(20), cr.bottom - S(62) - pad - bh - S(24), TRUE);
+}
+
+LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (!g_prompt) return DefWindowProcW(hwnd, msg, wp, lp);
+    switch (msg) {
+    case WM_CREATE: {
+        BOOL dark = TRUE;
+        DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+        g_prompt->edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
+                                         0, 0, 10, 10, hwnd, reinterpret_cast<HMENU>(1), g.inst, nullptr);
+        SendMessageW(g_prompt->edit, WM_SETFONT, reinterpret_cast<WPARAM>(g.font), TRUE);
+        SendMessageW(g_prompt->edit, EM_SETLIMITTEXT, 2000, 0);
+        SetWindowTheme(g_prompt->edit, L"DarkMode_Explorer", nullptr);
+        return 0;
+    }
+    case WM_SIZE: PromptLayout(hwnd); return 0;
+    case WM_ERASEBKGND: return 1;
+    case WM_CTLCOLOREDIT: {
+        static HBRUSH br = CreateSolidBrush(kCardRaised);
+        SetTextColor(reinterpret_cast<HDC>(wp), kText);
+        SetBkColor(reinterpret_cast<HDC>(wp), kCardRaised);
+        return reinterpret_cast<LRESULT>(br);
+    }
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(hwnd, &ps);
+        RECT cr; GetClientRect(hwnd, &cr);
+        HDC mem = CreateCompatibleDC(dc);
+        HBITMAP bmp = CreateCompatibleBitmap(dc, cr.right, cr.bottom);
+        HGDIOBJ old = SelectObject(mem, bmp);
+        HBRUSH bg = CreateSolidBrush(kBackground);
+        FillRect(mem, &cr, bg);
+        DeleteObject(bg);
+        RECT t{ S(20), S(18), cr.right - S(20), S(52) };
+        DrawTextC(mem, g.fontBold, g_prompt->title, t, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        RECT card{ S(20), S(58), cr.right - S(20), cr.bottom - S(20) - S(38) - S(20) };
+        FillRound(mem, card, S(10), kCardRaised, kBorder);
+        auto button = [&](const RECT& r, bool primary, bool hot, const wchar_t* label) {
+            COLORREF fill = primary ? (hot ? RGB(96, 176, 255) : kAccent) : (hot ? kCardHover : kCardRaised);
+            FillRound(mem, r, S(10), fill, primary ? fill : (hot ? RGB(96, 104, 126) : kBorder));
+            DrawTextC(mem, g.font, label, r, primary ? RGB(8, 20, 36) : kText);
+        };
+        button(g_prompt->btnCancel, false, g_prompt->hot == 2, L"Abbrechen");
+        button(g_prompt->btnOk, true, g_prompt->hot == 1, L"Hinzufügen");
+        BitBlt(dc, 0, 0, cr.right, cr.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        const int hot = PtInRect(&g_prompt->btnOk, p) ? 1 : PtInRect(&g_prompt->btnCancel, p) ? 2 : 0;
+        if (hot != g_prompt->hot) { g_prompt->hot = hot; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (PtInRect(&g_prompt->btnOk, p)) PromptCommit(hwnd);
+        else if (PtInRect(&g_prompt->btnCancel, p)) g_prompt->done = true;
+        return 0;
+    }
+    case WM_CLOSE: g_prompt->done = true; return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// Zeigt den Dialog modal (verschachtelte Nachrichtenschleife). true = Text eingegeben und bestaetigt.
+bool PromptText(HWND owner, const wchar_t* title, std::wstring& text) {
+    PromptState st;
+    st.title = title;
+    g_prompt = &st;
+    RECT cr{ 0, 0, S(460), S(300) };
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU, ex = WS_EX_DLGMODALFRAME;
+    AdjustWindowRectEx(&cr, style, FALSE, ex);
+    RECT orc; GetWindowRect(owner, &orc);
+    const int w = cr.right - cr.left, h = cr.bottom - cr.top;
+    HWND hwnd = CreateWindowExW(ex, L"DuncansPdfPrompt", title, style, orc.left + ((orc.right - orc.left) - w) / 2,
+                                orc.top + ((orc.bottom - orc.top) - h) / 3, w, h, owner, nullptr, g.inst, nullptr);
+    if (!hwnd) { g_prompt = nullptr; return false; }
+    PromptLayout(hwnd);
+    EnableWindow(owner, FALSE);
+    ShowWindow(hwnd, SW_SHOW);
+    SetFocus(st.edit);
+    MSG m;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&m, nullptr, 0, 0);
+        if (r == 0) { PostQuitMessage(static_cast<int>(m.wParam)); break; }   // WM_QUIT weiterreichen
+        if (r < 0) break;
+        if (m.message == WM_KEYDOWN) {
+            if (m.wParam == VK_ESCAPE) { st.done = true; continue; }
+            if (m.wParam == VK_RETURN && GetKeyState(VK_CONTROL) < 0) { PromptCommit(hwnd); continue; }
+        }
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    EnableWindow(owner, TRUE);
+    DestroyWindow(hwnd);
+    SetForegroundWindow(owner);
+    g_prompt = nullptr;
+    if (st.ok) text = st.text;
+    return st.ok;
+}
+
+// Obere linke Ecke der angezeigten Seite im Canvas (Client-Koordinaten)
+void PageOrigin(int& ox, int& oy) {
+    RECT cr; GetClientRect(g.canvas, &cr);
+    const int m = S(kMargin);
+    ox = (g.pageW + 2 * m <= cr.right) ? (cr.right - g.pageW) / 2 : m - g.scrollX;
+    oy = (g.pageH + 2 * m <= cr.bottom) ? (cr.bottom - g.pageH) / 2 : m - g.scrollY;
+}
+
+// Nach einer Aenderung am Dokument (Anmerkung): Seite und Vorschau neu zeichnen
+void RefreshAfterEdit(int page) {
+    if (page >= 0 && page < static_cast<int>(g.thumbs.size()) && g.thumbs[page]) { DeleteObject(g.thumbs[page]); g.thumbs[page] = nullptr; }
+    UpdateCanvas(true);
+    InvalidateRect(g.side, nullptr, FALSE);
+    UpdateTitle();
+}
+
+std::wstring FormatBytes(unsigned long long b) {
+    wchar_t buf[48];
+    if (b >= (1ull << 20)) swprintf(buf, 48, L"%.1f MB", b / 1048576.0);
+    else swprintf(buf, 48, L"%.0f KB", b / 1024.0);
+    return buf;
+}
+
 void UpdateTitle() {
     std::wstring t = g.doc.IsOpen() ? FileName(g.doc.Path()) + (g.doc.Modified() ? L" *" : L"") + L" – " + kAppTitle : kAppTitle;
     SetWindowTextW(g.main, t.c_str());
@@ -788,6 +972,40 @@ void RunCommand(int cmd) {
         break;
     }
     case C_FIND: OpenSearch(); break;
+    case C_HILITE: case C_NOTE: {
+        if (!g.doc.IsOpen()) break;
+        const int want = cmd == C_HILITE ? 1 : 2;
+        g.tool = g.tool == want ? 0 : want;
+        g.selDrag = false;
+        InvalidateToolbar();
+        InvalidateRect(g.canvas, nullptr, FALSE);
+        if (g.tool == 1) ShowToast(L"Marker: Text mit der Maus überstreichen (Esc beendet)");
+        else if (g.tool == 2) ShowToast(L"Notiz: auf die Stelle klicken (Esc beendet)");
+        SetFocus(g.canvas);
+        break;
+    }
+    case C_COMPRESS: {
+        if (!g.doc.IsOpen()) break;
+        if (MessageBoxW(g.main,
+                L"Die Datei wird verkleinert: Bilder werden auf höchstens 150 dpi heruntergerechnet und mit JPEG-Qualität 70 neu gespeichert, ungenutzte Objekte entfallen.\n\n"
+                L"Lesezeichen und Formularfelder gehen dabei verloren. Das geöffnete Dokument bleibt unverändert; die verkleinerte Kopie wird unter neuem Namen gespeichert.\n\nFortfahren?",
+                kAppTitle, MB_YESNO | MB_ICONQUESTION) != IDYES) break;
+        std::wstring suggestion = FileName(g.doc.Path());
+        if (suggestion.size() > 4 && _wcsicmp(suggestion.c_str() + suggestion.size() - 4, L".pdf") == 0) suggestion.resize(suggestion.size() - 4);
+        suggestion += L"_klein.pdf";
+        std::wstring p;
+        if (!PickFile(g.main, true, p, L"Verkleinerte PDF speichern unter", suggestion)) break;
+        HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+        PdfDocument::CompressStats st;
+        const bool ok = g.doc.SaveCompressed(p, 150, 70, st);
+        SetCursor(old);
+        if (!ok) { ShowToast(PdfDocument::LastError(), true); break; }
+        wchar_t pct[32];
+        swprintf(pct, 32, L"%d %%", st.before ? static_cast<int>(100.0 * (static_cast<double>(st.after) - static_cast<double>(st.before)) / static_cast<double>(st.before)) : 0);
+        ShowToast(L"Verkleinert: " + FormatBytes(st.before) + L" → " + FormatBytes(st.after) + L" (" + pct + L"), "
+                  + std::to_wstring(st.recompressed) + L" von " + std::to_wstring(st.images) + L" Bildern neu kodiert");
+        break;
+    }
     case C_DELETE: {
         if (!g.doc.IsOpen()) break;
         const std::vector<int> t = TargetPages();
@@ -846,7 +1064,12 @@ void HandleKey(UINT vk) {
     }
     if (!g.doc.IsOpen()) return;
     switch (vk) {
-    case VK_ESCAPE: CloseSearch(); break;
+    case VK_ESCAPE:
+        if (g.tool) { g.tool = 0; g.selDrag = false; InvalidateToolbar(); InvalidateRect(g.canvas, nullptr, FALSE); }
+        else CloseSearch();
+        break;
+    case 'H': RunCommand(C_HILITE); break;
+    case 'N': RunCommand(C_NOTE); break;
     case VK_F3: SearchStep(shift ? -1 : 1); break;
     case VK_DELETE: RunCommand(C_DELETE); break;
     case 'R': RunCommand(shift ? C_ROTL : C_ROTR); break;
@@ -952,12 +1175,83 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (PtInRect(&l.panel, p)) { SetFocus(g.searchEdit); return 0; }
         }
         SetFocus(hwnd);
+        if (g.tool && g.doc.IsOpen()) {                                  // Marker- bzw. Notiz-Werkzeug
+            int ox, oy; PageOrigin(ox, oy);
+            const int dx = p.x - ox, dy = p.y - oy;
+            if (dx < 0 || dy < 0 || dx >= g.pageW || dy >= g.pageH) return 0;
+            if (g.tool == 1) {
+                const int c = g.doc.CharAt(g.page, g.pageW, g.pageH, dx, dy);
+                if (c >= 0) { g.selDrag = true; g.selPage = g.page; g.selA = g.selB = c; SetCapture(hwnd); InvalidateRect(hwnd, nullptr, FALSE); }
+            } else {
+                std::wstring text;
+                if (PromptText(g.main, L"Notiz hinzufügen", text)) {
+                    if (g.doc.AddNote(g.page, g.pageW, g.pageH, dx, dy, text)) { RefreshAfterEdit(g.page); ShowToast(L"Notiz hinzugefügt – noch nicht gespeichert"); }
+                    else ShowToast(PdfDocument::LastError(), true);
+                }
+            }
+        }
         return 0;
     }
+    case WM_MOUSEMOVE:
+        if (g.selDrag) {
+            int ox, oy; PageOrigin(ox, oy);
+            const int c = g.doc.CharAt(g.selPage, g.pageW, g.pageH, GET_X_LPARAM(lp) - ox, GET_Y_LPARAM(lp) - oy);
+            if (c >= 0 && c != g.selB) { g.selB = c; InvalidateRect(hwnd, nullptr, FALSE); }
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (g.selDrag) {
+            g.selDrag = false;
+            if (GetCapture() == hwnd) ReleaseCapture();
+            const int start = std::min(g.selA, g.selB), count = std::abs(g.selB - g.selA) + 1;
+            if (g.doc.AddHighlight(g.selPage, start, count)) { RefreshAfterEdit(g.selPage); ShowToast(L"Markierung hinzugefügt – noch nicht gespeichert"); }
+            else { ShowToast(PdfDocument::LastError(), true); InvalidateRect(hwnd, nullptr, FALSE); }
+        }
+        return 0;
+    case WM_CAPTURECHANGED:
+        if (g.selDrag && reinterpret_cast<HWND>(lp) != hwnd) { g.selDrag = false; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    case WM_SETCURSOR:
+        if (g.tool && LOWORD(lp) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, g.tool == 1 ? IDC_IBEAM : IDC_CROSS)); return TRUE; }
+        break;
     case WM_KEYDOWN: HandleKey(static_cast<UINT>(wp)); return 0;
     case WM_GETDLGCODE: return DLGC_WANTALLKEYS;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void RefreshAfterEdit(int page);
+
+// Einfuegeposition (0..n) fuer das Verschieben: vor der Vorschau, deren obere Haelfte getroffen wird
+int InsertSlot(int y) {
+    const int n = g.doc.PageCount();
+    const int yy = y + g.sideScroll;
+    for (int i = 0; i < n && i + 1 < static_cast<int>(g.thumbTop.size()); ++i)
+        if (yy < (g.thumbTop[i] + g.thumbTop[i + 1]) / 2) return i;
+    return n;
+}
+
+void FinishDrag(bool apply) {
+    const bool wasDragging = g.dragging;
+    g.dragging = g.dragPending = false;
+    KillTimer(g.side, 1);
+    if (GetCapture() == g.side) ReleaseCapture();
+    if (!apply || !wasDragging) { InvalidateRect(g.side, nullptr, FALSE); return; }
+    std::vector<int> no;                                        // alt -> neu
+    if (!g.doc.MovePages(g.dragPages, g.dragInsert, &no)) { ShowToast(PdfDocument::LastError(), true); InvalidateRect(g.side, nullptr, FALSE); return; }
+    if (no.empty()) { InvalidateRect(g.side, nullptr, FALSE); return; }   // Reihenfolge unveraendert
+    const int n = g.doc.PageCount();
+    g.sel.assign(n, 0);
+    for (int i : g.dragPages) if (i < static_cast<int>(no.size())) g.sel[no[i]] = 1;
+    g.selAnchor = g.dragHit >= 0 && g.dragHit < static_cast<int>(no.size()) ? no[g.dragHit] : 0;
+    g.page = no[std::clamp(g.page, 0, static_cast<int>(no.size()) - 1)];
+    ClearThumbs();
+    ClearSearch();
+    LayoutSidebar();
+    UpdateCanvas(true);
+    EnsureThumbVisible();
+    UpdateTitle();
+    ShowToast(std::to_wstring(g.dragPages.size()) + L" Seite(n) verschoben – noch nicht gespeichert");
 }
 
 // Index der Seitenvorschau an der Client-Position y der Seitenleiste (-1 = keine)
@@ -993,8 +1287,49 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (row < 0 || row >= static_cast<int>(sizeof(kTools) / sizeof(kTools[0]))) row = -1;
             if (row != g.toolHot) { g.toolHot = row; InvalidateRect(hwnd, nullptr, FALSE); }
         }
+        if (g.dragPending) {                                            // Verschieben starten, sobald die Maus sich merklich bewegt hat
+            const int y = GET_Y_LPARAM(lp);
+            if (!g.dragging && std::abs(y - g.dragStartY) > S(6)) {
+                g.dragging = true;
+                g.dragPages = TargetPages();
+                if (std::find(g.dragPages.begin(), g.dragPages.end(), g.dragHit) == g.dragPages.end()) g.dragPages = { g.dragHit };
+                SetTimer(hwnd, 1, 40, nullptr);                         // Autoscroll am Rand
+            }
+            if (g.dragging) { g.dragInsert = InsertSlot(y); InvalidateRect(hwnd, nullptr, FALSE); }
+        }
         return 0;
     }
+    case WM_TIMER:
+        if (wp == 1 && g.dragging) {
+            POINT cur{}; GetCursorPos(&cur); ScreenToClient(hwnd, &cur);
+            RECT cr; GetClientRect(hwnd, &cr);
+            const int edge = S(36), step = S(22);
+            int d = 0;
+            if (cur.y < edge) d = -step; else if (cur.y > cr.bottom - edge) d = step;
+            if (d) {
+                g.sideScroll = std::clamp(g.sideScroll + d, 0, Max(0, g.sideContentH - cr.bottom));
+                SideScrollbar();
+            }
+            g.dragInsert = InsertSlot(cur.y);
+            InvalidateRect(hwnd, nullptr, FALSE);
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (g.dragPending) {
+            const bool wasDragging = g.dragging;
+            const bool defer = g.dragDeferClick;
+            const int hit = g.dragHit;
+            FinishDrag(wasDragging);
+            if (!wasDragging && defer && hit >= 0) {                    // einfacher Klick auf eine schon ausgewaehlte Seite
+                SelectOnly(hit);
+                g.selKeep = true; GoToPage(hit); g.selKeep = false;
+                InvalidateRect(hwnd, nullptr, FALSE);
+            }
+        }
+        return 0;
+    case WM_CAPTURECHANGED:
+        if (g.dragPending && reinterpret_cast<HWND>(lp) != hwnd) { g.dragging = g.dragPending = false; KillTimer(hwnd, 1); InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
     case WM_MOUSELEAVE:
         g.trackingSide = false;
         if (g.toolHot != -1) { g.toolHot = -1; InvalidateRect(hwnd, nullptr, FALSE); }
@@ -1017,7 +1352,15 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                     g.sel[hit] = !g.sel[hit];
                     g.selAnchor = hit;
                     if (std::find(g.sel.begin(), g.sel.end(), 1) == g.sel.end()) g.sel[hit] = 1;
-                } else SelectOnly(hit);
+                } else {
+                    // Einfacher Klick: auf einer schon ausgewaehlten Seite bleibt die Auswahl bestehen (so laesst sich die ganze Auswahl ziehen)
+                    // und wird erst beim Loslassen auf diese Seite beschraenkt.
+                    g.dragDeferClick = g.sel[hit] != 0;
+                    g.dragHit = hit; g.dragStartY = y; g.dragPending = true; g.dragging = false;
+                    SetCapture(hwnd);
+                    if (g.dragDeferClick) { InvalidateRect(hwnd, nullptr, FALSE); return 0; }
+                    SelectOnly(hit);
+                }
                 g.selKeep = true;
                 GoToPage(hit);
                 g.selKeep = false;
@@ -1122,7 +1465,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_GETMINMAXINFO: {
         auto* mm = reinterpret_cast<MINMAXINFO*>(lp);
-        mm->ptMinTrackSize = { S(760), S(480) };
+        mm->ptMinTrackSize = { S(1000), S(480) };   // so breit, dass die Werkzeugleiste ohne Ueberlappung passt
         return 0;
     }
     case WM_DPICHANGED: {
@@ -1213,6 +1556,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     reg(L"DuncansPdfMain", MainProc, nullptr, icon);
     reg(L"DuncansPdfSide", SideProc, nullptr, nullptr);
     reg(L"DuncansPdfCanvas", CanvasProc, nullptr, nullptr);
+    reg(L"DuncansPdfPrompt", PromptProc, nullptr, nullptr);
 
     HWND hwnd = CreateWindowExW(0, L"DuncansPdfMain", kAppTitle, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                                 CW_USEDEFAULT, CW_USEDEFAULT, 1280, 820, nullptr, nullptr, inst, nullptr);

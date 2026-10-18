@@ -44,11 +44,26 @@ public:
     std::vector<TextHit> Search(const std::wstring& needle, size_t maxHits = 20000) const;
     // Rechtecke (Pixel) eines Treffers fuer die Seite, gerendert in w x h Pixeln mit der aktuellen Drehung.
     void HitRects(const TextHit& hit, int w, int h, std::vector<RECT>& out) const;
+    // Verschiebt Seiten (Indizes aufsteigend) vor die Seite 'insertBefore' (0..PageCount, Index im Dokument vor dem Verschieben).
+    // newOrder (optional): neue Position jeder bisherigen Seite (Index alt -> neu).
+    bool MovePages(const std::vector<int>& indices, int insertBefore, std::vector<int>* newOrder = nullptr);
+
+    // Text markieren / kommentieren. Koordinaten in Pixeln der gerenderten Seite (w x h, aktuelle Drehung).
+    int CharAt(int index, int w, int h, int dx, int dy) const;                    // Zeichenindex an der Position oder -1
+    bool AddHighlight(int index, int startChar, int charCount);                   // gelbe Hervorhebung
+    bool AddNote(int index, int w, int h, int dx, int dy, const std::wstring& text);   // Notiz-Symbol mit Kommentar
+
+    struct CompressStats { unsigned long long before = 0, after = 0; int images = 0, recompressed = 0; };
+    // Speichert eine verkleinerte Kopie: Bilder auf maxDpi herunterrechnen und als JPEG neu kodieren,
+    // nur erreichbare Objekte uebernehmen. Das offene Dokument bleibt unveraendert. Lesezeichen/Formulare gehen verloren.
+    bool SaveCompressed(const std::wstring& path, int maxDpi, int jpegQuality, CompressStats& stats);
+
     // Speichert eine Kopie (inkl. Drehungen und angehaengter Seiten).
     bool SaveCopy(const std::wstring& path);
     bool Modified() const { return m_modified; }
 
 private:
+    void BakeRotations();                    // schreibt die Zusatzdrehungen in die Seiten
     void* m_doc = nullptr;
     std::vector<char> m_data;     // PDFium liest bei FPDF_LoadMemDocument direkt aus diesem Puffer
     std::wstring m_path;
