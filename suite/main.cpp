@@ -40,7 +40,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.0.9"
+#define SUITE_VERSION L"1.1.0"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
