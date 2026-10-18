@@ -21,7 +21,7 @@ DefaultDirName={autopf}\DuncansDriverUpdater
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 OutputDir=Output
-OutputBaseFilename=DuncansDriverUpdater_Setup_{#MyAppVersion}
+OutputBaseFilename=DuncansSuite_Setup_{#MyAppVersion}
 ; Treiber-Operationen erfordern Administratorrechte
 PrivilegesRequired=admin
 ArchitecturesAllowed=x64compatible
