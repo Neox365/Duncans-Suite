@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DuncansDriverUpdater VERSION 1.0.8 LANGUAGES CXX RC)
+project(DuncansDriverUpdater VERSION 1.0.9 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -35,7 +35,7 @@ if(MSVC)
 else()
     # MinGW-w64
     target_compile_options(DuncansDriverUpdater PRIVATE -Wall -Wextra)
-    target_link_options(DuncansDriverUpdater PRIVATE -municode -mwindows -static)
+    target_link_options(DuncansDriverUpdater PRIVATE -municode -mwindows -static -s)
 endif()
 
 # Benoetigte Windows-Bibliotheken
@@ -64,7 +64,7 @@ if(MSVC)
     target_link_options(DuncansSuite PRIVATE /MANIFEST:NO)
 else()
     target_compile_options(DuncansSuite PRIVATE -Wall -Wextra)
-    target_link_options(DuncansSuite PRIVATE -municode -mwindows -static)
+    target_link_options(DuncansSuite PRIVATE -municode -mwindows -static -s)
 endif()
 target_link_libraries(DuncansSuite PRIVATE user32 gdi32 shell32 shlwapi ole32 dwmapi gdiplus wininet bcrypt)
 
@@ -82,6 +82,6 @@ if(MSVC)
     target_link_options(DuncansPdfReader PRIVATE /MANIFEST:NO)
 else()
     target_compile_options(DuncansPdfReader PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type)
-    target_link_options(DuncansPdfReader PRIVATE -municode -mwindows -static)
+    target_link_options(DuncansPdfReader PRIVATE -municode -mwindows -static -s)
 endif()
 target_link_libraries(DuncansPdfReader PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus comdlg32 uxtheme)
