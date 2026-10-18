@@ -36,7 +36,7 @@ namespace
     // (Systemschutz aus, oder Windows erlaubt standardmaessig nur einen Punkt pro 24 h).
     bool CreateRestorePoint(std::wstring& note)
     {
-        HMODULE lib = LoadLibraryW(L"srclient.dll");
+        HMODULE lib = LoadLibraryExW(L"srclient.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);   // nur aus System32 (App laeuft als Admin)
         if (!lib)
         {
             note = L"Systemwiederherstellung nicht verfügbar";

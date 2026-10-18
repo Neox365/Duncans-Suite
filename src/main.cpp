@@ -11,6 +11,8 @@
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int showCommand)
 {
+    // Die App laeuft als Administrator: nachgeladene DLLs nur aus System32, nie aus dem (evtl. beschreibbaren) Programmordner
+    SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
     MainWindow window;
     const bool autoInstall = cmdLine && wcsstr(cmdLine, L"/install") != nullptr;
     if (!window.Create(instance, showCommand, autoInstall))
