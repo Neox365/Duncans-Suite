@@ -16,6 +16,14 @@ aus, gruppiert sie, erkennt Updates und kann Treiber-Updates über Windows Updat
 
 Die App benötigt Administratorrechte (UAC-Abfrage beim Start), weil Treiber-Operationen sie erfordern.
 
+## Duncan's Suite (Launcher)
+
+`DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: zwei Karten starten **Duncan's Tidy** (`DuncansTidy.exe`)
+und den **Driver Updater** (`DuncansDriverUpdater.exe`). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
+`%LOCALAPPDATA%\DuncansTidy`. Fehlt eine EXE, erscheint ein Dark-Dialog mit den durchsuchten Pfaden. Der Footer zeigt die Version
+und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
+und ins Startmenü.
+
 ## Hersteller-Tabelle (`vendor_releases.json`)
 
 Die SetupAPI kennt nur den *installierten* Treiber. Welche Version der Hersteller zuletzt veröffentlicht hat,
@@ -61,7 +69,8 @@ Ergebnis: `installer\Output\DuncansDriverUpdater_Setup_1.0.0.exe` (Admin-Install
 | `src/UpdateChecker.*`, `src/UpdateInstaller.*`, `src/Dispatch.h` | Windows Update Agent (Suche / Installation, COM-Automation) |
 | `src/VendorReleases.*` | Hersteller-Abgleich der Grafiktreiber |
 | `src/MainWindow.*`, `src/Icons.*` | UI (Win32 + GDI/GDI+), Banner, Splash, Dialoge |
-| `resources/` | Icon, Manifest (requireAdministrator), Versionsinfo, `vendor_releases.json` |
+| `suite/main.cpp` | Duncan's Suite (Launcher) |
+| `resources/` | Icons, Manifeste (Driver Updater: requireAdministrator, Suite: asInvoker), Versionsinfo, `vendor_releases.json` |
 | `installer/installer.iss` | Inno-Setup-Skript |
 
 ## Hinweise

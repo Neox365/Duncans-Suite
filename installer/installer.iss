@@ -1,11 +1,14 @@
 ; installer.iss - Inno Setup 6 Skript fuer "Duncan's Driver Updater"
-; Voraussetzung: Release-Build liegt unter ..\DuncansDriverUpdater.exe
+; Voraussetzung: Release-Build liegt unter ..\DuncansDriverUpdater.exe und ..\DuncansSuite.exe
 ; Kompilieren: ISCC.exe installer\installer.iss  (Ausgabe: installer\Output\)
 
 #define MyAppName      "Duncan's Driver Updater"
 #define MyAppVersion   "1.0.0"
 #define MyAppPublisher "Duncan"
 #define MyAppExeName   "DuncansDriverUpdater.exe"
+; Duncan's Suite: zentraler Launcher (Haupt-Startverknuepfung fuer Desktop und Startmenue)
+#define SuiteName      "Duncan's Suite"
+#define SuiteExeName   "DuncansSuite.exe"
 
 [Setup]
 ; Eindeutige App-ID (nie mehr aendern, sonst erkennt Windows Updates nicht als gleiche App)
@@ -38,18 +41,21 @@ Name: "german";  MessagesFile: "compiler:Languages\German.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
+; Desktop-Verknuepfung fuer die Suite (standardmaessig angehakt)
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
+Source: "..\{#SuiteExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; Hersteller-Tabelle fuer den Grafiktreiber-Abgleich (vom Nutzer editierbar)
 Source: "..\vendor_releases.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
+Name: "{group}\{#SuiteName}"; Filename: "{app}\{#SuiteExeName}"
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+Name: "{autodesktop}\{#SuiteName}"; Filename: "{app}\{#SuiteExeName}"; Tasks: desktopicon
 
 [Run]
 ; "Programm nach der Installation starten"
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#SuiteExeName}"; Description: "{cm:LaunchProgram,{#StringChange(SuiteName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent

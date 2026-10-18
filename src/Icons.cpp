@@ -166,6 +166,24 @@ namespace
             Dot(0.5f, 0.5f, 0.05f);
             Dot(0.7f, 0.5f, 0.05f);
             break;
+        case CategoryIcon::Broom:
+        {
+            // Besen: senkrecht gezeichnet, dann um 35 Grad gedreht (Stiel oben rechts, Borsten unten links)
+            const GraphicsState state = g.Save();
+            g.TranslateTransform(X(0.5f), Y(0.56f));
+            g.RotateTransform(35.0f);
+            g.DrawLine(&pen, PointF(0.0f, -0.46f * size), PointF(0.0f, -0.16f * size));   // Stiel
+            g.DrawRectangle(&pen, -0.08f * size, -0.18f * size, 0.16f * size, 0.1f * size);   // Zwinge
+            PointF head[4] = { PointF(-0.08f * size, -0.06f * size), PointF(0.08f * size, -0.06f * size),
+                               PointF(0.2f * size, 0.34f * size), PointF(-0.2f * size, 0.34f * size) };
+            SolidBrush headFill(Color(70, GetRValue(color), GetGValue(color), GetBValue(color)));
+            g.FillPolygon(&headFill, head, 4);
+            g.DrawPolygon(&pen, head, 4);
+            for (int i = -1; i <= 1; ++i)
+                g.DrawLine(&pen, PointF(i * 0.05f * size, -0.02f * size), PointF(i * 0.12f * size, 0.3f * size));
+            g.Restore(state);
+            break;
+        }
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);

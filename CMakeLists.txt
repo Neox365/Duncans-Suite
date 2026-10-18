@@ -49,3 +49,21 @@ add_custom_target(copy_vendor_releases ALL
             "$<TARGET_FILE_DIR:DuncansDriverUpdater>/vendor_releases.json"
     COMMENT "vendor_releases.json neben die EXE kopieren")
 add_dependencies(DuncansDriverUpdater copy_vendor_releases)
+
+# ---- Duncan's Suite: zentraler Launcher fuer Tidy + Driver Updater ----
+add_executable(DuncansSuite WIN32
+    suite/main.cpp
+    src/Icons.cpp
+    resources/suite.rc
+)
+target_compile_definitions(DuncansSuite PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           SUITE_VERSION=L\"${PROJECT_VERSION}\")
+if(MSVC)
+    target_compile_options(DuncansSuite PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET DuncansSuite PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(DuncansSuite PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(DuncansSuite PRIVATE -Wall -Wextra)
+    target_link_options(DuncansSuite PRIVATE -municode -mwindows -static)
+endif()
+target_link_libraries(DuncansSuite PRIVATE user32 gdi32 shell32 shlwapi ole32 dwmapi gdiplus)
