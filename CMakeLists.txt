@@ -65,7 +65,7 @@ else()
     target_compile_options(DuncansSuite PRIVATE -Wall -Wextra)
     target_link_options(DuncansSuite PRIVATE -municode -mwindows -static -s)
 endif()
-target_link_libraries(DuncansSuite PRIVATE user32 gdi32 shell32 shlwapi ole32 dwmapi gdiplus wininet bcrypt)
+target_link_libraries(DuncansSuite PRIVATE advapi32 user32 gdi32 shell32 shlwapi ole32 dwmapi gdiplus wininet bcrypt)
 
 # ---- Duncan's PDF: nativer PDF-Betrachter/-Editor (PDFium wird zur Laufzeit aus pdfium.dll geladen) ----
 add_executable(DuncansPdfReader WIN32

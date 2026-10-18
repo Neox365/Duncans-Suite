@@ -3,7 +3,7 @@
 // Drei grosse Karten (Tidy, Driver Updater, PDF Reader) starten die jeweilige Anwendung (zuerst aus dem eigenen Ordner, fuer Tidy zusaetzlich
 // aus %LOCALAPPDATA%\DuncansTidy). Fehlt eine EXE, erscheint ein eigener Dark-Dialog statt einer MessageBox.
 //
-// Linker-Bibliotheken: user32, gdi32, gdiplus, shell32, ole32, dwmapi
+// Linker-Bibliotheken: advapi32, user32, gdi32, gdiplus, shell32, ole32, dwmapi
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -13,6 +13,7 @@
 #include <bcrypt.h>
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <shlwapi.h>
 #include <wininet.h>
 #include <windowsx.h>
@@ -136,6 +137,115 @@ namespace
         wchar_t buf[MAX_PATH * 2] = {};
         const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH * 2);
         return n > 0 && n < MAX_PATH * 2 ? std::wstring(buf) : std::wstring();
+    }
+
+    // ---- Einstellungen (%LOCALAPPDATA%\DuncansSuite\settings.ini) ----------------------------
+    struct Settings
+    {
+        bool autoCheck = true;        // Update-Pruefung beim Start
+        bool autostart = false;       // Suite mit Windows starten
+        std::wstring downloadDir;     // leer = Standard (%LOCALAPPDATA%\DuncansSuite\update)
+    };
+
+    const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    const wchar_t* kRunValue = L"DuncansSuite";
+
+    std::wstring SettingsPath()
+    {
+        const std::wstring local = LocalAppData();
+        return local.empty() ? std::wstring() : local + L"\\DuncansSuite\\settings.ini";
+    }
+
+    // Nur absolute lokale Ordner (Laufwerk oder UNC) sind als Download-Ordner zulaessig.
+    bool IsUsableDir(const std::wstring& dir)
+    {
+        return dir.size() >= 3 && dir.size() < MAX_PATH - 20 && !PathIsRelativeW(dir.c_str());
+    }
+
+    bool IsAutostartEnabled()
+    {
+        wchar_t buf[MAX_PATH * 2] = {};
+        DWORD size = sizeof(buf) - sizeof(wchar_t);
+        return RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, RRF_RT_REG_SZ, nullptr, buf, &size) == ERROR_SUCCESS;
+    }
+
+    bool SetAutostart(bool on)
+    {
+        HKEY key = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+            return false;
+        LONG rc;
+        if (on)
+        {
+            wchar_t exe[MAX_PATH * 2] = {};
+            GetModuleFileNameW(nullptr, exe, MAX_PATH * 2);
+            const std::wstring value = L"\"" + std::wstring(exe) + L"\"";
+            rc = RegSetValueExW(key, kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
+                                static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+        }
+        else
+        {
+            rc = RegDeleteValueW(key, kRunValue);
+            if (rc == ERROR_FILE_NOT_FOUND)
+                rc = ERROR_SUCCESS;
+        }
+        RegCloseKey(key);
+        return rc == ERROR_SUCCESS;
+    }
+
+    Settings LoadSettings()
+    {
+        Settings s;
+        const std::wstring ini = SettingsPath();
+        if (!ini.empty())
+        {
+            s.autoCheck = GetPrivateProfileIntW(L"Allgemein", L"UpdatePruefung", 1, ini.c_str()) != 0;
+            wchar_t dir[MAX_PATH * 2] = {};
+            GetPrivateProfileStringW(L"Allgemein", L"DownloadOrdner", L"", dir, MAX_PATH * 2, ini.c_str());
+            if (IsUsableDir(dir))
+                s.downloadDir = dir;
+        }
+        s.autostart = IsAutostartEnabled();   // die Registry ist die Wahrheit, nicht die INI
+        return s;
+    }
+
+    bool SaveSettings(const Settings& s)
+    {
+        const std::wstring ini = SettingsPath();
+        if (ini.empty())
+            return false;
+        CreateDirectoryW((LocalAppData() + L"\\DuncansSuite").c_str(), nullptr);
+        return WritePrivateProfileStringW(L"Allgemein", L"UpdatePruefung", s.autoCheck ? L"1" : L"0", ini.c_str()) &&
+               WritePrivateProfileStringW(L"Allgemein", L"DownloadOrdner", s.downloadDir.c_str(), ini.c_str()) &&
+               WritePrivateProfileStringW(L"Allgemein", L"Autostart", s.autostart ? L"1" : L"0", ini.c_str());
+    }
+
+    // Ordnerauswahl; leer = abgebrochen.
+    std::wstring PickFolder(HWND owner, const std::wstring& start)
+    {
+        const HRESULT co = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        std::wstring result;
+        BROWSEINFOW bi{};
+        bi.hwndOwner = owner;
+        bi.lpszTitle = L"Download-Ordner für Update-Installer wählen";
+        bi.ulFlags = BIF_RETURNONLYFSDIRS | BIF_NEWDIALOGSTYLE;
+        bi.lpfn = [](HWND h, UINT m, LPARAM, LPARAM data) -> int
+        {
+            if (m == BFFM_INITIALIZED && data)
+                SendMessageW(h, BFFM_SETSELECTIONW, TRUE, data);
+            return 0;
+        };
+        bi.lParam = start.empty() ? 0 : reinterpret_cast<LPARAM>(start.c_str());
+        if (PIDLIST_ABSOLUTE pidl = SHBrowseForFolderW(&bi))
+        {
+            wchar_t path[MAX_PATH] = {};
+            if (SHGetPathFromIDListW(pidl, path))
+                result = path;
+            CoTaskMemFree(pidl);
+        }
+        if (SUCCEEDED(co))
+            CoUninitialize();
+        return result;
     }
 }
 
@@ -543,7 +653,8 @@ namespace
     }
 
     // Laedt den Installer in den Temp-Ordner und prueft die SHA-256 aus der API-Antwort.
-    bool DownloadInstaller(HWND hwnd, const UpdateInfo& info, std::wstring& installerPath, const std::atomic<bool>& cancel, std::wstring& error)
+    bool DownloadInstaller(HWND hwnd, const UpdateInfo& info, const std::wstring& customDir, std::wstring& installerPath,
+                           const std::atomic<bool>& cancel, std::wstring& error)
     {
         if (info.sha.size() != 64)
         {
@@ -569,7 +680,19 @@ namespace
             return false;
         }
         CreateDirectoryW((local + L"\\DuncansSuite").c_str(), nullptr);
-        const std::wstring dir = local + L"\\DuncansSuite\\update";
+        std::wstring dir = local + L"\\DuncansSuite\\update";
+        if (!customDir.empty())
+        {
+            dir = customDir;
+            while (dir.size() > 3 && (dir.back() == L'\\' || dir.back() == L'/'))
+                dir.pop_back();
+            const int rc = SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+            if (rc != ERROR_SUCCESS && rc != ERROR_ALREADY_EXISTS && rc != ERROR_FILE_EXISTS)
+            {
+                error = L"Der gewählte Download-Ordner ist nicht beschreibbar:\n" + dir;
+                return false;
+            }
+        }
         if (!DownloadFileVerified(session.h, hwnd, 2, info.url, info.sha, dir, info.fileName, cancel, error, SigCheck{ kSuitePublicKey, sizeof(kSuitePublicKey) }))
             return false;
         installerPath = dir + L"\\" + info.fileName;
@@ -706,6 +829,19 @@ private:
     bool m_modal = false;
     std::wstring m_modalTitle, m_modalText;
     RECT m_modalOk{};
+
+    // Einstellungsdialog (Zahnrad). Hover/Press-IDs: 6 Zahnrad, 7 Update-Haken, 8 Autostart-Haken,
+    // 9 Ordner waehlen, 10 Ordner Standard, 11 Speichern, 12 Abbrechen
+    Settings m_settings;          // gespeicherter Stand
+    Settings m_draft;             // Entwurf im offenen Dialog
+    bool m_settingsOpen = false;
+    HFONT m_fontSym = nullptr;
+    RECT m_gearRect{}, m_chkAuto{}, m_chkStart{}, m_btnPick{}, m_btnReset{}, m_btnSave{}, m_btnCancel{};
+    void OpenSettings();
+    void CloseSettings(bool save);
+    void DrawSettings(HDC dc, int w, int h);
+    void DrawCheck(HDC dc, const RECT& r, bool on, bool hover, const std::wstring& label, const std::wstring& hint);
+    void DrawButton(HDC dc, const RECT& r, bool primary, bool hover, bool pressed, const std::wstring& text);
 };
 
 // ---- Aufbau --------------------------------------------------------------------------------
@@ -770,12 +906,14 @@ void SuiteWindow::CreateFonts()
     m_fontHeading = make(11, FW_SEMIBOLD);
     m_fontBody = make(10, FW_NORMAL);
     m_fontSmall = make(9, FW_NORMAL);
+    m_fontSym = CreateFontW(-MulDiv(16, static_cast<int>(m_dpi), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Symbol");
     m_icon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, S(48), S(48), LR_DEFAULTCOLOR));
 }
 
 void SuiteWindow::DestroyFonts()
 {
-    for (HFONT* f : { &m_fontTitle, &m_fontCard, &m_fontHeading, &m_fontBody, &m_fontSmall })
+    for (HFONT* f : { &m_fontTitle, &m_fontCard, &m_fontHeading, &m_fontBody, &m_fontSmall, &m_fontSym })
         if (*f)
         {
             DeleteObject(*f);
@@ -974,7 +1112,21 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     DrawLabel(dc, m_fontSmall, kTextDim, { titleX, m_banner.top + S(46), m_banner.right - S(20), m_banner.top + S(66) },
               L"System- & Treiber-Optimierung");
 
-    // Update-Badge oben rechts im Banner
+    // Zahnrad oben rechts im Banner
+    {
+        const int gs = S(38);
+        m_gearRect = { m_banner.right - S(22) - gs, m_banner.top + S(18), m_banner.right - S(22), m_banner.top + S(18) + gs };
+        const bool hover = m_hover == 6 && !m_modal && !m_settingsOpen;
+        const bool pressed = m_press == 6 && hover;
+        FillRound(dc, m_gearRect, S(12), pressed ? RGB(24, 26, 32) : (hover ? kCardHover : kCardRaised), hover ? kBorderHover : kBorder);
+        HGDIOBJ old = SelectObject(dc, m_fontSym);
+        SetTextColor(dc, hover ? kText : kTextDim);
+        RECT g = m_gearRect;
+        DrawTextW(dc, L"⚙", 1, &g, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, old);
+    }
+
+    // Update-Badge oben rechts im Banner (links neben dem Zahnrad)
     m_updateRect = RECT{};
     if (m_updAvailable)
     {
@@ -983,8 +1135,9 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
             ? (m_updProgress <= 100 ? L"Lade Update … " + std::to_wstring(m_updProgress) + L" %" : std::wstring(L"Lade Update …"))
             : (ready ? L"Installer starten (v" + m_upd.version + L")" : L"Update verfügbar (v" + m_upd.version + L")");
         const int width = std::max(TextWidth(dc, m_fontBody, label), TextWidth(dc, m_fontBody, L"Lade Update … 100 %")) + S(44);
-        m_updateRect = { m_banner.right - S(22) - width, m_banner.top + S(18), m_banner.right - S(22), m_banner.top + S(18) + S(38) };
-        const bool hover = m_hover == 4 && !m_modal;
+        const int right = m_gearRect.left - S(12);
+        m_updateRect = { right - width, m_banner.top + S(18), right, m_banner.top + S(18) + S(38) };
+        const bool hover = m_hover == 4 && !m_modal && !m_settingsOpen;
         const bool pressed = m_press == 4 && hover;
         const COLORREF fill = m_updDownloading ? Blend(RGB(27, 40, 36), kGreen, 25)
                                                : (pressed ? Blend(kGreen, RGB(0, 0, 0), 25) : (hover ? Blend(kGreen, RGB(255, 255, 255), 14) : kGreen));
@@ -1023,8 +1176,123 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
                   L"Tools-Ordner öffnen", DT_CENTER);
     }
 
+    if (m_settingsOpen)
+        DrawSettings(dc, w, h);
     if (m_modal)
         DrawModal(dc, w, h);
+}
+
+void SuiteWindow::DrawButton(HDC dc, const RECT& r, bool primary, bool hover, bool pressed, const std::wstring& text)
+{
+    COLORREF fill, border;
+    if (primary)
+    {
+        fill = pressed ? Blend(kAccent, RGB(0, 0, 0), 25) : (hover ? Blend(kAccent, RGB(255, 255, 255), 14) : kAccent);
+        border = fill;
+    }
+    else
+    {
+        fill = pressed ? RGB(24, 26, 32) : (hover ? kCardHover : kCardRaised);
+        border = hover ? kBorderHover : kBorder;
+    }
+    FillRound(dc, r, S(12), fill, border);
+    DrawLabel(dc, m_fontBody, primary ? RGB(8, 20, 36) : (hover ? kText : kTextDim),
+              { r.left, r.top + (r.bottom - r.top - S(20)) / 2 - S(1), r.right, r.bottom }, text, DT_CENTER);
+}
+
+void SuiteWindow::DrawCheck(HDC dc, const RECT& r, bool on, bool hover, const std::wstring& label, const std::wstring& hint)
+{
+    const int box = S(22);
+    RECT b{ r.left, r.top + S(2), r.left + box, r.top + S(2) + box };
+    FillRound(dc, b, S(7), on ? kAccent : kCardRaised, on ? kAccent : (hover ? kBorderHover : kBorder));
+    if (on)
+    {
+        HPEN pen = CreatePen(PS_SOLID, std::max(2, S(2)), RGB(8, 20, 36));
+        HGDIOBJ old = SelectObject(dc, pen);
+        MoveToEx(dc, b.left + S(5), b.top + S(11), nullptr);
+        LineTo(dc, b.left + S(9), b.top + S(15));
+        LineTo(dc, b.left + S(17), b.top + S(7));
+        SelectObject(dc, old);
+        DeleteObject(pen);
+    }
+    DrawLabel(dc, m_fontBody, kText, { r.left + box + S(14), r.top, r.right, r.top + S(24) }, label);
+    DrawLabel(dc, m_fontSmall, kTextDim, { r.left + box + S(14), r.top + S(24), r.right, r.bottom }, hint);
+}
+
+void SuiteWindow::DrawSettings(HDC dc, int w, int h)
+{
+    FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
+
+    const int pad = S(26);
+    const int boxW = std::min(S(560), w - S(40));
+    const int inner = boxW - 2 * pad;
+    const int titleH = S(30), btnH = S(38), rowH = S(50);
+    const int folderH = S(24) + S(18) + S(12) + btnH;
+    const int boxH = pad + titleH + S(18) + rowH + S(10) + rowH + S(16) + folderH + S(26) + btnH + pad;
+    RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
+
+    DrawShadow(dc, box, S(18), static_cast<int>(m_dpi));
+    DrawPanelAA(dc, box, S(18), RGB(27, 29, 36), kBorder);
+    DrawLabel(dc, m_fontHeading, kText, { box.left + pad, box.top + pad + S(3), box.right - pad, box.top + pad + titleH }, L"Einstellungen");
+
+    int y = box.top + pad + titleH + S(18);
+    m_chkAuto = { box.left + pad, y, box.right - pad, y + rowH };
+    DrawCheck(dc, m_chkAuto, m_draft.autoCheck, m_hover == 7, L"Beim Start nach Updates suchen", L"Prüft beim Öffnen automatisch, ob eine neue Suite-Version vorliegt.");
+    y += rowH + S(10);
+    m_chkStart = { box.left + pad, y, box.right - pad, y + rowH };
+    DrawCheck(dc, m_chkStart, m_draft.autostart, m_hover == 8, L"Mit Windows starten", L"Startet die Suite bei der Anmeldung automatisch (nur für dein Konto).");
+    y += rowH + S(16);
+
+    DrawLabel(dc, m_fontBody, kText, { box.left + pad, y, box.right - pad, y + S(24) }, L"Download-Ordner für Update-Installer");
+    const std::wstring dirText = m_draft.downloadDir.empty() ? L"Standard (%LOCALAPPDATA%\\DuncansSuite\\update)" : m_draft.downloadDir;
+    DrawLabel(dc, m_fontSmall, kTextDim, { box.left + pad, y + S(24), box.right - pad, y + S(24) + S(18) }, dirText, DT_LEFT | DT_PATH_ELLIPSIS);
+    y += S(24) + S(18) + S(12);
+    m_btnPick = { box.left + pad, y, box.left + pad + S(120), y + btnH };
+    m_btnReset = { m_btnPick.right + S(10), y, m_btnPick.right + S(10) + S(120), y + btnH };
+    DrawButton(dc, m_btnPick, false, m_hover == 9, m_press == 9 && m_hover == 9, L"Ändern …");
+    DrawButton(dc, m_btnReset, false, m_hover == 10, m_press == 10 && m_hover == 10, L"Standard");
+
+    const int bw = S(120);
+    m_btnSave = { box.right - pad - bw, box.bottom - pad - btnH, box.right - pad, box.bottom - pad };
+    m_btnCancel = { m_btnSave.left - S(10) - bw, m_btnSave.top, m_btnSave.left - S(10), m_btnSave.bottom };
+    DrawButton(dc, m_btnCancel, false, m_hover == 12, m_press == 12 && m_hover == 12, L"Abbrechen");
+    DrawButton(dc, m_btnSave, true, m_hover == 11, m_press == 11 && m_hover == 11, L"Speichern");
+    (void)inner;
+}
+
+void SuiteWindow::OpenSettings()
+{
+    m_draft = m_settings;
+    m_draft.autostart = IsAutostartEnabled();
+    m_settingsOpen = true;
+    m_hover = m_press = -1;
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void SuiteWindow::CloseSettings(bool save)
+{
+    m_settingsOpen = false;
+    m_hover = m_press = -1;
+    if (save)
+    {
+        std::wstring problems;
+        if (!SetAutostart(m_draft.autostart))
+        {
+            problems += L"Der Autostart konnte nicht geändert werden.\n";
+            m_draft.autostart = IsAutostartEnabled();
+        }
+        if (!SaveSettings(m_draft))
+            problems += L"Die Einstellungen konnten nicht gespeichert werden.\n";
+        const bool enabledNow = m_draft.autoCheck && !m_settings.autoCheck;
+        m_settings = m_draft;
+        if (!problems.empty())
+            ShowModal(L"Einstellungen", problems);
+        else
+            SetNote(L"Einstellungen gespeichert");
+        if (enabledNow && !m_updAvailable)
+            StartUpdateCheck();
+    }
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void SuiteWindow::DrawModal(HDC dc, int w, int h)
@@ -1228,10 +1496,11 @@ void SuiteWindow::StartUpdateDownload()
     m_dlCancel = false;
     const UpdateInfo info = m_upd;
     const HWND hwnd = m_hwnd;
-    m_dlThread = std::thread([this, hwnd, info]()
+    const std::wstring customDir = m_settings.downloadDir;
+    m_dlThread = std::thread([this, hwnd, info, customDir]()
     {
         std::wstring error, path;
-        const bool ok = DownloadInstaller(hwnd, info, path, m_dlCancel, error);
+        const bool ok = DownloadInstaller(hwnd, info, customDir, path, m_dlCancel, error);
         m_updInstallerPath = ok ? path : std::wstring();
         m_dlMessage = error;
         if (IsWindow(hwnd))
@@ -1293,6 +1562,16 @@ void SuiteWindow::OnMouseMove(int x, int y)
     int hover = -1;
     if (m_modal)
         hover = PtInRect(&m_modalOk, pt) ? 3 : -1;
+    else if (m_settingsOpen)
+    {
+        const struct { const RECT* r; int id; } hits[] = { { &m_chkAuto, 7 }, { &m_chkStart, 8 }, { &m_btnPick, 9 },
+                                                          { &m_btnReset, 10 }, { &m_btnSave, 11 }, { &m_btnCancel, 12 } };
+        for (const auto& hit : hits)
+            if (PtInRect(hit.r, pt))
+                hover = hit.id;
+    }
+    else if (PtInRect(&m_gearRect, pt))
+        hover = 6;
     else if (m_updAvailable && PtInRect(&m_updateRect, pt))
         hover = 4;
     else if (PtInRect(&m_tools[0].rect, pt))
@@ -1324,6 +1603,26 @@ void SuiteWindow::OnClick(int, int)
         m_modal = false;
         InvalidateRect(m_hwnd, nullptr, FALSE);
     }
+    else if (pressed == 6)
+        OpenSettings();
+    else if (pressed == 7)
+        m_draft.autoCheck = !m_draft.autoCheck;
+    else if (pressed == 8)
+        m_draft.autostart = !m_draft.autostart;
+    else if (pressed == 9)
+    {
+        const std::wstring dir = PickFolder(m_hwnd, m_draft.downloadDir);
+        if (IsUsableDir(dir))
+            m_draft.downloadDir = dir;
+        else if (!dir.empty())
+            ShowModal(L"Ordner nicht zulässig", L"Bitte einen vollständigen Ordnerpfad wählen.");
+    }
+    else if (pressed == 10)
+        m_draft.downloadDir.clear();
+    else if (pressed == 11)
+        CloseSettings(true);
+    else if (pressed == 12)
+        CloseSettings(false);
     else if (pressed == 4)
     {
         if (!m_updDownloading)
@@ -1347,7 +1646,9 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
         CreateFonts();
         FindTools();
-        StartUpdateCheck();
+        m_settings = LoadSettings();
+        if (m_settings.autoCheck)
+            StartUpdateCheck();
         return 0;
     }
     case WM_ERASEBKGND:
@@ -1423,9 +1724,11 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             m_modal = false;
             InvalidateRect(m_hwnd, nullptr, FALSE);
         }
-        else if (!m_modal && wp == '1')
+        else if (m_settingsOpen && !m_modal && (wp == VK_ESCAPE || wp == VK_RETURN))
+            CloseSettings(wp == VK_RETURN);
+        else if (!m_modal && !m_settingsOpen && wp == '1')
             Launch(0);
-        else if (!m_modal && wp == '2')
+        else if (!m_modal && !m_settingsOpen && wp == '2')
             Launch(1);
         return 0;
     case WM_TIMER:

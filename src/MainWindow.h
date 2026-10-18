@@ -144,6 +144,7 @@ private:
     HFONT m_fontBody = nullptr;
     HFONT m_fontSmall = nullptr;
     HFONT m_fontBig = nullptr;
+    HFONT m_fontSym = nullptr;
 
     HardwareScanner m_scanner;
     UpdateChecker m_updater;
@@ -203,6 +204,24 @@ private:
     bool m_autoExpandPrev = false;
     int  m_hoverHeader = -1;        // Zeilenindex der Kopfzeile unter der Maus
     Modal m_modal;
+
+    // Einstellungsdialog (Zahnrad oben rechts)
+    struct Settings
+    {
+        bool autoScan = false;   // beim Start automatisch scannen
+        bool splash = true;      // Start-Animation zeigen
+    };
+    Settings m_settings, m_draft;
+    bool m_settingsOpen = false;
+    bool m_gearHover = false;
+    bool m_gearPress = false;
+    int  m_setHover = 0;         // 1 Scan-Haken, 2 Splash-Haken, 3 Speichern, 4 Abbrechen
+    int  m_setPress = 0;
+    RECT m_gearRect{}, m_chkScan{}, m_chkSplash{}, m_btnSave{}, m_btnCancel{};
+    void OpenSettings();
+    void CloseSettings(bool save);
+    void DrawSettings(HDC dc, int width, int height);
+    void SettingsMouse(int x, int y, bool down);
     std::deque<Modal> m_modalQueue;
     std::wstring m_toastText;
     int   m_toastKind = 0;

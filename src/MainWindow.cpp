@@ -170,6 +170,34 @@ namespace
     }
 }
 
+namespace
+{
+    // %LOCALAPPDATA%\DuncansDriverUpdater\settings.ini
+    std::wstring SettingsFile(bool createDir)
+    {
+        wchar_t buf[MAX_PATH * 2] = {};
+        const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH * 2);
+        if (n == 0 || n >= MAX_PATH * 2)
+            return std::wstring();
+        const std::wstring dir = std::wstring(buf) + L"\\DuncansDriverUpdater";
+        if (createDir)
+            CreateDirectoryW(dir.c_str(), nullptr);
+        return dir + L"\\settings.ini";
+    }
+
+    bool ReadFlag(const wchar_t* key, bool fallback)
+    {
+        const std::wstring ini = SettingsFile(false);
+        return ini.empty() ? fallback : GetPrivateProfileIntW(L"Allgemein", key, fallback ? 1 : 0, ini.c_str()) != 0;
+    }
+
+    bool WriteFlag(const wchar_t* key, bool value)
+    {
+        const std::wstring ini = SettingsFile(true);
+        return !ini.empty() && WritePrivateProfileStringW(L"Allgemein", key, value ? L"1" : L"0", ini.c_str()) != FALSE;
+    }
+}
+
 MainWindow::~MainWindow()
 {
     m_scanner.Cancel();
@@ -211,8 +239,10 @@ bool MainWindow::Create(HINSTANCE instance, int showCommand, bool autoInstall)
     BOOL animations = TRUE;
     SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animations, 0);
     m_motion = animations != FALSE;
+    m_settings.autoScan = ReadFlag(L"AutoScan", false);
+    m_settings.splash = ReadFlag(L"StartAnimation", true);
 
-    if (m_motion && !m_autoInstall && RunSplash(instance, showCommand))
+    if (m_motion && m_settings.splash && !m_autoInstall && RunSplash(instance, showCommand))
     {
         // Splash hat das Hauptfenster bereits gezeigt
     }
@@ -222,8 +252,8 @@ bool MainWindow::Create(HINSTANCE instance, int showCommand, bool autoInstall)
         UpdateWindow(m_hwnd);
         m_bannerP = 0.62f;
     }
-    if (m_autoInstall)
-        StartScan();   // nur nach dem UAC-Neustart fuer die Installation
+    if (m_autoInstall || m_settings.autoScan)
+        StartScan();   // nach dem UAC-Neustart fuer die Installation bzw. laut Einstellung
     return true;
 }
 
@@ -290,6 +320,12 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             m_buttonHover = false;
             InvalidateRect(m_hwnd, &m_buttonRect, FALSE);
         }
+        if (m_gearHover || m_setHover != 0)
+        {
+            m_gearHover = false;
+            m_setHover = 0;
+            InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
         return 0;
     case WM_SETCURSOR:
         if (m_modal.active && LOWORD(lp) == HTCLIENT)
@@ -306,7 +342,14 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             POINT cur{};
             GetCursorPos(&cur);
             ScreenToClient(m_hwnd, &cur);
-            bool clickable = (m_buttonHover && !Busy()) || m_installHover || m_dragThumb ||
+            if (m_settingsOpen)
+            {
+                if (m_setHover == 0)
+                    break;
+                SetCursor(LoadCursorW(nullptr, IDC_HAND));
+                return TRUE;
+            }
+            bool clickable = (m_buttonHover && !Busy()) || m_installHover || m_gearHover || m_dragThumb ||
                              PtInRect(&m_sortRect, cur) || PtInRect(&m_exportRect, cur) || m_hoverAction != 0 || m_hoverHeader != -1;
             for (int i = 0; i < 3; ++i)
                 clickable = clickable || PtInRect(&m_chipRect[i], cur);
@@ -342,7 +385,7 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         OnKeyDown(wp);
         return 0;
     case WM_CHAR:
-        if (m_modal.active)
+        if (m_modal.active || m_settingsOpen)
             return 0;
         if (wp == 8 && !m_filterText.empty())
             m_filterText.pop_back();
@@ -925,6 +968,25 @@ void MainWindow::OnMouseMove(int x, int y)
         OnModalMouseMove(x, y);
         return;
     }
+    if (!m_trackingMouse)
+    {
+        TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, m_hwnd, 0 };
+        TrackMouseEvent(&tme);
+        m_trackingMouse = true;
+    }
+    if (m_settingsOpen)
+    {
+        SettingsMouse(x, y, false);
+        return;
+    }
+    {
+        const bool gear = PtInRect(&m_gearRect, POINT{ x, y }) != FALSE;
+        if (gear != m_gearHover)
+        {
+            m_gearHover = gear;
+            InvalidateRect(m_hwnd, &m_gearRect, FALSE);
+        }
+    }
     if (m_dragThumb)
     {
         const RECT thumb = ScrollThumbRect();
@@ -963,6 +1025,36 @@ void MainWindow::OnLButtonUp()
         GetCursorPos(&cur);
         ScreenToClient(m_hwnd, &cur);
         OnModalMouse(cur.x, cur.y, false);
+        return;
+    }
+    if (m_settingsOpen)
+    {
+        POINT cur{};
+        GetCursorPos(&cur);
+        ScreenToClient(m_hwnd, &cur);
+        const int pressed = m_setPress;
+        m_setPress = 0;
+        SettingsMouse(cur.x, cur.y, false);
+        if (pressed != 0 && pressed == m_setHover)
+        {
+            if (pressed == 1)
+                m_draft.autoScan = !m_draft.autoScan;
+            else if (pressed == 2)
+                m_draft.splash = !m_draft.splash;
+            else
+                CloseSettings(pressed == 3);
+        }
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return;
+    }
+    if (m_gearPress)
+    {
+        m_gearPress = false;
+        POINT cur{};
+        GetCursorPos(&cur);
+        ScreenToClient(m_hwnd, &cur);
+        if (PtInRect(&m_gearRect, cur))
+            OpenSettings();
         return;
     }
     if (m_pressAction != 0)
@@ -1010,7 +1102,18 @@ void MainWindow::OnLButtonDown(int x, int y)
         OnModalMouse(x, y, true);
         return;
     }
+    if (m_settingsOpen)
+    {
+        SettingsMouse(x, y, true);
+        m_setPress = m_setHover;
+        return;
+    }
     POINT pt{ x, y };
+    if (PtInRect(&m_gearRect, pt))
+    {
+        m_gearPress = true;
+        return;
+    }
 
     // Scrollbalken: Thumb ziehen, in die Leiste klicken = seitenweise scrollen
     if (MaxScroll() > 0 && x >= m_listRect.right - S(14) && x < m_listRect.right + S(2) &&
@@ -1097,6 +1200,12 @@ void MainWindow::OnKeyDown(WPARAM key)
     if (m_modal.active)
     {
         OnModalKey(key);
+        return;
+    }
+    if (m_settingsOpen)
+    {
+        if (key == VK_ESCAPE || key == VK_RETURN)
+            CloseSettings(key == VK_RETURN);
         return;
     }
     const int page = m_listRect.bottom - m_listRect.top;
@@ -1401,7 +1510,8 @@ void MainWindow::Layout()
     const int m = S(24);
 
     m_bannerRect = { m, S(12), rc.right - m, S(12) + S(120) };
-    m_buttonRect = { m_bannerRect.right - S(22) - S(170), m_bannerRect.top + S(18), m_bannerRect.right - S(22), m_bannerRect.top + S(18) + S(42) };
+    m_gearRect = { m_bannerRect.right - S(22) - S(42), m_bannerRect.top + S(18), m_bannerRect.right - S(22), m_bannerRect.top + S(18) + S(42) };
+    m_buttonRect = { m_gearRect.left - S(12) - S(170), m_bannerRect.top + S(18), m_gearRect.left - S(12), m_bannerRect.top + S(18) + S(42) };
     m_installRect = { m_buttonRect.left - S(12) - S(230), m_buttonRect.top, m_buttonRect.left - S(12), m_buttonRect.bottom };
     m_statusRect = { m, m_bannerRect.bottom + S(14), rc.right - m, m_bannerRect.bottom + S(14) + S(168) };
     m_listTitleRect = { m, m_statusRect.bottom + S(22), rc.right - m, m_statusRect.bottom + S(22) + S(32) };
@@ -1511,6 +1621,17 @@ void MainWindow::Draw(HDC dc, int width, int height)
                   m_scanning ? L"Scan läuft …" : (m_installing ? L"Installiere …" : (m_checkingUpdates ? L"Suche Updates …" : L"Scan starten")), DT_CENTER);
     }
 
+    // Zahnrad
+    {
+        const bool hover = m_gearHover && !m_modal.active;
+        FillRound(dc, m_gearRect, S(12), hover ? kCardHover : kCardRaised, hover ? kCardBorderHover : kCardBorder);
+        HGDIOBJ old = SelectObject(dc, m_fontSym);
+        SetTextColor(dc, hover ? kText : kTextDim);
+        RECT g = m_gearRect;
+        DrawTextW(dc, L"⚙", 1, &g, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, old);
+    }
+
     if (RectVisible(dc, &m_statusRect))
         DrawStatusCard(dc);
 
@@ -1577,9 +1698,118 @@ void MainWindow::Draw(HDC dc, int width, int height)
     DrawScrollbar(dc);
     RestoreDC(dc, -1);
 
+    if (m_settingsOpen)
+        DrawSettings(dc, width, height);
     if (m_modal.active)
         DrawModal(dc, width, height);
     DrawToast(dc, width, height);
+}
+
+void MainWindow::OpenSettings()
+{
+    m_draft = m_settings;
+    m_settingsOpen = true;
+    m_setHover = m_setPress = 0;
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MainWindow::CloseSettings(bool save)
+{
+    m_settingsOpen = false;
+    m_setHover = m_setPress = 0;
+    if (save)
+    {
+        m_settings = m_draft;
+        if (WriteFlag(L"AutoScan", m_settings.autoScan) && WriteFlag(L"StartAnimation", m_settings.splash))
+            ShowToast(L"Einstellungen gespeichert");
+        else
+            ShowToast(L"Einstellungen konnten nicht gespeichert werden", 2);
+    }
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MainWindow::SettingsMouse(int x, int y, bool)
+{
+    const POINT pt{ x, y };
+    int hover = 0;
+    if (PtInRect(&m_chkScan, pt))
+        hover = 1;
+    else if (PtInRect(&m_chkSplash, pt))
+        hover = 2;
+    else if (PtInRect(&m_btnSave, pt))
+        hover = 3;
+    else if (PtInRect(&m_btnCancel, pt))
+        hover = 4;
+    if (hover != m_setHover)
+    {
+        m_setHover = hover;
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+    }
+}
+
+void MainWindow::DrawSettings(HDC dc, int width, int height)
+{
+    FillAlphaRect(dc, RECT{ 0, 0, width, height }, RGB(0, 0, 0), 150);
+
+    const int pad = S(26);
+    const int boxW = std::min(S(560), width - S(40));
+    const int titleH = S(30), btnH = S(38), rowH = S(50);
+    const int boxH = pad + titleH + S(18) + rowH + S(10) + rowH + S(26) + btnH + pad;
+    RECT box{ (width - boxW) / 2, (height - boxH) / 2, (width - boxW) / 2 + boxW, (height - boxH) / 2 + boxH };
+
+    DrawShadow(dc, box, S(18), static_cast<int>(m_dpi));
+    DrawPanelAA(dc, box, S(18), RGB(27, 29, 36), kCardBorder);
+    DrawLabel(dc, m_fontHeading, kText, { box.left + pad, box.top + pad + S(3), box.right - pad, box.top + pad + titleH }, L"Einstellungen");
+
+    auto check = [&](const RECT& r, bool on, bool hover, const wchar_t* label, const wchar_t* hint)
+    {
+        const int sz = S(22);
+        RECT b{ r.left, r.top + S(2), r.left + sz, r.top + S(2) + sz };
+        FillRound(dc, b, S(7), on ? kAccent : kCardRaised, on ? kAccent : (hover ? kCardBorderHover : kCardBorder));
+        if (on)
+        {
+            HPEN pen = CreatePen(PS_SOLID, std::max(2, S(2)), RGB(8, 20, 36));
+            HGDIOBJ old = SelectObject(dc, pen);
+            MoveToEx(dc, b.left + S(5), b.top + S(11), nullptr);
+            LineTo(dc, b.left + S(9), b.top + S(15));
+            LineTo(dc, b.left + S(17), b.top + S(7));
+            SelectObject(dc, old);
+            DeleteObject(pen);
+        }
+        DrawLabel(dc, m_fontBody, kText, { r.left + sz + S(14), r.top, r.right, r.top + S(24) }, label);
+        DrawLabel(dc, m_fontSmall, kTextDim, { r.left + sz + S(14), r.top + S(24), r.right, r.bottom }, hint);
+    };
+
+    int y = box.top + pad + titleH + S(18);
+    m_chkScan = { box.left + pad, y, box.right - pad, y + rowH };
+    check(m_chkScan, m_draft.autoScan, m_setHover == 1, L"Beim Start automatisch scannen", L"Startet den Geräte-Scan, sobald das Programm geöffnet ist.");
+    y += rowH + S(10);
+    m_chkSplash = { box.left + pad, y, box.right - pad, y + rowH };
+    check(m_chkSplash, m_draft.splash, m_setHover == 2, L"Start-Animation anzeigen", L"Zeigt beim Öffnen den animierten Startbildschirm.");
+
+    auto button = [&](const RECT& r, bool primary, int id, const wchar_t* text)
+    {
+        const bool hover = m_setHover == id;
+        const bool pressed = m_setPress == id && hover;
+        COLORREF fill, border;
+        if (primary)
+        {
+            fill = pressed ? Blend(kAccent, RGB(0, 0, 0), 25) : (hover ? Blend(kAccent, RGB(255, 255, 255), 14) : kAccent);
+            border = fill;
+        }
+        else
+        {
+            fill = pressed ? RGB(24, 26, 32) : (hover ? kCardHover : kCardRaised);
+            border = hover ? kCardBorderHover : kCardBorder;
+        }
+        FillRound(dc, r, S(12), fill, border);
+        DrawLabel(dc, m_fontBody, primary ? RGB(8, 20, 36) : kText, { r.left, r.top + S(8), r.right, r.bottom }, text, DT_CENTER);
+    };
+    const int bw = S(120);
+    m_btnSave = { box.right - pad - bw, box.bottom - pad - btnH, box.right - pad, box.bottom - pad };
+    m_btnCancel = { m_btnSave.left - S(10) - bw, m_btnSave.top, m_btnSave.left - S(10), m_btnSave.bottom };
+    button(m_btnCancel, false, 4, L"Abbrechen");
+    button(m_btnSave, true, 3, L"Speichern");
 }
 
 void MainWindow::DrawStatusCard(HDC dc)
@@ -1877,6 +2107,9 @@ void MainWindow::CreateFonts()
     m_fontHeading = make(11, FW_SEMIBOLD);
     m_fontBody    = make(10, FW_NORMAL);
     m_fontSmall   = make(9, FW_NORMAL);
+    m_fontSym = CreateFontW(-MulDiv(16, static_cast<int>(m_dpi), 72), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                            DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI Symbol");
     m_appIcon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON, S(48), S(48), LR_DEFAULTCOLOR));
 }
 
@@ -1887,7 +2120,7 @@ void MainWindow::DestroyFonts()
         DestroyIcon(m_appIcon);
         m_appIcon = nullptr;
     }
-    for (HFONT* f : { &m_fontTitle, &m_fontBig, &m_fontHeading, &m_fontBody, &m_fontSmall })
+    for (HFONT* f : { &m_fontTitle, &m_fontBig, &m_fontHeading, &m_fontBody, &m_fontSmall, &m_fontSym })
     {
         if (*f)
         {
