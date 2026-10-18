@@ -1,6 +1,6 @@
 ; installer.iss - Inno Setup 6 Skript fuer "Duncan's Driver Updater"
-; Voraussetzung: Release-Build liegt unter ..\DuncansDriverUpdater.exe und ..\DuncansSuite.exe
-; Kompilieren: ISCC.exe installer\installer.iss  (Ausgabe: installer\Output\)
+; Voraussetzung: Release-Build liegt unter ..\release\ (DuncansSuite.exe, DuncansDriverUpdater.exe, DuncansPdf.exe, pdfium.dll)
+; Kompilieren: ISCC.exe installer\installer.iss  (Ausgabe: release\)
 
 #define MyAppName      "Duncan's Driver Updater"
 #define MyAppVersion   "1.0.9"
@@ -20,7 +20,7 @@ VersionInfoVersion={#MyAppVersion}
 DefaultDirName={autopf}\DuncansDriverUpdater
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputDir=Output
+OutputDir=..\release
 OutputBaseFilename=DuncansSuite_Setup_{#MyAppVersion}
 ; Treiber-Operationen erfordern Administratorrechte
 PrivilegesRequired=admin
@@ -45,13 +45,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
-Source: "..\{#SuiteExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\release\{#SuiteExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; Duncan's PDF Reader (PDFium wird zur Laufzeit aus pdfium.dll geladen)
-Source: "..\DuncansPdf.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\pdfium.dll"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\release\DuncansPdf.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\release\pdfium.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; Hersteller-Tabelle fuer den Grafiktreiber-Abgleich (vom Nutzer editierbar)
-Source: "..\vendor_releases.json"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\release\vendor_releases.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#SuiteName}"; Filename: "{app}\{#SuiteExeName}"

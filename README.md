@@ -1,4 +1,4 @@
-# Duncan's Driver Updater
+﻿# Duncan's Driver Updater
 
 Hardware- & Treiber-Manager für Windows (C++ / Win32, Dark-UI). Liest alle Geräte samt Treiberdaten
 aus, gruppiert sie, erkennt Updates und kann Treiber-Updates über Windows Update installieren.
@@ -56,7 +56,7 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
 
-Die EXE landet im Projekt-Hauptordner (`DuncansDriverUpdater.exe`), `vendor_releases.json` wird daneben kopiert.
+Alle Programme landen in `release\` (`DuncansSuite.exe`, `DuncansDriverUpdater.exe`, `DuncansPdf.exe`); `vendor_releases.json` und `pdfium.dll` werden daneben kopiert.
 Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 
 ## Installer
@@ -67,7 +67,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.9.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.0.9.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 
@@ -78,6 +78,8 @@ Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.9.exe` (Admin-Installer, Star
 | `src/VendorReleases.*` | Hersteller-Abgleich der Grafiktreiber |
 | `src/MainWindow.*`, `src/Icons.*` | UI (Win32 + GDI/GDI+), Banner, Splash, Dialoge |
 | `suite/main.cpp` | Duncan's Suite (Launcher) |
+| `release/` | Fertige Programme, Installer und `.sig`-Dateien (nicht im Repository) |
+| `_archiv/` | Alte Installer (nicht im Repository) |
 | `resources/` | Icons, Manifeste (Driver Updater: requireAdministrator, Suite: asInvoker), Versionsinfo, `vendor_releases.json` |
 | `installer/installer.iss` | Inno-Setup-Skript |
 
@@ -91,7 +93,7 @@ Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.9.exe` (Admin-Installer, Star
 Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im selben Dark-Stil. Werkzeugleiste (Öffnen, Speichern, Merge, Zoom, Drehen, Seitenwechsel),
 ein-/ausklappbare Seitenleiste (Thumbnails / Werkzeuge, `Strg+B`) und Canvas mit Scrollen, `Strg+Mausrad`-Zoom und Drag & Drop.
 Gerendert wird mit **PDFium**, das zur Laufzeit aus `pdfium.dll` geladen wird (64-Bit). Die DLL besorgt `pdf\third_party\get_pdfium.ps1`
-(offizielle Builds von bblanchon/pdfium-binaries) und legt sie neben die EXE. Ohne DLL startet die App und meldet es per Hinweis.
+(offizielle Builds von bblanchon/pdfium-binaries) und legt sie nach `pdf\third_party` (CMake kopiert sie beim Build nach `release\`). Ohne DLL startet die App und meldet es per Hinweis.
 
 ## Signierte Downloads (Sicherheit)
 
@@ -106,5 +108,5 @@ Eine SHA-256-Summe allein reicht nicht, weil sie vom selben Server kommt wie die
 
 Einmalig: `powershell -File tools\MakeSigningKey.ps1` erzeugt den privaten Schlüssel in `%USERPROFILE%\DuncansSuite-Signing\` (sichern, nie hochladen)
 und schreibt `suite/public_key.inc`; danach neu bauen.
-Pro Release: Installer bauen, `powershell -File tools\SignRelease.ps1 <Datei>` ausführen und die erzeugte `.sig` als zusätzliches Asset ins selbe GitHub-Release laden.
+Pro Release: Installer bauen, `powershell -File tools\SignRelease.ps1 release\<Datei>` ausführen und die erzeugte `.sig` als zusätzliches Asset ins selbe GitHub-Release laden.
 Fehlt die `.sig`, lehnt die Suite die Datei ab.

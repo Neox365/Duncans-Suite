@@ -1,11 +1,10 @@
 build/
-installer/Output/
+release/
+_archiv/
 *.obj
 *.o
 *.exe
-.vs/
-/DuncansDriverUpdater.exe
-/vendor_releases.json
-*.lnk
-/pdfium.dll
 *.sig
+*.lnk
+.vs/
+pdf/third_party/pdfium.dll

@@ -4,8 +4,8 @@ project(DuncansDriverUpdater VERSION 1.0.9 LANGUAGES CXX RC)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# Fester Ausgabeordner: Projekt-Hauptordner (der Installer liest genau von dort)
-set(OUT_DIR ${CMAKE_SOURCE_DIR})
+# Fester Ausgabeordner: release/ (der Installer liest genau von dort)
+set(OUT_DIR ${CMAKE_SOURCE_DIR}/release)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${OUT_DIR})
 foreach(cfg DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${cfg} ${OUT_DIR})
@@ -85,3 +85,11 @@ else()
     target_link_options(DuncansPdfReader PRIVATE -municode -mwindows -static -s)
 endif()
 target_link_libraries(DuncansPdfReader PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus comdlg32 uxtheme)
+
+# pdfium.dll (pdf/third_party/get_pdfium.ps1) neben die EXEs in release/ kopieren, damit der PDF Reader und der Installer sie finden
+if(EXISTS "${CMAKE_SOURCE_DIR}/pdf/third_party/pdfium.dll")
+    add_custom_target(copy_pdfium ALL
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_SOURCE_DIR}/pdf/third_party/pdfium.dll" "${OUT_DIR}/pdfium.dll"
+        COMMENT "pdfium.dll nach release/ kopieren")
+endif()
