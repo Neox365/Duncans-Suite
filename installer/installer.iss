@@ -3,7 +3,7 @@
 ; Kompilieren: ISCC.exe installer\installer.iss  (Ausgabe: installer\Output\)
 
 #define MyAppName      "Duncan's Driver Updater"
-#define MyAppVersion   "1.0.6"
+#define MyAppVersion   "1.0.7"
 #define MyAppPublisher "Duncan"
 #define MyAppExeName   "DuncansDriverUpdater.exe"
 ; Duncan's Suite: zentraler Launcher (Haupt-Startverknuepfung fuer Desktop und Startmenue)
