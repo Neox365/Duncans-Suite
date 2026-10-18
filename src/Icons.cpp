@@ -185,6 +185,12 @@ namespace
             g.Restore(state);
             break;
         }
+        case CategoryIcon::Document:
+            RRect(0.2f, 0.08f, 0.6f, 0.84f, 0.08f);
+            Line(0.34f, 0.34f, 0.66f, 0.34f);
+            Line(0.34f, 0.5f, 0.66f, 0.5f);
+            Line(0.34f, 0.66f, 0.54f, 0.66f);
+            break;
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);

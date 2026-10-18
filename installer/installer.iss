@@ -47,12 +47,16 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\{#SuiteExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Duncan's PDF Reader (PDFium wird zur Laufzeit aus pdfium.dll geladen)
+Source: "..\DuncansPdf.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\pdfium.dll"; DestDir: "{app}"; Flags: ignoreversion
 ; Hersteller-Tabelle fuer den Grafiktreiber-Abgleich (vom Nutzer editierbar)
 Source: "..\vendor_releases.json"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#SuiteName}"; Filename: "{app}\{#SuiteExeName}"
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Duncan's PDF Reader"; Filename: "{app}\DuncansPdf.exe"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#SuiteName}"; Filename: "{app}\{#SuiteExeName}"; Tasks: desktopicon
 

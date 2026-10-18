@@ -67,3 +67,21 @@ else()
     target_link_options(DuncansSuite PRIVATE -municode -mwindows -static)
 endif()
 target_link_libraries(DuncansSuite PRIVATE user32 gdi32 shell32 shlwapi ole32 dwmapi gdiplus wininet bcrypt)
+
+# ---- Duncan's PDF: nativer PDF-Betrachter/-Editor (PDFium wird zur Laufzeit aus pdfium.dll geladen) ----
+add_executable(DuncansPdfReader WIN32
+    pdf/main.cpp
+    pdf/PdfDocument.cpp
+    resources/pdf.rc
+)
+set_target_properties(DuncansPdfReader PROPERTIES OUTPUT_NAME DuncansPdf)
+target_compile_definitions(DuncansPdfReader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00)
+if(MSVC)
+    target_compile_options(DuncansPdfReader PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET DuncansPdfReader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(DuncansPdfReader PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(DuncansPdfReader PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type)
+    target_link_options(DuncansPdfReader PRIVATE -municode -mwindows -static)
+endif()
+target_link_libraries(DuncansPdfReader PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus comdlg32 uxtheme)

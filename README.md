@@ -85,3 +85,10 @@ Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.4.exe` (Admin-Installer, Star
 
 - Die Installation von Windows-Update-Treibern wurde bisher nicht mit einem echten Update getestet.
 - Es gibt keinen automatischen Download von Hersteller-Treibern; dafür wird die Download-Seite geöffnet.
+
+## Duncan's PDF (in Arbeit)
+
+Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im selben Dark-Stil. Werkzeugleiste (Öffnen, Speichern, Merge, Zoom, Drehen, Seitenwechsel),
+ein-/ausklappbare Seitenleiste (Thumbnails / Werkzeuge, `Strg+B`) und Canvas mit Scrollen, `Strg+Mausrad`-Zoom und Drag & Drop.
+Gerendert wird mit **PDFium**, das zur Laufzeit aus `pdfium.dll` geladen wird (64-Bit). Die DLL besorgt `pdf\third_party\get_pdfium.ps1`
+(offizielle Builds von bblanchon/pdfium-binaries) und legt sie neben die EXE. Ohne DLL startet die App und meldet es per Hinweis.

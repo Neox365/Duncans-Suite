@@ -1,6 +1,6 @@
 // main.cpp - "Duncan's Suite": zentraler Launcher fuer Duncan's Tidy und Duncan's Driver Updater.
 //
-// Zwei grosse Karten starten die jeweilige Anwendung (zuerst aus dem eigenen Ordner, fuer Tidy zusaetzlich
+// Drei grosse Karten (Tidy, Driver Updater, PDF Reader) starten die jeweilige Anwendung (zuerst aus dem eigenen Ordner, fuer Tidy zusaetzlich
 // aus %LOCALAPPDATA%\DuncansTidy). Fehlt eine EXE, erscheint ein eigener Dark-Dialog statt einer MessageBox.
 //
 // Linker-Bibliotheken: user32, gdi32, gdiplus, shell32, ole32, dwmapi
@@ -238,6 +238,22 @@ namespace
         return DownloadFileVerified(session.h, hwnd, index, base + exeName, expected, dir, exeName, cancel, error);
     }
 
+    // Laedt eine EXE direkt von einer HTTPS-Adresse (das Release hat keine .sha256-Datei).
+    bool DownloadDirect(HWND hwnd, int index, const std::wstring& url, const std::wstring& exeName,
+                        const std::wstring& dir, const std::atomic<bool>& cancel, std::wstring& error)
+    {
+        InetHandle session(InternetOpenW(L"DuncansSuite/" SUITE_VERSION, INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0));
+        if (!session.h)
+        {
+            error = L"Internet-Zugriff konnte nicht initialisiert werden.";
+            return false;
+        }
+        DWORD timeout = 20000;
+        InternetSetOptionW(session.h, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+        InternetSetOptionW(session.h, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+        return DownloadFileVerified(session.h, hwnd, index, url, std::string(), dir, exeName, cancel, error);
+    }
+
     // Laedt url nach dir\fileName und prueft dabei die SHA-256 (expected: 64 Hex, klein).
     bool DownloadFileVerified(HINTERNET session, HWND hwnd, int index, const std::wstring& url, const std::string& expected,
                               const std::wstring& dir, const std::wstring& fileName, const std::atomic<bool>& cancel, std::wstring& error)
@@ -306,7 +322,8 @@ namespace
         if (ok)
         {
             unsigned char digest[32] = {};
-            if (BCryptFinishHash(hash, digest, sizeof(digest), 0) != 0 || ToHex(digest, sizeof(digest)) != expected)
+            // expected leer = Direkt-Download ohne Pruefsummen-Datei (nur HTTPS-Absicherung)
+            if (BCryptFinishHash(hash, digest, sizeof(digest), 0) != 0 || (!expected.empty() && ToHex(digest, sizeof(digest)) != expected))
             {
                 error = L"Die Prüfsumme der heruntergeladenen Datei stimmt nicht. Die Datei wurde verworfen.";
                 ok = false;
@@ -523,6 +540,7 @@ struct Tool
     std::vector<std::wstring> searched;
     RECT rect{};
     const wchar_t* downloadBase = nullptr;   // GitHub-Release-Adresse; nullptr = kein Download moeglich
+    const wchar_t* directUrl = nullptr;      // direkte EXE-Adresse (ohne Pruefsummen-Datei), alternativ zu downloadBase
     bool downloading = false;
     int progress = 0;                        // 0..100, 101 = unbekannt
 };
@@ -561,7 +579,7 @@ private:
     HFONT m_fontTitle = nullptr, m_fontCard = nullptr, m_fontHeading = nullptr, m_fontBody = nullptr, m_fontSmall = nullptr;
     HICON m_icon = nullptr;
 
-    Tool m_tools[2] = {
+    Tool m_tools[3] = {
         { L"DuncansTidy.exe", L"Duncan's Tidy",
           L"System-Reinigung & Datenmüll-Beseitigung. Räumt Downloads, temporäre Dateien und Browser-Caches auf.",
           CategoryIcon::Broom, RGB(251, 191, 36), {}, {}, {},
@@ -569,6 +587,10 @@ private:
         { L"DuncansDriverUpdater.exe", L"Duncan's Driver Updater",
           L"Hardware- & Treiber-Manager. Liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.",
           CategoryIcon::Cpu, RGB(64, 156, 255), {}, {}, {} },
+        { L"DuncansPdf.exe", L"Duncan's PDF Reader",
+          L"PDF-Betrachter. Öffnet, zoomt, dreht, fügt zusammen und speichert PDF-Dateien.",
+          CategoryIcon::Document, RGB(240, 84, 84), {}, {}, {},
+          nullptr, L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/DuncansPdf.exe" },
     };
 
     RECT m_banner{}, m_folderRect{}, m_footer{};
@@ -623,7 +645,7 @@ bool SuiteWindow::Create(HINSTANCE instance, int showCommand)
     IconsInit();
     m_dpi = GetDpiForSystem();
     m_hwnd = CreateWindowExW(0, kClassName, L"Duncan's Suite", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                             S(860), S(600), nullptr, nullptr, instance, this);
+                             S(1100), S(600), nullptr, nullptr, instance, this);
     if (!m_hwnd)
         return false;
     BOOL animations = TRUE;
@@ -693,9 +715,9 @@ void SuiteWindow::FindTools()
         t.path.clear();
         t.searched.clear();
         std::vector<std::wstring> candidates{ own + L"\\" + t.exe };
-        // Tidy wird standardmaessig nach %LOCALAPPDATA%\DuncansTidy installiert
-        if (!local.empty() && std::wstring(t.exe) == L"DuncansTidy.exe")
-            candidates.push_back(local + L"\\DuncansTidy\\" + t.exe);
+        // ladbare Programme (Tidy, PDF Reader) landen standardmaessig in %LOCALAPPDATA%\<Name>
+        if (!local.empty() && (t.downloadBase || t.directUrl))
+            candidates.push_back(InstallDir(t) + L"\\" + t.exe);
         for (const auto& c : candidates)
         {
             t.searched.push_back(c);
@@ -718,17 +740,22 @@ void SuiteWindow::Layout()
 
     const int top = m_banner.bottom + S(22), bottom = m_footer.top - S(16), gap = S(20);
     const int width = rc.right - 2 * m;
-    if (width >= S(640))
+    if (width >= S(960))
     {
-        const int w = (width - gap) / 2;
+        // drei Karten nebeneinander
+        const int w = (width - 2 * gap) / 3;
         m_tools[0].rect = { m, top, m + w, bottom };
-        m_tools[1].rect = { m + w + gap, top, m + width, bottom };
+        m_tools[1].rect = { m + w + gap, top, m + 2 * w + gap, bottom };
+        m_tools[2].rect = { m + 2 * (w + gap), top, m + width, bottom };
     }
     else
     {
+        // zwei Karten oben, die dritte volle Breite darunter
         const int h = (bottom - top - gap) / 2;
-        m_tools[0].rect = { m, top, m + width, top + h };
-        m_tools[1].rect = { m, top + h + gap, m + width, bottom };
+        const int w = (width - gap) / 2;
+        m_tools[0].rect = { m, top, m + w, top + h };
+        m_tools[1].rect = { m + w + gap, top, m + width, top + h };
+        m_tools[2].rect = { m, top + h + gap, m + width, bottom };
     }
 }
 
@@ -736,8 +763,8 @@ void SuiteWindow::DrawCard(HDC dc, int index)
 {
     const Tool& t = m_tools[index];
     const RECT& rc = t.rect;
-    const bool hover = m_hover == index && !m_modal;
-    const bool pressed = m_press == index && hover;
+    const bool hover = m_hover == (index < 2 ? index : 5) && !m_modal;
+    const bool pressed = m_press == (index < 2 ? index : 5) && hover;
     const bool found = !t.path.empty();
     const COLORREF fill = pressed ? Blend(kCardRaised, RGB(0, 0, 0), 18) : (hover ? kCardHover : kCardRaised);
 
@@ -752,7 +779,7 @@ void SuiteWindow::DrawCard(HDC dc, int index)
 
     // Status-Chip + Starten-Pille
     const bool downloading = t.downloading;
-    const bool canDownload = !found && t.downloadBase != nullptr;
+    const bool canDownload = !found && (t.downloadBase || t.directUrl);
     const std::wstring status = found ? L"Installiert" : (downloading ? L"Wird geladen" : L"Nicht installiert");
     const COLORREF statusColor = found ? kGreen : (downloading ? kAccent : kOrange);
     const int chipW = TextWidth(dc, m_fontSmall, status) + S(34);
@@ -897,6 +924,8 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         DrawCard(dc, 0);
     if (RectVisible(dc, &m_tools[1].rect))
         DrawCard(dc, 1);
+    if (RectVisible(dc, &m_tools[2].rect))
+        DrawCard(dc, 2);
 
     // Footer: Version links, Hinweis in der Mitte, Ordner-Button rechts
     DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(120), m_footer.bottom },
@@ -989,7 +1018,7 @@ void SuiteWindow::Launch(int index)
         SetNote(std::wstring(t.title) + L" wird gerade heruntergeladen …");
         return;
     }
-    if (t.path.empty() && t.downloadBase)
+    if (t.path.empty() && (t.downloadBase || t.directUrl))
     {
         StartDownload(index);   // nicht installiert: Ein-Klick-Installation von GitHub
         return;
@@ -1056,12 +1085,13 @@ void SuiteWindow::StartDownload(int index)
     t.progress = 0;
     m_dlBusy = true;
     m_dlCancel = false;
-    const std::wstring base = t.downloadBase, exe = t.exe, dir = InstallDir(t);
+    const std::wstring base = t.downloadBase ? t.downloadBase : L"", url = t.directUrl ? t.directUrl : L"", exe = t.exe, dir = InstallDir(t);
     const HWND hwnd = m_hwnd;
-    m_dlThread = std::thread([this, hwnd, index, base, exe, dir]()
+    m_dlThread = std::thread([this, hwnd, index, base, url, exe, dir]()
     {
         std::wstring error;
-        const bool ok = DownloadVerified(hwnd, index, base, exe, dir, m_dlCancel, error);
+        const bool ok = url.empty() ? DownloadVerified(hwnd, index, base, exe, dir, m_dlCancel, error)
+                                    : DownloadDirect(hwnd, index, url, exe, dir, m_dlCancel, error);
         m_dlMessage = error;   // vor PostMessage gesetzt, danach vom UI-Thread gelesen
         if (IsWindow(hwnd))
             PostMessageW(hwnd, WM_DL_DONE, ok ? 1 : 0, static_cast<LPARAM>(index));
@@ -1179,6 +1209,8 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = 0;
     else if (PtInRect(&m_tools[1].rect, pt))
         hover = 1;
+    else if (PtInRect(&m_tools[2].rect, pt))
+        hover = 5;
     else if (PtInRect(&m_folderRect, pt))
         hover = 2;
     if (hover != m_hover)
@@ -1210,7 +1242,7 @@ void SuiteWindow::OnClick(int, int)
     else if (pressed == 2)
         OpenToolsFolder();
     else
-        Launch(pressed);
+        Launch(pressed == 5 ? 2 : pressed);
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
