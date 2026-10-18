@@ -196,11 +196,14 @@ bool PdfDocument::SaveCopy(const std::wstring& path) {
     w.version = 1;
     w.WriteBlock = &WriteBlock;
     w.ok = true;
-    w.file = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    // Erst in eine Temp-Datei schreiben und danach ersetzen: bei einem Fehler bleibt eine vorhandene Zieldatei unversehrt
+    const std::wstring tmp = path + L".tmp";
+    w.file = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
     if (w.file == INVALID_HANDLE_VALUE) { g_error = L"Die Zieldatei kann nicht geschrieben werden."; return false; }
     bool ok = g_api.SaveAsCopy(m_doc, &w, 0) != 0 && w.ok;
     CloseHandle(w.file);
-    if (!ok) { DeleteFileW(path.c_str()); g_error = L"Speichern fehlgeschlagen."; return false; }
+    if (ok) ok = MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+    if (!ok) { DeleteFileW(tmp.c_str()); g_error = L"Speichern fehlgeschlagen."; return false; }
     m_modified = false;
     return true;
 }

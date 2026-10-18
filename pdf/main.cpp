@@ -308,7 +308,7 @@ void LayoutSidebar() {
     int y = pad;
     for (int i = 0; i < n; ++i) {
         double w, h;
-        if (g.doc.PageSize(i, w, h)) g.aspect[i] = h / w;
+        if (g.doc.PageSize(i, w, h)) g.aspect[i] = std::clamp(h / w, 0.05, 20.0);   // absurde Seitenformate (manipulierte PDF) begrenzen
         g.thumbTop[i] = y;
         y += static_cast<int>(g.thumbW * g.aspect[i]) + S(30) + pad / 2;
     }

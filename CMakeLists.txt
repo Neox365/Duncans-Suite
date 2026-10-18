@@ -15,7 +15,6 @@ add_executable(DuncansDriverUpdater WIN32
     src/main.cpp
     src/MainWindow.cpp
     src/HardwareScanner.cpp
-    src/DriverInfo.cpp
     src/Icons.cpp
     src/UpdateChecker.cpp
     src/UpdateInstaller.cpp

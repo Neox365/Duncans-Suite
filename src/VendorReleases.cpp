@@ -121,7 +121,7 @@ namespace
     int DateKeyFromIso(const std::string& iso, std::wstring& text)
     {
         int y = 0, m = 0, d = 0;
-        if (sscanf(iso.c_str(), "%d-%d-%d", &y, &m, &d) != 3 || y < 1990 || m < 1 || m > 12 || d < 1 || d > 31)
+        if (sscanf(iso.c_str(), "%d-%d-%d", &y, &m, &d) != 3 || y < 1990 || y > 9999 || m < 1 || m > 12 || d < 1 || d > 31)
             return 0;
         wchar_t buf[16];
         wsprintfW(buf, L"%02d.%02d.%04d", d, m, y);
@@ -144,7 +144,7 @@ namespace
         std::string data;
         char buffer[4096];
         DWORD read = 0;
-        while (ReadFile(h, buffer, sizeof(buffer), &read, nullptr) && read > 0)
+        while (data.size() < (1u << 20) && ReadFile(h, buffer, sizeof(buffer), &read, nullptr) && read > 0)   // max. 1 MB
             data.append(buffer, read);
         CloseHandle(h);
         if (data.size() >= 3 && static_cast<unsigned char>(data[0]) == 0xEF)

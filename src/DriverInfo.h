@@ -40,5 +40,3 @@ struct DriverInfo
     DriverStatus status = DriverStatus::Pending;
 };
 
-// Deutscher Text fuer den Status-Chip.
-const wchar_t* DriverStatusText(DriverStatus status);

@@ -861,7 +861,10 @@ void MainWindow::BackupDriver(const DriverInfo& d)
 {
     std::wstring inf = d.infName;
     CharLowerBuffW(&inf[0], static_cast<DWORD>(inf.size()));
-    if (inf.rfind(L"oem", 0) != 0)
+    // Nur "oem<Zahl>.inf": der Name geht unquotiert in die Kommandozeile von pnputil
+    const bool validInf = inf.size() > 7 && inf.rfind(L"oem", 0) == 0 && inf.compare(inf.size() - 4, 4, L".inf") == 0 &&
+                          std::all_of(inf.begin() + 3, inf.end() - 4, [](wchar_t c) { return c >= L'0' && c <= L'9'; });
+    if (!validInf)
     {
         ShowModal(L"Treiber sichern", L"Dieser Treiber gehört zu Windows (Inbox-Treiber) und kann nicht einzeln gesichert werden.",
                   {}, { L"OK" }, 0, nullptr);
@@ -886,7 +889,9 @@ void MainWindow::BackupDriver(const DriverInfo& d)
     if (!ok)
         return;
 
-    const std::wstring target = folder;
+    std::wstring target = folder;
+    while (target.size() > 3 && target.back() == L'\\')
+        target.pop_back();   // ein "\" vor dem schliessenden Anfuehrungszeichen wuerde es entwerten (z. B. "D:\")
     const HWND hwnd = m_hwnd;
     const std::wstring infName = d.infName;
     std::thread([hwnd, target, infName]()
