@@ -10,13 +10,19 @@
 #endif
 #include <windows.h>
 
+#include <bcrypt.h>
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <shlwapi.h>
+#include <wininet.h>
 #include <windowsx.h>
 
 #include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../src/Icons.h"
@@ -27,10 +33,12 @@
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "dwmapi.lib")
+#pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "bcrypt.lib")
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.0.1"
+#define SUITE_VERSION L"1.0.2"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -129,6 +137,193 @@ namespace
     }
 }
 
+// ---- Download (WinINet) --------------------------------------------------------------------
+// Laedt <base><exe> und <base><exe>.sha256 per HTTPS von den GitHub-Releases, prueft die SHA-256-Summe
+// waehrend des Schreibens und legt die Datei erst nach erfolgreicher Pruefung am Ziel ab.
+
+constexpr UINT WM_DL_PROGRESS = WM_APP + 1;   // wParam = Prozent (0..100) oder 101 = unbekannt, lParam = Tool-Index
+constexpr UINT WM_DL_DONE     = WM_APP + 2;   // wParam = 1 Erfolg / 0 Fehler, lParam = Tool-Index; Text in m_dlMessage
+
+namespace
+{
+    struct InetHandle
+    {
+        HINTERNET h = nullptr;
+        InetHandle() = default;
+        explicit InetHandle(HINTERNET handle) : h(handle) {}
+        InetHandle(const InetHandle&) = delete;
+        InetHandle& operator=(const InetHandle&) = delete;
+        ~InetHandle() { if (h) InternetCloseHandle(h); }
+    };
+
+    bool OpenHttps(HINTERNET session, const std::wstring& url, InetHandle& out, DWORD& total, std::wstring& error)
+    {
+        if (url.rfind(L"https://", 0) != 0)
+        {
+            error = L"Nur HTTPS-Adressen sind erlaubt.";
+            return false;
+        }
+        out.h = InternetOpenUrlW(session, url.c_str(), nullptr, 0,
+                                 INTERNET_FLAG_SECURE | INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_NO_UI, 0);
+        if (!out.h)
+        {
+            error = L"Keine Verbindung zu GitHub (Fehlercode " + std::to_wstring(GetLastError()) + L"). Bitte Internetverbindung prüfen.";
+            return false;
+        }
+        DWORD status = 0, size = sizeof(status);
+        if (!HttpQueryInfoW(out.h, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &size, nullptr) || status != 200)
+        {
+            error = L"GitHub antwortet mit Status " + std::to_wstring(status) + L". Gibt es bereits ein Release?";
+            return false;
+        }
+        total = 0;
+        size = sizeof(total);
+        HttpQueryInfoW(out.h, HTTP_QUERY_CONTENT_LENGTH | HTTP_QUERY_FLAG_NUMBER, &total, &size, nullptr);
+        return true;
+    }
+
+    std::string ToHex(const unsigned char* bytes, size_t n)
+    {
+        static const char* digits = "0123456789abcdef";
+        std::string s;
+        for (size_t i = 0; i < n; ++i)
+        {
+            s += digits[bytes[i] >> 4];
+            s += digits[bytes[i] & 15];
+        }
+        return s;
+    }
+
+    // Laedt exeName samt Pruefsumme nach dir\exeName. Rueckgabe false + error bei jedem Problem.
+    bool DownloadVerified(HWND hwnd, int index, const std::wstring& base, const std::wstring& exeName,
+                          const std::wstring& dir, const std::atomic<bool>& cancel, std::wstring& error)
+    {
+        InetHandle session(InternetOpenW(L"DuncansSuite/" SUITE_VERSION, INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0));
+        if (!session.h)
+        {
+            error = L"Internet-Zugriff konnte nicht initialisiert werden.";
+            return false;
+        }
+        DWORD timeout = 20000;
+        InternetSetOptionW(session.h, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+        InternetSetOptionW(session.h, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+
+        // 1) erwartete SHA-256 vom selben Release lesen (64 Hex-Zeichen)
+        std::string expected;
+        {
+            InetHandle h;
+            DWORD total = 0;
+            if (!OpenHttps(session.h, base + exeName + L".sha256", h, total, error))
+                return false;
+            char buf[256] = {};
+            DWORD n = 0;
+            InternetReadFile(h.h, buf, sizeof(buf) - 1, &n);
+            std::string text(buf, n);
+            const size_t start = text.find_first_not_of(" \t\r\n\xEF\xBB\xBF");
+            if (start != std::string::npos)
+                expected = text.substr(start, 64);
+            const bool valid = expected.size() == 64 &&
+                               std::all_of(expected.begin(), expected.end(), [](char c) { return std::isxdigit(static_cast<unsigned char>(c)) != 0; });
+            if (!valid)
+            {
+                error = L"Die Prüfsumme des Herstellers ist nicht lesbar. Download abgebrochen.";
+                return false;
+            }
+            std::transform(expected.begin(), expected.end(), expected.begin(), [](char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); });
+        }
+
+        // 2) Datei laden und dabei hashen
+        InetHandle h;
+        DWORD total = 0;
+        if (!OpenHttps(session.h, base + exeName, h, total, error))
+            return false;
+
+        CreateDirectoryW(dir.c_str(), nullptr);
+        const std::wstring tmp = dir + L"\\" + exeName + L".download";
+        const std::wstring dest = dir + L"\\" + exeName;
+        HANDLE file = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (file == INVALID_HANDLE_VALUE)
+        {
+            error = L"Zielordner nicht beschreibbar:\n" + dir;
+            return false;
+        }
+
+        BCRYPT_ALG_HANDLE alg = nullptr;
+        BCRYPT_HASH_HANDLE hash = nullptr;
+        bool ok = BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0 &&
+                  BCryptCreateHash(alg, &hash, nullptr, 0, nullptr, 0, 0) == 0;
+        if (!ok)
+            error = L"Prüfsummen-Funktion nicht verfügbar.";
+
+        DWORD received = 0;
+        int lastPercent = -1;
+        std::vector<char> buffer(64 * 1024);
+        while (ok)
+        {
+            if (cancel.load())
+            {
+                error = L"Download abgebrochen.";
+                ok = false;
+                break;
+            }
+            DWORD n = 0;
+            if (!InternetReadFile(h.h, buffer.data(), static_cast<DWORD>(buffer.size()), &n))
+            {
+                error = L"Die Verbindung wurde unterbrochen (Fehlercode " + std::to_wstring(GetLastError()) + L").";
+                ok = false;
+                break;
+            }
+            if (n == 0)
+                break;
+            DWORD written = 0;
+            if (!WriteFile(file, buffer.data(), n, &written, nullptr) || written != n)
+            {
+                error = L"Schreiben der Datei fehlgeschlagen (Datenträger voll?).";
+                ok = false;
+                break;
+            }
+            BCryptHashData(hash, reinterpret_cast<PUCHAR>(buffer.data()), n, 0);
+            received += n;
+            const int percent = total > 0 ? static_cast<int>(std::min<unsigned long long>(100ull, static_cast<unsigned long long>(received) * 100 / total)) : 101;
+            if (percent != lastPercent)
+            {
+                lastPercent = percent;
+                if (IsWindow(hwnd))
+                    PostMessageW(hwnd, WM_DL_PROGRESS, static_cast<WPARAM>(percent), static_cast<LPARAM>(index));
+            }
+        }
+        CloseHandle(file);
+
+        if (ok)
+        {
+            unsigned char digest[32] = {};
+            if (BCryptFinishHash(hash, digest, sizeof(digest), 0) != 0 || ToHex(digest, sizeof(digest)) != expected)
+            {
+                error = L"Die Prüfsumme der heruntergeladenen Datei stimmt nicht. Die Datei wurde verworfen.";
+                ok = false;
+            }
+            else if (received < 100 * 1024 || (total > 0 && received != total))
+            {
+                error = L"Der Download ist unvollständig.";
+                ok = false;
+            }
+        }
+        if (hash)
+            BCryptDestroyHash(hash);
+        if (alg)
+            BCryptCloseAlgorithmProvider(alg, 0);
+
+        if (ok && !MoveFileExW(tmp.c_str(), dest.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            error = L"Die Datei konnte nicht abgelegt werden (läuft sie gerade?):\n" + dest;
+            ok = false;
+        }
+        if (!ok)
+            DeleteFileW(tmp.c_str());
+        return ok;
+    }
+}
+
 struct Tool
 {
     const wchar_t* exe;
@@ -139,6 +334,9 @@ struct Tool
     std::wstring path;      // gefundener Pfad (leer = nicht gefunden)
     std::vector<std::wstring> searched;
     RECT rect{};
+    const wchar_t* downloadBase = nullptr;   // GitHub-Release-Adresse; nullptr = kein Download moeglich
+    bool downloading = false;
+    int progress = 0;                        // 0..100, 101 = unbekannt
 };
 
 class SuiteWindow
@@ -164,6 +362,8 @@ private:
     void OpenToolsFolder();
     void ShowModal(const std::wstring& title, const std::wstring& text);
     void SetNote(const std::wstring& text);
+    void StartDownload(int index);
+    std::wstring InstallDir(const Tool& t) const;
 
     HWND m_hwnd = nullptr;
     UINT m_dpi = 96;
@@ -173,7 +373,8 @@ private:
     Tool m_tools[2] = {
         { L"DuncansTidy.exe", L"Duncan's Tidy",
           L"System-Reinigung & Datenmüll-Beseitigung. Räumt Downloads, temporäre Dateien und Browser-Caches auf.",
-          CategoryIcon::Broom, RGB(251, 191, 36), {}, {}, {} },
+          CategoryIcon::Broom, RGB(251, 191, 36), {}, {}, {},
+          L"https://github.com/Neox365/Duncans-Tidy-ToolSet/releases/latest/download/" },
         { L"DuncansDriverUpdater.exe", L"Duncan's Driver Updater",
           L"Hardware- & Treiber-Manager. Liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.",
           CategoryIcon::Cpu, RGB(64, 156, 255), {}, {}, {} },
@@ -184,6 +385,10 @@ private:
     int  m_press = -1;
     bool m_tracking = false;
     std::wstring m_note;
+
+    std::thread m_dlThread;
+    std::atomic<bool> m_dlCancel{ false };
+    std::wstring m_dlMessage;   // Fehlertext des letzten Downloads (vom Worker gesetzt, vor WM_DL_DONE)
 
     bool m_modal = false;
     std::wstring m_modalTitle, m_modalText;
@@ -329,11 +534,16 @@ void SuiteWindow::DrawCard(HDC dc, int index)
     DrawCategoryTile(dc, tile, t.icon, t.color, fill);
 
     // Status-Chip + Starten-Pille
-    const std::wstring status = found ? L"Installiert" : L"Nicht gefunden";
-    const COLORREF statusColor = found ? kGreen : kOrange;
+    const bool downloading = t.downloading;
+    const bool canDownload = !found && t.downloadBase != nullptr;
+    const std::wstring status = found ? L"Installiert" : (downloading ? L"Wird geladen" : L"Nicht installiert");
+    const COLORREF statusColor = found ? kGreen : (downloading ? kAccent : kOrange);
     const int chipW = TextWidth(dc, m_fontSmall, status) + S(34);
-    const std::wstring go = L"Starten";
-    const int goW = TextWidth(dc, m_fontBody, go) + S(44);
+    std::wstring go = found ? L"Starten" : (canDownload ? L"Herunterladen" : L"Starten");
+    if (downloading)
+        go = t.progress <= 100 ? L"Lade herunter … " + std::to_wstring(t.progress) + L" %" : L"Lade herunter …";
+    // Breite fuer den laengsten Text reservieren, damit die Pille beim Laden nicht springt
+    const int goW = std::max(TextWidth(dc, m_fontBody, go), TextWidth(dc, m_fontBody, canDownload || downloading ? L"Lade herunter … 100 %" : go)) + S(44);
 
     int textLeft, textTop, textRight = rc.right - pad;
     if (compact)
@@ -379,10 +589,22 @@ void SuiteWindow::DrawCard(HDC dc, int index)
     DrawLabel(dc, m_fontSmall, statusColor, { chip.left + S(20), chip.top + S(4), chip.right, chip.bottom }, status, DT_CENTER);
 
     RECT goRc{ rc.right - pad - goW, compact ? rc.bottom - pad - btnH : bottomRow, rc.right - pad, (compact ? rc.bottom - pad - btnH : bottomRow) + btnH };
-    COLORREF goFill = found ? (pressed ? Blend(kAccent, RGB(0, 0, 0), 25) : (hover ? Blend(kAccent, RGB(255, 255, 255), 14) : kAccent))
-                            : Blend(fill, RGB(255, 255, 255), hover ? 14 : 6);
-    FillRound(dc, goRc, S(12), goFill, found ? goFill : kBorder);
-    DrawLabel(dc, m_fontBody, found ? RGB(8, 20, 36) : kTextDim, { goRc.left, goRc.top + S(8), goRc.right, goRc.bottom }, go, DT_CENTER);
+    const bool enabled = (found || canDownload) && !downloading;
+    COLORREF goFill = enabled ? (pressed ? Blend(kAccent, RGB(0, 0, 0), 25) : (hover ? Blend(kAccent, RGB(255, 255, 255), 14) : kAccent))
+                              : Blend(fill, RGB(255, 255, 255), hover ? 14 : 6);
+    FillRound(dc, goRc, S(12), goFill, enabled ? goFill : kBorder);
+    if (downloading && t.progress <= 100)
+    {
+        // Fortschritt: Pille von links mit Akzentfarbe fuellen
+        RECT part = goRc;
+        part.right = goRc.left + (goRc.right - goRc.left) * t.progress / 100;
+        SaveDC(dc);
+        IntersectClipRect(dc, part.left, part.top, part.right, part.bottom);
+        FillRound(dc, goRc, S(12), Blend(fill, kAccent, 55), Blend(fill, kAccent, 55));
+        RestoreDC(dc, -1);
+    }
+    DrawLabel(dc, m_fontBody, enabled ? RGB(8, 20, 36) : (downloading ? kText : kTextDim),
+              { goRc.left, goRc.top + S(8), goRc.right, goRc.bottom }, go, DT_CENTER);
 }
 
 void SuiteWindow::Draw(HDC dc, int w, int h)
@@ -479,6 +701,16 @@ void SuiteWindow::Launch(int index)
 {
     FindTools();   // der Nutzer kann inzwischen installiert haben
     const Tool& t = m_tools[index];
+    if (t.downloading)
+    {
+        SetNote(std::wstring(t.title) + L" wird gerade heruntergeladen …");
+        return;
+    }
+    if (t.path.empty() && t.downloadBase)
+    {
+        StartDownload(index);   // nicht installiert: Ein-Klick-Installation von GitHub
+        return;
+    }
     if (t.path.empty())
     {
         std::wstring text = std::wstring(t.title) + L" wurde nicht gefunden. Gesucht wurde in:\n";
@@ -510,6 +742,43 @@ void SuiteWindow::Launch(int index)
         SetNote(L"Start abgebrochen");
     else
         ShowModal(L"Start fehlgeschlagen", std::wstring(t.title) + L" konnte nicht gestartet werden (Fehlercode " + std::to_wstring(GetLastError()) + L").\n\n" + t.path);
+}
+
+std::wstring SuiteWindow::InstallDir(const Tool& t) const
+{
+    // Standard-Installationsordner von Tidy: %LOCALAPPDATA%\DuncansTidy (kein Admin noetig, wird beim Suchen mit erfasst)
+    std::wstring stem = t.exe;
+    const size_t dot = stem.find_last_of(L'.');
+    if (dot != std::wstring::npos)
+        stem.erase(dot);
+    return LocalAppData() + L"\\" + stem;
+}
+
+void SuiteWindow::StartDownload(int index)
+{
+    Tool& t = m_tools[index];
+    if (m_dlThread.joinable())
+        m_dlThread.join();   // vorheriger, beendeter Download
+    if (LocalAppData().empty())
+    {
+        ShowModal(L"Download nicht möglich", L"Der Ordner %LOCALAPPDATA% ist nicht verfügbar.");
+        return;
+    }
+    t.downloading = true;
+    t.progress = 0;
+    m_dlCancel = false;
+    const std::wstring base = t.downloadBase, exe = t.exe, dir = InstallDir(t);
+    const HWND hwnd = m_hwnd;
+    m_dlThread = std::thread([this, hwnd, index, base, exe, dir]()
+    {
+        std::wstring error;
+        const bool ok = DownloadVerified(hwnd, index, base, exe, dir, m_dlCancel, error);
+        m_dlMessage = error;   // vor PostMessage gesetzt, danach vom UI-Thread gelesen
+        if (IsWindow(hwnd))
+            PostMessageW(hwnd, WM_DL_DONE, ok ? 1 : 0, static_cast<LPARAM>(index));
+    });
+    SetNote(std::wstring(t.title) + L" wird heruntergeladen …");
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void SuiteWindow::OpenToolsFolder()
@@ -659,7 +928,34 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         m_note.clear();
         InvalidateRect(m_hwnd, &m_footer, FALSE);
         return 0;
+    case WM_DL_PROGRESS:
+        if (lp >= 0 && lp < 2)
+        {
+            m_tools[lp].progress = static_cast<int>(wp);
+            InvalidateRect(m_hwnd, &m_tools[lp].rect, FALSE);
+        }
+        return 0;
+    case WM_DL_DONE:
+    {
+        if (m_dlThread.joinable())
+            m_dlThread.join();
+        const int index = static_cast<int>(lp);
+        if (index >= 0 && index < 2)
+        {
+            m_tools[index].downloading = false;
+            FindTools();   // Button wechselt automatisch von "Herunterladen" auf "Starten"
+            if (wp)
+                SetNote(std::wstring(m_tools[index].title) + L" wurde installiert");
+            else
+                ShowModal(L"Download fehlgeschlagen", m_dlMessage.empty() ? std::wstring(L"Unbekannter Fehler.") : m_dlMessage);
+        }
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+    }
     case WM_DESTROY:
+        m_dlCancel = true;
+        if (m_dlThread.joinable())
+            m_dlThread.join();
         DestroyFonts();
         IconsShutdown();
         PostQuitMessage(0);

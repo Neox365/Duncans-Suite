@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DuncansDriverUpdater VERSION 1.0.1 LANGUAGES CXX RC)
+project(DuncansDriverUpdater VERSION 1.0.2 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -66,4 +66,4 @@ else()
     target_compile_options(DuncansSuite PRIVATE -Wall -Wextra)
     target_link_options(DuncansSuite PRIVATE -municode -mwindows -static)
 endif()
-target_link_libraries(DuncansSuite PRIVATE user32 gdi32 shell32 shlwapi ole32 dwmapi gdiplus)
+target_link_libraries(DuncansSuite PRIVATE user32 gdi32 shell32 shlwapi ole32 dwmapi gdiplus wininet bcrypt)
