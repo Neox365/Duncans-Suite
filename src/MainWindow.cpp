@@ -478,7 +478,11 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         if (m_splashHwnd)
             DestroyWindow(m_splashHwnd);
         m_scanner.Cancel();
-    m_updater.Cancel();
+        // Eine laufende Windows-Update-Suche laesst sich nicht abbrechen; sie nur zu beenden (Join) wuerde das
+        // Schliessen lange blockieren. Reine Suche (kein Installieren) darf der Prozess hart beenden.
+        if (m_updater.IsRunning() && !m_installer.IsRunning())
+            ExitProcess(0);
+        m_updater.Cancel();
         PostQuitMessage(0);
         return 0;
     default:
