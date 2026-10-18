@@ -16,6 +16,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <winver.h>
 #include <wininet.h>
 #include <windowsx.h>
 
@@ -42,7 +43,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.7"
+#define SUITE_VERSION L"1.1.8"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -147,6 +148,8 @@ namespace
         bool autostart = false;       // Suite mit Windows starten
         bool trayOnClose = false;     // X = in den Infobereich minimieren statt beenden
         bool trayOnLaunch = false;    // nach dem Start eines Programms in den Infobereich minimieren
+        bool ctxPdf = false;          // Explorer-Kontextmenue "Mit Duncan's PDF oeffnen" (Registry ist die Wahrheit)
+        bool ctxTidy = false;         // Explorer-Kontextmenue "Mit Duncan's Tidy analysieren"
         std::wstring downloadDir;     // leer = Standard (%LOCALAPPDATA%\DuncansSuite\update)
     };
 
@@ -196,6 +199,10 @@ namespace
         return rc == ERROR_SUCCESS;
     }
 
+    bool VerbExists(const wchar_t* verbKey);   // weiter unten (Explorer-Kontextmenue)
+    extern const wchar_t* kPdfVerb;
+    extern const wchar_t* kTidyVerbs[2];
+
     Settings LoadSettings()
     {
         Settings s;
@@ -211,6 +218,8 @@ namespace
                 s.downloadDir = dir;
         }
         s.autostart = IsAutostartEnabled();   // die Registry ist die Wahrheit, nicht die INI
+        s.ctxPdf = VerbExists(kPdfVerb);
+        s.ctxTidy = VerbExists(kTidyVerbs[0]) && VerbExists(kTidyVerbs[1]);
         return s;
     }
 
@@ -225,6 +234,189 @@ namespace
                WritePrivateProfileStringW(L"Allgemein", L"TrayBeimProgrammstart", s.trayOnLaunch ? L"1" : L"0", ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"DownloadOrdner", s.downloadDir.c_str(), ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"Autostart", s.autostart ? L"1" : L"0", ini.c_str());
+    }
+
+    // ---- Explorer-Kontextmenue (HKCU\Software\Classes, ohne Administrator-Rechte) -------------
+    const wchar_t* kPdfVerb = L"Software\\Classes\\SystemFileAssociations\\.pdf\\shell\\DuncansPdf";
+    const wchar_t* kTidyVerbs[2] = { L"Software\\Classes\\Directory\\shell\\DuncansTidy", L"Software\\Classes\\Drive\\shell\\DuncansTidy" };
+
+    bool SetRegString(const std::wstring& key, const wchar_t* name, const std::wstring& value)
+    {
+        HKEY k = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, key.c_str(), 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) != ERROR_SUCCESS)
+            return false;
+        const LONG rc = RegSetValueExW(k, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()),
+                                       static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+        RegCloseKey(k);
+        return rc == ERROR_SUCCESS;
+    }
+
+    bool VerbExists(const wchar_t* verbKey)
+    {
+        HKEY k = nullptr;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, verbKey, 0, KEY_READ, &k) != ERROR_SUCCESS)
+            return false;
+        RegCloseKey(k);
+        return true;
+    }
+
+    bool RegisterVerb(const wchar_t* verbKey, const wchar_t* label, const std::wstring& icon, const std::wstring& command)
+    {
+        const std::wstring key = verbKey;
+        return SetRegString(key, nullptr, label) && SetRegString(key, L"Icon", icon) && SetRegString(key + L"\\command", nullptr, command);
+    }
+
+    // Entfernt nur den eigenen Verb-Schluessel (feste Pfade oben, nichts davon kommt von aussen).
+    bool UnregisterVerb(const wchar_t* verbKey)
+    {
+        const LONG rc = RegDeleteTreeW(HKEY_CURRENT_USER, verbKey);
+        return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND;
+    }
+
+    std::wstring SelfPath()
+    {
+        wchar_t p[MAX_PATH * 2] = {};
+        GetModuleFileNameW(nullptr, p, MAX_PATH * 2);
+        return p;
+    }
+
+    // Programm im Ordner der Suite oder im Standard-Installationsordner suchen (wie die Karten); leer = nicht gefunden
+    std::wstring FindExeFile(const wchar_t* exeName, const wchar_t* installFolder)
+    {
+        const std::wstring own = ExeDir() + L"\\" + exeName;
+        if (FileExists(own))
+            return own;
+        const std::wstring local = LocalAppData();
+        if (!local.empty())
+        {
+            const std::wstring inst = local + L"\\" + installFolder + L"\\" + exeName;
+            if (FileExists(inst))
+                return inst;
+        }
+        return std::wstring();
+    }
+
+    // Legt die Eintraege an oder entfernt sie. Gibt Probleme als Text zurueck (leer = alles gut).
+    std::wstring ApplyContextMenus(bool pdf, bool tidy)
+    {
+        std::wstring problems;
+        if (pdf)
+        {
+            const std::wstring exe = FindExeFile(L"DuncansPdf.exe", L"DuncansPdf");
+            if (exe.empty())
+                problems += L"Der PDF Reader wurde nicht gefunden – das PDF-Kontextmenü wurde nicht eingerichtet.\n";
+            else if (!RegisterVerb(kPdfVerb, L"Mit Duncan's PDF öffnen", L"\"" + exe + L"\",0", L"\"" + exe + L"\" \"%1\""))
+                problems += L"Das PDF-Kontextmenü konnte nicht eingerichtet werden.\n";
+        }
+        else if (!UnregisterVerb(kPdfVerb))
+            problems += L"Das PDF-Kontextmenü konnte nicht entfernt werden.\n";
+
+        if (tidy)
+        {
+            // Der Aufruf geht ueber die Suite (--tidy-analyze): sie prueft, ob ein passendes Tidy installiert ist, bevor sie es startet
+            const std::wstring self = SelfPath();
+            const std::wstring tidyExe = FindExeFile(L"DuncansTidy.exe", L"DuncansTidy");
+            const std::wstring icon = L"\"" + (tidyExe.empty() ? self : tidyExe) + L"\",0";
+            const std::wstring cmd = L"\"" + self + L"\" --tidy-analyze \"%1\"";
+            for (const wchar_t* key : kTidyVerbs)
+                if (!RegisterVerb(key, L"Mit Duncan's Tidy analysieren", icon, cmd))
+                {
+                    problems += L"Das Tidy-Kontextmenü konnte nicht eingerichtet werden.\n";
+                    break;
+                }
+        }
+        else
+            for (const wchar_t* key : kTidyVerbs)
+                if (!UnregisterVerb(key))
+                {
+                    problems += L"Das Tidy-Kontextmenü konnte nicht entfernt werden.\n";
+                    break;
+                }
+        return problems;
+    }
+
+    // Beim Start: bestehende Eintraege auf den aktuellen Programmpfad bringen (Suite verschoben/aktualisiert); entfernt nichts
+    void RefreshContextMenus()
+    {
+        if (VerbExists(kPdfVerb))
+        {
+            const std::wstring exe = FindExeFile(L"DuncansPdf.exe", L"DuncansPdf");
+            if (!exe.empty())
+                RegisterVerb(kPdfVerb, L"Mit Duncan's PDF öffnen", L"\"" + exe + L"\",0", L"\"" + exe + L"\" \"%1\"");
+        }
+        if (VerbExists(kTidyVerbs[0]) || VerbExists(kTidyVerbs[1]))
+        {
+            const std::wstring self = SelfPath();
+            const std::wstring tidyExe = FindExeFile(L"DuncansTidy.exe", L"DuncansTidy");
+            const std::wstring icon = L"\"" + (tidyExe.empty() ? self : tidyExe) + L"\",0";
+            const std::wstring cmd = L"\"" + self + L"\" --tidy-analyze \"%1\"";
+            for (const wchar_t* key : kTidyVerbs)
+                RegisterVerb(key, L"Mit Duncan's Tidy analysieren", icon, cmd);
+        }
+    }
+
+    // Ist die Datei mindestens Version major.minor.patch? (Datei-Versionsinfo)
+    bool FileVersionAtLeast(const std::wstring& path, int major, int minor, int patch, std::wstring* found = nullptr)
+    {
+        DWORD ignored = 0;
+        const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &ignored);
+        if (size == 0)
+            return false;
+        std::vector<char> data(size);
+        VS_FIXEDFILEINFO* info = nullptr;
+        UINT len = 0;
+        if (!GetFileVersionInfoW(path.c_str(), 0, size, data.data()) || !VerQueryValueW(data.data(), L"\\", reinterpret_cast<LPVOID*>(&info), &len) || !info)
+            return false;
+        const int a = HIWORD(info->dwFileVersionMS), b = LOWORD(info->dwFileVersionMS), c = HIWORD(info->dwFileVersionLS);
+        if (found)
+            *found = std::to_wstring(a) + L"." + std::to_wstring(b) + L"." + std::to_wstring(c);
+        if (a != major)
+            return a > major;
+        if (b != minor)
+            return b > minor;
+        return c >= patch;
+    }
+
+    // Aufruf aus dem Explorer-Kontextmenue: "DuncansSuite.exe --tidy-analyze "<Ordner>"". rest = Text hinter dem Schalter.
+    int RunTidyAnalyze(std::wstring rest)
+    {
+        // Pfad von Hand aus der Kommandozeile lesen: ein Laufwerk ("C:\") ergibt in Anfuehrungszeichen sonst "C:\" und verschluckt das Ende
+        while (!rest.empty() && rest.front() == L' ')
+            rest.erase(rest.begin());
+        if (!rest.empty() && rest.front() == L'"')
+            rest.erase(rest.begin());
+        while (!rest.empty() && (rest.back() == L' ' || rest.back() == L'"'))
+            rest.pop_back();
+        while (rest.size() > 3 && (rest.back() == L'\\' || rest.back() == L'/'))
+            rest.pop_back();
+        if (rest.size() == 3 && rest[1] == L':' && (rest[2] == L'\\' || rest[2] == L'/'))
+            rest.pop_back();   // "C:\" -> "C:" (Laufwerk)
+        const bool drive = rest.size() == 2 && rest[1] == L':';
+        const DWORD attr = rest.empty() || rest.size() > 32000 ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(drive ? (rest + L"\\").c_str() : rest.c_str());
+        if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY))
+        {
+            MessageBoxW(nullptr, L"Dieser Ordner wurde nicht gefunden oder ist nicht lesbar.", L"Duncan's Suite", MB_ICONWARNING | MB_OK);
+            return 1;
+        }
+        const std::wstring tidy = FindExeFile(L"DuncansTidy.exe", L"DuncansTidy");
+        if (tidy.empty())
+        {
+            if (MessageBoxW(nullptr, L"Duncan's Tidy ist nicht installiert.\n\nDie Suite öffnen, um es mit einem Klick herunterzuladen?", L"Duncan's Suite",
+                            MB_ICONINFORMATION | MB_YESNO) == IDYES)
+                ShellExecuteW(nullptr, L"open", SelfPath().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            return 1;
+        }
+        std::wstring version;
+        if (!FileVersionAtLeast(tidy, 1, 1, 4, &version))
+        {
+            MessageBoxW(nullptr, (L"Die installierte Version von Duncan's Tidy (" + (version.empty() ? std::wstring(L"unbekannt") : version) +
+                                  L") kann noch keine Ordner analysieren.\n\nBitte Tidy auf Version 1.1.4 oder neuer aktualisieren (Tidy: Update im Programm, oder GitHub-Release).").c_str(),
+                        L"Duncan's Suite", MB_ICONINFORMATION | MB_OK);
+            return 1;
+        }
+        const std::wstring params = L"--analyze \"" + rest + L"\"";
+        const std::wstring dir = tidy.substr(0, tidy.find_last_of(L"\\/"));
+        return reinterpret_cast<INT_PTR>(ShellExecuteW(nullptr, L"open", tidy.c_str(), params.c_str(), dir.c_str(), SW_SHOWNORMAL)) > 32 ? 0 : 1;
     }
 
     // Ordnerauswahl; leer = abgebrochen.
@@ -843,7 +1035,7 @@ private:
     Settings m_draft;             // Entwurf im offenen Dialog
     bool m_settingsOpen = false;
     HFONT m_fontSym = nullptr;
-    RECT m_gearRect{}, m_chkAuto{}, m_chkStart{}, m_chkTrayClose{}, m_chkTrayLaunch{}, m_btnPick{}, m_btnReset{}, m_btnSave{}, m_btnCancel{};
+    RECT m_gearRect{}, m_chkAuto{}, m_chkStart{}, m_chkTrayClose{}, m_chkTrayLaunch{}, m_chkCtxPdf{}, m_chkCtxTidy{}, m_btnPick{}, m_btnReset{}, m_btnSave{}, m_btnCancel{};
 
     // Infobereich (Tray): Symbol neben der Uhr, Kontextmenue, Quick Clean, Benachrichtigung
     static constexpr UINT kTrayMsg = WM_APP + 10;     // Rueckmeldungen des Tray-Symbols
@@ -1248,38 +1440,40 @@ void SuiteWindow::DrawSettings(HDC dc, int w, int h)
 {
     FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
 
-    const int pad = S(26);
+    // kompakt gehalten, damit der Dialog auch im kleinsten Fenster (560 px Hoehe) passt
+    const int pad = S(20);
     const int boxW = std::min(S(560), w - S(40));
-    const int inner = boxW - 2 * pad;
-    const int titleH = S(30), btnH = S(38), rowH = S(46), gap = S(8);
-    const int folderH = S(24) + S(18) + S(12) + btnH;
-    const int boxH = pad + titleH + S(18) + 4 * rowH + 3 * gap + S(16) + folderH + S(26) + btnH + pad;
+    const int titleH = S(30), btnH = S(38), rowH = S(40), gap = S(6);
+    const int folderH = S(24) + S(18);
+    const int boxH = pad + titleH + S(14) + 6 * rowH + 5 * gap + S(12) + folderH + S(18) + btnH + pad;
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
 
     DrawShadow(dc, box, S(18), static_cast<int>(m_dpi));
     DrawPanelAA(dc, box, S(18), RGB(27, 29, 36), kBorder);
     DrawLabel(dc, m_fontHeading, kText, { box.left + pad, box.top + pad + S(3), box.right - pad, box.top + pad + titleH }, L"Einstellungen");
 
-    int y = box.top + pad + titleH + S(18);
-    m_chkAuto = { box.left + pad, y, box.right - pad, y + rowH };
-    DrawCheck(dc, m_chkAuto, m_draft.autoCheck, m_hover == 7, L"Beim Start nach Updates suchen", L"Prüft beim Öffnen automatisch, ob eine neue Suite-Version vorliegt.");
-    y += rowH + gap;
-    m_chkStart = { box.left + pad, y, box.right - pad, y + rowH };
-    DrawCheck(dc, m_chkStart, m_draft.autostart, m_hover == 8, L"Mit Windows starten", L"Startet die Suite bei der Anmeldung automatisch (nur für dein Konto).");
-    y += rowH + gap;
-    m_chkTrayClose = { box.left + pad, y, box.right - pad, y + rowH };
-    DrawCheck(dc, m_chkTrayClose, m_draft.trayOnClose, m_hover == 13, L"Beim Schließen in den Infobereich minimieren", L"Das X versteckt die Suite neben der Uhr, statt sie zu beenden.");
-    y += rowH + gap;
-    m_chkTrayLaunch = { box.left + pad, y, box.right - pad, y + rowH };
-    DrawCheck(dc, m_chkTrayLaunch, m_draft.trayOnLaunch, m_hover == 14, L"Nach dem Start eines Programms minimieren", L"Die Suite zieht sich nach dem Starten in den Infobereich zurück.");
-    y += rowH + S(16);
+    int y = box.top + pad + titleH + S(14);
+    auto row = [&](RECT& rc, bool on, int id, const wchar_t* label, const wchar_t* hint)
+    {
+        rc = { box.left + pad, y, box.right - pad, y + rowH };
+        DrawCheck(dc, rc, on, m_hover == id, label, hint);
+        y += rowH + gap;
+    };
+    row(m_chkAuto, m_draft.autoCheck, 7, L"Beim Start nach Updates suchen", L"Prüft beim Öffnen, ob eine neue Suite-Version vorliegt.");
+    row(m_chkStart, m_draft.autostart, 8, L"Mit Windows starten", L"Startet die Suite bei der Anmeldung (nur für dein Konto).");
+    row(m_chkTrayClose, m_draft.trayOnClose, 13, L"Beim Schließen in den Infobereich minimieren", L"Das X versteckt die Suite neben der Uhr, statt sie zu beenden.");
+    row(m_chkTrayLaunch, m_draft.trayOnLaunch, 14, L"Nach dem Start eines Programms minimieren", L"Die Suite zieht sich nach dem Starten in den Infobereich zurück.");
+    row(m_chkCtxPdf, m_draft.ctxPdf, 15, L"Explorer-Kontextmenü für PDFs aktivieren", L"Rechtsklick auf eine PDF: „Mit Duncan's PDF öffnen“.");
+    row(m_chkCtxTidy, m_draft.ctxTidy, 16, L"Explorer-Kontextmenü für Tidy-Analyse aktivieren", L"Rechtsklick auf Ordner/Laufwerk: „Mit Duncan's Tidy analysieren“.");
+    y += S(12) - gap;
 
-    DrawLabel(dc, m_fontBody, kText, { box.left + pad, y, box.right - pad, y + S(24) }, L"Download-Ordner für Update-Installer");
+    // Download-Ordner: Text links, die beiden Knoepfe rechts daneben
+    const int bsm = S(100);
+    m_btnReset = { box.right - pad - bsm, y, box.right - pad, y + folderH };
+    m_btnPick = { m_btnReset.left - S(8) - bsm, y, m_btnReset.left - S(8), y + folderH };
+    DrawLabel(dc, m_fontBody, kText, { box.left + pad, y, m_btnPick.left - S(10), y + S(24) }, L"Download-Ordner für Update-Installer");
     const std::wstring dirText = m_draft.downloadDir.empty() ? L"Standard (%LOCALAPPDATA%\\DuncansSuite\\update)" : m_draft.downloadDir;
-    DrawLabel(dc, m_fontSmall, kTextDim, { box.left + pad, y + S(24), box.right - pad, y + S(24) + S(18) }, dirText, DT_LEFT | DT_PATH_ELLIPSIS);
-    y += S(24) + S(18) + S(12);
-    m_btnPick = { box.left + pad, y, box.left + pad + S(120), y + btnH };
-    m_btnReset = { m_btnPick.right + S(10), y, m_btnPick.right + S(10) + S(120), y + btnH };
+    DrawLabel(dc, m_fontSmall, kTextDim, { box.left + pad, y + S(24), m_btnPick.left - S(10), y + S(24) + S(18) }, dirText, DT_LEFT | DT_PATH_ELLIPSIS);
     DrawButton(dc, m_btnPick, false, m_hover == 9, m_press == 9 && m_hover == 9, L"Ändern …");
     DrawButton(dc, m_btnReset, false, m_hover == 10, m_press == 10 && m_hover == 10, L"Standard");
 
@@ -1288,7 +1482,6 @@ void SuiteWindow::DrawSettings(HDC dc, int w, int h)
     m_btnCancel = { m_btnSave.left - S(10) - bw, m_btnSave.top, m_btnSave.left - S(10), m_btnSave.bottom };
     DrawButton(dc, m_btnCancel, false, m_hover == 12, m_press == 12 && m_hover == 12, L"Abbrechen");
     DrawButton(dc, m_btnSave, true, m_hover == 11, m_press == 11 && m_hover == 11, L"Speichern");
-    (void)inner;
 }
 
 void SuiteWindow::OpenSettings()
@@ -1311,6 +1504,15 @@ void SuiteWindow::CloseSettings(bool save)
         {
             problems += L"Der Autostart konnte nicht geändert werden.\n";
             m_draft.autostart = IsAutostartEnabled();
+        }
+        {
+            // Explorer-Kontextmenue (HKCU, kein Admin): nur anfassen, wenn sich etwas geaendert hat
+            if (m_draft.ctxPdf != m_settings.ctxPdf || m_draft.ctxTidy != m_settings.ctxTidy)
+            {
+                problems += ApplyContextMenus(m_draft.ctxPdf, m_draft.ctxTidy);
+                m_draft.ctxPdf = VerbExists(kPdfVerb);                                          // tatsaechlichen Stand uebernehmen
+                m_draft.ctxTidy = VerbExists(kTidyVerbs[0]) && VerbExists(kTidyVerbs[1]);
+            }
         }
         if (!SaveSettings(m_draft))
             problems += L"Die Einstellungen konnten nicht gespeichert werden.\n";
@@ -1779,7 +1981,7 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = PtInRect(&m_modalOk, pt) ? 3 : -1;
     else if (m_settingsOpen)
     {
-        const struct { const RECT* r; int id; } hits[] = { { &m_chkAuto, 7 }, { &m_chkStart, 8 }, { &m_chkTrayClose, 13 }, { &m_chkTrayLaunch, 14 }, { &m_btnPick, 9 },
+        const struct { const RECT* r; int id; } hits[] = { { &m_chkAuto, 7 }, { &m_chkStart, 8 }, { &m_chkTrayClose, 13 }, { &m_chkTrayLaunch, 14 }, { &m_chkCtxPdf, 15 }, { &m_chkCtxTidy, 16 }, { &m_btnPick, 9 },
                                                           { &m_btnReset, 10 }, { &m_btnSave, 11 }, { &m_btnCancel, 12 } };
         for (const auto& hit : hits)
             if (PtInRect(hit.r, pt))
@@ -1828,6 +2030,10 @@ void SuiteWindow::OnClick(int, int)
         m_draft.trayOnClose = !m_draft.trayOnClose;
     else if (pressed == 14)
         m_draft.trayOnLaunch = !m_draft.trayOnLaunch;
+    else if (pressed == 15)
+        m_draft.ctxPdf = !m_draft.ctxPdf;
+    else if (pressed == 16)
+        m_draft.ctxTidy = !m_draft.ctxTidy;
     else if (pressed == 9)
     {
         const std::wstring dir = PickFolder(m_hwnd, m_draft.downloadDir);
@@ -1919,6 +2125,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         }
         m_taskbarMsg = RegisterWindowMessageW(L"TaskbarCreated");
         AddTrayIcon();
+        RefreshContextMenus();   // vorhandene Kontextmenue-Eintraege auf den aktuellen Pfad bringen
         return 0;
     }
     case WM_ERASEBKGND:
@@ -2080,6 +2287,14 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
 {
+    {
+        // Explorer-Kontextmenue "Mit Duncan's Tidy analysieren": kein Fenster, nur pruefen und Tidy starten
+        const std::wstring cmd = GetCommandLineW();
+        const wchar_t* flag = L"--tidy-analyze";
+        const size_t pos = cmd.find(flag);
+        if (pos != std::wstring::npos)
+            return RunTidyAnalyze(cmd.substr(pos + wcslen(flag)));
+    }
     SuiteWindow window;
     if (!window.Create(instance, showCommand))
     {

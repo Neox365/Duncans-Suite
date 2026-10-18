@@ -55,6 +55,12 @@ Ein dunkler Dialog mit *Speichern* / *Abbrechen*; gespeichert in `%LOCALAPPDATA%
 - **Download-Ordner für Update-Installer** (Standard: `%LOCALAPPDATA%\DuncansSuite\update`, nur absolute Pfade)
 - **Beim Schließen in den Infobereich minimieren** (das X versteckt die Suite, statt sie zu beenden) und **Nach dem Start eines Programms minimieren** (beide Standard: aus)
 
+- **Explorer-Kontextmenü für PDFs aktivieren:** Rechtsklick auf eine PDF → *Mit Duncan's PDF öffnen*
+- **Explorer-Kontextmenü für Tidy-Analyse aktivieren:** Rechtsklick auf einen Ordner oder ein Laufwerk → *Mit Duncan's Tidy analysieren* (zeigt die 20 größten Dateien, es wird nichts gelöscht)
+
+Die Kontextmenü-Einträge liegen unter `HKEY_CURRENT_USER\Software\Classes` (kein Administrator nötig) und werden beim Ausschalten wieder entfernt. Die Suite frischt sie beim Start auf den aktuellen Programmpfad auf.
+Der Tidy-Eintrag ruft `DuncansSuite.exe --tidy-analyze "<Ordner>"` auf; die Suite prüft, ob Tidy 1.1.4 oder neuer installiert ist, und startet es dann mit `--analyze` (ältere Versionen würden das Argument als Reinigungsmodus missverstehen und werden deshalb nie damit gestartet).
+
 ### Infobereich (Tray)
 
 Solange die Suite läuft, zeigt der Infobereich neben der Uhr ihr Symbol (Klick öffnet das Fenster). Rechtsklick öffnet ein dunkles Menü:
@@ -112,7 +118,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.7.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.8.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DuncansDriverUpdater VERSION 1.1.7 LANGUAGES CXX RC)
+project(DuncansDriverUpdater VERSION 1.1.8 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -66,7 +66,7 @@ else()
     target_compile_options(DuncansSuite PRIVATE -Wall -Wextra)
     target_link_options(DuncansSuite PRIVATE -municode -mwindows -static -s)
 endif()
-target_link_libraries(DuncansSuite PRIVATE psapi advapi32 user32 gdi32 shell32 shlwapi ole32 dwmapi gdiplus wininet bcrypt)
+target_link_libraries(DuncansSuite PRIVATE version psapi advapi32 user32 gdi32 shell32 shlwapi ole32 dwmapi gdiplus wininet bcrypt)
 
 # ---- Duncan's PDF: nativer PDF-Betrachter/-Editor (PDFium wird zur Laufzeit aus pdfium.dll geladen) ----
 add_executable(DuncansPdfReader WIN32
