@@ -27,8 +27,11 @@ struct VendorRelease
     std::wstring url;       // Download-Seite des Herstellers
 };
 
-// Standardwerte + vendor_releases.json (falls vorhanden).
+// Standardwerte, signierte Online-Tabelle (Cache) und vendor_releases.json neben der EXE; je Hersteller gewinnt der neuere Stand.
 std::vector<VendorRelease> LoadVendorReleases();
+
+// Holt im Hintergrund die aktuelle Tabelle von GitHub (nur mit gueltiger Signatur) in den Cache; wirkt ab dem naechsten Laden.
+void RefreshVendorReleasesAsync();
 
 // Markiert Grafikkarten mit aelterem Treiber als UpdateAvailable. Gibt die Anzahl zurueck.
 // Geraete, die bereits ein Windows-Update-Angebot haben (updateId gesetzt), bleiben unveraendert.

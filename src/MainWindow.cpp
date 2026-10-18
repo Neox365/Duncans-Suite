@@ -239,6 +239,7 @@ bool MainWindow::Create(HINSTANCE instance, int showCommand, bool autoInstall)
     BOOL animations = TRUE;
     SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animations, 0);
     m_motion = animations != FALSE;
+    RefreshVendorReleasesAsync();   // aktuelle Hersteller-Tabelle im Hintergrund holen (signiert, zwischengespeichert)
     m_settings.autoScan = ReadFlag(L"AutoScan", false);
     m_settings.splash = ReadFlag(L"StartAnimation", true);
 

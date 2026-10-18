@@ -4,10 +4,20 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <bcrypt.h>
+#include <wininet.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <cwchar>
+#include <thread>
+
+#include "../suite/public_key.inc"   // kSuitePublicKey: dieselbe Signatur wie bei den Suite-Downloads
+
+#ifdef _MSC_VER
+#pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "bcrypt.lib")
+#endif
 
 namespace
 {
@@ -129,24 +139,91 @@ namespace
         return y * 10000 + m * 100 + d;
     }
 
-    void LoadOverrides(std::vector<VendorRelease>& releases)
-    {
-        wchar_t path[MAX_PATH * 2] = {};
-        if (GetModuleFileNameW(nullptr, path, MAX_PATH * 2) == 0)
-            return;
-        std::wstring file = path;
-        const size_t slash = file.find_last_of(L"\\/");
-        file = (slash == std::wstring::npos ? L"" : file.substr(0, slash + 1)) + L"vendor_releases.json";
+    // ---- Online-Tabelle: signierte Kopie von GitHub, lokal zwischengespeichert ----------------
+    const wchar_t* kOnlineJson = L"https://raw.githubusercontent.com/Neox365/Duncans-Suite/main/resources/vendor_releases.json";
+    const wchar_t* kOnlineSig  = L"https://raw.githubusercontent.com/Neox365/Duncans-Suite/main/resources/vendor_releases.json.sig";
 
+    std::wstring CacheDir()
+    {
+        wchar_t buf[MAX_PATH * 2] = {};
+        const DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH * 2);
+        return n > 0 && n < MAX_PATH * 2 ? std::wstring(buf) + L"\\DuncansDriverUpdater" : std::wstring();
+    }
+
+    bool ReadWholeFile(const std::wstring& file, std::string& data, size_t maxBytes)
+    {
         HANDLE h = CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
         if (h == INVALID_HANDLE_VALUE)
-            return;
-        std::string data;
+            return false;
+        data.clear();
         char buffer[4096];
         DWORD read = 0;
-        while (data.size() < (1u << 20) && ReadFile(h, buffer, sizeof(buffer), &read, nullptr) && read > 0)   // max. 1 MB
+        while (data.size() < maxBytes && ReadFile(h, buffer, sizeof(buffer), &read, nullptr) && read > 0)
             data.append(buffer, read);
         CloseHandle(h);
+        return true;
+    }
+
+    bool WriteWholeFile(const std::wstring& file, const std::string& data)
+    {
+        const std::wstring tmp = file + L".tmp";
+        HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE)
+            return false;
+        DWORD written = 0;
+        const bool ok = WriteFile(h, data.data(), static_cast<DWORD>(data.size()), &written, nullptr) && written == data.size();
+        CloseHandle(h);
+        if (!ok || !MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+        {
+            DeleteFileW(tmp.c_str());
+            return false;
+        }
+        return true;
+    }
+
+    // ECDSA-P256-Signatur (64 Byte) ueber SHA-256 der Daten, geprueft gegen den Suite-Schluessel.
+    bool VerifySignature(const std::string& data, const std::string& sig)
+    {
+        if (sig.size() != 64 || data.empty())
+            return false;
+        BCRYPT_ALG_HANDLE sha = nullptr, ecc = nullptr;
+        BCRYPT_KEY_HANDLE key = nullptr;
+        unsigned char digest[32] = {};
+        bool ok = BCryptOpenAlgorithmProvider(&sha, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0 &&
+                  BCryptHash(sha, nullptr, 0, reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())), static_cast<ULONG>(data.size()), digest, sizeof(digest)) == 0 &&
+                  BCryptOpenAlgorithmProvider(&ecc, BCRYPT_ECDSA_P256_ALGORITHM, nullptr, 0) == 0 &&
+                  BCryptImportKeyPair(ecc, nullptr, BCRYPT_ECCPUBLIC_BLOB, &key, const_cast<PUCHAR>(kSuitePublicKey), static_cast<ULONG>(sizeof(kSuitePublicKey)), 0) == 0 &&
+                  BCryptVerifySignature(key, nullptr, digest, sizeof(digest), reinterpret_cast<PUCHAR>(const_cast<char*>(sig.data())), static_cast<ULONG>(sig.size()), 0) == 0;
+        if (key) BCryptDestroyKey(key);
+        if (ecc) BCryptCloseAlgorithmProvider(ecc, 0);
+        if (sha) BCryptCloseAlgorithmProvider(sha, 0);
+        return ok;
+    }
+
+    bool DownloadHttps(HINTERNET session, const wchar_t* url, std::string& out, size_t maxBytes)
+    {
+        out.clear();
+        HINTERNET h = InternetOpenUrlW(session, url, nullptr, 0,
+                                       INTERNET_FLAG_SECURE | INTERNET_FLAG_NO_CACHE_WRITE | INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_UI, 0);
+        if (!h)
+            return false;
+        DWORD status = 0, len = sizeof(status);
+        bool ok = HttpQueryInfoW(h, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER, &status, &len, nullptr) && status == 200;
+        char buf[4096];
+        DWORD n = 0;
+        while (ok && InternetReadFile(h, buf, sizeof(buf), &n) && n > 0)
+        {
+            if (out.size() + n > maxBytes) { ok = false; break; }   // zu gross: verwerfen
+            out.append(buf, n);
+        }
+        InternetCloseHandle(h);
+        return ok && !out.empty();
+    }
+
+    // Ein {...}-Block pro Eintrag; Datum entscheidet, ob ein Eintrag einen vorhandenen ersetzt:
+    // gleicher oder neuerer Stand ersetzt, aelterer nicht (so verdraengt eine veraltete mitgelieferte Datei die Online-Tabelle nie).
+    void ApplyJson(std::string data, std::vector<VendorRelease>& releases)
+    {
         if (data.size() >= 3 && static_cast<unsigned char>(data[0]) == 0xEF)
             data.erase(0, 3);   // UTF-8-BOM
 
@@ -176,10 +253,12 @@ namespace
             CharUpperBuffW(&r.venId[0], static_cast<DWORD>(r.venId.size()));
             r.dateKey = DateKeyFromIso(iso, r.dateText);
 
-            // gleicher Hersteller -> ersetzt den eingebauten Eintrag, sonst neu
+            // gleicher Hersteller -> ersetzt den bisherigen Eintrag nur bei gleichem oder neuerem Datum, sonst neu
             auto it = std::find_if(releases.begin(), releases.end(), [&](const VendorRelease& e) { return e.venId == r.venId; });
             if (it != releases.end())
             {
+                if (r.dateKey < it->dateKey)
+                    continue;
                 if (r.vendor.empty())
                     r.vendor = it->vendor;
                 if (r.url.empty())
@@ -190,13 +269,67 @@ namespace
                 releases.push_back(r);
         }
     }
+
+    // Zwischengespeicherte Online-Tabelle: wird bei jedem Laden erneut gegen die Signatur geprueft.
+    void LoadOnlineCache(std::vector<VendorRelease>& releases)
+    {
+        const std::wstring dir = CacheDir();
+        if (dir.empty())
+            return;
+        std::string json, sig;
+        if (!ReadWholeFile(dir + L"\\vendor_releases_online.json", json, 1u << 17) ||
+            !ReadWholeFile(dir + L"\\vendor_releases_online.json.sig", sig, 64) || !VerifySignature(json, sig))
+            return;
+        ApplyJson(json, releases);
+    }
+
+    // Tabelle neben der EXE (vom Installer mitgeliefert oder von Hand gepflegt)
+    void LoadOverrides(std::vector<VendorRelease>& releases)
+    {
+        wchar_t path[MAX_PATH * 2] = {};
+        if (GetModuleFileNameW(nullptr, path, MAX_PATH * 2) == 0)
+            return;
+        std::wstring file = path;
+        const size_t slash = file.find_last_of(L"\\/");
+        file = (slash == std::wstring::npos ? L"" : file.substr(0, slash + 1)) + L"vendor_releases.json";
+        std::string data;
+        if (ReadWholeFile(file, data, 1u << 20))   // max. 1 MB
+            ApplyJson(data, releases);
+    }
 }
 
 std::vector<VendorRelease> LoadVendorReleases()
 {
+    // Reihenfolge: eingebaut -> Online-Tabelle (Cache) -> Datei neben der EXE; jeweils gewinnt der neuere Stand
     std::vector<VendorRelease> releases = BuiltIn();
+    LoadOnlineCache(releases);
     LoadOverrides(releases);
     return releases;
+}
+
+void RefreshVendorReleasesAsync()
+{
+    std::thread([]()
+    {
+        const std::wstring dir = CacheDir();
+        if (dir.empty())
+            return;
+        HINTERNET session = InternetOpenW(L"DuncansDriverUpdater", INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0);
+        if (!session)
+            return;
+        DWORD timeout = 8000;
+        InternetSetOptionW(session, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+        InternetSetOptionW(session, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+        std::string json, sig;
+        // Nur eine Tabelle mit gueltiger Signatur wird gespeichert; Fehler (offline, GitHub nicht erreichbar) bleiben still
+        if (DownloadHttps(session, kOnlineJson, json, 1u << 17) && DownloadHttps(session, kOnlineSig, sig, 64) && VerifySignature(json, sig))
+        {
+            CreateDirectoryW(dir.c_str(), nullptr);
+            if (WriteWholeFile(dir + L"\\vendor_releases_online.json", json))
+                WriteWholeFile(dir + L"\\vendor_releases_online.json.sig", sig);
+        }
+        InternetCloseHandle(session);
+    }).detach();
 }
 
 int ApplyVendorReleases(std::vector<DriverInfo>& drivers, const std::vector<VendorRelease>& releases)

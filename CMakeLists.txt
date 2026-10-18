@@ -38,7 +38,7 @@ else()
 endif()
 
 # Benoetigte Windows-Bibliotheken
-target_link_libraries(DuncansDriverUpdater PRIVATE setupapi cfgmgr32 user32 gdi32 dwmapi advapi32 shell32 ole32 oleaut32 gdiplus comdlg32 msimg32)
+target_link_libraries(DuncansDriverUpdater PRIVATE setupapi cfgmgr32 user32 gdi32 dwmapi advapi32 shell32 ole32 oleaut32 gdiplus comdlg32 msimg32 wininet bcrypt)
 
 # Default-Hersteller-Tabelle (resources/vendor_releases.json) bei jedem Build neben die EXE kopieren.
 # Dort liest sie die App; der Installer packt genau diese Kopie. Aenderungen daher in resources/ machen.

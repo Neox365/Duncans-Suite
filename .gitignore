@@ -8,3 +8,4 @@ _archiv/
 *.lnk
 .vs/
 pdf/third_party/pdfium.dll
+!resources/vendor_releases.json.sig

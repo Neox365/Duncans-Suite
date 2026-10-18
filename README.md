@@ -66,8 +66,24 @@ steht in `resources/vendor_releases.json` (wird beim Build neben die EXE kopiert
 
 - `version` ist die **Windows-Treiberversion** (`a.b.c.d`, wie im Geräte-Manager). NVIDIA: Release `617.42` entspricht `32.0.16.1742`.
 - Leere `version` = Eintrag inaktiv (AMD ist so vorbelegt, bis eine geprüfte Version eingetragen ist).
-- Die Tabelle veraltet mit jedem neuen Hersteller-Release und muss gepflegt werden. Eine Datei neben der EXE überschreibt die eingebauten Werte.
+- Die Tabelle veraltet mit jedem neuen Hersteller-Release und muss gepflegt werden (siehe unten: Online-Tabelle).
 - Verglichen wird nur innerhalb desselben Treiber-Hauptzweigs (z. B. `32.0.x`), um falschen Alarm bei älteren GPU-Generationen zu vermeiden.
+
+### Online-Tabelle (ohne neues Release aktualisieren)
+
+Der Driver Updater holt beim Start im Hintergrund `resources/vendor_releases.json` samt `vendor_releases.json.sig` aus diesem Repository (GitHub `raw`, Zweig `main`).
+Nur wenn die Signatur (Suite-Schlüssel, wie bei den Downloads) stimmt, wird die Tabelle in `%LOCALAPPDATA%\DuncansDriverUpdater\` zwischengespeichert; beim Laden wird sie erneut geprüft.
+Offline oder bei einem Fehler bleibt es still und es gilt der bisherige Stand. Quellen und Vorrang: eingebaute Werte → Online-Tabelle → Datei neben der EXE; je Hersteller gewinnt der Eintrag mit dem **neueren `date`** (bei gleichem Datum der spätere).
+Eine Änderung wirkt ab dem nächsten Start der App.
+
+Pflege: `resources/vendor_releases.json` anpassen (`version`, `date`, `name`), dann
+
+```powershell
+powershell -File tools\SignVendorTable.ps1
+git add resources/vendor_releases.json resources/vendor_releases.json.sig; git commit; git push
+```
+
+`SignVendorTable.ps1` bringt die Datei auf LF/UTF-8 ohne BOM (genau diese Bytes liefert GitHub aus) und erzeugt die `.sig`.
 
 ## Bauen
 

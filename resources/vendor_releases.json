@@ -1,4 +1,4 @@
-{
+
   "_comment": "Neueste bekannte Hersteller-Treiber fuer den Update-Abgleich der Grafikkarten. 'version' = Windows-Treiberversion (a.b.c.d) wie im Geraete-Manager. Leere 'version' = Eintrag inaktiv. Datei neben DuncansDriverUpdater.exe ablegen; sie ueberschreibt die eingebauten Werte (Abgleich ueber 'ven').",
   "releases": [
     {
