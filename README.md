@@ -21,7 +21,7 @@ Die App benötigt Administratorrechte (UAC-Abfrage beim Start), weil Treiber-Ope
 `DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: zwei Karten starten **Duncan's Tidy** (`DuncansTidy.exe`)
 und den **Driver Updater** (`DuncansDriverUpdater.exe`). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
 `%LOCALAPPDATA%\DuncansTidy`. Ist Tidy nicht installiert, zeigt die Karte „Nicht installiert“ und den Button **Herunterladen**: Ein Klick lädt die neueste `DuncansTidy.exe` per HTTPS von den GitHub-Releases (`Neox365/Duncans-Tidy-ToolSet`) nach `%LOCALAPPDATA%\DuncansTidy`, prüft die SHA-256-Summe aus `DuncansTidy.exe.sha256` und schaltet den Button danach auf „Starten“. Fehlt eine andere EXE, erscheint ein Dark-Dialog mit den durchsuchten Pfaden. Der Footer zeigt die Version
-und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
+und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Banner vereint beide Programme: Der Besen von Tidy fegt eine rote Schmutzspur weg und hinterlässt eine saubere grüne Leiterbahn, der Prüf-Chip des Driver Updaters folgt und hakt die Knoten ab (Start-Animation, danach ruhend). Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
 und ins Startmenü.
 
 ### Automatische Updates der Suite
@@ -67,7 +67,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.3.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `installer\Output\DuncansSuite_Setup_1.0.4.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 

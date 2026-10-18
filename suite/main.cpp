@@ -38,7 +38,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.0.3"
+#define SUITE_VERSION L"1.0.4"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -584,6 +584,16 @@ private:
     UpdateInfo m_upd;
     bool m_updAvailable = false;
     bool m_updDownloading = false;
+    // Start-Animation des Banners (Besen faegt, Chip folgt) und vorgerenderter Banner-Hintergrund
+    float m_introT = 1.0f;
+    ULONGLONG m_introStart = 0;
+    HDC m_bnDc = nullptr;
+    HBITMAP m_bnBmp = nullptr;
+    HGDIOBJ m_bnOld = nullptr;
+    int m_bnW = 0, m_bnH = 0;
+    UINT m_bnDpi = 0;
+    void ReleaseBannerCache();
+
     int  m_updProgress = 0;
     std::wstring m_updInstallerPath;   // fertig geladener Installer (leer = noch nicht geladen)
     RECT m_updateRect{};
@@ -616,6 +626,14 @@ bool SuiteWindow::Create(HINSTANCE instance, int showCommand)
                              S(860), S(600), nullptr, nullptr, instance, this);
     if (!m_hwnd)
         return false;
+    BOOL animations = TRUE;
+    SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &animations, 0);
+    if (animations)
+    {
+        m_introT = 0.0f;
+        m_introStart = GetTickCount64() + 250;
+        SetTimer(m_hwnd, 2, 16, nullptr);
+    }
     ShowWindow(m_hwnd, showCommand);
     UpdateWindow(m_hwnd);
     return true;
@@ -815,8 +833,30 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     SetBkMode(dc, TRANSPARENT);
 
     // Banner
-    DrawBannerPanel(dc, m_banner, S(18), static_cast<int>(m_dpi));
-    DrawScanScene(dc, m_banner, 0.62f, 0, static_cast<int>(m_dpi), false);
+    if (RectVisible(dc, &m_banner))
+    {
+        // Panel samt Schatten nur bei Groessen-/DPI-Aenderung neu rendern, sonst kopieren
+        const int mg = S(16);
+        const int bw = m_banner.right - m_banner.left, bh = m_banner.bottom - m_banner.top;
+        if (!m_bnDc || m_bnW != bw || m_bnH != bh || m_bnDpi != m_dpi)
+        {
+            ReleaseBannerCache();
+            m_bnDc = CreateCompatibleDC(dc);
+            m_bnBmp = CreateCompatibleBitmap(dc, bw + 2 * mg, bh + 2 * mg);
+            m_bnOld = SelectObject(m_bnDc, m_bnBmp);
+            RECT whole{ 0, 0, bw + 2 * mg, bh + 2 * mg };
+            HBRUSH back = CreateSolidBrush(kBackground);
+            FillRect(m_bnDc, &whole, back);
+            DeleteObject(back);
+            DrawBannerPanel(m_bnDc, RECT{ mg, mg, mg + bw, mg + bh }, S(18), static_cast<int>(m_dpi));
+            m_bnW = bw;
+            m_bnH = bh;
+            m_bnDpi = m_dpi;
+        }
+        BitBlt(dc, m_banner.left - mg, m_banner.top - mg, bw + 2 * mg, bh + 2 * mg, m_bnDc, 0, 0, SRCCOPY);
+        // ein gemeinsamer Banner fuer beide Programme: Besen (Tidy) + Pruef-Chip (Driver Updater)
+        DrawSuiteScene(dc, m_banner, m_introT, static_cast<int>(m_dpi));
+    }
     const int iconSize = S(48);
     if (m_icon)
         DrawIconEx(dc, m_banner.left + S(24), m_banner.top + S(16), m_icon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
@@ -853,8 +893,10 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
                   { m_updateRect.left, m_updateRect.top + S(9), m_updateRect.right, m_updateRect.bottom }, label, DT_CENTER);
     }
 
-    DrawCard(dc, 0);
-    DrawCard(dc, 1);
+    if (RectVisible(dc, &m_tools[0].rect))
+        DrawCard(dc, 0);
+    if (RectVisible(dc, &m_tools[1].rect))
+        DrawCard(dc, 1);
 
     // Footer: Version links, Hinweis in der Mitte, Ordner-Button rechts
     DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(120), m_footer.bottom },
@@ -922,6 +964,20 @@ void SuiteWindow::SetNote(const std::wstring& text)
     m_note = text;
     SetTimer(m_hwnd, 1, 3200, nullptr);
     InvalidateRect(m_hwnd, &m_footer, FALSE);
+}
+
+void SuiteWindow::ReleaseBannerCache()
+{
+    if (m_bnDc)
+    {
+        SelectObject(m_bnDc, m_bnOld);
+        DeleteObject(m_bnBmp);
+        DeleteDC(m_bnDc);
+    }
+    m_bnDc = nullptr;
+    m_bnBmp = nullptr;
+    m_bnOld = nullptr;
+    m_bnW = m_bnH = 0;
 }
 
 void SuiteWindow::Launch(int index)
@@ -1202,8 +1258,10 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         HDC mem = CreateCompatibleDC(screen);
         HBITMAP bmp = CreateCompatibleBitmap(screen, rc.right, rc.bottom);
         HGDIOBJ old = SelectObject(mem, bmp);
+        const RECT& pr = ps.rcPaint;
+        IntersectClipRect(mem, pr.left, pr.top, pr.right, pr.bottom);
         Draw(mem, rc.right, rc.bottom);
-        BitBlt(screen, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        BitBlt(screen, pr.left, pr.top, pr.right - pr.left, pr.bottom - pr.top, mem, pr.left, pr.top, SRCCOPY);
         SelectObject(mem, old);
         DeleteObject(bmp);
         DeleteDC(mem);
@@ -1249,6 +1307,16 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             Launch(1);
         return 0;
     case WM_TIMER:
+        if (wp == 2)
+        {
+            const ULONGLONG now = GetTickCount64();
+            const double elapsed = now > m_introStart ? static_cast<double>(now - m_introStart) : 0.0;   // 250 ms Anlaufpause
+            m_introT = static_cast<float>(std::clamp(elapsed / 1200.0, 0.0, 1.0));
+            if (m_introT >= 1.0f)
+                KillTimer(m_hwnd, 2);
+            InvalidateRect(m_hwnd, &m_banner, FALSE);
+            return 0;
+        }
         KillTimer(m_hwnd, 1);
         m_note.clear();
         InvalidateRect(m_hwnd, &m_footer, FALSE);
@@ -1298,6 +1366,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_DESTROY:
+        ReleaseBannerCache();
         m_dlCancel = true;
         if (m_dlThread.joinable())
             m_dlThread.join();

@@ -46,3 +46,8 @@ void DrawBannerPanel(HDC dc, const RECT& rc, int radius, int scalePx);
 // "prueft" die Knoten (gruen). probe = 0..1 Position, phase = steigender Zaehler fuer Pulse/Glow,
 // busy = Scan aktiv (Pulsring + Strahl intensiver).
 void DrawScanScene(HDC dc, const RECT& area, float probe, int phase, int scalePx, bool busy);
+
+// Suite-Banner: Besen (Tidy) faegt eine rote Schmutzspur weg und hinterlaesst eine saubere gruene Leiterbahn,
+// dahinter faehrt der Pruef-Chip (Driver Updater) und haekt die Knoten gruen ab.
+// t = Fortschritt der Start-Animation (0 = Besen links am Start, 1 = Ruheposition).
+void DrawSuiteScene(HDC dc, const RECT& area, float t, int scalePx);
