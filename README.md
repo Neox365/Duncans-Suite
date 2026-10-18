@@ -1,40 +1,62 @@
-# Duncan's Driver Updater
+# Duncan's Suite
 
-Hardware- & Treiber-Manager für Windows (C++ / Win32, Dark-UI). Liest alle Geräte samt Treiberdaten
-aus, gruppiert sie, erkennt Updates und kann Treiber-Updates über Windows Update installieren.
+Windows-Programmsammlung in C++ / Win32 mit einheitlichem Dark-UI, Sprache der Programme: Deutsch.
 
-## Funktionen
+| Programm | Aufgabe |
+| --- | --- |
+| **Duncan's Suite** | Launcher: startet die Programme, lÃ¤dt fehlende per Ein-Klick-Download und aktualisiert sich selbst |
+| **Duncan's Driver Updater** | Hardware- und Treiber-Manager (Scan, Update-Erkennung, Installation Ã¼ber Windows Update) |
+| **Duncan's PDF Reader** | PDF-Betrachter und -Werkzeug (PDFium) |
+| **Duncan's Tidy** | System-Cleaner und Optimierer, eigenes Projekt ([Neox365/Duncans-Tidy-ToolSet](https://github.com/Neox365/Duncans-Tidy-ToolSet)); die Suite lÃ¤dt es nur herunter und startet es |
 
-- **Geräte-Scan** über die Windows SetupAPI (Name, Kategorie, Version, Datum, Anbieter, Hardware-ID, Problemcode), asynchron im Hintergrund
+## Duncan's Driver Updater
+
+Hardware- & Treiber-Manager fÃ¼r Windows. Liest alle GerÃ¤te samt Treiberdaten
+aus, gruppiert sie, erkennt Updates und kann Treiber-Updates Ã¼ber Windows Update installieren.
+
+### Funktionen
+
+- **GerÃ¤te-Scan** Ã¼ber die Windows SetupAPI (Name, Kategorie, Version, Datum, Anbieter, Hardware-ID, Problemcode), asynchron im Hintergrund
 - **Gruppierte Ansicht** (ausklappbar): Grafik & Monitor, Audio, Netzwerk & Bluetooth, Peripherie, Speicher, System & Prozessor, Sonstige
 - **Update-Erkennung**
-  - über den Windows Update Agent (Treiber-Updates, per Hardware-ID abgeglichen)
-  - **Hersteller-Abgleich** für Grafikkarten (NVIDIA `VEN_10DE`, AMD `VEN_1002`, Intel `VEN_8086`) anhand von `vendor_releases.json`
-- **Aktualisieren-Button** pro Karte: Windows-Update-Treiber werden mit Wiederherstellungspunkt installiert, bei Hersteller-Treibern öffnet sich die offizielle Download-Seite
+  - Ã¼ber den Windows Update Agent (Treiber-Updates, per Hardware-ID abgeglichen)
+  - **Hersteller-Abgleich** fÃ¼r Grafikkarten (NVIDIA `VEN_10DE`, AMD `VEN_1002`, Intel `VEN_8086`) anhand von `vendor_releases.json`
+- **Aktualisieren-Button** pro Karte: Windows-Update-Treiber werden mit Wiederherstellungspunkt installiert, bei Hersteller-Treibern Ã¶ffnet sich die offizielle Download-Seite
 - Suche, Filter (Alle / Updates / Probleme), Sortierung, CSV-Export, Treiber sichern (`pnputil /export-driver`), Hardware-ID kopieren
 - Eigene Dark-Dialoge und Toasts, Banner mit Start-Animation
 
-Die App benötigt Administratorrechte (UAC-Abfrage beim Start), weil Treiber-Operationen sie erfordern.
+Die App benÃ¶tigt Administratorrechte (UAC-Abfrage beim Start), weil Treiber-Operationen sie erfordern.
+
+**Einstellungen (Zahnrad rechts neben â€žScan startenâ€œ):** *Beim Start automatisch scannen* und *Start-Animation anzeigen*.
+Gespeichert in `%LOCALAPPDATA%\DuncansDriverUpdater\settings.ini`. Einen Autostart mit Windows gibt es hier bewusst nicht, weil die App Administratorrechte verlangt.
 
 ## Duncan's Suite (Launcher)
 
-`DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: zwei Karten starten **Duncan's Tidy** (`DuncansTidy.exe`)
-und den **Driver Updater** (`DuncansDriverUpdater.exe`). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
-`%LOCALAPPDATA%\DuncansTidy`. Ist Tidy nicht installiert, zeigt die Karte „Nicht installiert“ und den Button **Herunterladen**: Ein Klick lädt die neueste `DuncansTidy.exe` per HTTPS von den GitHub-Releases (`Neox365/Duncans-Tidy-ToolSet`) nach `%LOCALAPPDATA%\DuncansTidy`, prüft die SHA-256-Summe aus `DuncansTidy.exe.sha256` und schaltet den Button danach auf „Starten“. Fehlt eine andere EXE, erscheint ein Dark-Dialog mit den durchsuchten Pfaden. Der Footer zeigt die Version
-und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Banner vereint beide Programme: Der Besen von Tidy fegt eine rote Schmutzspur weg und hinterlässt eine saubere grüne Leiterbahn, der Prüf-Chip des Driver Updaters folgt und hakt die Knoten ab (Start-Animation, danach ruhend). Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
-und ins Startmenü.
+`DuncansSuite.exe` ist ein kleines HauptmenÃ¼ im selben Dark-Stil: drei Karten starten **Duncan's Tidy** (`DuncansTidy.exe`),
+den **Driver Updater** (`DuncansDriverUpdater.exe`) und den **PDF Reader** (`DuncansPdf.exe`). Gesucht wird zuerst im Ordner der Suite, fÃ¼r Tidy zusÃ¤tzlich in
+`%LOCALAPPDATA%\DuncansTidy`. Ist Tidy nicht installiert, zeigt die Karte â€žNicht installiertâ€œ und den Button **Herunterladen**: Ein Klick lÃ¤dt die neueste `DuncansTidy.exe` per HTTPS von den GitHub-Releases (`Neox365/Duncans-Tidy-ToolSet`) nach `%LOCALAPPDATA%\DuncansTidy`, prÃ¼ft die SHA-256-Summe aus `DuncansTidy.exe.sha256` und schaltet den Button danach auf â€žStartenâ€œ. Fehlt eine andere EXE, erscheint ein Dark-Dialog mit den durchsuchten Pfaden. Der Footer zeigt die Version
+und Ã¶ffnet mit â€žTools-Ordner Ã¶ffnenâ€œ den Installationsordner. Der Banner vereint beide Programme: Der Besen von Tidy fegt eine rote Schmutzspur weg und hinterlÃ¤sst eine saubere grÃ¼ne Leiterbahn, der PrÃ¼f-Chip des Driver Updaters folgt und hakt die Knoten ab (Start-Animation, danach ruhend). Der Installer legt die Suite als Haupt-VerknÃ¼pfung auf den Desktop
+und ins StartmenÃ¼.
 
 ### Automatische Updates der Suite
 
 Beim Start fragt die Suite im Hintergrund die GitHub-Releases (`Neox365/Duncans-Suite`) ab. Gibt es einen neueren
-`DuncansSuite_Setup_X.Y.Z.exe`, erscheint oben im Banner **„Update verfügbar (vX.Y.Z)“**. Ein Klick lädt den Installer in den
-Temp-Ordner (mit Fortschritt), prüft die SHA-256-Summe (`digest` des GitHub-Assets), startet ihn (UAC) und beendet die Suite.
+`DuncansSuite_Setup_X.Y.Z.exe`, erscheint oben im Banner **â€žUpdate verfÃ¼gbar (vX.Y.Z)â€œ**. Ein Klick lÃ¤dt den Installer nach
+`%LOCALAPPDATA%\DuncansSuite\update` (mit Fortschritt; der Ordner ist einstellbar), prÃ¼ft SHA-256 und Signatur, startet ihn (UAC) und beendet die Suite.
 Es wird die Release-**Liste** abgefragt statt `/releases/latest`, weil `latest` Pre-Releases ignoriert. Ist man offline
-oder GitHub nicht erreichbar, bleibt die Prüfung still.
+oder GitHub nicht erreichbar, bleibt die PrÃ¼fung still.
+
+### Einstellungen der Suite (Zahnrad im Banner)
+
+Ein dunkler Dialog mit *Speichern* / *Abbrechen*; gespeichert in `%LOCALAPPDATA%\DuncansSuite\settings.ini`:
+
+- **Beim Start nach Updates suchen** (Standard: an)
+- **Mit Windows starten** (Eintrag unter `HKCU\...\Run`, nur fÃ¼r das eigene Konto)
+- **Download-Ordner fÃ¼r Update-Installer** (Standard: `%LOCALAPPDATA%\DuncansSuite\update`, nur absolute Pfade)
 
 ## Hersteller-Tabelle (`vendor_releases.json`)
 
-Die SetupAPI kennt nur den *installierten* Treiber. Welche Version der Hersteller zuletzt veröffentlicht hat,
+Die SetupAPI kennt nur den *installierten* Treiber. Welche Version der Hersteller zuletzt verÃ¶ffentlicht hat,
 steht in `resources/vendor_releases.json` (wird beim Build neben die EXE kopiert und vom Installer mitgeliefert):
 
 ```json
@@ -42,14 +64,14 @@ steht in `resources/vendor_releases.json` (wird beim Build neben die EXE kopiert
   "version": "32.0.16.1742", "date": "2026-10-06", "url": "https://www.nvidia.com/en-us/geforce/drivers/" }
 ```
 
-- `version` ist die **Windows-Treiberversion** (`a.b.c.d`, wie im Geräte-Manager). NVIDIA: Release `617.42` entspricht `32.0.16.1742`.
-- Leere `version` = Eintrag inaktiv (AMD ist so vorbelegt, bis eine geprüfte Version eingetragen ist).
-- Die Tabelle veraltet mit jedem neuen Hersteller-Release und muss gepflegt werden. Eine Datei neben der EXE überschreibt die eingebauten Werte.
-- Verglichen wird nur innerhalb desselben Treiber-Hauptzweigs (z. B. `32.0.x`), um falschen Alarm bei älteren GPU-Generationen zu vermeiden.
+- `version` ist die **Windows-Treiberversion** (`a.b.c.d`, wie im GerÃ¤te-Manager). NVIDIA: Release `617.42` entspricht `32.0.16.1742`.
+- Leere `version` = Eintrag inaktiv (AMD ist so vorbelegt, bis eine geprÃ¼fte Version eingetragen ist).
+- Die Tabelle veraltet mit jedem neuen Hersteller-Release und muss gepflegt werden. Eine Datei neben der EXE Ã¼berschreibt die eingebauten Werte.
+- Verglichen wird nur innerhalb desselben Treiber-Hauptzweigs (z. B. `32.0.x`), um falschen Alarm bei Ã¤lteren GPU-Generationen zu vermeiden.
 
 ## Bauen
 
-Voraussetzungen: CMake = 3.20 und ein C++17-Compiler (MinGW-w64 oder MSVC), Windows 10/11.
+Voraussetzungen: CMake â‰¥ 3.20 und ein C++17-Compiler (MinGW-w64 oder MSVC), Windows 10/11.
 
 ```powershell
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
@@ -57,7 +79,7 @@ cmake --build build
 ```
 
 Alle Programme landen in `release\` (`DuncansSuite.exe`, `DuncansDriverUpdater.exe`, `DuncansPdf.exe`); `vendor_releases.json` und `pdfium.dll` werden daneben kopiert.
-Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
+Mit MinGW wird statisch gelinkt, es sind keine zusÃ¤tzlichen DLLs nÃ¶tig.
 
 ## Installer
 
@@ -67,7 +89,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.3.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.3.exe` (Admin-Installer, StartmenÃ¼, optionale Desktop-VerknÃ¼pfung, Deinstaller).
 
 ## Projektstruktur
 
@@ -78,6 +100,8 @@ Ergebnis: `release\DuncansSuite_Setup_1.1.3.exe` (Admin-Installer, Startmenü, op
 | `src/VendorReleases.*` | Hersteller-Abgleich der Grafiktreiber |
 | `src/MainWindow.*`, `src/Icons.*` | UI (Win32 + GDI/GDI+), Banner, Splash, Dialoge |
 | `suite/main.cpp` | Duncan's Suite (Launcher) |
+| `pdf/` | Duncan's PDF Reader (`main.cpp` UI, `PdfDocument.*` PDFium-Wrapper, `PdfiumApi.h`) |
+| `tools/` | `MakeSigningKey.ps1`, `SignRelease.ps1` |
 | `release/` | Fertige Programme, Installer und `.sig`-Dateien (nicht im Repository) |
 | `_archiv/` | Alte Installer (nicht im Repository) |
 | `resources/` | Icons, Manifeste (Driver Updater: requireAdministrator, Suite: asInvoker), Versionsinfo, `vendor_releases.json` |
@@ -86,27 +110,42 @@ Ergebnis: `release\DuncansSuite_Setup_1.1.3.exe` (Admin-Installer, Startmenü, op
 ## Hinweise
 
 - Die Installation von Windows-Update-Treibern wurde bisher nicht mit einem echten Update getestet.
-- Es gibt keinen automatischen Download von Hersteller-Treibern; dafür wird die Download-Seite geöffnet.
+- Es gibt keinen automatischen Download von Hersteller-Treibern; dafÃ¼r wird die Download-Seite geÃ¶ffnet.
 
-## Duncan's PDF (in Arbeit)
+## Duncan's PDF Reader
 
-Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` ? `DuncansPdf.exe`) im selben Dark-Stil. Werkzeugleiste (Öffnen, Speichern, Merge, Zoom, Drehen, Seitenwechsel),
-ein-/ausklappbare Seitenleiste (Thumbnails / Werkzeuge, `Strg+B`) und Canvas mit Scrollen, `Strg+Mausrad`-Zoom und Drag & Drop.
+Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` â†’ `DuncansPdf.exe`) im selben Dark-Stil: Werkzeugleiste oben, Seitenleiste links, Canvas mit Scrollen,
+`Strg+Mausrad`-Zoom und Drag & Drop.
+
+- **Seitenleiste:** Vorschaubilder aller Seiten; Klick wÃ¤hlt, `Strg`-/`Umschalt`-Klick wÃ¤hlt mehrere. Drehen und LÃ¶schen wirken auf die Auswahl (Werkzeugleiste, Tab â€žWerkzeugeâ€œ oder Rechtsklick-MenÃ¼).
+- **Merge:** Ein Dialog, in dem sich eine oder mehrere PDFs auswÃ¤hlen und hinten anhÃ¤ngen lassen.
+- **Suche:** `Strg+F` Ã¶ffnet ein Suchfeld oben rechts, Treffer werden auf der Seite markiert (aktueller Treffer krÃ¤ftiger), Anzeige â€žx / yâ€œ.
+- **Speichern:** schreibt eine Kopie mit allen Ã„nderungen (Drehungen, gelÃ¶schte und angehÃ¤ngte Seiten); das Original bleibt unverÃ¤ndert.
+
+| KÃ¼rzel | Aktion |
+| --- | --- |
+| `Strg+O` / `Strg+S` | Ã–ffnen / Speichern unter |
+| `Strg+F`, `Enter` / `Umschalt+Enter` oder `F3` / `Umschalt+F3` | Suchen, nÃ¤chster / vorheriger Treffer; `Esc` schlieÃŸt die Suche |
+| `Bild auf` / `Bild ab`, `Pos1` / `Ende` | Seiten blÃ¤ttern |
+| `Entf`, `R` / `Umschalt+R` | ausgewÃ¤hlte Seiten lÃ¶schen / drehen |
+| `Strg+A`, `Strg+M`, `Strg+B` | alle Seiten wÃ¤hlen, Merge, Seitenleiste ein-/ausblenden |
+| `Strg+Plus` / `Strg+Minus`, `Strg+0`, `Strg+1` | Zoom, Seitenbreite, 100 % |
+
 Gerendert wird mit **PDFium**, das zur Laufzeit aus `pdfium.dll` geladen wird (64-Bit). Die DLL besorgt `pdf\third_party\get_pdfium.ps1`
 (offizielle Builds von bblanchon/pdfium-binaries) und legt sie nach `pdf\third_party` (CMake kopiert sie beim Build nach `release\`). Ohne DLL startet die App und meldet es per Hinweis.
 
 ## Signierte Downloads (Sicherheit)
 
-Die Suite führt nur Dateien aus, deren Signatur (ECDSA P-256 / SHA-256, `<Datei>.sig`) zum einkompilierten öffentlichen Schlüssel passt.
+Die Suite fÃ¼hrt nur Dateien aus, deren Signatur (ECDSA P-256 / SHA-256, `<Datei>.sig`) zum einkompilierten Ã¶ffentlichen SchlÃ¼ssel passt.
 Eine SHA-256-Summe allein reicht nicht, weil sie vom selben Server kommt wie die Datei.
 
-| Datei | Geprüft mit |
+| Datei | GeprÃ¼ft mit |
 | --- | --- |
-| `DuncansSuite_Setup_X.Y.Z.exe` (Suite-Update) | Suite-Schlüssel (`suite/public_key.inc`) |
-| `DuncansPdf.exe` (Duncans-PDF-Reader-Release) | Suite-Schlüssel |
-| `DuncansTidy.exe` | Tidy-Schlüssel (`suite/tidy_public_key.inc`, Kopie aus dem Tidy-Projekt) |
+| `DuncansSuite_Setup_X.Y.Z.exe` (Suite-Update) | Suite-SchlÃ¼ssel (`suite/public_key.inc`) |
+| `DuncansPdf.exe` (Duncans-PDF-Reader-Release) | Suite-SchlÃ¼ssel |
+| `DuncansTidy.exe` | Tidy-SchlÃ¼ssel (`suite/tidy_public_key.inc`, Kopie aus dem Tidy-Projekt) |
 
-Einmalig: `powershell -File tools\MakeSigningKey.ps1` erzeugt den privaten Schlüssel in `%USERPROFILE%\DuncansSuite-Signing\` (sichern, nie hochladen)
+Einmalig: `powershell -File tools\MakeSigningKey.ps1` erzeugt den privaten SchlÃ¼ssel in `%USERPROFILE%\DuncansSuite-Signing\` (sichern, nie hochladen)
 und schreibt `suite/public_key.inc`; danach neu bauen.
-Pro Release: Installer bauen, `powershell -File tools\SignRelease.ps1 release\<Datei>` ausführen und die erzeugte `.sig` als zusätzliches Asset ins selbe GitHub-Release laden.
+Pro Release: Installer bauen, `powershell -File tools\SignRelease.ps1 release\<Datei>` ausfÃ¼hren und die erzeugte `.sig` als zusÃ¤tzliches Asset ins selbe GitHub-Release laden.
 Fehlt die `.sig`, lehnt die Suite die Datei ab.
