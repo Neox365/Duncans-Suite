@@ -11,6 +11,7 @@
 #include <windows.h>
 
 #include <bcrypt.h>
+#include <psapi.h>
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <shlobj.h>
@@ -41,7 +42,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.5"
+#define SUITE_VERSION L"1.1.6"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -144,6 +145,8 @@ namespace
     {
         bool autoCheck = true;        // Update-Pruefung beim Start
         bool autostart = false;       // Suite mit Windows starten
+        bool trayOnClose = false;     // X = in den Infobereich minimieren statt beenden
+        bool trayOnLaunch = false;    // nach dem Start eines Programms in den Infobereich minimieren
         std::wstring downloadDir;     // leer = Standard (%LOCALAPPDATA%\DuncansSuite\update)
     };
 
@@ -200,6 +203,8 @@ namespace
         if (!ini.empty())
         {
             s.autoCheck = GetPrivateProfileIntW(L"Allgemein", L"UpdatePruefung", 1, ini.c_str()) != 0;
+            s.trayOnClose = GetPrivateProfileIntW(L"Allgemein", L"TrayBeimSchliessen", 0, ini.c_str()) != 0;
+            s.trayOnLaunch = GetPrivateProfileIntW(L"Allgemein", L"TrayBeimProgrammstart", 0, ini.c_str()) != 0;
             wchar_t dir[MAX_PATH * 2] = {};
             GetPrivateProfileStringW(L"Allgemein", L"DownloadOrdner", L"", dir, MAX_PATH * 2, ini.c_str());
             if (IsUsableDir(dir))
@@ -216,6 +221,8 @@ namespace
             return false;
         CreateDirectoryW((LocalAppData() + L"\\DuncansSuite").c_str(), nullptr);
         return WritePrivateProfileStringW(L"Allgemein", L"UpdatePruefung", s.autoCheck ? L"1" : L"0", ini.c_str()) &&
+               WritePrivateProfileStringW(L"Allgemein", L"TrayBeimSchliessen", s.trayOnClose ? L"1" : L"0", ini.c_str()) &&
+               WritePrivateProfileStringW(L"Allgemein", L"TrayBeimProgrammstart", s.trayOnLaunch ? L"1" : L"0", ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"DownloadOrdner", s.downloadDir.c_str(), ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"Autostart", s.autostart ? L"1" : L"0", ini.c_str());
     }
@@ -836,7 +843,25 @@ private:
     Settings m_draft;             // Entwurf im offenen Dialog
     bool m_settingsOpen = false;
     HFONT m_fontSym = nullptr;
-    RECT m_gearRect{}, m_chkAuto{}, m_chkStart{}, m_btnPick{}, m_btnReset{}, m_btnSave{}, m_btnCancel{};
+    RECT m_gearRect{}, m_chkAuto{}, m_chkStart{}, m_chkTrayClose{}, m_chkTrayLaunch{}, m_btnPick{}, m_btnReset{}, m_btnSave{}, m_btnCancel{};
+
+    // Infobereich (Tray): Symbol neben der Uhr, Kontextmenue, Quick Clean, Benachrichtigung
+    static constexpr UINT kTrayMsg = WM_APP + 10;     // Rueckmeldungen des Tray-Symbols
+    static constexpr UINT kQuickDone = WM_APP + 11;   // Quick Clean fertig (wParam = freigegebene Bytes, lParam = Anzahl Prozesse)
+    NOTIFYICONDATAW m_nid{};
+    bool m_trayShown = false;
+    bool m_exiting = false;                           // wirklich beenden (nicht in den Infobereich minimieren)
+    bool m_hiddenToTray = false;
+    UINT m_taskbarMsg = 0;                            // "TaskbarCreated": Explorer wurde neu gestartet
+    std::atomic<bool> m_quickBusy{ false };
+    HICON m_trayIcon = nullptr;
+    void AddTrayIcon();
+    void RemoveTrayIcon();
+    void HideToTray();
+    void RestoreFromTray();
+    void ShowTrayMenu();
+    void TrayBalloon(const std::wstring& title, const std::wstring& text);
+    void StartQuickClean();
     void OpenSettings();
     void CloseSettings(bool save);
     void DrawSettings(HDC dc, int w, int h);
@@ -1226,9 +1251,9 @@ void SuiteWindow::DrawSettings(HDC dc, int w, int h)
     const int pad = S(26);
     const int boxW = std::min(S(560), w - S(40));
     const int inner = boxW - 2 * pad;
-    const int titleH = S(30), btnH = S(38), rowH = S(50);
+    const int titleH = S(30), btnH = S(38), rowH = S(46), gap = S(8);
     const int folderH = S(24) + S(18) + S(12) + btnH;
-    const int boxH = pad + titleH + S(18) + rowH + S(10) + rowH + S(16) + folderH + S(26) + btnH + pad;
+    const int boxH = pad + titleH + S(18) + 4 * rowH + 3 * gap + S(16) + folderH + S(26) + btnH + pad;
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
 
     DrawShadow(dc, box, S(18), static_cast<int>(m_dpi));
@@ -1238,9 +1263,15 @@ void SuiteWindow::DrawSettings(HDC dc, int w, int h)
     int y = box.top + pad + titleH + S(18);
     m_chkAuto = { box.left + pad, y, box.right - pad, y + rowH };
     DrawCheck(dc, m_chkAuto, m_draft.autoCheck, m_hover == 7, L"Beim Start nach Updates suchen", L"Prüft beim Öffnen automatisch, ob eine neue Suite-Version vorliegt.");
-    y += rowH + S(10);
+    y += rowH + gap;
     m_chkStart = { box.left + pad, y, box.right - pad, y + rowH };
     DrawCheck(dc, m_chkStart, m_draft.autostart, m_hover == 8, L"Mit Windows starten", L"Startet die Suite bei der Anmeldung automatisch (nur für dein Konto).");
+    y += rowH + gap;
+    m_chkTrayClose = { box.left + pad, y, box.right - pad, y + rowH };
+    DrawCheck(dc, m_chkTrayClose, m_draft.trayOnClose, m_hover == 13, L"Beim Schließen in den Infobereich minimieren", L"Das X versteckt die Suite neben der Uhr, statt sie zu beenden.");
+    y += rowH + gap;
+    m_chkTrayLaunch = { box.left + pad, y, box.right - pad, y + rowH };
+    DrawCheck(dc, m_chkTrayLaunch, m_draft.trayOnLaunch, m_hover == 14, L"Nach dem Start eines Programms minimieren", L"Die Suite zieht sich nach dem Starten in den Infobereich zurück.");
     y += rowH + S(16);
 
     DrawLabel(dc, m_fontBody, kText, { box.left + pad, y, box.right - pad, y + S(24) }, L"Download-Ordner für Update-Installer");
@@ -1293,6 +1324,185 @@ void SuiteWindow::CloseSettings(bool save)
             StartUpdateCheck();
     }
     InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+// ---- Infobereich (Tray) --------------------------------------------------------------------
+
+void SuiteWindow::AddTrayIcon()
+{
+    if (!m_trayIcon)
+        m_trayIcon = static_cast<HICON>(LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(1), IMAGE_ICON,
+                                                   GetSystemMetricsForDpi(SM_CXSMICON, m_dpi), GetSystemMetricsForDpi(SM_CYSMICON, m_dpi), LR_DEFAULTCOLOR));
+    ZeroMemory(&m_nid, sizeof(m_nid));
+    m_nid.cbSize = sizeof(m_nid);
+    m_nid.hWnd = m_hwnd;
+    m_nid.uID = 1;
+    m_nid.uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP;
+    m_nid.uCallbackMessage = kTrayMsg;
+    m_nid.hIcon = m_trayIcon;
+    wcscpy_s(m_nid.szTip, L"Duncan's Suite");
+    m_trayShown = Shell_NotifyIconW(NIM_ADD, &m_nid) != FALSE;
+}
+
+void SuiteWindow::RemoveTrayIcon()
+{
+    if (m_trayShown)
+        Shell_NotifyIconW(NIM_DELETE, &m_nid);
+    m_trayShown = false;
+    if (m_trayIcon)
+    {
+        DestroyIcon(m_trayIcon);
+        m_trayIcon = nullptr;
+    }
+}
+
+void SuiteWindow::HideToTray()
+{
+    if (!m_trayShown)
+        AddTrayIcon();
+    if (!m_trayShown)
+    {
+        ShowWindow(m_hwnd, SW_MINIMIZE);   // ohne Symbol nicht verstecken, sonst waere die Suite nicht mehr erreichbar
+        return;
+    }
+    ShowWindow(m_hwnd, SW_HIDE);
+    m_hiddenToTray = true;
+}
+
+void SuiteWindow::RestoreFromTray()
+{
+    ShowWindow(m_hwnd, IsIconic(m_hwnd) ? SW_RESTORE : SW_SHOW);
+    SetForegroundWindow(m_hwnd);
+    m_hiddenToTray = false;
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void SuiteWindow::TrayBalloon(const std::wstring& title, const std::wstring& text)
+{
+    if (!m_trayShown)
+        AddTrayIcon();
+    if (!m_trayShown)
+        return;
+    NOTIFYICONDATAW n = m_nid;
+    n.uFlags = NIF_INFO;
+    wcsncpy_s(n.szInfoTitle, title.c_str(), _TRUNCATE);
+    wcsncpy_s(n.szInfo, text.c_str(), _TRUNCATE);
+    n.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
+    Shell_NotifyIconW(NIM_MODIFY, &n);   // erscheint als Windows-Benachrichtigung
+}
+
+void SuiteWindow::ShowTrayMenu()
+{
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, 1, L"Duncan's Suite öffnen");
+    AppendMenuW(menu, MF_STRING, 2, L"RAM schnell leeren (Quick Clean)");
+    AppendMenuW(menu, MF_STRING, 3, L"Tidy starten");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, 4, L"Beenden");
+    SetMenuDefaultItem(menu, 1, FALSE);
+    POINT pt{};
+    GetCursorPos(&pt);
+    SetForegroundWindow(m_hwnd);   // sonst schliesst sich das Menue nicht beim Klick daneben
+    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+    PostMessageW(m_hwnd, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+    switch (cmd)
+    {
+    case 1:
+        RestoreFromTray();
+        break;
+    case 2:
+        StartQuickClean();
+        break;
+    case 3:
+        FindTools();
+        if (m_tools[0].path.empty())
+            RestoreFromTray();   // nicht installiert: Download/Hinweis braucht das sichtbare Fenster
+        Launch(0);
+        break;
+    case 4:
+        m_exiting = true;
+        DestroyWindow(m_hwnd);
+        break;
+    default:
+        break;
+    }
+}
+
+namespace
+{
+    unsigned long long AvailablePhysical()
+    {
+        MEMORYSTATUSEX ms{};
+        ms.dwLength = sizeof(ms);
+        GlobalMemoryStatusEx(&ms);
+        return ms.ullAvailPhys;
+    }
+
+    // Standby-Liste leeren (braucht Administrator-Rechte; ohne sie scheitert das still)
+    bool PurgeStandbyList()
+    {
+        HANDLE tok = nullptr;
+        if (!OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, &tok))
+            return false;
+        TOKEN_PRIVILEGES tp{};
+        tp.PrivilegeCount = 1;
+        tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED;
+        bool ok = LookupPrivilegeValueW(nullptr, L"SeProfileSingleProcessPrivilege", &tp.Privileges[0].Luid) &&
+                  AdjustTokenPrivileges(tok, FALSE, &tp, 0, nullptr, nullptr) && GetLastError() == ERROR_SUCCESS;
+        CloseHandle(tok);
+        if (!ok)
+            return false;
+        using NtSetFn = LONG(NTAPI*)(ULONG, PVOID, ULONG);
+        HMODULE nt = GetModuleHandleW(L"ntdll.dll");
+        auto fn = nt ? reinterpret_cast<NtSetFn>(reinterpret_cast<void*>(GetProcAddress(nt, "NtSetSystemInformation"))) : nullptr;
+        ULONG command = 4;   // MemoryPurgeStandbyList
+        return fn && fn(80 /* SystemMemoryListInformation */, &command, sizeof(command)) >= 0;
+    }
+
+    std::wstring SizeText(unsigned long long b)
+    {
+        wchar_t buf[40];
+        if (b >= (1ull << 30)) swprintf(buf, 40, L"%.1f GB", b / 1073741824.0);
+        else swprintf(buf, 40, L"%.0f MB", b / 1048576.0);
+        return buf;
+    }
+}
+
+// Quick Clean: Arbeitssaetze aller Programme verkleinern (mit Administrator-Rechten zusaetzlich die Standby-Liste leeren)
+void SuiteWindow::StartQuickClean()
+{
+    if (m_quickBusy.exchange(true))
+        return;
+    SetNote(L"RAM wird geleert …");
+    const HWND hwnd = m_hwnd;
+    std::thread([hwnd]()
+    {
+        const unsigned long long before = AvailablePhysical();
+        int trimmed = 0;
+        std::vector<DWORD> ids(8192);
+        DWORD bytes = 0;
+        if (EnumProcesses(ids.data(), static_cast<DWORD>(ids.size() * sizeof(DWORD)), &bytes))
+        {
+            const DWORD self = GetCurrentProcessId();
+            for (DWORD i = 0; i < bytes / sizeof(DWORD); ++i)
+            {
+                if (ids[i] == 0 || ids[i] == self)
+                    continue;
+                HANDLE p = OpenProcess(PROCESS_SET_QUOTA | PROCESS_QUERY_INFORMATION, FALSE, ids[i]);   // geschuetzte Prozesse scheitern still
+                if (!p)
+                    continue;
+                if (EmptyWorkingSet(p))
+                    ++trimmed;
+                CloseHandle(p);
+            }
+        }
+        PurgeStandbyList();
+        Sleep(600);   // Windows braucht einen Moment, bis die Zaehler stimmen
+        const unsigned long long after = AvailablePhysical();
+        if (IsWindow(hwnd))
+            PostMessageW(hwnd, kQuickDone, static_cast<WPARAM>(after > before ? after - before : 0), static_cast<LPARAM>(trimmed));
+    }).detach();
 }
 
 void SuiteWindow::DrawModal(HDC dc, int w, int h)
@@ -1399,7 +1609,11 @@ void SuiteWindow::Launch(int index)
     sei.lpDirectory = dir.c_str();
     sei.nShow = SW_SHOWNORMAL;
     if (ShellExecuteExW(&sei))
+    {
         SetNote(std::wstring(t.title) + L" wird gestartet …");
+        if (m_settings.trayOnLaunch)
+            HideToTray();   // Suite zieht sich in den Infobereich zurueck
+    }
     else if (GetLastError() == ERROR_CANCELLED)
         SetNote(L"Start abgebrochen");
     else
@@ -1535,6 +1749,7 @@ void SuiteWindow::RunInstaller()
     if (ShellExecuteExW(&sei))
     {
         SetNote(L"Installer wird gestartet …");
+        m_exiting = true;                       // wirklich beenden, nicht in den Infobereich
         PostMessageW(m_hwnd, WM_CLOSE, 0, 0);   // Suite beenden, damit das Update die Dateien ersetzen kann
     }
     else if (GetLastError() == ERROR_CANCELLED)
@@ -1564,7 +1779,7 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = PtInRect(&m_modalOk, pt) ? 3 : -1;
     else if (m_settingsOpen)
     {
-        const struct { const RECT* r; int id; } hits[] = { { &m_chkAuto, 7 }, { &m_chkStart, 8 }, { &m_btnPick, 9 },
+        const struct { const RECT* r; int id; } hits[] = { { &m_chkAuto, 7 }, { &m_chkStart, 8 }, { &m_chkTrayClose, 13 }, { &m_chkTrayLaunch, 14 }, { &m_btnPick, 9 },
                                                           { &m_btnReset, 10 }, { &m_btnSave, 11 }, { &m_btnCancel, 12 } };
         for (const auto& hit : hits)
             if (PtInRect(hit.r, pt))
@@ -1609,6 +1824,10 @@ void SuiteWindow::OnClick(int, int)
         m_draft.autoCheck = !m_draft.autoCheck;
     else if (pressed == 8)
         m_draft.autostart = !m_draft.autostart;
+    else if (pressed == 13)
+        m_draft.trayOnClose = !m_draft.trayOnClose;
+    else if (pressed == 14)
+        m_draft.trayOnLaunch = !m_draft.trayOnLaunch;
     else if (pressed == 9)
     {
         const std::wstring dir = PickFolder(m_hwnd, m_draft.downloadDir);
@@ -1637,8 +1856,45 @@ void SuiteWindow::OnClick(int, int)
 
 LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (m_taskbarMsg != 0 && msg == m_taskbarMsg)   // Explorer wurde neu gestartet: Symbol neu anlegen
+    {
+        m_trayShown = false;
+        AddTrayIcon();
+        return 0;
+    }
     switch (msg)
     {
+    case kTrayMsg:
+        switch (LOWORD(lp))
+        {
+        case WM_RBUTTONUP:
+        case WM_CONTEXTMENU:
+            ShowTrayMenu();
+            break;
+        case WM_LBUTTONUP:
+        case WM_LBUTTONDBLCLK:
+        case NIN_BALLOONUSERCLICK:
+            RestoreFromTray();
+            break;
+        default:
+            break;
+        }
+        return 0;
+    case kQuickDone:
+    {
+        m_quickBusy = false;
+        const std::wstring text = L"Freigegeben: " + SizeText(static_cast<unsigned long long>(wp)) + L"  ·  " + std::to_wstring(static_cast<int>(lp)) + L" Programme verkleinert";
+        SetNote(text);
+        TrayBalloon(L"Quick Clean fertig", text);
+        return 0;
+    }
+    case WM_CLOSE:
+        if (m_settings.trayOnClose && !m_exiting)
+        {
+            HideToTray();   // statt Beenden in den Infobereich
+            return 0;
+        }
+        break;
     case WM_CREATE:
     {
         m_dpi = GetDpiForWindow(m_hwnd);
@@ -1649,6 +1905,20 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         m_settings = LoadSettings();
         if (m_settings.autoCheck)
             StartUpdateCheck();
+        {
+            // dunkle Kontextmenues (undokumentierte uxtheme-Ordinale 135 = SetPreferredAppMode, 136 = FlushMenuThemes)
+            if (HMODULE ux = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32))
+            {
+                using SetModeFn = int(WINAPI*)(int);
+                using FlushFn = void(WINAPI*)();
+                auto setMode = reinterpret_cast<SetModeFn>(reinterpret_cast<void*>(GetProcAddress(ux, MAKEINTRESOURCEA(135))));
+                auto flush = reinterpret_cast<FlushFn>(reinterpret_cast<void*>(GetProcAddress(ux, MAKEINTRESOURCEA(136))));
+                if (setMode) setMode(2);   // ForceDark
+                if (flush) flush();
+            }
+        }
+        m_taskbarMsg = RegisterWindowMessageW(L"TaskbarCreated");
+        AddTrayIcon();
         return 0;
     }
     case WM_ERASEBKGND:
@@ -1750,6 +2020,8 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         m_updAvailable = wp != 0;
         if (m_updAvailable && m_checkResult)
             m_upd = *m_checkResult;
+        if (m_updAvailable && m_hiddenToTray)
+            TrayBalloon(L"Update verfügbar", L"Duncan's Suite v" + m_upd.version + L" kann installiert werden.");
         InvalidateRect(m_hwnd, &m_banner, FALSE);
         return 0;
     case WM_DL_PROGRESS:
@@ -1791,6 +2063,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_DESTROY:
+        RemoveTrayIcon();
         ReleaseBannerCache();
         m_dlCancel = true;
         if (m_dlThread.joinable())

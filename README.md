@@ -53,6 +53,13 @@ Ein dunkler Dialog mit *Speichern* / *Abbrechen*; gespeichert in `%LOCALAPPDATA%
 - **Beim Start nach Updates suchen** (Standard: an)
 - **Mit Windows starten** (Eintrag unter `HKCU\...\Run`, nur für das eigene Konto)
 - **Download-Ordner für Update-Installer** (Standard: `%LOCALAPPDATA%\DuncansSuite\update`, nur absolute Pfade)
+- **Beim Schließen in den Infobereich minimieren** (das X versteckt die Suite, statt sie zu beenden) und **Nach dem Start eines Programms minimieren** (beide Standard: aus)
+
+### Infobereich (Tray)
+
+Solange die Suite läuft, zeigt der Infobereich neben der Uhr ihr Symbol (Klick öffnet das Fenster). Rechtsklick öffnet ein dunkles Menü:
+*Duncan's Suite öffnen*, *RAM schnell leeren (Quick Clean)*, *Tidy starten*, *Beenden*. Quick Clean verkleinert den Arbeitsspeicher laufender Programme
+(mit Administrator-Rechten zusätzlich die Standby-Liste) und meldet das Ergebnis als Windows-Benachrichtigung. Auch ein gefundenes Suite-Update wird so gemeldet, solange das Fenster versteckt ist.
 
 ## Hersteller-Tabelle (`vendor_releases.json`)
 
@@ -105,7 +112,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.5.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.6.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 
