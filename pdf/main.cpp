@@ -23,7 +23,7 @@ using std::min;
 #include "PdfDocument.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.1.20"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.1.21"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -56,7 +56,8 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
-    C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS, C_CROP, C_UNCROP
+    C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS, C_CROP, C_UNCROP,
+    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
 };
 
 struct Item {
@@ -134,6 +135,13 @@ struct App {
     int pageW = 0, pageH = 0, scrollX = 0, scrollY = 0;
     std::wstring toast;
     bool toastErr = false;
+
+    // Markerfarbe (Palette in der Werkzeugleiste)
+    COLORREF hlColor = RGB(255, 255, 0);   // aktuelle Farbe
+    int hlSel = 0;                         // 0-4 Voreinstellung, 5 = eigene Farbe
+    COLORREF customColor = RGB(180, 180, 180);
+    bool customSet = false;
+    COLORREF custColors[16] = {};          // Palette des Windows-Farbdialogs
 } g;
 
 inline int Max(long a, long b) { return static_cast<int>(a > b ? a : b); }
@@ -141,7 +149,7 @@ inline int Min(long a, long b) { return static_cast<int>(a < b ? a : b); }
 int S(int v) { return MulDiv(v, g.dpi, 96); }
 int ToolbarH() { return S(56); }
 int TabHeaderH() { return S(38); }
-int SideW() { return g.sideVisible ? S(210) : 0; }
+int SideW() { return g.sideVisible ? S(250) : 0; }
 int FooterH() { return S(26); }   // schmale Fusszeile unter Seitenleiste und Canvas
 const int kMargin = 24;
 
@@ -211,6 +219,7 @@ void OpenSearch();
 void CloseSearch();
 void SearchStep(int dir);
 void ClearSearch();
+void ShowSettings();
 
 void InvalidateToolbar() {
     RECT r{ 0, 0, 100000, ToolbarH() };
@@ -245,6 +254,85 @@ void BuildItems() {
     add(C_PREV, L"‹", 40, true, true);
     add(C_NONE, L"1 / 1", 84, true, true, true);   // Seitenanzeige (nicht klickbar)
     add(C_NEXT, L"›", 40, true, true);
+    add(C_SETTINGS, L"⚙", 44, false, true);   // Zahnrad ganz rechts: Einstellungen
+}
+
+const COLORREF kPresetColors[5] = { RGB(255, 255, 0), RGB(0, 255, 0), RGB(0, 255, 255), RGB(255, 0, 255), RGB(255, 165, 0) };
+COLORREF SwatchColor(int idx) { return idx < 5 ? kPresetColors[idx] : g.customColor; }
+
+std::wstring SettingsPath() {
+    wchar_t base[MAX_PATH] = {};
+    if (!GetEnvironmentVariableW(L"LOCALAPPDATA", base, MAX_PATH)) return L"";
+    const std::wstring dir = std::wstring(base) + L"\\DuncansPdf";
+    CreateDirectoryW(dir.c_str(), nullptr);
+    return dir + L"\\settings.ini";
+}
+
+void LoadMarkerColor() {
+    const std::wstring ini = SettingsPath();
+    if (ini.empty()) return;
+    g.customSet = GetPrivateProfileIntW(L"Marker", L"EigeneFarbeGesetzt", 0, ini.c_str()) != 0;
+    g.customColor = static_cast<COLORREF>(GetPrivateProfileIntW(L"Marker", L"EigeneFarbe", static_cast<INT>(g.customColor), ini.c_str())) & 0xFFFFFF;
+    const int sel = GetPrivateProfileIntW(L"Marker", L"Auswahl", 0, ini.c_str());
+    g.hlSel = (sel >= 0 && sel <= 5 && (sel < 5 || g.customSet)) ? sel : 0;
+    g.hlColor = SwatchColor(g.hlSel);
+}
+
+void SaveMarkerColor() {
+    const std::wstring ini = SettingsPath();
+    if (ini.empty()) return;
+    WritePrivateProfileStringW(L"Marker", L"Auswahl", std::to_wstring(g.hlSel).c_str(), ini.c_str());
+    WritePrivateProfileStringW(L"Marker", L"EigeneFarbe", std::to_wstring(static_cast<unsigned long>(g.customColor)).c_str(), ini.c_str());
+    WritePrivateProfileStringW(L"Marker", L"EigeneFarbeGesetzt", g.customSet ? L"1" : L"0", ini.c_str());
+}
+
+// Allgemeine Einstellungen (Dialog hinter dem Zahnrad), gespeichert in settings.ini [Allgemein]
+struct Prefs {
+    bool singleKeys = true;     // Einzelbuchstaben-Hotkeys (H, N, C, U, R)
+    int zoomMode = 0;           // 0 Seitenbreite, 1 Originalgroesse, 2 letzter Zoom
+    bool bakeRot = true;        // Drehung beim Speichern in die Datei schreiben
+    bool lastFit = true;
+    double lastZoom = 1.0;
+} cfg;
+
+void LoadPrefs() {
+    const std::wstring ini = SettingsPath();
+    if (!ini.empty()) {
+        cfg.singleKeys = GetPrivateProfileIntW(L"Allgemein", L"EinzelbuchstabenHotkeys", 1, ini.c_str()) != 0;
+        cfg.zoomMode = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"StandardZoom", 0, ini.c_str())), 0, 2);
+        cfg.bakeRot = GetPrivateProfileIntW(L"Allgemein", L"DrehungSpeichern", 1, ini.c_str()) != 0;
+        cfg.lastFit = GetPrivateProfileIntW(L"Allgemein", L"LetzterZoomBreite", 1, ini.c_str()) != 0;
+        cfg.lastZoom = std::clamp(GetPrivateProfileIntW(L"Allgemein", L"LetzterZoom", 1000, ini.c_str()) / 1000.0, 0.1, 8.0);
+    }
+    PdfDocument::SetBakeRotations(cfg.bakeRot);
+}
+
+void SavePrefs() {
+    const std::wstring ini = SettingsPath();
+    if (ini.empty()) return;
+    auto put = [&](const wchar_t* key, long v) { WritePrivateProfileStringW(L"Allgemein", key, std::to_wstring(v).c_str(), ini.c_str()); };
+    put(L"EinzelbuchstabenHotkeys", cfg.singleKeys ? 1 : 0);
+    put(L"StandardZoom", cfg.zoomMode);
+    put(L"DrehungSpeichern", cfg.bakeRot ? 1 : 0);
+    put(L"LetzterZoomBreite", cfg.lastFit ? 1 : 0);
+    put(L"LetzterZoom", std::lround(cfg.lastZoom * 1000));
+}
+
+// Windows-Standard-Farbdialog; die gewaehlte Farbe wird zur eigenen Markerfarbe (Palettenplatz 6) und bleibt aktiv
+bool PickCustomColor() {
+    CHOOSECOLORW cc{};
+    cc.lStructSize = sizeof(cc);
+    cc.hwndOwner = g.main;
+    cc.rgbResult = g.customColor;
+    cc.lpCustColors = g.custColors;
+    cc.Flags = CC_RGBINIT | CC_FULLOPEN;
+    if (!ChooseColorW(&cc)) return false;
+    g.customColor = cc.rgbResult;
+    g.customSet = true;
+    g.hlSel = 5;
+    g.hlColor = g.customColor;
+    SaveMarkerColor();
+    return true;
 }
 
 void UpdateLabels() {
@@ -326,12 +414,29 @@ int HitToolbar(POINT p) {
 // ---------- Seitenleiste: Layout & Zeichnen ----------
 const struct { int cmd; const wchar_t* label; } kTools[] = {
     { C_ROTL, L"Seite nach links drehen" }, { C_ROTR, L"Seite nach rechts drehen" },
-    { C_DELETE, L"Seite(n) löschen  (Entf)" }, { C_FIND, L"Im Dokument suchen  (Strg+F)" },
+    { C_DELETE, L"Seite(n) löschen  (Entf)" }, { C_FIND, L"Suchen  (Strg+F)" },
     { C_HILITE, L"Text markieren  (H)" }, { C_NOTE, L"Notiz hinzufügen  (N)" }, { C_COMPRESS, L"Datei verkleinern …" },
     { C_MERGE, L"PDF anhängen (Merge)" }, { C_SAVE, L"Speichern unter …" },
     { C_FITW, L"Auf Seitenbreite einpassen" }, { C_ACTUAL, L"Originalgröße (100 %)" },
 };
 int ToolRowH() { return S(42); }
+
+// Zeile "Text markieren": rechts daneben sitzt der Farbknopf (oeffnet die Farbpalette)
+int HiliteRow() {
+    for (int i = 0; i < static_cast<int>(sizeof(kTools) / sizeof(kTools[0])); ++i) if (kTools[i].cmd == C_HILITE) return i;
+    return -1;
+}
+RECT ToolRowRect(int i, const RECT& cr) {
+    RECT r{ S(12), S(12) + i * ToolRowH(), cr.right - S(12), S(12) + i * ToolRowH() + ToolRowH() - S(6) };
+    if (i == HiliteRow()) r.right -= S(46);
+    return r;
+}
+RECT ColorBtnRect(const RECT& cr) {
+    const int i = HiliteRow();
+    const int top = S(12) + i * ToolRowH();
+    return RECT{ cr.right - S(12) - S(38), top, cr.right - S(12), top + ToolRowH() - S(6) };
+}
+constexpr int kColorBtnHot = 1000;   // toolHot-Wert fuer den Farbknopf
 
 void ClearThumbs() {
     for (HBITMAP b : g.thumbs) if (b) DeleteObject(b);
@@ -400,11 +505,24 @@ void PaintSide(HDC dc, RECT cr) {
     DeleteObject(bg);
     if (g.sideTab == 1) {
         for (int i = 0; i < static_cast<int>(sizeof(kTools) / sizeof(kTools[0])); ++i) {
-            RECT r{ S(12), S(12) + i * ToolRowH(), cr.right - S(12), S(12) + i * ToolRowH() + ToolRowH() - S(6) };
+            RECT r = ToolRowRect(i, cr);
             bool enabled = kTools[i].cmd != C_NONE && g.doc.IsOpen();
             FillRound(dc, r, S(10), i == g.toolHot && enabled ? kCardHover : kCardRaised, i == g.toolHot && enabled ? RGB(96, 104, 126) : kBorder);
-            RECT t = r; t.left += S(14);
-            DrawTextC(dc, g.font, kTools[i].label, t, enabled ? kText : RGB(95, 100, 112), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            RECT t = r; t.left += S(14); t.right -= S(6);
+            DrawTextC(dc, g.font, kTools[i].label, t, enabled ? kText : RGB(95, 100, 112), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        {   // Farbknopf neben "Text markieren": zeigt die aktuelle Markerfarbe, Klick oeffnet die Palette
+            const RECT b = ColorBtnRect(cr);
+            const bool en = g.doc.IsOpen(), hot = en && g.toolHot == kColorBtnHot;
+            FillRound(dc, b, S(10), hot ? kCardHover : kCardRaised, hot ? RGB(96, 104, 126) : kBorder);
+            const int cx = (b.left + b.right) / 2, cy = (b.top + b.bottom) / 2 - S(3), d = S(18);
+            HBRUSH br = CreateSolidBrush(en ? g.hlColor : RGB(70, 74, 84));
+            HPEN pn = CreatePen(PS_SOLID, 1, kText);
+            HGDIOBJ ob = SelectObject(dc, br), op = SelectObject(dc, pn);
+            Ellipse(dc, cx - d / 2, cy - d / 2, cx + d / 2 + 1, cy + d / 2 + 1);
+            SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(pn); DeleteObject(br);
+            RECT car{ b.left, cy + d / 2, b.right, b.bottom };                      // kleiner Pfeil als Hinweis auf das Aufklappen
+            DrawTextC(dc, g.fontSmall, L"▾", car, en ? kTextDim : RGB(95, 100, 112));
         }
         return;
     }
@@ -950,6 +1068,223 @@ void ShowAbout() {
     PromptText(g.main, L"Über Duncan's PDF Reader", unused, body.c_str());
 }
 
+
+// ---------- Einstellungen (Zahnrad oben rechts) ----------
+struct SetState {
+    bool done = false, ok = false;
+    bool single = true, bake = true;
+    int zoom = 0, color = 0;
+    int hot = -1;                                   // 1 Hotkeys, 2 Drehung, 10-12 Zoom, 20-25 Farbe, 30 OK, 31 Abbrechen
+    RECT card1{}, rcSingle{}, rcZoomRow{}, rcColorRow{}, rcBake{}, rcZoom[3]{}, rcColor[6]{}, rcOk{}, rcCancel{};
+    int secY[3]{};                                  // Ueberschriften der drei Bereiche
+    int height = 0;
+} *g_set = nullptr;
+
+constexpr int kSetW = 560;   // Clientbreite (unskaliert)
+
+void SetDoLayout(SetState& s) {
+    const int W = S(kSetW), pad = S(20), lab = S(26);
+    int y = S(58);
+    s.secY[0] = y; y += lab;
+    s.card1 = RECT{ pad, y, W - pad, y + S(5 * 24 + 22) }; y = s.card1.bottom + S(8);
+    s.rcSingle = RECT{ pad, y, W - pad, y + S(48) }; y = s.rcSingle.bottom + S(18);
+    s.secY[1] = y; y += lab;
+    s.rcZoomRow = RECT{ pad, y, W - pad, y + S(52) }; y = s.rcZoomRow.bottom + S(8);
+    s.rcColorRow = RECT{ pad, y, W - pad, y + S(52) }; y = s.rcColorRow.bottom + S(18);
+    s.secY[2] = y; y += lab;
+    s.rcBake = RECT{ pad, y, W - pad, y + S(66) }; y = s.rcBake.bottom + S(20);
+    const int bh = S(38), bw = S(130);
+    s.rcOk = RECT{ W - pad - bw, y, W - pad, y + bh };
+    s.rcCancel = RECT{ s.rcOk.left - S(10) - bw, y, s.rcOk.left - S(10), y + bh };
+    s.height = y + bh + pad;
+    const int cw = S(100), cg = S(6);                // Zoom-Auswahl (3 Felder rechts)
+    for (int i = 0; i < 3; ++i) {
+        const int right = s.rcZoomRow.right - S(12) - (2 - i) * (cw + cg);
+        s.rcZoom[i] = RECT{ right - cw, s.rcZoomRow.top + S(10), right, s.rcZoomRow.bottom - S(10) };
+    }
+    const int d = S(32), dg = S(10);                 // Farbpunkte
+    for (int i = 0; i < 6; ++i) {
+        const int right = s.rcColorRow.right - S(16) - (5 - i) * (d + dg);
+        const int cy = (s.rcColorRow.top + s.rcColorRow.bottom) / 2;
+        s.rcColor[i] = RECT{ right - d, cy - d / 2, right, cy + d / 2 };
+    }
+}
+
+int SetHit(const SetState& s, POINT p) {
+    if (PtInRect(&s.rcOk, p)) return 30;
+    if (PtInRect(&s.rcCancel, p)) return 31;
+    if (PtInRect(&s.rcSingle, p)) return 1;
+    if (PtInRect(&s.rcBake, p)) return 2;
+    for (int i = 0; i < 3; ++i) if (PtInRect(&s.rcZoom[i], p)) return 10 + i;
+    for (int i = 0; i < 6; ++i) if (PtInRect(&s.rcColor[i], p)) return 20 + i;
+    return 0;
+}
+
+void DrawSwitch(HDC dc, const RECT& row, bool on, bool hot) {
+    const int w = S(44), h = S(24);
+    RECT sw{ row.right - S(16) - w, (row.top + row.bottom) / 2 - h / 2, row.right - S(16), (row.top + row.bottom) / 2 + h / 2 };
+    const COLORREF fill = on ? kAccent : RGB(60, 64, 76);
+    FillRound(dc, sw, h / 2, fill, hot && !on ? RGB(110, 118, 140) : fill);
+    const int kd = h - S(8), kx = on ? sw.right - S(4) - kd : sw.left + S(4);
+    HBRUSH kb = CreateSolidBrush(on ? RGB(8, 20, 36) : RGB(200, 205, 215));
+    HPEN np = CreatePen(PS_NULL, 0, 0);
+    HGDIOBJ ob = SelectObject(dc, kb), op = SelectObject(dc, np);
+    Ellipse(dc, kx, sw.top + S(4), kx + kd + 1, sw.top + S(4) + kd + 1);
+    SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(np); DeleteObject(kb);
+}
+
+void SetPaint(HWND hwnd) {
+    SetState& s = *g_set;
+    PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps);
+    RECT cr; GetClientRect(hwnd, &cr);
+    HDC mem = CreateCompatibleDC(dc);
+    HBITMAP bmp = CreateCompatibleBitmap(dc, cr.right, cr.bottom);
+    HGDIOBJ old = SelectObject(mem, bmp);
+    HBRUSH bg = CreateSolidBrush(kBackground); FillRect(mem, &cr, bg); DeleteObject(bg);
+    const int pad = S(20);
+    DrawTextC(mem, g.fontBold, L"Einstellungen", RECT{ pad, S(16), cr.right - pad, S(52) }, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    const wchar_t* secs[3] = { L"Tastenkürzel & Hotkeys", L"Standard-Verhalten & Ansicht", L"Performance & Rendering" };
+    for (int i = 0; i < 3; ++i) DrawTextC(mem, g.fontSmall, secs[i], RECT{ pad + S(4), s.secY[i], cr.right - pad, s.secY[i] + S(22) }, kTextDim, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+
+    // Hotkey-Liste
+    FillRound(mem, s.card1, S(10), kCardRaised, kBorder);
+    static const wchar_t* keysL[5] = { L"H", L"N", L"C", L"U", L"R / ⇧R" };
+    static const wchar_t* descL[5] = { L"Text markieren", L"Notiz hinzufügen", L"Zuschnitt aufziehen", L"Zuschnitt zurücksetzen", L"Seite drehen" };
+    static const wchar_t* keysR[5] = { L"Strg+O", L"Strg+S", L"Strg+F", L"Entf", L"Strg+0 / 1" };
+    static const wchar_t* descR[5] = { L"Öffnen", L"Speichern", L"Suchen", L"Seite löschen", L"Breite / 100 %" };
+    const int colW = (s.card1.right - s.card1.left) / 2, kw = S(86);
+    for (int i = 0; i < 5; ++i) {
+        const int ty = s.card1.top + S(11) + i * S(24);
+        const COLORREF kc = s.single ? kAccent : RGB(95, 100, 112), dtc = s.single ? kText : RGB(120, 126, 140);
+        DrawTextC(mem, g.font, keysL[i], RECT{ s.card1.left + S(16), ty, s.card1.left + S(16) + kw, ty + S(24) }, kc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextC(mem, g.font, descL[i], RECT{ s.card1.left + S(16) + kw, ty, s.card1.left + colW, ty + S(24) }, dtc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        DrawTextC(mem, g.font, keysR[i], RECT{ s.card1.left + colW + S(8), ty, s.card1.left + colW + S(8) + kw, ty + S(24) }, kAccent, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextC(mem, g.font, descR[i], RECT{ s.card1.left + colW + S(8) + kw, ty, s.card1.right - S(10), ty + S(24) }, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+    auto row = [&](const RECT& r, bool hot) { FillRound(mem, r, S(10), hot ? kCardHover : kCardRaised, hot ? RGB(96, 104, 126) : kBorder); };
+    row(s.rcSingle, s.hot == 1);
+    DrawTextC(mem, g.font, L"Einzelbuchstaben-Hotkeys aktivieren (z. B. H, N)", RECT{ s.rcSingle.left + S(16), s.rcSingle.top, s.rcSingle.right - S(70), s.rcSingle.bottom }, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawSwitch(mem, s.rcSingle, s.single, s.hot == 1);
+
+    // Zoom + Markerfarbe
+    FillRound(mem, s.rcZoomRow, S(10), kCardRaised, kBorder);
+    DrawTextC(mem, g.font, L"Zoom beim Öffnen", RECT{ s.rcZoomRow.left + S(16), s.rcZoomRow.top, s.rcZoom[0].left - S(8), s.rcZoomRow.bottom }, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    static const wchar_t* zl[3] = { L"Seitenbreite", L"100 %", L"Zuletzt" };
+    for (int i = 0; i < 3; ++i) {
+        const bool sel = s.zoom == i, hot = s.hot == 10 + i;
+        FillRound(mem, s.rcZoom[i], S(8), sel ? kAccent : (hot ? kCardHover : RGB(36, 40, 50)), sel ? kAccent : (hot ? RGB(110, 118, 140) : kBorder));
+        DrawTextC(mem, g.font, zl[i], s.rcZoom[i], sel ? RGB(8, 20, 36) : kText);
+    }
+    FillRound(mem, s.rcColorRow, S(10), kCardRaised, kBorder);
+    DrawTextC(mem, g.font, L"Standard-Markerfarbe", RECT{ s.rcColorRow.left + S(16), s.rcColorRow.top, s.rcColor[0].left - S(8), s.rcColorRow.bottom }, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    for (int i = 0; i < 6; ++i) {
+        const bool sel = s.color == i, hot = s.hot == 20 + i;
+        const RECT& r = s.rcColor[i];
+        const int cx = (r.left + r.right) / 2, cy = (r.top + r.bottom) / 2, d = S(sel ? 30 : (hot ? 28 : 24));
+        HBRUSH br = CreateSolidBrush(SwatchColor(i));
+        HPEN rp = CreatePen(PS_SOLID, sel ? S(3) : 1, sel ? kText : (hot ? RGB(150, 158, 178) : kBorder));
+        HGDIOBJ ob = SelectObject(mem, br), op = SelectObject(mem, rp);
+        Ellipse(mem, cx - d / 2, cy - d / 2, cx + d / 2 + 1, cy + d / 2 + 1);
+        SelectObject(mem, op); SelectObject(mem, ob); DeleteObject(rp); DeleteObject(br);
+        if (i == 5 && !g.customSet) DrawTextC(mem, g.font, L"+", r, RGB(40, 40, 40));
+    }
+
+    // Performance
+    row(s.rcBake, s.hot == 2);
+    DrawTextC(mem, g.font, L"Gedrehte Seiten beim Speichern dauerhaft übernehmen", RECT{ s.rcBake.left + S(16), s.rcBake.top + S(8), s.rcBake.right - S(70), s.rcBake.top + S(34) }, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawTextC(mem, g.fontSmall, L"Aus: Die Drehung gilt nur in der Ansicht, die gespeicherte Datei bleibt unverändert.", RECT{ s.rcBake.left + S(16), s.rcBake.top + S(34), s.rcBake.right - S(70), s.rcBake.bottom - S(6) }, kTextDim, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    DrawSwitch(mem, s.rcBake, s.bake, s.hot == 2);
+
+    auto button = [&](const RECT& r, bool primary, bool hot, const wchar_t* label) {
+        const COLORREF fill = primary ? (hot ? RGB(96, 176, 255) : kAccent) : (hot ? kCardHover : kCardRaised);
+        FillRound(mem, r, S(10), fill, primary ? fill : (hot ? RGB(96, 104, 126) : kBorder));
+        DrawTextC(mem, g.font, label, r, primary ? RGB(8, 20, 36) : kText);
+    };
+    button(s.rcCancel, false, s.hot == 31, L"Abbrechen");
+    button(s.rcOk, true, s.hot == 30, L"Speichern");
+    BitBlt(dc, 0, 0, cr.right, cr.bottom, mem, 0, 0, SRCCOPY);
+    SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem);
+    EndPaint(hwnd, &ps);
+}
+
+LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (!g_set) return DefWindowProcW(hwnd, msg, wp, lp);
+    SetState& s = *g_set;
+    switch (msg) {
+    case WM_CREATE: { BOOL dark = TRUE; DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark)); return 0; }
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: SetPaint(hwnd); return 0;
+    case WM_MOUSEMOVE: {
+        const int h = SetHit(s, POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+        if (h != s.hot) { s.hot = h; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        const int h = SetHit(s, POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+        if (h == 1) s.single = !s.single;
+        else if (h == 2) s.bake = !s.bake;
+        else if (h >= 10 && h <= 12) s.zoom = h - 10;
+        else if (h >= 20 && h <= 25) {
+            const int i = h - 20;
+            if (i == 5 && (!g.customSet || s.color == 5)) {      // eigene Farbe waehlen (erneuter Klick aendert sie)
+                CHOOSECOLORW cc{};
+                cc.lStructSize = sizeof(cc); cc.hwndOwner = hwnd; cc.rgbResult = g.customColor;
+                cc.lpCustColors = g.custColors; cc.Flags = CC_RGBINIT | CC_FULLOPEN;
+                if (ChooseColorW(&cc)) { g.customColor = cc.rgbResult; g.customSet = true; s.color = 5; }
+            } else s.color = i;
+        }
+        else if (h == 30) { s.ok = true; s.done = true; }
+        else if (h == 31) s.done = true;
+        InvalidateRect(hwnd, nullptr, FALSE);
+        return 0;
+    }
+    case WM_CLOSE: s.done = true; return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void ShowSettings() {
+    SetState st;
+    st.single = cfg.singleKeys; st.bake = cfg.bakeRot; st.zoom = cfg.zoomMode; st.color = g.hlSel;
+    g_set = &st;
+    SetDoLayout(st);
+    RECT cr{ 0, 0, S(kSetW), st.height };
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU, ex = WS_EX_DLGMODALFRAME;
+    AdjustWindowRectEx(&cr, style, FALSE, ex);
+    RECT orc; GetWindowRect(g.main, &orc);
+    const int w = cr.right - cr.left, h = cr.bottom - cr.top;
+    HWND hwnd = CreateWindowExW(ex, L"DuncansPdfSettings", L"Einstellungen", style, orc.left + ((orc.right - orc.left) - w) / 2,
+                                orc.top + ((orc.bottom - orc.top) - h) / 3, w, h, g.main, nullptr, g.inst, nullptr);
+    if (!hwnd) { g_set = nullptr; return; }
+    EnableWindow(g.main, FALSE);
+    ShowWindow(hwnd, SW_SHOW);
+    MSG m;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&m, nullptr, 0, 0);
+        if (r == 0) { PostQuitMessage(static_cast<int>(m.wParam)); break; }
+        if (r < 0) break;
+        if (m.message == WM_KEYDOWN) {
+            if (m.wParam == VK_ESCAPE) { st.done = true; continue; }
+            if (m.wParam == VK_RETURN) { st.ok = true; st.done = true; continue; }
+        }
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    EnableWindow(g.main, TRUE);
+    DestroyWindow(hwnd);
+    SetForegroundWindow(g.main);
+    g_set = nullptr;
+    if (!st.ok) return;
+    cfg.singleKeys = st.single; cfg.bakeRot = st.bake; cfg.zoomMode = st.zoom;
+    g.hlSel = st.color; g.hlColor = SwatchColor(st.color);
+    PdfDocument::SetBakeRotations(cfg.bakeRot);
+    SavePrefs();
+    SaveMarkerColor();
+    InvalidateToolbar();
+    InvalidateRect(g.side, nullptr, FALSE);
+    ShowToast(L"Einstellungen gespeichert");
+}
+
 // Obere linke Ecke der angezeigten Seite im Canvas (Client-Koordinaten)
 void PageOrigin(int& ox, int& oy) {
     RECT cr; GetClientRect(g.canvas, &cr);
@@ -980,7 +1315,11 @@ void UpdateTitle() {
 
 void OpenPath(const std::wstring& path) {
     if (!g.doc.Open(path)) { ShowToast(PdfDocument::LastError(), true); return; }
-    g.page = 0; g.zoom = 1.0; g.fitWidth = true; g.scrollX = g.scrollY = g.sideScroll = 0;
+    g.page = 0;
+    if (cfg.zoomMode == 1) { g.zoom = 1.0; g.fitWidth = false; }                       // Standard-Zoom aus den Einstellungen
+    else if (cfg.zoomMode == 2) { g.zoom = cfg.lastZoom; g.fitWidth = cfg.lastFit; }
+    else { g.zoom = 1.0; g.fitWidth = true; }
+    g.scrollX = g.scrollY = g.sideScroll = 0;
     ClearThumbs();
     g.sel.clear();
     ClearSearch();
@@ -1061,6 +1400,20 @@ void RunCommand(int cmd) {
         break;
     }
     case C_FIND: OpenSearch(); break;
+    case C_SETTINGS: ShowSettings(); break;
+    case C_COL0: case C_COL1: case C_COL2: case C_COL3: case C_COL4: case C_COL5: case C_COLMORE: {
+        const int idx = cmd - C_COL0;
+        if (cmd == C_COLMORE || (idx == 5 && !g.customSet)) {
+            if (!PickCustomColor()) break;
+        } else {
+            g.hlSel = idx;
+            g.hlColor = SwatchColor(idx);
+            SaveMarkerColor();
+        }
+        if (g.doc.IsOpen() && g.tool != 1) { g.tool = 1; g.selDrag = false; InvalidateRect(g.canvas, nullptr, FALSE); }   // Farbwahl schaltet den Marker ein
+        InvalidateToolbar();
+        break;
+    }
     case C_HILITE: case C_NOTE: {
         if (!g.doc.IsOpen()) break;
         const int want = cmd == C_HILITE ? 1 : 2;
@@ -1157,13 +1510,13 @@ void HandleKey(UINT vk) {
         if (g.tool) { g.tool = 0; g.selDrag = g.cropDrag = false; InvalidateToolbar(); InvalidateRect(g.canvas, nullptr, FALSE); }
         else CloseSearch();
         break;
-    case 'C': RunCommand(C_CROP); break;
-    case 'U': RunCommand(C_UNCROP); break;
-    case 'H': RunCommand(C_HILITE); break;
-    case 'N': RunCommand(C_NOTE); break;
+    case 'C': if (cfg.singleKeys) RunCommand(C_CROP); break;
+    case 'U': if (cfg.singleKeys) RunCommand(C_UNCROP); break;
+    case 'H': if (cfg.singleKeys) RunCommand(C_HILITE); break;
+    case 'N': if (cfg.singleKeys) RunCommand(C_NOTE); break;
     case VK_F3: SearchStep(shift ? -1 : 1); break;
     case VK_DELETE: RunCommand(C_DELETE); break;
-    case 'R': RunCommand(shift ? C_ROTL : C_ROTR); break;
+    case 'R': if (cfg.singleKeys) RunCommand(shift ? C_ROTL : C_ROTR); break;
     case VK_PRIOR: RunCommand(C_PREV); break;
     case VK_NEXT: RunCommand(C_NEXT); break;
     case VK_HOME: GoToPage(0); break;
@@ -1417,7 +1770,7 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g.selDrag = false;
             if (GetCapture() == hwnd) ReleaseCapture();
             const int start = std::min(g.selA, g.selB), count = std::abs(g.selB - g.selA) + 1;
-            if (g.doc.AddHighlight(g.selPage, start, count)) { RefreshAfterEdit(g.selPage); ShowToast(L"Markierung hinzugefügt – noch nicht gespeichert"); }
+            if (g.doc.AddHighlight(g.selPage, start, count, g.hlColor)) { RefreshAfterEdit(g.selPage); ShowToast(L"Markierung hinzugefügt – noch nicht gespeichert"); }
             else { ShowToast(PdfDocument::LastError(), true); InvalidateRect(hwnd, nullptr, FALSE); }
         }
         return 0;
@@ -1498,6 +1851,85 @@ int ThumbAt(int y) {
     return -1;
 }
 
+// ---------- Farbpalette (Popup unter dem Farbknopf) ----------
+HWND g_pal = nullptr;
+int g_palHot = -1;                       // 0-5 Farbpunkt, 6 = "Weitere Farben ..."
+bool g_palTrack = false;
+constexpr UINT WM_PALETTE_PICK = WM_APP + 30;   // wParam = Auswahl (0-5 Farbe, 6 = Weitere Farben), geht an das Hauptfenster
+
+void PalLayout(RECT dot[6], RECT& more, SIZE& sz) {
+    const int pad = S(14), d = S(26), gap = S(8);
+    for (int i = 0; i < 6; ++i) dot[i] = RECT{ pad + i * (d + gap), pad, pad + i * (d + gap) + d, pad + d };
+    sz.cx = 2 * pad + 6 * d + 5 * gap;
+    more = RECT{ pad, pad + d + S(12), sz.cx - pad, pad + d + S(12) + S(34) };
+    sz.cy = more.bottom + pad;
+}
+
+int PalHit(POINT p) {
+    RECT dot[6], more; SIZE sz; PalLayout(dot, more, sz);
+    for (int i = 0; i < 6; ++i) if (PtInRect(&dot[i], p)) return i;
+    return PtInRect(&more, p) ? 6 : -1;
+}
+
+LRESULT CALLBACK PaletteProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps; HDC dc = BeginPaint(hwnd, &ps);
+        RECT cr; GetClientRect(hwnd, &cr);
+        HBRUSH bg = CreateSolidBrush(kPanel); FillRect(dc, &cr, bg); DeleteObject(bg);
+        HBRUSH fb = CreateSolidBrush(RGB(96, 104, 126)); FrameRect(dc, &cr, fb); DeleteObject(fb);
+        RECT dot[6], more; SIZE sz; PalLayout(dot, more, sz);
+        for (int i = 0; i < 6; ++i) {
+            const bool sel = g.hlSel == i, hot = g_palHot == i;
+            const int cx = (dot[i].left + dot[i].right) / 2, cy = (dot[i].top + dot[i].bottom) / 2, d = S(hot ? 26 : 22);
+            HBRUSH br = CreateSolidBrush(SwatchColor(i));
+            HPEN rp = CreatePen(PS_SOLID, sel ? S(3) : 1, sel ? kText : (hot ? RGB(150, 158, 178) : kBorder));
+            HGDIOBJ ob = SelectObject(dc, br), op = SelectObject(dc, rp);
+            Ellipse(dc, cx - d / 2, cy - d / 2, cx + d / 2 + 1, cy + d / 2 + 1);
+            SelectObject(dc, op); SelectObject(dc, ob); DeleteObject(rp); DeleteObject(br);
+            if (i == 5 && !g.customSet) DrawTextC(dc, g.font, L"+", dot[i], RGB(40, 40, 40));   // eigene Farbe noch nicht gewaehlt
+        }
+        FillRound(dc, more, S(8), g_palHot == 6 ? kCardHover : kCardRaised, g_palHot == 6 ? RGB(96, 104, 126) : kBorder);
+        DrawTextC(dc, g.font, L"Weitere Farben …", more, kText);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        if (!g_palTrack) { TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, hwnd, 0 }; TrackMouseEvent(&t); g_palTrack = true; }
+        const int h = PalHit(POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+        if (h != g_palHot) { g_palHot = h; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        g_palTrack = false;
+        if (g_palHot != -1) { g_palHot = -1; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    case WM_LBUTTONDOWN: {
+        const int h = PalHit(POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
+        DestroyWindow(hwnd);                       // erst schliessen, dann ausfuehren (der Farbdialog soll nicht unter dem Popup haengen)
+        if (h >= 0) PostMessageW(g.main, WM_PALETTE_PICK, static_cast<WPARAM>(h), 0);
+        return 0;
+    }
+    case WM_KEYDOWN: if (wp == VK_ESCAPE) DestroyWindow(hwnd); return 0;
+    case WM_ACTIVATE: if (LOWORD(wp) == WA_INACTIVE) DestroyWindow(hwnd); return 0;
+    case WM_DESTROY: g_pal = nullptr; g_palHot = -1; g_palTrack = false; return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+void OpenPalette(HWND side, const RECT& btn) {
+    if (g_pal) { DestroyWindow(g_pal); return; }
+    RECT dot[6], more; SIZE sz; PalLayout(dot, more, sz);
+    POINT p{ btn.right - sz.cx, btn.bottom + S(6) };      // rechtsbuendig unter dem Knopf, bleibt in der Seitenleiste
+    if (p.x < 0) p.x = 0;
+    ClientToScreen(side, &p);
+    g_pal = CreateWindowExW(WS_EX_TOOLWINDOW, L"DuncansPdfPalette", L"", WS_POPUP, p.x, p.y, sz.cx, sz.cy, g.main, nullptr, g.inst, nullptr);
+    if (!g_pal) return;
+    ShowWindow(g_pal, SW_SHOW);
+    SetForegroundWindow(g_pal);
+}
+
 LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_ERASEBKGND: return 1;
@@ -1522,6 +1954,11 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g.sideTab == 1) {
             int row = (GET_Y_LPARAM(lp) - S(12)) / ToolRowH();
             if (row < 0 || row >= static_cast<int>(sizeof(kTools) / sizeof(kTools[0]))) row = -1;
+            RECT scr; GetClientRect(hwnd, &scr);
+            const POINT mp{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            const RECT cb = ColorBtnRect(scr);
+            if (PtInRect(&cb, mp)) row = kColorBtnHot;
+            else if (row == HiliteRow() && mp.x >= ToolRowRect(row, scr).right) row = -1;
             if (row != g.toolHot) { g.toolHot = row; InvalidateRect(hwnd, nullptr, FALSE); }
         }
         if (g.dragPending) {                                            // Verschieben starten, sobald die Maus sich merklich bewegt hat
@@ -1576,7 +2013,12 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         const int y = GET_Y_LPARAM(lp);
         if (g.sideTab == 1) {
             int row = (y - S(12)) / ToolRowH();
-            if (row >= 0 && row < static_cast<int>(sizeof(kTools) / sizeof(kTools[0])) && g.doc.IsOpen()) RunCommand(kTools[row].cmd);
+            RECT scr; GetClientRect(hwnd, &scr);
+            const POINT mp{ GET_X_LPARAM(lp), y };
+            const RECT cb = ColorBtnRect(scr);
+            if (PtInRect(&cb, mp)) { if (g.doc.IsOpen()) OpenPalette(hwnd, cb); }
+            else if (row >= 0 && row < static_cast<int>(sizeof(kTools) / sizeof(kTools[0])) && g.doc.IsOpen()
+                     && !(row == HiliteRow() && mp.x >= ToolRowRect(row, scr).right)) RunCommand(kTools[row].cmd);
         } else if (g.doc.IsOpen()) {
             const int hit = ThumbAt(y);
             if (hit >= 0) {
@@ -1684,6 +2126,9 @@ void SetDarkScrollbars(HWND h) { SetWindowTheme(h, L"DarkMode_Explorer", nullptr
 
 LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
+    case WM_PALETTE_PICK:                    // Auswahl aus der Farbpalette (6 = Weitere Farben)
+        RunCommand(wp >= 6 ? C_COLMORE : C_COL0 + static_cast<int>(wp));
+        return 0;
     case WM_CREATE: {
         g.main = hwnd;
         g.dpi = static_cast<int>(GetDpiForWindow(hwnd));
@@ -1698,6 +2143,8 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (flush) flush();
         }
         MakeFonts();
+        LoadMarkerColor();
+        LoadPrefs();
         BuildItems();
         g.side = CreateWindowExW(0, L"DuncansPdfSide", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL, 0, 0, 10, 10, hwnd, nullptr, g.inst, nullptr);
         g.canvas = CreateWindowExW(0, L"DuncansPdfCanvas", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | WS_HSCROLL | WS_CLIPCHILDREN, 0, 0, 10, 10, hwnd, nullptr, g.inst, nullptr);
@@ -1789,6 +2236,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        if (g.doc.IsOpen()) { cfg.lastFit = g.fitWidth; cfg.lastZoom = g.zoom; SavePrefs(); }   // "Letzten Zoom merken"
         PostQuitMessage(0);
         return 0;
     }
@@ -1814,6 +2262,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     reg(L"DuncansPdfSide", SideProc, nullptr, nullptr);
     reg(L"DuncansPdfCanvas", CanvasProc, nullptr, nullptr);
     reg(L"DuncansPdfPrompt", PromptProc, nullptr, nullptr);
+    reg(L"DuncansPdfPalette", PaletteProc, nullptr, nullptr);
+    reg(L"DuncansPdfSettings", SettingsProc, nullptr, nullptr);
 
     HWND hwnd = CreateWindowExW(0, L"DuncansPdfMain", kAppTitle, WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                                 CW_USEDEFAULT, CW_USEDEFAULT, 1280, 820, nullptr, nullptr, inst, nullptr);

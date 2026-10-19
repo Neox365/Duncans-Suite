@@ -318,7 +318,11 @@ void PdfDocument::HitRects(const TextHit& hit, int w, int h, std::vector<RECT>& 
     g_api.ClosePage(page);
 }
 
+static bool g_bakeRot = true;
+void PdfDocument::SetBakeRotations(bool on) { g_bakeRot = on; }
+
 void PdfDocument::BakeRotations() {
+    if (!g_bakeRot) return;
     // Drehungen in die Seiten schreiben; danach gilt die Drehung als im Dokument enthalten.
     for (size_t i = 0; i < m_rot.size(); ++i) {
         if (!m_rot[i]) continue;
@@ -384,7 +388,7 @@ int PdfDocument::CharAt(int index, int w, int h, int dx, int dy) const {
     return result;
 }
 
-bool PdfDocument::AddHighlight(int index, int startChar, int charCount) {
+bool PdfDocument::AddHighlight(int index, int startChar, int charCount, unsigned long rgb) {
     if (!m_doc || charCount <= 0 || startChar < 0) return false;
     void* page = g_api.LoadPage(m_doc, index);
     if (!page) return false;
@@ -407,7 +411,7 @@ bool PdfDocument::AddHighlight(int index, int startChar, int charCount) {
                 }
                 if (added > 0) {
                     g_api.AnnotSetRect(annot, &all);
-                    g_api.AnnotSetColor(annot, 0 /* Color */, 255, 235, 0, 200);
+                    g_api.AnnotSetColor(annot, 0 /* Color */, rgb & 0xFF, (rgb >> 8) & 0xFF, (rgb >> 16) & 0xFF, 200);   // Textmarker-Transparenz
                     ok = true;
                 }
                 g_api.PageCloseAnnot(annot);

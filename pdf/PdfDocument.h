@@ -50,7 +50,7 @@ public:
 
     // Text markieren / kommentieren. Koordinaten in Pixeln der gerenderten Seite (w x h, aktuelle Drehung).
     int CharAt(int index, int w, int h, int dx, int dy) const;                    // Zeichenindex an der Position oder -1
-    bool AddHighlight(int index, int startChar, int charCount);                   // gelbe Hervorhebung
+    bool AddHighlight(int index, int startChar, int charCount, unsigned long rgb = 0x00EBFF /* COLORREF: Gelb */);   // Hervorhebung in der Farbe rgb (COLORREF 0x00BBGGRR)
     bool AddNote(int index, int w, int h, int dx, int dy, const std::wstring& text);   // Notiz-Symbol mit Kommentar
 
     struct CompressStats { unsigned long long before = 0, after = 0; int images = 0, recompressed = 0; };
@@ -81,6 +81,7 @@ public:
     void FormKillFocus();                                  // uebernimmt den Feldinhalt in das Dokument
     bool TakeFormDirty();                                  // Seite muss neu gezeichnet werden
     static void SetFormRedrawHook(void (*hook)());         // wird aus PDFium-Rueckrufen/Timern aufgerufen
+    static void SetBakeRotations(bool on);                 // false: Drehungen beim Speichern nicht in die Datei schreiben (nur Ansicht)
 
 private:
     void BakeRotations();                    // schreibt die Zusatzdrehungen in die Seiten
