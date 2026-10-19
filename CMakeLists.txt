@@ -1,5 +1,8 @@
 cmake_minimum_required(VERSION 3.20)
 project(DuncansDriverUpdater VERSION 1.1.24 LANGUAGES CXX RC)
+# Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
+set(SUITE_VER "1.1.26")
+set(PDF_VER "1.1.24")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -59,7 +62,7 @@ add_executable(DuncansSuite WIN32
     resources/suite.rc
 )
 target_compile_definitions(DuncansSuite PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
-                           SUITE_VERSION=L\"${PROJECT_VERSION}\")
+                           SUITE_VERSION=L\"${SUITE_VER}\")
 if(MSVC)
     target_compile_options(DuncansSuite PRIVATE /utf-8 /W4 /permissive-)
     set_property(TARGET DuncansSuite PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -78,7 +81,7 @@ add_executable(DuncansPdfReader WIN32
 )
 set_target_properties(DuncansPdfReader PROPERTIES OUTPUT_NAME DuncansPdf)
 target_compile_definitions(DuncansPdfReader PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
-                           APP_VERSION=L\"${PROJECT_VERSION}\")
+                           APP_VERSION=L\"${PDF_VER}\")
 if(MSVC)
     target_compile_options(DuncansPdfReader PRIVATE /utf-8 /W4 /permissive-)
     set_property(TARGET DuncansPdfReader PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
