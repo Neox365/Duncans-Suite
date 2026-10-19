@@ -16,7 +16,7 @@
 #include "Utils.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.1.15"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.1.16"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER

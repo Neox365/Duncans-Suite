@@ -44,7 +44,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.15"
+#define SUITE_VERSION L"1.1.16"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -53,6 +53,11 @@
 namespace
 {
     const wchar_t* kClassName = L"DuncansSuiteWnd";
+    UINT ShowRequestMessage()   // zweite Instanz bittet die laufende, sich zu zeigen
+    {
+        static const UINT msg = RegisterWindowMessageW(L"DuncansSuite.ShowRequest");
+        return msg;
+    }
 
     // Palette wie in den anderen Tools
     const COLORREF kBackground = RGB(18, 19, 22);
@@ -2078,6 +2083,11 @@ void SuiteWindow::OnClick(int, int)
 
 LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (msg == ShowRequestMessage())                  // zweiter Start: Fenster aus dem Infobereich/Hintergrund holen
+    {
+        RestoreFromTray();
+        return 0;
+    }
     if (m_taskbarMsg != 0 && msg == m_taskbarMsg)   // Explorer wurde neu gestartet: Symbol neu anlegen
     {
         m_trayShown = false;
@@ -2310,6 +2320,15 @@ int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int showCommand)
         const size_t pos = cmd.find(flag);
         if (pos != std::wstring::npos)
             return RunTidyAnalyze(cmd.substr(pos + wcslen(flag)));
+    }
+    // Nur eine Suite pro Anmeldung: ein weiterer Start holt das vorhandene Fenster (auch aus dem Infobereich) nach vorn
+    HANDLE singleton = CreateMutexW(nullptr, FALSE, L"Local\\DuncansSuite.SingleInstance");
+    if (singleton && GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        if (HWND other = FindWindowW(kClassName, nullptr))
+            PostMessageW(other, ShowRequestMessage(), 0, 0);
+        CloseHandle(singleton);
+        return 0;
     }
     SuiteWindow window;
     if (!window.Create(instance, showCommand))
