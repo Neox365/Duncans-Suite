@@ -44,7 +44,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.24"
+#define SUITE_VERSION L"1.1.25"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -1047,8 +1047,8 @@ private:
         { L"DuncansDriverUpdater.exe", L"Duncan's Driver Updater",
           L"Hardware- & Treiber-Manager. Liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.",
           CategoryIcon::Cpu, RGB(64, 156, 255), {}, {}, {},
-          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/latest/download/DuncansDriverUpdater.exe",
-          L"https://github.com/Neox365/Duncans-Suite/releases/latest/download/modules.txt" },
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansDriverUpdater.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansPdf.exe", L"Duncan's PDF Reader",
           L"PDF-Betrachter. Öffnet, zoomt, dreht, fügt zusammen und speichert PDF-Dateien.",
           CategoryIcon::Document, RGB(240, 84, 84), {}, {}, {},
@@ -1058,8 +1058,8 @@ private:
         { L"DuncansPrivacy.exe", L"Duncan's Privacy Shield",
           L"Datenschutz- & Telemetrie-Manager. Schaltet Hintergrund-Tracking, Diagnosedaten und unnötige Windows-Dienste per Klick stumm.",
           CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {},
-          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/latest/download/DuncansPrivacy.exe",
-          L"https://github.com/Neox365/Duncans-Suite/releases/latest/download/modules.txt" },
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPrivacy.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
     };
 
     RECT m_banner{}, m_folderRect{}, m_footer{};
@@ -2403,7 +2403,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     case WM_UPD_CHECKED:
     {
         m_updAvailable = wp == 1;
-        std::wstring modNote;   // z. B. "Tidy v1.1.5, PDF Reader v1.1.24"
+        std::wstring modNote;   // z. B. "Tidy v1.1.5, PDF Reader v1.1.25"
         for (int i = 0; i < 4; ++i)
         {
             m_tools[i].newVersion = ((lp >> i) & 1) && m_modRemote && i < static_cast<int>(m_modRemote->size()) ? (*m_modRemote)[i] : std::wstring();
