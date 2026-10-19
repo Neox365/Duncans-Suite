@@ -23,7 +23,7 @@ using std::min;
 #include "PdfDocument.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.1.13"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.1.14"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER

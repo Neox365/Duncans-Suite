@@ -3,7 +3,7 @@
 ; Kompilieren: ISCC.exe installer\installer.iss  (Ausgabe: release\)
 
 #define MyAppName      "Duncan's Driver Updater"
-#define MyAppVersion   "1.1.13"
+#define MyAppVersion   "1.1.14"
 #define MyAppPublisher "Duncan"
 #define MyAppExeName   "DuncansDriverUpdater.exe"
 ; Duncan's Suite: zentraler Launcher (Haupt-Startverknuepfung fuer Desktop und Startmenue)
@@ -50,6 +50,8 @@ Source: "..\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; Duncan's PDF Reader (PDFium wird zur Laufzeit aus pdfium.dll geladen)
 Source: "..\release\DuncansPdf.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\release\pdfium.dll"; DestDir: "{app}"; Flags: ignoreversion
+; Duncan's Privacy Shield (Administratorrechte, Registry-Einstellungen mit Sicherung)
+Source: "..\release\DuncansPrivacy.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Hersteller-Tabelle fuer den Grafiktreiber-Abgleich (vom Nutzer editierbar)
 Source: "..\release\vendor_releases.json"; DestDir: "{app}"; Flags: ignoreversion
 
@@ -57,6 +59,7 @@ Source: "..\release\vendor_releases.json"; DestDir: "{app}"; Flags: ignoreversio
 Name: "{group}\{#SuiteName}"; Filename: "{app}\{#SuiteExeName}"
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Duncan's PDF Reader"; Filename: "{app}\DuncansPdf.exe"
+Name: "{group}\Duncan's Privacy Shield"; Filename: "{app}\DuncansPrivacy.exe"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#SuiteName}"; Filename: "{app}\{#SuiteExeName}"; Tasks: desktopicon
 

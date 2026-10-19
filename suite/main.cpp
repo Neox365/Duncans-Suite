@@ -43,7 +43,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.13"
+#define SUITE_VERSION L"1.1.14"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -983,7 +983,7 @@ private:
     HFONT m_fontTitle = nullptr, m_fontCard = nullptr, m_fontHeading = nullptr, m_fontBody = nullptr, m_fontSmall = nullptr;
     HICON m_icon = nullptr;
 
-    Tool m_tools[3] = {
+    Tool m_tools[4] = {
         { L"DuncansTidy.exe", L"Duncan's Tidy",
           L"System-Reinigung & Datenmüll-Beseitigung. Räumt Downloads, temporäre Dateien und Browser-Caches auf.",
           CategoryIcon::Broom, RGB(251, 191, 36), {}, {}, {},
@@ -995,6 +995,9 @@ private:
           L"PDF-Betrachter. Öffnet, zoomt, dreht, fügt zusammen und speichert PDF-Dateien.",
           CategoryIcon::Document, RGB(240, 84, 84), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/DuncansPdf.exe" },
+        { L"DuncansPrivacy.exe", L"Duncan's Privacy Shield",
+          L"Datenschutz- & Telemetrie-Manager. Schaltet Hintergrund-Tracking, Diagnosedaten und unnötige Windows-Dienste per Klick stumm.",
+          CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {} },
     };
 
     RECT m_banner{}, m_folderRect{}, m_footer{};
@@ -1080,7 +1083,7 @@ bool SuiteWindow::Create(HINSTANCE instance, int showCommand)
     IconsInit();
     m_dpi = GetDpiForSystem();
     m_hwnd = CreateWindowExW(0, kClassName, L"Duncan's Suite", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                             S(1100), S(600), nullptr, nullptr, instance, this);
+                             S(1100), S(700), nullptr, nullptr, instance, this);
     if (!m_hwnd)
         return false;
     BOOL animations = TRUE;
@@ -1177,31 +1180,22 @@ void SuiteWindow::Layout()
 
     const int top = m_banner.bottom + S(22), bottom = m_footer.top - S(16), gap = S(20);
     const int width = rc.right - 2 * m;
-    if (width >= S(960))
-    {
-        // drei Karten nebeneinander
-        const int w = (width - 2 * gap) / 3;
-        m_tools[0].rect = { m, top, m + w, bottom };
-        m_tools[1].rect = { m + w + gap, top, m + 2 * w + gap, bottom };
-        m_tools[2].rect = { m + 2 * (w + gap), top, m + width, bottom };
-    }
-    else
-    {
-        // zwei Karten oben, die dritte volle Breite darunter
-        const int h = (bottom - top - gap) / 2;
-        const int w = (width - gap) / 2;
-        m_tools[0].rect = { m, top, m + w, top + h };
-        m_tools[1].rect = { m + w + gap, top, m + width, top + h };
-        m_tools[2].rect = { m, top + h + gap, m + width, bottom };
-    }
+    // 2 x 2 Karten: Tidy | Driver Updater / PDF Reader | Privacy Shield
+    const int h = (bottom - top - gap) / 2;
+    const int w = (width - gap) / 2;
+    m_tools[0].rect = { m, top, m + w, top + h };
+    m_tools[1].rect = { m + w + gap, top, m + width, top + h };
+    m_tools[2].rect = { m, top + h + gap, m + w, bottom };
+    m_tools[3].rect = { m + w + gap, top + h + gap, m + width, bottom };
 }
 
 void SuiteWindow::DrawCard(HDC dc, int index)
 {
     const Tool& t = m_tools[index];
     const RECT& rc = t.rect;
-    const bool hover = m_hover == (index < 2 ? index : 5) && !m_modal;
-    const bool pressed = m_press == (index < 2 ? index : 5) && hover;
+    const int hid = index < 2 ? index : (index == 2 ? 5 : 17);
+    const bool hover = m_hover == hid && !m_modal;
+    const bool pressed = m_press == hid && hover;
     const bool found = !t.path.empty();
     const COLORREF fill = pressed ? Blend(kCardRaised, RGB(0, 0, 0), 18) : (hover ? kCardHover : kCardRaised);
 
@@ -1392,6 +1386,8 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         DrawCard(dc, 1);
     if (RectVisible(dc, &m_tools[2].rect))
         DrawCard(dc, 2);
+    if (RectVisible(dc, &m_tools[3].rect))
+        DrawCard(dc, 3);
 
     // Footer: Version links, Hinweis in der Mitte, Ordner-Button rechts
     DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(176), m_footer.bottom },
@@ -2011,6 +2007,8 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = 1;
     else if (PtInRect(&m_tools[2].rect, pt))
         hover = 5;
+    else if (PtInRect(&m_tools[3].rect, pt))
+        hover = 17;
     else if (PtInRect(&m_folderRect, pt))
         hover = 2;
     if (hover != m_hover)
@@ -2070,7 +2068,7 @@ void SuiteWindow::OnClick(int, int)
     else if (pressed == 2)
         OpenToolsFolder();
     else
-        Launch(pressed == 5 ? 2 : pressed);
+        Launch(pressed == 5 ? 2 : (pressed == 17 ? 3 : pressed));
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -2152,7 +2150,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
         mmi->ptMinTrackSize.x = S(520);
-        mmi->ptMinTrackSize.y = S(560);
+        mmi->ptMinTrackSize.y = S(680);
         return 0;
     }
     case WM_DPICHANGED:

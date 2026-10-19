@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DuncansDriverUpdater VERSION 1.1.13 LANGUAGES CXX RC)
+project(DuncansDriverUpdater VERSION 1.1.14 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -94,3 +94,23 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/pdf/third_party/pdfium.dll")
                 "${CMAKE_SOURCE_DIR}/pdf/third_party/pdfium.dll" "${OUT_DIR}/pdfium.dll"
         COMMENT "pdfium.dll nach release/ kopieren")
 endif()
+
+# ---- Duncan's Privacy Shield: Datenschutz-/Telemetrie-Manager (Administratorrechte, Registry-Logik in privacy/PrivacyRules) ----
+add_executable(DuncansPrivacyShield WIN32
+    privacy/main.cpp
+    privacy/PrivacyRules.cpp
+    src/Icons.cpp
+    resources/privacy.rc
+)
+set_target_properties(DuncansPrivacyShield PROPERTIES OUTPUT_NAME DuncansPrivacy)
+target_compile_definitions(DuncansPrivacyShield PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"0.5.0\")
+if(MSVC)
+    target_compile_options(DuncansPrivacyShield PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET DuncansPrivacyShield PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(DuncansPrivacyShield PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(DuncansPrivacyShield PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
+    target_link_options(DuncansPrivacyShield PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
+endif()
+target_link_libraries(DuncansPrivacyShield PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32)

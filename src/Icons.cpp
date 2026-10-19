@@ -192,6 +192,23 @@ namespace
             Line(0.34f, 0.5f, 0.66f, 0.5f);
             Line(0.34f, 0.66f, 0.54f, 0.66f);
             break;
+        case CategoryIcon::Shield:
+        {
+            // Schild mit Schluesselloch: oben spitz zulaufend, unten gerundet
+            GraphicsPath sh;
+            sh.AddLine(P(0.5f, 0.06f), P(0.84f, 0.2f));
+            sh.AddLine(P(0.84f, 0.2f), P(0.84f, 0.5f));
+            sh.AddBezier(P(0.84f, 0.5f), P(0.84f, 0.72f), P(0.66f, 0.86f), P(0.5f, 0.95f));
+            sh.AddBezier(P(0.5f, 0.95f), P(0.34f, 0.86f), P(0.16f, 0.72f), P(0.16f, 0.5f));
+            sh.AddLine(P(0.16f, 0.5f), P(0.16f, 0.2f));
+            sh.CloseFigure();
+            SolidBrush shFill(Color(60, GetRValue(color), GetGValue(color), GetBValue(color)));
+            g.FillPath(&shFill, &sh);
+            g.DrawPath(&pen, &sh);
+            Circle(0.5f, 0.42f, 0.075f);
+            Line(0.5f, 0.5f, 0.5f, 0.66f);
+            break;
+        }
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);
@@ -566,10 +583,11 @@ void DrawSuiteScene(HDC dc, const RECT& area, float t, int scalePx)
     };
     const auto makeBrush = [&](BYTE a) {
         auto* b = new LinearGradientBrush(PointF(x0, 0), PointF(x1, 0), Color(0, 255, 190, 60), Color(0, 255, 60, 120));
-        const Color cols[7] = { Color(0, 255, 180, 50), Color(a, 255, 185, 55), Color(a, 255, 210, 110), Color(a, 70, 195, 255),
-                                Color(a, 235, 80, 160), Color(a, 255, 60, 110), Color(0, 255, 60, 110) };
-        const REAL pos[7] = { 0.0f, 0.1f, 0.32f, 0.5f, 0.74f, 0.9f, 1.0f };
-        b->SetInterpolationColors(cols, pos, 7);
+        // Gold (Tidy) -> Cyan (Driver Updater) -> Magenta (PDF Reader) -> Violett (Privacy Shield), Enden laufen aus
+        const Color cols[8] = { Color(0, 255, 180, 50), Color(a, 255, 185, 55), Color(a, 255, 210, 110), Color(a, 70, 195, 255),
+                                Color(a, 235, 80, 160), Color(a, 255, 70, 130), Color(a, 167, 139, 250), Color(0, 167, 139, 250) };
+        const REAL pos[8] = { 0.0f, 0.08f, 0.27f, 0.45f, 0.64f, 0.78f, 0.92f, 1.0f };
+        b->SetInterpolationColors(cols, pos, 8);
         return b;
     };
     const auto curve = [&](Pen& pen, REAL k) {
@@ -635,7 +653,7 @@ void DrawSuiteScene(HDC dc, const RECT& area, float t, int scalePx)
         const REAL x = x0 + (x1 - x0) * s;
         const REAL dy = (((i * 53) % 17) - 8) * 2.6f * u;
         const REAL y = wave(x, 0) + dy;
-        const Color c = s < 0.38f ? Color(255, 255, 190, 70) : (s < 0.66f ? Color(255, 110, 210, 255) : Color(255, 255, 80, 140));
+        const Color c = s < 0.33f ? Color(255, 255, 190, 70) : (s < 0.57f ? Color(255, 110, 210, 255) : (s < 0.8f ? Color(255, 255, 80, 140) : Color(255, 190, 160, 255)));
         SolidBrush dot(Color(static_cast<BYTE>(60 + 110 * (1.0f - std::fabs(dy) / (24 * u)) + 40 * pulse), c.GetR(), c.GetG(), c.GetB()));
         const REAL r = (0.8f + (i % 3) * 0.55f) * u;
         g.FillEllipse(&dot, x - r, y - r, 2 * r, 2 * r);

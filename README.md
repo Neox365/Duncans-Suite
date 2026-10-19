@@ -98,6 +98,27 @@ git add resources/vendor_releases.json resources/vendor_releases.json.sig; git c
 
 `SignVendorTable.ps1` bringt die Datei auf LF/UTF-8 ohne BOM (genau diese Bytes liefert GitHub aus) und erzeugt die `.sig`.
 
+## Duncan's Privacy Shield
+
+Datenschutz- & Telemetrie-Manager (`DuncansPrivacy.exe`, vierte Karte der Suite, eigene Programmversion 0.5.0). Läuft mit Administratorrechten (UAC), weil Richtlinien unter `HKLM` geschrieben werden.
+Jede Einstellung ist ein Schalter und besteht aus klar benannten Registry-Werten (siehe `privacy/PrivacyRules.cpp`, `AllSettings()`):
+
+| Gruppe | Einstellung | Registry (Auszug) |
+| --- | --- | --- |
+| Telemetrie & Diagnose | Telemetrie minimieren | `Policies\...\DataCollection\AllowTelemetry = 0` |
+| | Feedback-Aufforderungen aus | `DoNotShowFeedbackNotifications = 1`, `Siuf\Rules` |
+| | Telemetrie-Dienste stoppen | Dienste `DiagTrack`, `dmwappushservice` (Start = 4, werden beendet) |
+| | Maßgeschneiderte Erfahrungen aus | `Privacy\TailoredExperiencesWithDiagnosticDataEnabled = 0` |
+| Startmenü-Suche | Web-/Bing-Ergebnisse aus | `Search\BingSearchEnabled = 0`, `DisableSearchBoxSuggestions = 1` |
+| System-Tracking | Werbe-ID aus | `AdvertisingInfo\Enabled = 0`, Richtlinie `DisabledByGroupPolicy` |
+| | Standortdienste aus | `LocationAndSensors\DisableLocation = 1`, `ConsentStore\location = Deny` |
+| | Eingabe-/Handschriftdaten nicht übermitteln | `Input\TIPC\Enabled = 0`, `InputPersonalization\*` |
+
+**Sicherheit:** Vor der ersten Änderung wird ein Windows-Wiederherstellungspunkt erstellt (im Hintergrund; ist der Systemschutz aus, fragt das Programm nach, ob es trotzdem weitermachen soll).
+Zusätzlich sichert das Programm vor dem Schreiben den Originalzustand jedes Wertes (vorhanden + Wert oder „nicht vorhanden“) in `%LOCALAPPDATA%\DuncansPrivacyShield\backup.ini`.
+Ein einzelner Schalter nimmt genau seine Werte zurück, **Standard wiederherstellen** stellt alles auf den Zustand von vor der ersten Änderung. Schlägt ein Schreibvorgang mitten in einer Einstellung fehl, wird sie vollständig zurückgenommen.
+Manche Richtlinien greifen erst nach Neustart oder Abmelden.
+
 ## Bauen
 
 Voraussetzungen: CMake ≥ 3.20 und ein C++17-Compiler (MinGW-w64 oder MSVC), Windows 10/11.
@@ -118,7 +139,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.13.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.14.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 
@@ -130,6 +151,7 @@ Ergebnis: `release\DuncansSuite_Setup_1.1.13.exe` (Admin-Installer, Startmenü, 
 | `src/MainWindow.*`, `src/Icons.*` | UI (Win32 + GDI/GDI+), Banner, Splash, Dialoge |
 | `suite/main.cpp` | Duncan's Suite (Launcher) |
 | `pdf/` | Duncan's PDF Reader (`main.cpp` UI, `PdfDocument.*` PDFium-Wrapper, `PdfiumApi.h`) |
+| `privacy/` | Duncan's Privacy Shield (`main.cpp` UI, `PrivacyRules.*` Registry-Logik mit Sicherung) |
 | `tools/` | `MakeSigningKey.ps1`, `SignRelease.ps1` |
 | `release/` | Fertige Programme, Installer und `.sig`-Dateien (nicht im Repository) |
 | `_archiv/` | Alte Installer (nicht im Repository) |
