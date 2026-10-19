@@ -27,12 +27,11 @@ using std::min;
 #include "../src/Icons.h"
 #include "../src/SuiteSafety.h"
 #include "PrivacyRules.h"
+#include "../common/Theme.h"
+#include "../common/Gfx.h"
 
 #ifndef APP_VERSION
 #define APP_VERSION L"0.6.2"   // normalerweise aus CMake (PROJECT_VERSION)
-#endif
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
 #ifdef _MSC_VER
@@ -41,18 +40,13 @@ using std::min;
 
 namespace {
 
-const COLORREF kBackground = RGB(18, 19, 22);
-const COLORREF kCard       = RGB(35, 38, 47);
-const COLORREF kCardHover  = RGB(43, 47, 59);
-const COLORREF kBorder     = RGB(45, 49, 61);
-const COLORREF kBorderHot  = RGB(96, 104, 126);
-const COLORREF kText       = RGB(235, 237, 242);
-const COLORREF kTextDim    = RGB(150, 155, 168);
-const COLORREF kAccent     = RGB(64, 156, 255);
+// Gemeinsame Palette und Helfer aus common/; nur Privacy-Shield-eigene Farben bleiben hier
+using namespace theme;
+using gfx::Blend;
+using gfx::TextWidth;
+const COLORREF kCard       = kCardRaised;
+const COLORREF kBorderHot  = kBorderHover;
 const COLORREF kViolet     = RGB(167, 139, 250);
-const COLORREF kGreen      = RGB(52, 199, 120);
-const COLORREF kRed        = RGB(240, 84, 84);
-const COLORREF kOrange     = RGB(255, 150, 50);
 
 const wchar_t* kTitle = L"Duncan's Privacy Shield";
 const UINT WM_RP_DONE = WM_APP + 1;     // Wiederherstellungspunkt fertig (wp = Erfolg)
@@ -98,11 +92,6 @@ struct App {
 
 int S(int v) { return MulDiv(v, static_cast<int>(g.dpi), 96); }
 
-COLORREF Blend(COLORREF a, COLORREF b, int pctB) {
-    auto mix = [&](int x, int y) { return (x * (100 - pctB) + y * pctB) / 100; };
-    return RGB(mix(GetRValue(a), GetRValue(b)), mix(GetGValue(a), GetGValue(b)), mix(GetBValue(a), GetBValue(b)));
-}
-
 void MakeFonts() {
     for (HFONT* f : { &g.fTitle, &g.fHead, &g.fBody, &g.fSmall, &g.fBold })
         if (*f) { DeleteObject(*f); *f = nullptr; }
@@ -123,14 +112,6 @@ void DrawText2(HDC dc, HFONT f, COLORREF c, RECT r, const std::wstring& t, UINT 
     SetBkMode(dc, TRANSPARENT);
     DrawTextW(dc, t.c_str(), -1, &r, flags | DT_NOPREFIX);
     SelectObject(dc, old);
-}
-
-int TextWidth(HDC dc, HFONT f, const std::wstring& t) {
-    HGDIOBJ old = SelectObject(dc, f);
-    SIZE sz{};
-    GetTextExtentPoint32W(dc, t.c_str(), static_cast<int>(t.size()), &sz);
-    SelectObject(dc, old);
-    return sz.cx;
 }
 
 int WrappedHeight(HDC dc, HFONT f, const std::wstring& t, int width) {
@@ -740,8 +721,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     if (!g.hwnd) return 1;
     g.dpi = GetDpiForWindow(g.hwnd);
     MakeFonts();
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(g.hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    gfx::EnableDarkTitleBar(g.hwnd);
     RefreshApplied();
     Layout();
     SetStatus(g.hasBackup ? L"" : L"Vor der ersten Änderung wird ein Wiederherstellungspunkt erstellt.", kTextDim);

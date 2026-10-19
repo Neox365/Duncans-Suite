@@ -13,6 +13,8 @@
 #include <thread>
 
 #include "../suite/public_key.inc"   // kSuitePublicKey: dieselbe Signatur wie bei den Suite-Downloads
+#include "../common/VersionUtil.h"
+#include "../common/Crypto.h"
 
 #ifdef _MSC_VER
 #pragma comment(lib, "wininet.lib")
@@ -36,39 +38,6 @@ namespace
         v.push_back({ L"Intel", L"VEN_8086", L"Intel Arc & Core Ultra Grafiktreiber 32.0.101.9150", L"32.0.101.9150", L"12.10.2026", 20261012,
                       L"https://www.intel.com/content/www/us/en/download-center/home.html" });
         return v;
-    }
-
-    // "a.b.c.d" -> 4 Zahlen; false, wenn nichts Lesbares drinsteht.
-    bool ParseVersion(const std::wstring& text, unsigned long (&parts)[4])
-    {
-        for (auto& p : parts)
-            p = 0;
-        const wchar_t* s = text.c_str();
-        size_t index = 0;
-        bool any = false;
-        while (*s && index < 4)
-        {
-            wchar_t* end = nullptr;
-            const unsigned long value = wcstoul(s, &end, 10);
-            if (end == s)
-                break;
-            parts[index++] = value;
-            any = true;
-            if (*end != L'.')
-                break;
-            s = end + 1;
-        }
-        return any;
-    }
-    // -1: a < b, 0: gleich, 1: a > b
-    int CompareVersion(const unsigned long (&a)[4], const unsigned long (&b)[4])
-    {
-        for (int i = 0; i < 4; ++i)
-        {
-            if (a[i] != b[i])
-                return a[i] < b[i] ? -1 : 1;
-        }
-        return 0;
     }
 
     // ---- Minimaler, toleranter JSON-Leser fuer { "releases": [ { "key": "value", ... }, ... ] } ----
@@ -184,20 +153,7 @@ namespace
     // ECDSA-P256-Signatur (64 Byte) ueber SHA-256 der Daten, geprueft gegen den Suite-Schluessel.
     bool VerifySignature(const std::string& data, const std::string& sig)
     {
-        if (sig.size() != 64 || data.empty())
-            return false;
-        BCRYPT_ALG_HANDLE sha = nullptr, ecc = nullptr;
-        BCRYPT_KEY_HANDLE key = nullptr;
-        unsigned char digest[32] = {};
-        bool ok = BCryptOpenAlgorithmProvider(&sha, BCRYPT_SHA256_ALGORITHM, nullptr, 0) == 0 &&
-                  BCryptHash(sha, nullptr, 0, reinterpret_cast<PUCHAR>(const_cast<char*>(data.data())), static_cast<ULONG>(data.size()), digest, sizeof(digest)) == 0 &&
-                  BCryptOpenAlgorithmProvider(&ecc, BCRYPT_ECDSA_P256_ALGORITHM, nullptr, 0) == 0 &&
-                  BCryptImportKeyPair(ecc, nullptr, BCRYPT_ECCPUBLIC_BLOB, &key, const_cast<PUCHAR>(kSuitePublicKey), static_cast<ULONG>(sizeof(kSuitePublicKey)), 0) == 0 &&
-                  BCryptVerifySignature(key, nullptr, digest, sizeof(digest), reinterpret_cast<PUCHAR>(const_cast<char*>(sig.data())), static_cast<ULONG>(sig.size()), 0) == 0;
-        if (key) BCryptDestroyKey(key);
-        if (ecc) BCryptCloseAlgorithmProvider(ecc, 0);
-        if (sha) BCryptCloseAlgorithmProvider(sha, 0);
-        return ok;
+        return crypto::VerifyData(data, sig, kSuitePublicKey, sizeof(kSuitePublicKey));
     }
 
     bool DownloadHttps(HINTERNET session, const wchar_t* url, std::string& out, size_t maxBytes)
@@ -358,15 +314,15 @@ int ApplyVendorReleases(std::vector<DriverInfo>& drivers, const std::vector<Vend
         if (!release)
             continue;
 
-        unsigned long installed[4], latest[4];
+        const versionutil::Version installed = versionutil::Parse(d.driverVersion), latest = versionutil::Parse(release->version);
         bool outdated = false;
-        if (ParseVersion(d.driverVersion, installed) && ParseVersion(release->version, latest))
+        if (installed.valid && latest.valid)
         {
             // Aeltere GPU-Generationen haben eigene Treiber-Zweige (z. B. Intel 31.0.x statt 32.0.x):
             // nur innerhalb desselben Hauptzweigs vergleichen, sonst kein falscher Alarm.
-            if (installed[0] != latest[0])
+            if (installed.part[0] != latest.part[0])
                 continue;
-            outdated = CompareVersion(installed, latest) < 0;
+            outdated = versionutil::Compare(installed, latest) < 0;
         }
         else if (d.driverDateKey != 0 && release->dateKey != 0)
             outdated = d.driverDateKey < release->dateKey;   // Fallback: Datum

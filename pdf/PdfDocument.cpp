@@ -64,7 +64,6 @@ bool PdfDocument::InitLibrary() {
         return false;
     }
     bool ok = Load("FPDF_InitLibraryWithConfig", g_api.InitLibraryWithConfig)
-        && Load("FPDF_DestroyLibrary", g_api.DestroyLibrary)
         && Load("FPDF_GetLastError", g_api.GetLastError)
         && Load("FPDF_LoadMemDocument", g_api.LoadMemDocument)
         && Load("FPDF_CloseDocument", g_api.CloseDocument)

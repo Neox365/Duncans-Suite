@@ -21,6 +21,8 @@ using std::min;
 #include <gdiplus.h>
 
 #include "PdfDocument.h"
+#include "../common/Theme.h"
+#include "../common/Gfx.h"
 
 #ifndef APP_VERSION
 #define APP_VERSION L"1.1.24"   // normalerweise aus CMake (PROJECT_VERSION)
@@ -33,24 +35,13 @@ using std::min;
 #pragma comment(lib, "uxtheme.lib")
 #endif
 
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
 
 namespace {
 
 // ---- Farben (wie Duncan's Suite) ----
-const COLORREF kBackground = RGB(18, 19, 22);
+using namespace theme;   // gemeinsame Palette aus common/ (wie in allen Duncan's-Programmen)
 const COLORREF kPanel      = RGB(22, 24, 29);
 const COLORREF kCanvas     = RGB(28, 30, 36);
-const COLORREF kCardRaised = RGB(35, 38, 47);
-const COLORREF kCardHover  = RGB(43, 47, 59);
-const COLORREF kBorder     = RGB(45, 49, 61);
-const COLORREF kText       = RGB(235, 237, 242);
-const COLORREF kTextDim    = RGB(150, 155, 168);
-const COLORREF kAccent     = RGB(64, 156, 255);
-const COLORREF kRed        = RGB(240, 84, 84);
-const COLORREF kGreen      = RGB(52, 199, 120);
 
 const wchar_t* kAppTitle = L"Duncan's PDF";
 
@@ -1017,8 +1008,7 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (!g_prompt) return DefWindowProcW(hwnd, msg, wp, lp);
     switch (msg) {
     case WM_CREATE: {
-        BOOL dark = TRUE;
-        DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+        gfx::EnableDarkTitleBar(hwnd);
         if (g_prompt->about) return 0;
         g_prompt->edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
                                          0, 0, 10, 10, hwnd, reinterpret_cast<HMENU>(1), g.inst, nullptr);
@@ -1291,7 +1281,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     if (!g_set) return DefWindowProcW(hwnd, msg, wp, lp);
     SetState& s = *g_set;
     switch (msg) {
-    case WM_CREATE: { BOOL dark = TRUE; DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark)); return 0; }
+    case WM_CREATE: { gfx::EnableDarkTitleBar(hwnd); return 0; }
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: SetPaint(hwnd); return 0;
     case WM_MOUSEMOVE: {
@@ -2252,8 +2242,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CREATE: {
         g.main = hwnd;
         g.dpi = static_cast<int>(GetDpiForWindow(hwnd));
-        BOOL dark = TRUE;
-        DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+        gfx::EnableDarkTitleBar(hwnd);
         if (HMODULE ux = LoadLibraryExW(L"uxtheme.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32)) {   // dunkle Kontextmenues (undokumentierte Ordinale 135/136)
             using SetModeFn = int(WINAPI*)(int);
             using FlushFn = void(WINAPI*)();

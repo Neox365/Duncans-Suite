@@ -37,7 +37,6 @@ struct Setting {
 const std::vector<Setting>& AllSettings();
 
 // Sicherungsdatei (Standard: %LOCALAPPDATA%\DuncansPrivacyShield\backup.ini); fuer Tests ueberschreibbar.
-void SetBackupPath(const std::wstring& path);
 std::wstring BackupPath();
 
 bool IsApplied(const Setting& s);                           // alle Werte stehen auf dem Zielwert

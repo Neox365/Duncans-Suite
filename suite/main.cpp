@@ -30,6 +30,10 @@
 
 #include "../src/Icons.h"
 #include "../src/SuiteSafety.h"
+#include "../common/Theme.h"
+#include "../common/Gfx.h"
+#include "../common/VersionUtil.h"
+#include "../common/Crypto.h"
 #include "public_key.inc"        // kSuitePublicKey: Suite-Installer und PDF Reader (erzeugt von tools\MakeSigningKey.ps1)
 #include "tidy_public_key.inc"   // kTidyPublicKey: DuncansTidy.exe
 
@@ -46,9 +50,6 @@
 #ifndef SUITE_VERSION
 #define SUITE_VERSION L"1.1.26"
 #endif
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
 
 namespace
 {
@@ -59,45 +60,12 @@ namespace
         return msg;
     }
 
-    // Palette wie in den anderen Tools
-    const COLORREF kBackground = RGB(18, 19, 22);
-    const COLORREF kCardRaised = RGB(35, 38, 47);
-    const COLORREF kCardHover  = RGB(43, 47, 59);
-    const COLORREF kBorder     = RGB(45, 49, 61);
-    const COLORREF kBorderHover = RGB(96, 104, 126);
-    const COLORREF kText       = RGB(235, 237, 242);
-    const COLORREF kTextDim    = RGB(150, 155, 168);
-    const COLORREF kAccent     = RGB(64, 156, 255);
-    const COLORREF kGreen      = RGB(52, 199, 120);
-    const COLORREF kRed        = RGB(240, 84, 84);
-    const COLORREF kOrange     = RGB(255, 150, 50);
-
-    COLORREF Blend(COLORREF a, COLORREF b, int percentB)
-    {
-        auto mix = [&](int ca, int cb) { return (ca * (100 - percentB) + cb * percentB) / 100; };
-        return RGB(mix(GetRValue(a), GetRValue(b)), mix(GetGValue(a), GetGValue(b)), mix(GetBValue(a), GetBValue(b)));
-    }
-
-    void FillRound(HDC dc, const RECT& r, int radius, COLORREF fill, COLORREF border)
-    {
-        HBRUSH brush = CreateSolidBrush(fill);
-        HPEN pen = CreatePen(PS_SOLID, 1, border);
-        HGDIOBJ ob = SelectObject(dc, brush);
-        HGDIOBJ op = SelectObject(dc, pen);
-        RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
-        SelectObject(dc, op);
-        SelectObject(dc, ob);
-        DeleteObject(pen);
-        DeleteObject(brush);
-    }
-
-    void DrawLabel(HDC dc, HFONT font, COLORREF color, RECT rc, const std::wstring& text, UINT flags = DT_LEFT)
-    {
-        HGDIOBJ old = SelectObject(dc, font);
-        SetTextColor(dc, color);
-        DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &rc, flags | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-        SelectObject(dc, old);
-    }
+    // Gemeinsame Palette und Zeichenhelfer aus common/ (gleich in allen Programmen)
+    using namespace theme;
+    using gfx::Blend;
+    using gfx::DrawLabel;
+    using gfx::FillRound;
+    using gfx::TextWidth;
 
     void DrawWrapped(HDC dc, HFONT font, COLORREF color, RECT rc, const std::wstring& text)
     {
@@ -114,15 +82,6 @@ namespace
         DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
         SelectObject(dc, old);
         return r.bottom - r.top;
-    }
-
-    int TextWidth(HDC dc, HFONT font, const std::wstring& text)
-    {
-        HGDIOBJ old = SelectObject(dc, font);
-        SIZE size{};
-        GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &size);
-        SelectObject(dc, old);
-        return size.cx;
     }
 
     std::wstring ExeDir()
@@ -503,17 +462,8 @@ namespace
         return true;
     }
 
-    std::string ToHex(const unsigned char* bytes, size_t n)
-    {
-        static const char* digits = "0123456789abcdef";
-        std::string s;
-        for (size_t i = 0; i < n; ++i)
-        {
-            s += digits[bytes[i] >> 4];
-            s += digits[bytes[i] & 15];
-        }
-        return s;
-    }
+    using crypto::ToHex;
+
 
     // Signatur-Pruefung: <url>.sig (64 Byte, ECDSA P-256 ueber SHA-256) muss zum Schluessel passen.
     struct SigCheck
@@ -536,21 +486,7 @@ namespace
             while (sig.size() <= 64 && InternetReadFile(h.h, buf, sizeof(buf), &n) && n > 0)
                 sig.append(buf, n);
         }
-        bool valid = false;
-        if (sig.size() == 64)
-        {
-            BCRYPT_ALG_HANDLE ecc = nullptr;
-            BCRYPT_KEY_HANDLE key = nullptr;
-            valid = BCryptOpenAlgorithmProvider(&ecc, BCRYPT_ECDSA_P256_ALGORITHM, nullptr, 0) == 0 &&
-                    BCryptImportKeyPair(ecc, nullptr, BCRYPT_ECCPUBLIC_BLOB, &key, const_cast<PUCHAR>(check.key),
-                                        static_cast<ULONG>(check.keyLen), 0) == 0 &&
-                    BCryptVerifySignature(key, nullptr, const_cast<PUCHAR>(digest), sizeof(digest),
-                                          reinterpret_cast<PUCHAR>(&sig[0]), static_cast<ULONG>(sig.size()), 0) == 0;
-            if (key)
-                BCryptDestroyKey(key);
-            if (ecc)
-                BCryptCloseAlgorithmProvider(ecc, 0);
-        }
+        const bool valid = crypto::VerifyDigest(digest, sig.data(), sig.size(), check.key, check.keyLen);
         if (!valid)
             error = L"Die Signatur der Datei fehlt oder ist ungültig. Aus Sicherheitsgründen wurde sie verworfen.";
         return valid;
@@ -722,51 +658,15 @@ namespace
 
     constexpr UINT WM_UPD_CHECKED = WM_APP + 3;   // wParam = 1 neuere Version gefunden, 0 keine/Fehler
 
-    struct Version
-    {
-        int major = 0, minor = 0, patch = 0;
-        bool valid = false;
-    };
+    using versionutil::IsNewer;
+    using versionutil::Version;
 
     std::wstring Widen(const std::string& s)
     {
         return std::wstring(s.begin(), s.end());   // nur ASCII (Versionen, URLs)
     }
 
-    Version ParseVer(const std::wstring& text)
-    {
-        Version v;
-        const wchar_t* s = text.c_str();
-        if (*s == L'v' || *s == L'V')
-            ++s;
-        int parts[3] = { 0, 0, 0 };
-        int count = 0;
-        while (*s && count < 3)
-        {
-            wchar_t* end = nullptr;
-            const long n = wcstol(s, &end, 10);
-            if (end == s || n < 0 || n > 9999)
-                return Version{};
-            parts[count++] = static_cast<int>(n);
-            if (*end != L'.')
-                break;
-            s = end + 1;
-        }
-        if (count == 0)
-            return Version{};
-        v.major = parts[0];
-        v.minor = parts[1];
-        v.patch = parts[2];
-        v.valid = true;
-        return v;
-    }
-
-    bool IsNewer(const Version& a, const Version& b)
-    {
-        if (a.major != b.major) return a.major > b.major;
-        if (a.minor != b.minor) return a.minor > b.minor;
-        return a.patch > b.patch;
-    }
+    Version ParseVer(const std::wstring& text) { return versionutil::Parse(text); }
 
     struct UpdateInfo
     {
@@ -1024,7 +924,6 @@ private:
     void OnMouseMove(int x, int y);
     void OnClick(int x, int y);
     void Launch(int index);
-    void OpenToolsFolder();
     void ShowModal(const std::wstring& title, const std::wstring& text);
     void SetNote(const std::wstring& text);
     void StartDownload(int index);
@@ -1062,7 +961,7 @@ private:
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
     };
 
-    RECT m_banner{}, m_folderRect{}, m_footer{};
+    RECT m_banner{}, m_footer{};
     int  m_hover = -1;       // 0/1 Karten, 2 Ordner-Button, 3 Modal-OK
     int  m_press = -1;
     bool m_tracking = false;
@@ -1251,7 +1150,6 @@ void SuiteWindow::Layout()
     const int m = S(28);
     m_banner = { m, S(18), rc.right - m, S(18) + S(150) };
     m_footer = { m, rc.bottom - S(60), rc.right - m, rc.bottom - S(14) };
-    m_folderRect = { m_footer.right, m_footer.top, m_footer.right, m_footer.top };   // Tools-Ordner-Knopf entfernt (leeres Rechteck)
 
     const int top = m_banner.bottom + S(22), bottom = m_footer.top - S(16), gap = S(20);
     const int width = rc.right - 2 * m;
@@ -1465,14 +1363,14 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     if (RectVisible(dc, &m_tools[3].rect))
         DrawCard(dc, 3);
 
-    // Footer: Version links, Hinweis in der Mitte, Ordner-Button rechts
+    // Footer: Version links, Hinweis in der Mitte
     DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(176), m_footer.bottom },
               std::wstring(L"© 2026 Duncan · v") + SUITE_VERSION);
     if (!m_note.empty())
-        DrawLabel(dc, m_fontSmall, kText, { m_footer.left + S(176), m_footer.top + S(13), m_folderRect.left - S(16), m_footer.bottom },
+        DrawLabel(dc, m_fontSmall, kText, { m_footer.left + S(176), m_footer.top + S(13), m_footer.right - S(16), m_footer.bottom },
                   m_note, DT_CENTER);
     else if (!suite_safety::IsElevated())     // dezenter Hinweis: die Suite selbst braucht keine Adminrechte, zwei Programme schon
-        DrawLabel(dc, m_fontSmall, Blend(kBackground, kTextDim, 70), { m_footer.left + S(176), m_footer.top + S(13), m_folderRect.left - S(16), m_footer.bottom },
+        DrawLabel(dc, m_fontSmall, Blend(kBackground, kTextDim, 70), { m_footer.left + S(176), m_footer.top + S(13), m_footer.right - S(16), m_footer.bottom },
                   L"Privacy Shield und Driver Updater fragen beim Start nach Administratorrechten", DT_CENTER | DT_END_ELLIPSIS);
 
     if (m_settingsOpen)
@@ -2104,11 +2002,6 @@ void SuiteWindow::RunInstaller()
         ShowModal(L"Start fehlgeschlagen", L"Der Installer konnte nicht gestartet werden (Fehlercode " + std::to_wstring(GetLastError()) + L").\n\n" + m_updInstallerPath);
 }
 
-void SuiteWindow::OpenToolsFolder()
-{
-    ShellExecuteW(m_hwnd, L"open", ExeDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-}
-
 // ---- Eingaben ------------------------------------------------------------------------------
 
 void SuiteWindow::OnMouseMove(int x, int y)
@@ -2143,8 +2036,6 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = 5;
     else if (PtInRect(&m_tools[3].rect, pt))
         hover = 17;
-    else if (PtInRect(&m_folderRect, pt))
-        hover = 2;
     if (hover != m_hover)
     {
         m_hover = hover;
@@ -2225,8 +2116,6 @@ void SuiteWindow::OnClick(int, int)
         if (!m_updDownloading)
             StartUpdateDownload();
     }
-    else if (pressed == 2)
-        OpenToolsFolder();
     else
         Launch(pressed == 5 ? 2 : (pressed == 17 ? 3 : pressed));
     InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -2281,8 +2170,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     case WM_CREATE:
     {
         m_dpi = GetDpiForWindow(m_hwnd);
-        BOOL dark = TRUE;
-        DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+        gfx::EnableDarkTitleBar(m_hwnd);
         CreateFonts();
         FindTools();
         m_settings = LoadSettings();

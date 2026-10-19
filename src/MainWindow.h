@@ -65,7 +65,6 @@ private:
     void OnLButtonUp();
     // Banner + Start-Animation
     void DrawBanner(HDC dc);
-    float SweepP() const;                     // Sondenposition waehrend eines Scans (0..1, laeuft in Schleife)
     void StartBannerEase(float target);       // Sonde gleitet sanft zur Zielposition
     bool RunSplash(HINSTANCE instance, int showCommand);
     void OnSplashTick(HWND splash);

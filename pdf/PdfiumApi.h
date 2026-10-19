@@ -71,7 +71,6 @@ enum { FPDF_NO_INCREMENTAL = 2 };
 struct PdfiumApi {
     HMODULE module = nullptr;
     void (*InitLibraryWithConfig)(const FPDF_LIBRARY_CONFIG*) = nullptr;
-    void (*DestroyLibrary)() = nullptr;
     unsigned long (*GetLastError)() = nullptr;
     FPDF_DOCUMENT (*LoadMemDocument)(const void* data, int size, const char* password) = nullptr;
     void (*CloseDocument)(FPDF_DOCUMENT) = nullptr;

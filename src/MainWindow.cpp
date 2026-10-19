@@ -14,6 +14,8 @@
 
 #include "Icons.h"
 #include "Utils.h"
+#include "../common/Theme.h"
+#include "../common/Gfx.h"
 
 #ifndef APP_VERSION
 #define APP_VERSION L"1.1.24"   // normalerweise aus CMake (PROJECT_VERSION)
@@ -28,68 +30,24 @@
 #pragma comment(lib, "msimg32.lib")
 #endif
 
-#ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
-#define DWMWA_USE_IMMERSIVE_DARK_MODE 20
-#endif
 
 namespace
 {
     const wchar_t* kWindowClass = L"DuncansDriverUpdaterWnd";
 
-    // ---- Farbpalette (Dark / Card Style) ---------------------------------------------------
-    const COLORREF kBackground = RGB(18, 19, 22);
+    // ---- Farbpalette: gemeinsame Werte aus common/, nur Driver-Updater-eigene Farben bleiben hier ----
+    using namespace theme;
+    using gfx::Blend;
+    using gfx::DrawLabel;
+    using gfx::FillRound;
+    using gfx::TextWidth;
     const COLORREF kCard       = RGB(28, 30, 36);
-    const COLORREF kCardBorder = RGB(45, 49, 61);   // #2D313D
-    const COLORREF kCardBorderHover = RGB(96, 104, 126);
+    const COLORREF kCardBorder = kBorder;
+    const COLORREF kCardBorderHover = kBorderHover;
     constexpr UINT WM_BACKUP_DONE = WM_APP + 6;   // wParam = Exit-Code, lParam = new std::wstring* (Zielordner)
-    const COLORREF kText       = RGB(235, 237, 242);
-    const COLORREF kTextDim    = RGB(150, 155, 168);
-    const COLORREF kAccent     = RGB(64, 156, 255);
     const COLORREF kAccentDark = RGB(38, 98, 170);
-    const COLORREF kGreen      = RGB(52, 199, 120);
-    const COLORREF kRed        = RGB(240, 84, 84);
     const COLORREF kAmber      = RGB(240, 180, 60);
     const COLORREF kDisabled   = RGB(52, 55, 64);
-    const COLORREF kCardRaised = RGB(35, 38, 47);   // Treiber-Karten: etwas heller als die Panels
-    const COLORREF kCardHover  = RGB(43, 47, 59);
-    const COLORREF kOrange     = RGB(255, 150, 50);
-
-    COLORREF Blend(COLORREF a, COLORREF b, int percentB)
-    {
-        auto mix = [&](int ca, int cb) { return (ca * (100 - percentB) + cb * percentB) / 100; };
-        return RGB(mix(GetRValue(a), GetRValue(b)), mix(GetGValue(a), GetGValue(b)), mix(GetBValue(a), GetBValue(b)));
-    }
-
-    void FillRound(HDC dc, const RECT& r, int radius, COLORREF fill, COLORREF border)
-    {
-        HBRUSH brush = CreateSolidBrush(fill);
-        HPEN pen = CreatePen(PS_SOLID, 1, border);
-        HGDIOBJ oldBrush = SelectObject(dc, brush);
-        HGDIOBJ oldPen = SelectObject(dc, pen);
-        RoundRect(dc, r.left, r.top, r.right, r.bottom, radius, radius);
-        SelectObject(dc, oldPen);
-        SelectObject(dc, oldBrush);
-        DeleteObject(pen);
-        DeleteObject(brush);
-    }
-
-    void DrawLabel(HDC dc, HFONT font, COLORREF color, RECT rc, const std::wstring& text, UINT flags = DT_LEFT)
-    {
-        HGDIOBJ old = SelectObject(dc, font);
-        SetTextColor(dc, color);
-        DrawTextW(dc, text.c_str(), static_cast<int>(text.size()), &rc,
-                  flags | DT_SINGLELINE | DT_NOPREFIX | DT_END_ELLIPSIS);
-        SelectObject(dc, old);
-    }
-
-    int TextWidth(HDC dc, HFONT font, const std::wstring& text)
-    {
-        HGDIOBJ old = SelectObject(dc, font);
-        SIZE size{};
-        GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &size);
-        SelectObject(dc, old);
-        return size.cx;
-    }
 
     struct Badge
     {
@@ -549,8 +507,7 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
 void MainWindow::OnCreate()
 {
     m_dpi = GetDpiForWindow(m_hwnd);
-    BOOL dark = TRUE;
-    DwmSetWindowAttribute(m_hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, &dark, sizeof(dark));
+    gfx::EnableDarkTitleBar(m_hwnd);
     m_isAdmin = IsRunningAsAdmin();
     OleInitialize(nullptr);
     IconsInit();
@@ -2523,11 +2480,6 @@ namespace
     }
 
     constexpr ULONGLONG kSplashMs = 1600, kSplashFadeInMs = 220, kSplashFadeOutMs = 300;
-}
-
-float MainWindow::SweepP() const
-{
-    return EaseInOut(static_cast<float>(m_marquee % 120) / 120.0f);
 }
 
 void MainWindow::StartBannerEase(float target)

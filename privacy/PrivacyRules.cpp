@@ -148,7 +148,6 @@ namespace {
     }
 }
 
-void SetBackupPath(const std::wstring& path) { g_backupPath = path; }
 
 std::wstring BackupPath() {
     if (!g_backupPath.empty()) return g_backupPath;
