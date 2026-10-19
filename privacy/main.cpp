@@ -29,7 +29,7 @@ using std::min;
 #include "PrivacyRules.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.6.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -157,6 +157,9 @@ const Meta kMeta[] = {
     { 6, L"Empfohlen", nullptr },
     { 7, L"Erweitert", L"Karten-, Wetter- und Navigations-Apps sowie „Mein Gerät suchen“ erhalten keinen Standort mehr; auch die automatische Zeitzone kann betroffen sein. Für Einsteiger nur aktivieren, wenn kein Standort gebraucht wird." },
     { 8, L"Empfohlen", nullptr },
+    { 9, L"Empfohlen", nullptr },
+    { 10, L"Empfohlen", nullptr },
+    { 11, L"Empfohlen", nullptr },
 };
 
 const Meta* MetaFor(int settingId) {

@@ -261,11 +261,17 @@ const std::vector<Setting>& AllSettings() {
         { 4, L"Telemetrie & Diagnosedaten", L"Maßgeschneiderte Erfahrungen aus",
           L"Windows nutzt Diagnosedaten nicht mehr für personalisierte Tipps, Werbung und Empfehlungen.",
           { { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Privacy", L"TailoredExperiencesWithDiagnosticDataEnabled", ValType::Dword, 0, nullptr } }, {} },
+        { 11, L"Telemetrie & Diagnosedaten", L"Windows-Tipps & vorgeschlagene Inhalte aus",
+          L"Verhindert Popup-Hinweise wie „Nutzen Sie Edge“ oder Tipps zur Systemeinstellung.",
+          { { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", L"SubscribedContent-338388Enabled", ValType::Dword, 0, nullptr } }, {} },
         { 5, L"Startmenü-Suche", L"Web- und Bing-Ergebnisse im Startmenü aus",
           L"Die Suche im Startmenü zeigt nur noch lokale Treffer (Apps, Dateien, Einstellungen) und sendet keine Eingaben an Bing.",
           { { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search", L"BingSearchEnabled", ValType::Dword, 0, nullptr },
             { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search", L"CortanaConsent", ValType::Dword, 0, nullptr },
             { Hive::User, L"SOFTWARE\\Policies\\Microsoft\\Windows\\Explorer", L"DisableSearchBoxSuggestions", ValType::Dword, 1, nullptr } }, {} },
+        { 10, L"Startmenü-Suche", L"Zuletzt geöffnete Dateien im Startmenü verbergen",
+          L"Blendet den Bereich „Empfohlen“ und zuletzt geöffnete Dateien im Startmenü/Explorer für besseren Sichtschutz aus.",
+          { { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"Start_TrackDocs", ValType::Dword, 0, nullptr } }, {} },
         { 6, L"System-Tracking", L"Werbe-ID deaktivieren",
           L"Apps können die persönliche Werbe-ID nicht mehr für personalisierte Werbung verwenden.",
           { { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\AdvertisingInfo", L"Enabled", ValType::Dword, 0, nullptr },
@@ -280,6 +286,9 @@ const std::vector<Setting>& AllSettings() {
             { Hive::User, L"SOFTWARE\\Microsoft\\InputPersonalization", L"RestrictImplicitInkCollection", ValType::Dword, 1, nullptr },
             { Hive::User, L"SOFTWARE\\Microsoft\\InputPersonalization", L"RestrictImplicitTextCollection", ValType::Dword, 1, nullptr },
             { Hive::User, L"SOFTWARE\\Microsoft\\InputPersonalization\\TrainedDataStore", L"HarvestContacts", ValType::Dword, 0, nullptr } }, {} },
+        { 9, L"System-Tracking", L"Windows Copilot & KI-Analyse aus",
+          L"Deaktiviert die tief integrierte Copilot-Assistentenfunktion und die Hintergrund-Analyse.",
+          { { Hive::User, L"SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsCopilot", L"TurnOffWindowsCopilot", ValType::Dword, 1, nullptr } }, {} },
     };
     return all;
 }

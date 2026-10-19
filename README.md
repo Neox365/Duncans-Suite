@@ -105,7 +105,7 @@ git add resources/vendor_releases.json resources/vendor_releases.json.sig; git c
 
 ## Duncan's Privacy Shield
 
-Datenschutz- & Telemetrie-Manager (`DuncansPrivacy.exe`, vierte Karte der Suite, eigene Programmversion 0.5.0). Läuft mit Administratorrechten (UAC), weil Richtlinien unter `HKLM` geschrieben werden.
+Datenschutz- & Telemetrie-Manager (`DuncansPrivacy.exe`, vierte Karte der Suite, eigene Programmversion 0.6.0). Läuft mit Administratorrechten (UAC), weil Richtlinien unter `HKLM` geschrieben werden.
 Jede Einstellung ist ein Schalter und besteht aus klar benannten Registry-Werten (siehe `privacy/PrivacyRules.cpp`, `AllSettings()`):
 
 | Gruppe | Einstellung | Registry (Auszug) |
@@ -146,7 +146,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.18.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.19.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 
