@@ -29,7 +29,7 @@ using std::min;
 #include "PrivacyRules.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.6.1"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -160,6 +160,8 @@ const Meta kMeta[] = {
     { 9, L"Empfohlen", nullptr },
     { 10, L"Empfohlen", nullptr },
     { 11, L"Empfohlen", nullptr },
+    { 12, L"Empfohlen", nullptr },
+    { 13, L"Empfohlen", L"Windows installiert Treiber dann nicht mehr automatisch; Treiber-Updates müssen manuell oder über Hersteller-Tools kommen. Kann die Treibersuche über Windows Update im Duncan's Driver Updater beeinflussen (nicht geprüft). Schalter macht alles rückgängig." },
 };
 
 const Meta* MetaFor(int settingId) {
