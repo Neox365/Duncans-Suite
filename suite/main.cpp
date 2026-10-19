@@ -44,7 +44,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.21"
+#define SUITE_VERSION L"1.1.22"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -462,6 +462,7 @@ namespace
 // waehrend des Schreibens und legt die Datei erst nach erfolgreicher Pruefung am Ziel ab.
 
 constexpr UINT WM_DL_PROGRESS = WM_APP + 1;   // wParam = Prozent (0..100) oder 101 = unbekannt, lParam = Tool-Index
+constexpr int kSuiteIdx = 100;                  // Pseudo-Index fuer den Suite-Installer (Tool-Indizes sind 0..3)
 constexpr UINT WM_DL_DONE     = WM_APP + 2;   // wParam = 1 Erfolg / 0 Fehler, lParam = Tool-Index; Text in m_dlMessage
 
 namespace
@@ -860,8 +861,9 @@ namespace
         return FindNewestInstaller(body, best);
     }
 
-    // Liest version.txt aus dem neuesten Tidy-Release (zentrale Update-Pruefung der Suite). true = Version gelesen.
-    bool FetchTidyVersion(std::wstring& version)
+    // Liest die Versionsdatei eines Moduls (zentrale Update-Pruefung der Suite). Inhalt: nur eine Versionsnummer ("1.1.5")
+    // oder Zeilen "DuncansPrivacy.exe=0.6.0" (dann zaehlt die Zeile der gesuchten EXE). true = Version gelesen.
+    bool FetchModuleVersion(const std::wstring& url, const std::wstring& exeName, std::wstring& version)
     {
         InetHandle session(InternetOpenW(L"DuncansSuite/" SUITE_VERSION, INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0));
         if (!session.h)
@@ -872,15 +874,23 @@ namespace
         InetHandle h;
         DWORD total = 0;
         std::wstring error;
-        if (!OpenHttps(session.h, L"https://github.com/Neox365/Duncans-Tidy-ToolSet/releases/latest/download/version.txt", h, total, error))
+        if (!OpenHttps(session.h, url, h, total, error))
             return false;
-        char buf[64] = {};
+        char buf[1024] = {};
         DWORD n = 0;
         InternetReadFile(h.h, buf, sizeof(buf) - 1, &n);
+        std::string text(buf, n);
+        const std::string key = std::string(exeName.begin(), exeName.end()) + "=";   // Dateinamen sind ASCII
+        const size_t at = text.find(key);
+        size_t from = 0;
+        if (at != std::string::npos)
+            from = at + key.size();
+        else if (text.find('=') != std::string::npos)
+            return false;   // Datei kennt nur andere Programme
         std::string v;
-        for (DWORD i = 0; i < n; ++i)
+        for (size_t i = from; i < text.size(); ++i)
         {
-            const char c = buf[i];
+            const char c = text[i];
             if (std::isdigit(static_cast<unsigned char>(c)) || c == '.')
                 v.push_back(c);
             else if (!v.empty())
@@ -933,7 +943,7 @@ namespace
                 return false;
             }
         }
-        if (!DownloadFileVerified(session.h, hwnd, 2, info.url, info.sha, dir, info.fileName, cancel, error, SigCheck{ kSuitePublicKey, sizeof(kSuitePublicKey) }))
+        if (!DownloadFileVerified(session.h, hwnd, kSuiteIdx, info.url, info.sha, dir, info.fileName, cancel, error, SigCheck{ kSuitePublicKey, sizeof(kSuitePublicKey) }))
             return false;
         installerPath = dir + L"\\" + info.fileName;
         return true;
@@ -986,6 +996,8 @@ struct Tool
     RECT rect{};
     const wchar_t* downloadBase = nullptr;   // GitHub-Release-Adresse; nullptr = kein Download moeglich
     const wchar_t* directUrl = nullptr;      // direkte EXE-Adresse (ohne Pruefsummen-Datei), alternativ zu downloadBase
+    const wchar_t* versionUrl = nullptr;     // Versionsdatei im neuesten Release (zentrale Update-Pruefung); nullptr = keine
+    std::wstring newVersion;                 // neuere Version laut Pruefung (leer = aktuell)
     bool downloading = false;
     int progress = 0;                        // 0..100, 101 = unbekannt
 };
@@ -1028,17 +1040,23 @@ private:
         { L"DuncansTidy.exe", L"Duncan's Tidy",
           L"System-Reinigung & Datenmüll-Beseitigung. Räumt Downloads, temporäre Dateien und Browser-Caches auf.",
           CategoryIcon::Broom, RGB(251, 191, 36), {}, {}, {},
-          L"https://github.com/Neox365/Duncans-Tidy-ToolSet/releases/latest/download/" },
+          L"https://github.com/Neox365/Duncans-Tidy-ToolSet/releases/latest/download/", nullptr,
+          L"https://github.com/Neox365/Duncans-Tidy-ToolSet/releases/latest/download/version.txt" },
         { L"DuncansDriverUpdater.exe", L"Duncan's Driver Updater",
           L"Hardware- & Treiber-Manager. Liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.",
-          CategoryIcon::Cpu, RGB(64, 156, 255), {}, {}, {} },
+          CategoryIcon::Cpu, RGB(64, 156, 255), {}, {}, {},
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/latest/download/DuncansDriverUpdater.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/latest/download/modules.txt" },
         { L"DuncansPdf.exe", L"Duncan's PDF Reader",
           L"PDF-Betrachter. Öffnet, zoomt, dreht, fügt zusammen und speichert PDF-Dateien.",
           CategoryIcon::Document, RGB(240, 84, 84), {}, {}, {},
-          nullptr, L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/DuncansPdf.exe" },
+          nullptr, L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/DuncansPdf.exe",
+          L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/version.txt" },
         { L"DuncansPrivacy.exe", L"Duncan's Privacy Shield",
           L"Datenschutz- & Telemetrie-Manager. Schaltet Hintergrund-Tracking, Diagnosedaten und unnötige Windows-Dienste per Klick stumm.",
-          CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {} },
+          CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {},
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/latest/download/DuncansPrivacy.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/latest/download/modules.txt" },
     };
 
     RECT m_banner{}, m_folderRect{}, m_footer{};
@@ -1053,8 +1071,7 @@ private:
     std::shared_ptr<UpdateInfo> m_checkResult;
     UpdateInfo m_upd;
     bool m_updAvailable = false;
-    std::wstring m_tidyNew;                       // neuere Tidy-Version (leer = Tidy aktuell oder nicht installiert)
-    std::shared_ptr<std::wstring> m_tidyRemote;   // Ergebnis der Hintergrundpruefung
+    std::shared_ptr<std::vector<std::wstring>> m_modRemote;   // Ergebnis der Modul-Pruefung (Hintergrundthread), je Tool-Index
     bool m_updDownloading = false;
     // Start-Animation des Banners (Besen faegt, Chip folgt) und vorgerenderter Banner-Hintergrund
     float m_introT = 1.0f;
@@ -1203,11 +1220,21 @@ void SuiteWindow::FindTools()
         // ladbare Programme (Tidy, PDF Reader) landen standardmaessig in %LOCALAPPDATA%\<Name>
         if (!local.empty() && (t.downloadBase || t.directUrl))
             candidates.push_back(InstallDir(t) + L"\\" + t.exe);
+        // Gibt es mehrere Kopien (z. B. Installer-Ordner und per Update geladene Kopie in %LOCALAPPDATA%), gewinnt die neuere Version
+        Version best{};
         for (const auto& c : candidates)
         {
             t.searched.push_back(c);
-            if (t.path.empty() && FileExists(c))
+            if (!FileExists(c))
+                continue;
+            std::wstring ver;
+            FileVersionAtLeast(c, 0, 0, 0, &ver);
+            const Version v = ParseVer(ver);
+            if (t.path.empty() || (v.valid && (!best.valid || IsNewer(v, best))))
+            {
                 t.path = c;
+                best = v;
+            }
         }
     }
 }
@@ -1259,8 +1286,8 @@ void SuiteWindow::DrawCard(HDC dc, int index)
     const std::wstring status = found ? L"Installiert" : (downloading ? L"Wird geladen" : L"Nicht installiert");
     const COLORREF statusColor = found ? kGreen : (downloading ? kAccent : kOrange);
     const int chipW = TextWidth(dc, m_fontSmall, status) + S(34);
-    const bool tidyUpdate = index == 0 && found && !m_tidyNew.empty();
-    std::wstring go = tidyUpdate ? L"Update auf v" + m_tidyNew : (found ? L"Starten" : (canDownload ? L"Herunterladen" : L"Starten"));
+    const bool tidyUpdate = found && !t.newVersion.empty() && (t.downloadBase || t.directUrl);   // neuere Version verfuegbar
+    std::wstring go = tidyUpdate ? L"Update auf v" + t.newVersion : (found ? L"Starten" : (canDownload ? L"Herunterladen" : L"Starten"));
     if (downloading)
         go = t.progress <= 100 ? L"Lade herunter … " + std::to_wstring(t.progress) + L" %" : L"Lade herunter …";
     // Breite fuer den laengsten Text reservieren, damit die Pille beim Laden nicht springt
@@ -1865,7 +1892,7 @@ void SuiteWindow::Launch(int index)
         SetNote(std::wstring(t.title) + L" wird gerade heruntergeladen …");
         return;
     }
-    if ((t.path.empty() && (t.downloadBase || t.directUrl)) || (index == 0 && !m_tidyNew.empty() && !t.path.empty()))
+    if ((t.path.empty() && (t.downloadBase || t.directUrl)) || (!t.newVersion.empty() && !t.path.empty() && (t.downloadBase || t.directUrl)))
     {
         StartDownload(index);   // nicht installiert: Ein-Klick-Installation von GitHub
         return;
@@ -1937,8 +1964,7 @@ void SuiteWindow::StartDownload(int index)
     m_dlBusy = true;
     m_dlCancel = false;
     const std::wstring base = t.downloadBase ? t.downloadBase : L"", url = t.directUrl ? t.directUrl : L"", exe = t.exe,
-                       // Tidy-Update: die vorhandene EXE dort ersetzen, wo sie gefunden wurde (Suite-Ordner oder Standardordner)
-                       dir = (index == 0 && !m_tidyNew.empty() && !t.path.empty()) ? t.path.substr(0, t.path.find_last_of(L"\\/")) : InstallDir(t);
+                       dir = InstallDir(t);   // Updates landen immer in %LOCALAPPDATA%<Name>; FindTools nimmt die neuere Kopie
     const HWND hwnd = m_hwnd;
     m_dlThread = std::thread([this, hwnd, index, base, url, exe, dir]()
     {
@@ -1957,26 +1983,33 @@ void SuiteWindow::StartUpdateCheck()
 {
     // Pruefung im Hintergrund; Fehler (offline, Rate-Limit) bleiben still. Ergebnis ueber shared_ptr,
     // damit der Thread auch nach dem Schliessen des Fensters gefahrlos auslaufen kann.
+    FindTools();
     m_checkResult = std::make_shared<UpdateInfo>();
     const HWND hwnd = m_hwnd;
     const std::shared_ptr<UpdateInfo> result = m_checkResult;
-    // Tidy zentral mitpruefen: installierte Version aus der Datei lesen, Release-Version im Hintergrund vergleichen
-    std::wstring tidyLocal;
-    const std::wstring tidyPath = FindExeFile(L"DuncansTidy.exe", L"DuncansTidy");
-    const bool tidyKnown = !tidyPath.empty() && FileVersionAtLeast(tidyPath, 0, 0, 0, &tidyLocal);
-    m_tidyRemote = std::make_shared<std::wstring>();
-    const std::shared_ptr<std::wstring> tidyRemote = m_tidyRemote;
-    std::thread([hwnd, result, tidyKnown, tidyLocal, tidyRemote]()
+    // Alle Module zentral mitpruefen: installierte Version aus der EXE lesen, Release-Version im Hintergrund vergleichen
+    struct Job { int index; std::wstring url, exe, local; };
+    std::vector<Job> jobs;
+    for (int i = 0; i < 4; ++i)
+    {
+        const Tool& t = m_tools[i];
+        std::wstring local;
+        if (t.versionUrl && !t.path.empty() && FileVersionAtLeast(t.path, 0, 0, 0, &local))
+            jobs.push_back({ i, t.versionUrl, t.exe, local });
+    }
+    m_modRemote = std::make_shared<std::vector<std::wstring>>(4);
+    const std::shared_ptr<std::vector<std::wstring>> modRemote = m_modRemote;
+    std::thread([hwnd, result, jobs, modRemote]()
     {
         bool newer = false, failed = false;
-        bool tidyNewer = false;
-        if (tidyKnown)
+        int mask = 0;
+        for (const Job& j : jobs)
         {
             std::wstring remote;
-            if (FetchTidyVersion(remote) && IsNewer(ParseVer(remote), ParseVer(tidyLocal)))
+            if (FetchModuleVersion(j.url, j.exe, remote) && IsNewer(ParseVer(remote), ParseVer(j.local)))
             {
-                *tidyRemote = remote;
-                tidyNewer = true;
+                (*modRemote)[j.index] = remote;
+                mask |= 1 << j.index;
             }
         }
         UpdateInfo best;
@@ -1993,7 +2026,7 @@ void SuiteWindow::StartUpdateCheck()
             }
         }
         if (IsWindow(hwnd))
-            PostMessageW(hwnd, WM_UPD_CHECKED, newer ? 1 : (failed ? 2 : 0), tidyNewer ? 1 : 0);
+            PostMessageW(hwnd, WM_UPD_CHECKED, newer ? 1 : (failed ? 2 : 0), mask);
     }).detach();
 }
 
@@ -2025,7 +2058,7 @@ void SuiteWindow::StartUpdateDownload()
         m_updInstallerPath = ok ? path : std::wstring();
         m_dlMessage = error;
         if (IsWindow(hwnd))
-            PostMessageW(hwnd, WM_DL_DONE, ok ? 1 : 0, static_cast<LPARAM>(2));
+            PostMessageW(hwnd, WM_DL_DONE, ok ? 1 : 0, static_cast<LPARAM>(kSuiteIdx));
     });
     InvalidateRect(m_hwnd, &m_banner, FALSE);
 }
@@ -2362,32 +2395,46 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         InvalidateRect(m_hwnd, &m_footer, FALSE);
         return 0;
     case WM_UPD_CHECKED:
+    {
         m_updAvailable = wp == 1;
-        m_tidyNew = (lp == 1 && m_tidyRemote) ? *m_tidyRemote : std::wstring();
+        std::wstring modNote;   // z. B. "Tidy v1.1.5, PDF Reader v1.1.22"
+        for (int i = 0; i < 4; ++i)
+        {
+            m_tools[i].newVersion = ((lp >> i) & 1) && m_modRemote && i < static_cast<int>(m_modRemote->size()) ? (*m_modRemote)[i] : std::wstring();
+            if (!m_tools[i].newVersion.empty())
+            {
+                std::wstring name = m_tools[i].title;
+                if (name.rfind(L"Duncan's ", 0) == 0)
+                    name.erase(0, 9);
+                modNote += (modNote.empty() ? L"" : L", ") + name + L" v" + m_tools[i].newVersion;
+            }
+        }
         if (m_manualCheck)
         {
             m_manualCheck = false;
             std::wstring note = wp == 1 ? L"Update verfügbar: Duncan's Suite v" + (m_checkResult ? m_checkResult->version : std::wstring()) : (wp == 2 ? L"Updatesuche nicht möglich (offline?)" : L"Duncan's Suite ist aktuell (v" SUITE_VERSION L")");
-            if (!m_tidyNew.empty())
-                note += L" · Duncan's Tidy v" + m_tidyNew + L" verfügbar (Tidy-Karte)";
+            if (!modNote.empty())
+                note += L" · Programm-Updates: " + modNote + L" (auf den Karten)";
             SetNote(note);
         }
-        else if (!m_tidyNew.empty() && !m_updAvailable)
-            SetNote(L"Update für Duncan's Tidy verfügbar: v" + m_tidyNew + L" (auf der Tidy-Karte installieren)");
-        InvalidateRect(m_hwnd, &m_tools[0].rect, FALSE);
+        else if (!modNote.empty() && !m_updAvailable)
+            SetNote(L"Programm-Updates verfügbar: " + modNote + L" (auf den Karten installieren)");
+        InvalidateRect(m_hwnd, nullptr, FALSE);
         if (m_updAvailable && m_checkResult)
             m_upd = *m_checkResult;
         if (m_updAvailable && m_hiddenToTray)
             TrayBalloon(L"Update verfügbar", L"Duncan's Suite v" + m_upd.version + L" kann installiert werden.");
-        InvalidateRect(m_hwnd, &m_banner, FALSE);
+        else if (!modNote.empty() && m_hiddenToTray)
+            TrayBalloon(L"Programm-Updates verfügbar", modNote);
         return 0;
+    }
     case WM_DL_PROGRESS:
-        if (lp >= 0 && lp < 2)
+        if (lp >= 0 && lp < 4)
         {
             m_tools[lp].progress = static_cast<int>(wp);
             InvalidateRect(m_hwnd, &m_tools[lp].rect, FALSE);
         }
-        else if (lp == 2)
+        else if (lp == kSuiteIdx)
         {
             m_updProgress = static_cast<int>(wp);
             InvalidateRect(m_hwnd, &m_banner, FALSE);
@@ -2399,7 +2446,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             m_dlThread.join();
         const int index = static_cast<int>(lp);
         m_dlBusy = false;
-        if (index == 2)
+        if (index == kSuiteIdx)
         {
             m_updDownloading = false;
             if (wp)
@@ -2407,15 +2454,14 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             else
                 ShowModal(L"Update-Download fehlgeschlagen", m_dlMessage.empty() ? std::wstring(L"Unbekannter Fehler.") : m_dlMessage);
         }
-        else if (index >= 0 && index < 2)
+        else if (index >= 0 && index < 4)
         {
             m_tools[index].downloading = false;
             FindTools();   // Button wechselt automatisch von "Herunterladen" auf "Starten"
             if (wp)
             {
-                const bool wasUpdate = index == 0 && !m_tidyNew.empty();
-                if (index == 0)
-                    m_tidyNew.clear();
+                const bool wasUpdate = !m_tools[index].newVersion.empty();
+                m_tools[index].newVersion.clear();
                 SetNote(std::wstring(m_tools[index].title) + (wasUpdate ? L" wurde aktualisiert" : L" wurde installiert"));
             }
             else
