@@ -11,6 +11,6 @@ function Ver($f) { $v = (Get-Item (Join-Path $rel $f)).VersionInfo.FileVersion; 
 $lines = @("DuncansDriverUpdater.exe=$(Ver 'DuncansDriverUpdater.exe')", "DuncansPrivacy.exe=$(Ver 'DuncansPrivacy.exe')")
 [IO.File]::WriteAllText((Join-Path $rel 'modules.txt'), ($lines -join "`n"), (New-Object Text.UTF8Encoding $false))
 [IO.File]::WriteAllText((Join-Path $rel 'version.txt'), (Ver 'DuncansPdf.exe'), (New-Object Text.UTF8Encoding $false))
-& (Join-Path $root 'SignRelease.ps1') (Join-Path $rel 'DuncansDriverUpdater.exe') (Join-Path $rel 'DuncansPrivacy.exe') (Join-Path $rel 'DuncansPdf.exe')
+& (Join-Path $root 'SignRelease.ps1') (Join-Path $rel 'DuncansDriverUpdater.exe') (Join-Path $rel 'DuncansPrivacy.exe') (Join-Path $rel 'DuncansPdf.exe') (Join-Path $rel 'pdfium.dll')
 Write-Host "modules.txt:"; Get-Content (Join-Path $rel 'modules.txt')
 Write-Host "version.txt (PDF): $(Get-Content (Join-Path $rel 'version.txt'))"

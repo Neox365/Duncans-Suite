@@ -44,7 +44,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.22"
+#define SUITE_VERSION L"1.1.23"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -998,6 +998,8 @@ struct Tool
     const wchar_t* directUrl = nullptr;      // direkte EXE-Adresse (ohne Pruefsummen-Datei), alternativ zu downloadBase
     const wchar_t* versionUrl = nullptr;     // Versionsdatei im neuesten Release (zentrale Update-Pruefung); nullptr = keine
     std::wstring newVersion;                 // neuere Version laut Pruefung (leer = aktuell)
+    const wchar_t* extraUrl = nullptr;       // zusaetzliche Datei, die neben der EXE liegen muss (PDF Reader: pdfium.dll), signiert wie die EXE
+    const wchar_t* extraName = nullptr;
     bool downloading = false;
     int progress = 0;                        // 0..100, 101 = unbekannt
 };
@@ -1051,7 +1053,8 @@ private:
           L"PDF-Betrachter. Öffnet, zoomt, dreht, fügt zusammen und speichert PDF-Dateien.",
           CategoryIcon::Document, RGB(240, 84, 84), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/DuncansPdf.exe",
-          L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/version.txt" },
+          L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/version.txt", {},
+          L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/pdfium.dll", L"pdfium.dll" },
         { L"DuncansPrivacy.exe", L"Duncan's Privacy Shield",
           L"Datenschutz- & Telemetrie-Manager. Schaltet Hintergrund-Tracking, Diagnosedaten und unnötige Windows-Dienste per Klick stumm.",
           CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {},
@@ -1963,14 +1966,17 @@ void SuiteWindow::StartDownload(int index)
     t.progress = 0;
     m_dlBusy = true;
     m_dlCancel = false;
+    const std::wstring extraUrl = t.extraUrl ? t.extraUrl : L"", extraName = t.extraName ? t.extraName : L"";
     const std::wstring base = t.downloadBase ? t.downloadBase : L"", url = t.directUrl ? t.directUrl : L"", exe = t.exe,
                        dir = InstallDir(t);   // Updates landen immer in %LOCALAPPDATA%<Name>; FindTools nimmt die neuere Kopie
     const HWND hwnd = m_hwnd;
-    m_dlThread = std::thread([this, hwnd, index, base, url, exe, dir]()
+    m_dlThread = std::thread([this, hwnd, index, base, url, exe, dir, extraUrl, extraName]()
     {
         std::wstring error;
-        const bool ok = url.empty() ? DownloadVerified(hwnd, index, base, exe, dir, m_dlCancel, error)
+        bool ok = url.empty() ? DownloadVerified(hwnd, index, base, exe, dir, m_dlCancel, error)
                                     : DownloadDirect(hwnd, index, url, exe, dir, m_dlCancel, error);
+        if (ok && !extraUrl.empty() && !FileExists(dir + L"\\" + extraName))   // Begleitdatei (pdfium.dll) nur laden, wenn sie fehlt
+            ok = DownloadDirect(hwnd, index, extraUrl, extraName, dir, m_dlCancel, error);
         m_dlMessage = error;   // vor PostMessage gesetzt, danach vom UI-Thread gelesen
         if (IsWindow(hwnd))
             PostMessageW(hwnd, WM_DL_DONE, ok ? 1 : 0, static_cast<LPARAM>(index));
@@ -2397,7 +2403,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     case WM_UPD_CHECKED:
     {
         m_updAvailable = wp == 1;
-        std::wstring modNote;   // z. B. "Tidy v1.1.5, PDF Reader v1.1.22"
+        std::wstring modNote;   // z. B. "Tidy v1.1.5, PDF Reader v1.1.23"
         for (int i = 0; i < 4; ++i)
         {
             m_tools[i].newVersion = ((lp >> i) & 1) && m_modRemote && i < static_cast<int>(m_modRemote->size()) ? (*m_modRemote)[i] : std::wstring();

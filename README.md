@@ -146,7 +146,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.22.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.23.exe` (schlanker Admin-Installer: nur die Suite, Startmenü, optionale Desktop-Verknüpfung, Deinstaller). Die Programme lädt die Suite per „Herunterladen“ nach `%LOCALAPPDATA%` (Signaturprüfung) und hält sie einzeln aktuell. Komplett-Installer mit allen Programmen: `ISCC /DFull=1 installer\installer.iss` → `DuncansSuite_Full_Setup_1.1.23.exe`.
 
 ## Projektstruktur
 
