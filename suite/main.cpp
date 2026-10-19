@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "../src/Icons.h"
+#include "../src/SuiteSafety.h"
 #include "public_key.inc"        // kSuitePublicKey: Suite-Installer und PDF Reader (erzeugt von tools\MakeSigningKey.ps1)
 #include "tidy_public_key.inc"   // kTidyPublicKey: DuncansTidy.exe
 
@@ -43,7 +44,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.14"
+#define SUITE_VERSION L"1.1.15"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -1395,6 +1396,9 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     if (!m_note.empty())
         DrawLabel(dc, m_fontSmall, kText, { m_footer.left + S(176), m_footer.top + S(13), m_folderRect.left - S(16), m_footer.bottom },
                   m_note, DT_CENTER);
+    else if (!suite_safety::IsElevated())     // dezenter Hinweis: die Suite selbst braucht keine Adminrechte, zwei Programme schon
+        DrawLabel(dc, m_fontSmall, Blend(kBackground, kTextDim, 70), { m_footer.left + S(176), m_footer.top + S(13), m_folderRect.left - S(16), m_footer.bottom },
+                  L"Privacy Shield und Driver Updater fragen beim Start nach Administratorrechten", DT_CENTER | DT_END_ELLIPSIS);
     {
         const bool hover = m_hover == 2 && !m_modal;
         const bool pressed = m_press == 2 && hover;

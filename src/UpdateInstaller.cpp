@@ -1,6 +1,7 @@
 #include "UpdateInstaller.h"
 
 #include "Dispatch.h"
+#include "SuiteSafety.h"
 #include "Utils.h"
 
 #include <algorithm>
@@ -9,67 +10,11 @@ using namespace dispatch;
 
 namespace
 {
-    // ---- Systemwiederherstellung (srclient.dll, dynamisch geladen) --------------------------
-
-#pragma pack(push, 1)
-    struct RestorePointInfo
-    {
-        DWORD   dwEventType;
-        DWORD   dwRestorePtType;
-        INT64   llSequenceNumber;
-        WCHAR   szDescription[256];
-    };
-    struct StateMgrStatus
-    {
-        DWORD nStatus;
-        INT64 llSequenceNumber;
-    };
-#pragma pack(pop)
-
-    constexpr DWORD kBeginSystemChange = 100;
-    constexpr DWORD kEndSystemChange   = 101;
-    constexpr DWORD kDeviceDriverInstall = 10;
-
-    using SRSetRestorePointFn = BOOL(WINAPI*)(RestorePointInfo*, StateMgrStatus*);
-
-    // Legt einen Wiederherstellungspunkt an. Gibt false + Hinweistext zurueck, wenn das nicht geht
-    // (Systemschutz aus, oder Windows erlaubt standardmaessig nur einen Punkt pro 24 h).
+    // ---- Systemwiederherstellung: gemeinsame Implementierung (SuiteSafety, Name "Duncan's Suite Pre-Optimization") ----
     bool CreateRestorePoint(std::wstring& note)
     {
-        HMODULE lib = LoadLibraryExW(L"srclient.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);   // nur aus System32 (App laeuft als Admin)
-        if (!lib)
-        {
-            note = L"Systemwiederherstellung nicht verfügbar";
-            return false;
-        }
-        auto fn = reinterpret_cast<SRSetRestorePointFn>(reinterpret_cast<void*>(GetProcAddress(lib, "SRSetRestorePointW")));
-        bool ok = false;
-        if (fn)
-        {
-            RestorePointInfo info{};
-            info.dwEventType = kBeginSystemChange;
-            info.dwRestorePtType = kDeviceDriverInstall;
-            lstrcpynW(info.szDescription, L"Duncan's Driver Updater: Treiber-Update", 256);
-            StateMgrStatus status{};
-            if (fn(&info, &status) && status.nStatus == 0)
-            {
-                ok = true;
-                RestorePointInfo end{};
-                end.dwEventType = kEndSystemChange;
-                end.llSequenceNumber = status.llSequenceNumber;
-                StateMgrStatus endStatus{};
-                fn(&end, &endStatus);
-            }
-            else
-            {
-                note = L"Wiederherstellungspunkt nicht erstellt (Systemschutz deaktiviert oder bereits einer in den letzten 24 h)";
-            }
-        }
-        else
-        {
-            note = L"Systemwiederherstellung nicht verfügbar";
-        }
-        FreeLibrary(lib);
+        const bool ok = suite_safety::CreateRestorePoint(10 /* DEVICE_DRIVER_INSTALL */, note);
+        if (!ok && note.empty()) note = L"Wiederherstellungspunkt nicht erstellt";
         return ok;
     }
 
@@ -240,6 +185,8 @@ bool UpdateInstaller::StartAsync(HWND notifyWindow, std::vector<std::wstring> up
 
         const int installed = result.installed;
         const bool ok = result.error.empty();
+        suite_safety::Log(L"DriverUpdater", ok ? L"Treiber-Installation abgeschlossen: " + std::to_wstring(result.installed) + L" installiert, " + std::to_wstring(result.failed) + L" fehlgeschlagen, " + std::to_wstring(result.skipped) + L" übersprungen" + (result.rebootRequired ? L", Neustart nötig" : L"")
+                                         : L"Treiber-Installation FEHLER: " + result.error);
         {
             std::lock_guard<std::mutex> lock(m_mutex);
             m_result = std::move(result);

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DuncansDriverUpdater VERSION 1.1.14 LANGUAGES CXX RC)
+project(DuncansDriverUpdater VERSION 1.1.15 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -18,6 +18,7 @@ add_executable(DuncansDriverUpdater WIN32
     src/Icons.cpp
     src/UpdateChecker.cpp
     src/UpdateInstaller.cpp
+    src/SuiteSafety.cpp
     src/VendorReleases.cpp
     src/Utils.cpp
     resources/app.rc
@@ -53,6 +54,7 @@ add_dependencies(DuncansDriverUpdater copy_vendor_releases)
 # ---- Duncan's Suite: zentraler Launcher fuer Tidy + Driver Updater ----
 add_executable(DuncansSuite WIN32
     suite/main.cpp
+    src/SuiteSafety.cpp
     src/Icons.cpp
     resources/suite.rc
 )
@@ -99,6 +101,7 @@ endif()
 add_executable(DuncansPrivacyShield WIN32
     privacy/main.cpp
     privacy/PrivacyRules.cpp
+    src/SuiteSafety.cpp
     src/Icons.cpp
     resources/privacy.rc
 )

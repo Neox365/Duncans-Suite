@@ -24,6 +24,7 @@ using std::min;
 #include <gdiplus.h>
 
 #include "../src/Icons.h"
+#include "../src/SuiteSafety.h"
 #include "PrivacyRules.h"
 
 #ifndef APP_VERSION
@@ -220,14 +221,7 @@ struct JobResult {
     std::wstring error;
 };
 
-void Log(const std::wstring& line) {
-    const std::wstring path = privacy::BackupPath().substr(0, privacy::BackupPath().find_last_of(L'\\')) + L"\\log.txt";
-    if (FILE* f = _wfopen(path.c_str(), L"a, ccs=UTF-8")) {
-        SYSTEMTIME st; GetLocalTime(&st);
-        fwprintf(f, L"%04d-%02d-%02d %02d:%02d:%02d  %ls\n", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, line.c_str());
-        fclose(f);
-    }
-}
+void Log(const std::wstring& line) { suite_safety::Log(L"PrivacyShield", line); }   // %ProgramData%\DuncansSuite\duncans_suite.log
 
 void StartSpinner() { SetTimer(g.hwnd, 2, 50, nullptr); }
 void StopSpinner() { KillTimer(g.hwnd, 2); }
@@ -292,7 +286,6 @@ void EnsureRestorePoint(std::function<void()> next) {
     std::thread([hwnd]() {
         std::wstring err;
         const bool ok = privacy::CreateRestorePoint(L"Duncan's Privacy Shield – vor Datenschutz-Änderungen", err);
-        Log(ok ? L"Wiederherstellungspunkt: ok" : L"Wiederherstellungspunkt: FEHLER – " + err);
         static std::wstring s_err;
         s_err = err;
         PostMessageW(hwnd, WM_RP_DONE, ok ? 1 : 0, reinterpret_cast<LPARAM>(s_err.c_str()));

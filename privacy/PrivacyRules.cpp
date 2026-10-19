@@ -2,6 +2,8 @@
 
 #include <shlobj.h>
 
+#include "../src/SuiteSafety.h"
+
 #include <cwchar>
 #include <map>
 
@@ -150,13 +152,24 @@ void SetBackupPath(const std::wstring& path) { g_backupPath = path; }
 
 std::wstring BackupPath() {
     if (!g_backupPath.empty()) return g_backupPath;
-    wchar_t base[MAX_PATH] = {};
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, base))) return L"DuncansPrivacyShield_backup.ini";
-    const std::wstring dir = std::wstring(base) + L"\\DuncansPrivacyShield";
-    CreateDirectoryW(dir.c_str(), nullptr);
-    g_backupPath = dir + L"\\backup.ini";
+    // Standard: %ProgramData%\DuncansSuite\Backups\privacy_backup.ini (Fallback: Datei neben der EXE-Arbeitsumgebung)
+    const std::wstring dir = suite_safety::BackupsDir();
+    if (dir.empty()) { g_backupPath = L"DuncansPrivacyShield_backup.ini"; return g_backupPath; }
+    g_backupPath = dir + L"\\privacy_backup.ini";
+    // Einmalige Uebernahme der Sicherung aus frueheren Versionen (%LOCALAPPDATA%\DuncansPrivacyShield\backup.ini)
+    if (GetFileAttributesW(g_backupPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
+        wchar_t local[MAX_PATH] = {};
+        if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local))) {
+            const std::wstring old = std::wstring(local) + L"\\DuncansPrivacyShield\\backup.ini";
+            if (GetFileAttributesW(old.c_str()) != INVALID_FILE_ATTRIBUTES && CopyFileW(old.c_str(), g_backupPath.c_str(), TRUE)) {
+                MoveFileExW(old.c_str(), (old + L".migrated").c_str(), MOVEFILE_REPLACE_EXISTING);
+                suite_safety::Log(L"PrivacyShield", L"Sicherung aus früherer Version übernommen: " + old + L" -> " + g_backupPath);
+            }
+        }
+    }
     return g_backupPath;
 }
+
 
 bool HasBackup() {
     wchar_t buf[64] = {};
@@ -175,11 +188,15 @@ bool Apply(const Setting& s, std::wstring& error) {
     for (const RegOp& op : s.ops) {
         std::wstring ignore;
         if (ReadBackup(OpId(op), ignore)) continue;
-        if (!WriteBackup(OpId(op), Encode(ReadValue(op)))) { error = L"Die Sicherungsdatei kann nicht geschrieben werden: " + BackupPath(); return false; }
+        const std::wstring before = Encode(ReadValue(op));
+        if (!WriteBackup(OpId(op), before)) { error = L"Die Sicherungsdatei kann nicht geschrieben werden: " + BackupPath(); suite_safety::Log(L"PrivacyShield", L"FEHLER Sicherung: " + OpId(op) + L" -> " + BackupPath()); return false; }
+        suite_safety::Log(L"PrivacyShield", L"Sicherung " + OpId(op) + L" = " + before);
     }
     // 2) Zielwerte schreiben; bei einem Fehler mittendrin alles wieder zuruecknehmen (keine halb angewendete Einstellung)
     for (const RegOp& op : s.ops)
-        if (!WriteValue(op, Target(op), error)) {
+        if (WriteValue(op, Target(op), error)) suite_safety::Log(L"PrivacyShield", L"Gesetzt " + OpId(op) + L" = " + Encode(Target(op)) + L" (ok)");
+        else {
+            suite_safety::Log(L"PrivacyShield", L"FEHLER beim Setzen " + OpId(op) + L": " + error + L" – Einstellung wird zurückgenommen");
             std::wstring ignore;
             Revert(s, ignore);
             return false;
@@ -197,6 +214,7 @@ bool Revert(const Setting& s, std::wstring& error) {
         if (!ReadBackup(OpId(op), enc) || !Decode(enc, old)) continue;     // nie angewendet: nichts zurueckzusetzen
         if (Equal(old, ReadValue(op))) { DropBackup(OpId(op)); continue; }  // Wert steht schon auf dem Original: nur die Sicherung verwerfen
         const bool done = old.exists ? WriteValue(op, old, error) : DeleteValue(op, error);
+        suite_safety::Log(L"PrivacyShield", std::wstring(L"Wiederhergestellt ") + OpId(op) + L" = " + enc + (done ? L" (ok)" : L" FEHLER: " + error));
         if (!done) { ok = false; continue; }                               // Sicherung behalten, damit ein neuer Versuch moeglich bleibt
         DropBackup(OpId(op));
         if (old.exists && old.type == ValType::Dword && old.dword == 2) {  // Dienst war automatisch gestartet: wieder starten
@@ -219,34 +237,9 @@ bool RevertAll(int& restored, std::wstring& error) {
     return ok;
 }
 
-bool CreateRestorePoint(const std::wstring& description, std::wstring& error) {
-    HMODULE lib = LoadLibraryExW(L"srclient.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!lib) { error = L"Der Systemschutz (srclient.dll) ist nicht verfügbar."; return false; }
-    struct RestorePointInfo { DWORD eventType; DWORD pointType; LONGLONG seq; WCHAR description[256]; };
-    struct StateMgrStatus { DWORD status; LONGLONG seq; };
-    using SetFn = BOOL(WINAPI*)(RestorePointInfo*, StateMgrStatus*);
-    auto fn = reinterpret_cast<SetFn>(reinterpret_cast<void*>(GetProcAddress(lib, "SRSetRestorePointW")));
-    if (!fn) { FreeLibrary(lib); error = L"SRSetRestorePointW wurde nicht gefunden."; return false; }
-
-    RestorePointInfo info{};
-    info.eventType = 100;      // BEGIN_SYSTEM_CHANGE
-    info.pointType = 12;       // MODIFY_SETTINGS
-    wcsncpy(info.description, description.c_str(), 255);
-    StateMgrStatus st{};
-    const BOOL ok = fn(&info, &st);
-    if (ok) {
-        info.eventType = 101;  // END_SYSTEM_CHANGE
-        info.seq = st.seq;
-        fn(&info, &st);
-    }
-    FreeLibrary(lib);
-    if (!ok) {
-        error = st.status == ERROR_SERVICE_DISABLED
-            ? L"Der Systemschutz ist auf diesem PC deaktiviert."
-            : L"Der Wiederherstellungspunkt konnte nicht erstellt werden (Status " + std::to_wstring(st.status) + L").";
-        return false;
-    }
-    return true;
+bool CreateRestorePoint(const std::wstring& /*description*/, std::wstring& error) {
+    // gemeinsame Implementierung (Name "Duncan's Suite Pre-Optimization", Typ MODIFY_SETTINGS, mit Log)
+    return suite_safety::CreateRestorePoint(12, error);
 }
 
 const std::vector<Setting>& AllSettings() {

@@ -115,7 +115,9 @@ Jede Einstellung ist ein Schalter und besteht aus klar benannten Registry-Werten
 | | Eingabe-/Handschriftdaten nicht übermitteln | `Input\TIPC\Enabled = 0`, `InputPersonalization\*` |
 
 **Sicherheit:** Vor der ersten Änderung wird ein Windows-Wiederherstellungspunkt erstellt (im Hintergrund; ist der Systemschutz aus, fragt das Programm nach, ob es trotzdem weitermachen soll).
-Zusätzlich sichert das Programm vor dem Schreiben den Originalzustand jedes Wertes (vorhanden + Wert oder „nicht vorhanden“) in `%LOCALAPPDATA%\DuncansPrivacyShield\backup.ini`.
+Zusätzlich sichert das Programm vor dem Schreiben den Originalzustand jedes Wertes (vorhanden + Wert oder „nicht vorhanden“) in `%ProgramData%\DuncansSuite\Backups\privacy_backup.ini` (eine ältere Sicherung unter `%LOCALAPPDATA%\DuncansPrivacyShield` wird beim ersten Start übernommen).
+Der Wiederherstellungspunkt heißt „Duncan's Suite Pre-Optimization“ und wird auch vom Driver Updater vor Treiber-Installationen angelegt (Windows erlaubt standardmäßig einen Punkt pro 24 h).
+Alle gesetzten und zurückgenommenen Schlüssel samt Ergebnis stehen in `%ProgramData%\DuncansSuite\duncans_suite.log` (Privacy Shield, Driver Updater, Wiederherstellungspunkte; ab 1 MB Wechsel auf `.1`).
 Ein einzelner Schalter nimmt genau seine Werte zurück, **Standard wiederherstellen** stellt alles auf den Zustand von vor der ersten Änderung. Schlägt ein Schreibvorgang mitten in einer Einstellung fehl, wird sie vollständig zurückgenommen.
 Manche Richtlinien greifen erst nach Neustart oder Abmelden.
 
@@ -139,7 +141,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.14.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.15.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 
