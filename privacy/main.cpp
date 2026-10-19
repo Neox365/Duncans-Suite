@@ -319,6 +319,12 @@ void RunChanges(const std::vector<int>& idxs, bool apply) {
 
 // Vor der ersten Aenderung einer Sitzung: Wiederherstellungspunkt (im Hintergrund), danach 'next'.
 void EnsureRestorePoint(std::function<void()> next) {
+    if (!suite_safety::AutoRestorePointEnabled()) {       // Suite-Einstellung: automatischer Wiederherstellungspunkt aus
+        Log(L"Wiederherstellungspunkt übersprungen (Suite-Einstellung)");
+        g.restorePointDone = true;
+        next();
+        return;
+    }
     if (g.restorePointDone || privacy::HasBackup()) { g.restorePointDone = true; next(); return; }   // Sicherung vorhanden: Originalzustand ist gesichert
     g.busy = true;
     g.spin = 0;

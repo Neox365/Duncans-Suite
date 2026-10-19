@@ -50,6 +50,11 @@ oder GitHub nicht erreichbar, bleibt die Prüfung still.
 
 Ein dunkler Dialog mit *Speichern* / *Abbrechen*; gespeichert in `%LOCALAPPDATA%\DuncansSuite\settings.ini`:
 
+Der Dialog hat zwei Spalten: links **Allgemein** (Schalter), rechts **Pfade & Backups** sowie **Updates & Info**.
+
+- **Vor kritischen Aktionen Wiederherstellungspunkt anlegen** (Standard: an; `AutoWiederherstellungspunkt` in der INI). Privacy Shield und Driver Updater lesen diese Einstellung und legen den Punkt „Duncan's Suite Pre-Optimization“ nur an, wenn sie an ist. Der manuelle Knopf im Privacy Shield ist davon unabhängig.
+- **Pfade & Backups:** zeigt den Backup-Ordner (`%ProgramData%\DuncansSuite\Backups\`) mit *Ordner öffnen* und die Logdatei (`duncans_suite.log`) mit *Log-Datei anzeigen*.
+- **Updates & Info:** *Nach Updates suchen* prüft sofort und meldet das Ergebnis in der Fußzeile („ist aktuell“, „Update verfügbar“ oder „offline?“); daneben stehen Version und Copyright.
 - **Beim Start nach Updates suchen** (Standard: an)
 - **Mit Windows starten** (Eintrag unter `HKCU\...\Run`, nur für das eigene Konto)
 - **Download-Ordner für Update-Installer** (Standard: `%LOCALAPPDATA%\DuncansSuite\update`, nur absolute Pfade)
@@ -141,7 +146,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.17.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.18.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 

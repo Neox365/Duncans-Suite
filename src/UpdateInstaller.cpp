@@ -29,7 +29,14 @@ namespace
         };
 
         stage(StageRestorePoint);
-        r.restorePointCreated = CreateRestorePoint(r.restorePointNote);
+        if (suite_safety::AutoRestorePointEnabled())
+            r.restorePointCreated = CreateRestorePoint(r.restorePointNote);
+        else
+        {
+            r.restorePointCreated = false;
+            r.restorePointNote = L"Automatischer Wiederherstellungspunkt ist in den Suite-Einstellungen ausgeschaltet";
+            suite_safety::Log(L"DriverUpdater", r.restorePointNote);
+        }
 
         Disp session = CreateByProgId(L"Microsoft.Update.Session");
         if (!session)

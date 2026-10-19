@@ -113,3 +113,24 @@ bool IsElevated() {
 }
 
 }  // namespace suite_safety
+
+namespace suite_safety {
+
+std::wstring BackupsDirPath() {
+    const std::wstring pd = ProgramData();
+    return pd.empty() ? L"" : pd + L"\\DuncansSuite\\Backups";
+}
+
+std::wstring LogFilePath() {
+    const std::wstring pd = ProgramData();
+    return pd.empty() ? L"" : pd + L"\\DuncansSuite\\duncans_suite.log";
+}
+
+bool AutoRestorePointEnabled() {
+    wchar_t local[MAX_PATH] = {};
+    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local))) return true;
+    const std::wstring ini = std::wstring(local) + L"\\DuncansSuite\\settings.ini";
+    return GetPrivateProfileIntW(L"Allgemein", L"AutoWiederherstellungspunkt", 1, ini.c_str()) != 0;
+}
+
+}  // namespace suite_safety

@@ -44,7 +44,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.17"
+#define SUITE_VERSION L"1.1.18"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -156,6 +156,7 @@ namespace
         bool trayOnLaunch = false;    // nach dem Start eines Programms in den Infobereich minimieren
         bool ctxPdf = false;          // Explorer-Kontextmenue "Mit Duncan's PDF oeffnen" (Registry ist die Wahrheit)
         bool ctxTidy = false;         // Explorer-Kontextmenue "Mit Duncan's Tidy analysieren"
+        bool autoRestorePoint = true; // Privacy Shield / Driver Updater legen vor kritischen Aktionen einen Wiederherstellungspunkt an
         std::wstring downloadDir;     // leer = Standard (%LOCALAPPDATA%\DuncansSuite\update)
     };
 
@@ -218,6 +219,7 @@ namespace
             s.autoCheck = GetPrivateProfileIntW(L"Allgemein", L"UpdatePruefung", 1, ini.c_str()) != 0;
             s.trayOnClose = GetPrivateProfileIntW(L"Allgemein", L"TrayBeimSchliessen", 0, ini.c_str()) != 0;
             s.trayOnLaunch = GetPrivateProfileIntW(L"Allgemein", L"TrayBeimProgrammstart", 0, ini.c_str()) != 0;
+            s.autoRestorePoint = GetPrivateProfileIntW(L"Allgemein", L"AutoWiederherstellungspunkt", 1, ini.c_str()) != 0;
             wchar_t dir[MAX_PATH * 2] = {};
             GetPrivateProfileStringW(L"Allgemein", L"DownloadOrdner", L"", dir, MAX_PATH * 2, ini.c_str());
             if (IsUsableDir(dir))
@@ -239,6 +241,7 @@ namespace
                WritePrivateProfileStringW(L"Allgemein", L"TrayBeimSchliessen", s.trayOnClose ? L"1" : L"0", ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"TrayBeimProgrammstart", s.trayOnLaunch ? L"1" : L"0", ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"DownloadOrdner", s.downloadDir.c_str(), ini.c_str()) &&
+               WritePrivateProfileStringW(L"Allgemein", L"AutoWiederherstellungspunkt", s.autoRestorePoint ? L"1" : L"0", ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"Autostart", s.autostart ? L"1" : L"0", ini.c_str());
     }
 
@@ -1044,7 +1047,9 @@ private:
     Settings m_draft;             // Entwurf im offenen Dialog
     bool m_settingsOpen = false;
     HFONT m_fontSym = nullptr;
-    RECT m_gearRect{}, m_chkAuto{}, m_chkStart{}, m_chkTrayClose{}, m_chkTrayLaunch{}, m_chkCtxPdf{}, m_chkCtxTidy{}, m_btnPick{}, m_btnReset{}, m_btnSave{}, m_btnCancel{};
+    RECT m_gearRect{}, m_chkAuto{}, m_chkStart{}, m_chkTrayClose{}, m_chkTrayLaunch{}, m_chkCtxPdf{}, m_chkCtxTidy{}, m_chkRestore{}, m_btnPick{}, m_btnReset{}, m_btnSave{}, m_btnCancel{};
+    RECT m_btnBackup{}, m_btnLog{}, m_btnCheck{};   // Ids: 18 Wiederherstellungspunkt-Haken, 19 Backup-Ordner, 20 Logdatei, 21 Update-Suche
+    bool m_manualCheck = false;                      // Update-Suche per Knopf: Ergebnis als Hinweis melden
 
     // Infobereich (Tray): Symbol neben der Uhr, Kontextmenue, Quick Clean, Benachrichtigung
     static constexpr UINT kTrayMsg = WM_APP + 10;     // Rueckmeldungen des Tray-Symbols
@@ -1459,42 +1464,75 @@ void SuiteWindow::DrawSettings(HDC dc, int w, int h)
 {
     FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
 
-    // kompakt gehalten, damit der Dialog auch im kleinsten Fenster (560 px Hoehe) passt
-    const int pad = S(20);
-    const int boxW = std::min(S(560), w - S(40));
-    const int titleH = S(30), btnH = S(38), rowH = S(40), gap = S(6);
-    const int folderH = S(24) + S(18);
-    const int boxH = pad + titleH + S(14) + 6 * rowH + 5 * gap + S(12) + folderH + S(18) + btnH + pad;
+    // zwei Spalten: links "Allgemein" (Schalter), rechts "Pfade & Backups" sowie "Updates & Info"
+    const int pad = S(22), colGap = S(26);
+    const int boxW = std::min(S(920), w - S(40));
+    const int colW = (boxW - 2 * pad - colGap) / 2;
+    const int titleH = S(30), btnH = S(38), rowH = S(40), gap = S(6), sectionH = S(28);
+    const int leftH = 7 * rowH + 6 * gap;
+    const int boxH = pad + titleH + S(8) + sectionH + leftH + S(18) + btnH + pad;
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
 
     DrawShadow(dc, box, S(18), static_cast<int>(m_dpi));
     DrawPanelAA(dc, box, S(18), RGB(27, 29, 36), kBorder);
     DrawLabel(dc, m_fontHeading, kText, { box.left + pad, box.top + pad + S(3), box.right - pad, box.top + pad + titleH }, L"Einstellungen");
 
-    int y = box.top + pad + titleH + S(14);
+    const int x0 = box.left + pad, x1 = x0 + colW + colGap;
+    const int top = box.top + pad + titleH + S(8);
+
+    // ---- links: Allgemein ----
+    DrawLabel(dc, m_fontHeading, kTextDim, { x0, top, x0 + colW, top + sectionH }, L"Allgemein");
+    int y = top + sectionH;
     auto row = [&](RECT& rc, bool on, int id, const wchar_t* label, const wchar_t* hint)
     {
-        rc = { box.left + pad, y, box.right - pad, y + rowH };
+        rc = { x0, y, x0 + colW, y + rowH };
         DrawCheck(dc, rc, on, m_hover == id, label, hint);
         y += rowH + gap;
     };
-    row(m_chkAuto, m_draft.autoCheck, 7, L"Beim Start nach Updates suchen", L"Prüft beim Öffnen, ob eine neue Suite-Version vorliegt.");
-    row(m_chkStart, m_draft.autostart, 8, L"Mit Windows starten", L"Startet die Suite bei der Anmeldung (nur für dein Konto).");
+    row(m_chkStart, m_draft.autostart, 8, L"Duncan's Suite mit Windows starten", L"Startet die Suite bei der Anmeldung (nur für dein Konto).");
     row(m_chkTrayClose, m_draft.trayOnClose, 13, L"Beim Schließen in den Infobereich minimieren", L"Das X versteckt die Suite neben der Uhr, statt sie zu beenden.");
+    row(m_chkRestore, m_draft.autoRestorePoint, 18, L"Vor kritischen Aktionen Wiederherstellungspunkt anlegen", L"Privacy Shield und Driver Updater sichern das System vorab.");
+    row(m_chkAuto, m_draft.autoCheck, 7, L"Beim Start nach Updates suchen", L"Prüft beim Öffnen, ob eine neue Suite-Version vorliegt.");
     row(m_chkTrayLaunch, m_draft.trayOnLaunch, 14, L"Nach dem Start eines Programms minimieren", L"Die Suite zieht sich nach dem Starten in den Infobereich zurück.");
-    row(m_chkCtxPdf, m_draft.ctxPdf, 15, L"Explorer-Kontextmenü für PDFs aktivieren", L"Rechtsklick auf eine PDF: „Mit Duncan's PDF öffnen“.");
-    row(m_chkCtxTidy, m_draft.ctxTidy, 16, L"Explorer-Kontextmenü für Tidy-Analyse aktivieren", L"Rechtsklick auf Ordner/Laufwerk: „Mit Duncan's Tidy analysieren“.");
-    y += S(12) - gap;
+    row(m_chkCtxPdf, m_draft.ctxPdf, 15, L"Explorer-Kontextmenü für PDFs", L"Rechtsklick auf eine PDF: „Mit Duncan's PDF öffnen“.");
+    row(m_chkCtxTidy, m_draft.ctxTidy, 16, L"Explorer-Kontextmenü für Tidy-Analyse", L"Rechtsklick auf Ordner/Laufwerk: „Mit Duncan's Tidy analysieren“.");
 
-    // Download-Ordner: Text links, die beiden Knoepfe rechts daneben
-    const int bsm = S(100);
-    m_btnReset = { box.right - pad - bsm, y, box.right - pad, y + folderH };
-    m_btnPick = { m_btnReset.left - S(8) - bsm, y, m_btnReset.left - S(8), y + folderH };
-    DrawLabel(dc, m_fontBody, kText, { box.left + pad, y, m_btnPick.left - S(10), y + S(24) }, L"Download-Ordner für Update-Installer");
-    const std::wstring dirText = m_draft.downloadDir.empty() ? L"Standard (%LOCALAPPDATA%\\DuncansSuite\\update)" : m_draft.downloadDir;
-    DrawLabel(dc, m_fontSmall, kTextDim, { box.left + pad, y + S(24), m_btnPick.left - S(10), y + S(24) + S(18) }, dirText, DT_LEFT | DT_PATH_ELLIPSIS);
-    DrawButton(dc, m_btnPick, false, m_hover == 9, m_press == 9 && m_hover == 9, L"Ändern …");
-    DrawButton(dc, m_btnReset, false, m_hover == 10, m_press == 10 && m_hover == 10, L"Standard");
+    // ---- rechts: Pfade & Backups ----
+    DrawLabel(dc, m_fontHeading, kTextDim, { x1, top, x1 + colW, top + sectionH }, L"Pfade & Backups");
+    int ry = top + sectionH;
+    const int pathH = S(24) + S(18);
+    auto pathRow = [&](const wchar_t* label, const std::wstring& path, RECT& b1, int id1, const wchar_t* t1, RECT* b2, int id2, const wchar_t* t2)
+    {
+        const int bw1 = (b2 ? S(96) : S(150));
+        b1 = { x1 + colW - bw1, ry, x1 + colW, ry + pathH };
+        int textRight = b1.left - S(10);
+        if (b2)
+        {
+            *b2 = b1;
+            b1 = { b2->left - S(8) - bw1, ry, b2->left - S(8), ry + pathH };
+            textRight = b1.left - S(10);
+        }
+        DrawLabel(dc, m_fontBody, kText, { x1, ry, textRight, ry + S(24) }, label);
+        DrawLabel(dc, m_fontSmall, kTextDim, { x1, ry + S(24), textRight, ry + pathH }, path, DT_LEFT | DT_PATH_ELLIPSIS);
+        DrawButton(dc, b1, false, m_hover == id1, m_press == id1 && m_hover == id1, t1);
+        if (b2)
+            DrawButton(dc, *b2, false, m_hover == id2, m_press == id2 && m_hover == id2, t2);
+        ry += pathH + S(12);
+    };
+    pathRow(L"Backup-Ordner", suite_safety::BackupsDirPath() + L"\\", m_btnBackup, 19, L"Ordner öffnen", nullptr, 0, nullptr);
+    pathRow(L"Logdatei", suite_safety::LogFilePath(), m_btnLog, 20, L"Log-Datei anzeigen", nullptr, 0, nullptr);
+    pathRow(L"Download-Ordner",
+            m_draft.downloadDir.empty() ? L"Standard (%LOCALAPPDATA%\\DuncansSuite\\update)" : m_draft.downloadDir,
+            m_btnPick, 9, L"Ändern …", &m_btnReset, 10, L"Standard");
+
+    // ---- rechts: Updates & Info ----
+    ry += S(6);
+    DrawLabel(dc, m_fontHeading, kTextDim, { x1, ry, x1 + colW, ry + sectionH }, L"Updates & Info");
+    ry += sectionH;
+    m_btnCheck = { x1, ry, x1 + S(210), ry + btnH };
+    DrawButton(dc, m_btnCheck, false, m_hover == 21, m_press == 21 && m_hover == 21, L"Nach Updates suchen");
+    DrawLabel(dc, m_fontBody, kText, { m_btnCheck.right + S(16), ry, x1 + colW, ry + S(20) }, std::wstring(L"Duncan's Suite v") + SUITE_VERSION);
+    DrawLabel(dc, m_fontSmall, kTextDim, { m_btnCheck.right + S(16), ry + S(20), x1 + colW, ry + S(38) }, L"© 2026 Duncan");
 
     const int bw = S(120);
     m_btnSave = { box.right - pad - bw, box.bottom - pad - btnH, box.right - pad, box.bottom - pad };
@@ -1894,9 +1932,11 @@ void SuiteWindow::StartUpdateCheck()
     const std::shared_ptr<UpdateInfo> result = m_checkResult;
     std::thread([hwnd, result]()
     {
-        bool newer = false;
+        bool newer = false, failed = false;
         UpdateInfo best;
-        if (FetchLatestSuiteInstaller(best))
+        if (!FetchLatestSuiteInstaller(best))
+            failed = true;
+        else
         {
             const Version remote = ParseVer(best.version);
             const Version local = ParseVer(SUITE_VERSION);
@@ -1907,7 +1947,7 @@ void SuiteWindow::StartUpdateCheck()
             }
         }
         if (IsWindow(hwnd))
-            PostMessageW(hwnd, WM_UPD_CHECKED, newer ? 1 : 0, 0);
+            PostMessageW(hwnd, WM_UPD_CHECKED, newer ? 1 : (failed ? 2 : 0), 0);
     }).detach();
 }
 
@@ -2000,7 +2040,7 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = PtInRect(&m_modalOk, pt) ? 3 : -1;
     else if (m_settingsOpen)
     {
-        const struct { const RECT* r; int id; } hits[] = { { &m_chkAuto, 7 }, { &m_chkStart, 8 }, { &m_chkTrayClose, 13 }, { &m_chkTrayLaunch, 14 }, { &m_chkCtxPdf, 15 }, { &m_chkCtxTidy, 16 }, { &m_btnPick, 9 },
+        const struct { const RECT* r; int id; } hits[] = { { &m_chkAuto, 7 }, { &m_chkStart, 8 }, { &m_chkTrayClose, 13 }, { &m_chkTrayLaunch, 14 }, { &m_chkCtxPdf, 15 }, { &m_chkCtxTidy, 16 }, { &m_chkRestore, 18 }, { &m_btnBackup, 19 }, { &m_btnLog, 20 }, { &m_btnCheck, 21 }, { &m_btnPick, 9 },
                                                           { &m_btnReset, 10 }, { &m_btnSave, 11 }, { &m_btnCancel, 12 } };
         for (const auto& hit : hits)
             if (PtInRect(hit.r, pt))
@@ -2055,6 +2095,32 @@ void SuiteWindow::OnClick(int, int)
         m_draft.ctxPdf = !m_draft.ctxPdf;
     else if (pressed == 16)
         m_draft.ctxTidy = !m_draft.ctxTidy;
+    else if (pressed == 18)
+        m_draft.autoRestorePoint = !m_draft.autoRestorePoint;
+    else if (pressed == 19)          // Backup-Ordner im Explorer oeffnen (wird bei Bedarf angelegt)
+    {
+        const std::wstring dir = suite_safety::BackupsDir();
+        if (dir.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(m_hwnd, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+            ShowModal(L"Backup-Ordner", L"Der Backup-Ordner konnte nicht geöffnet werden:\n" + suite_safety::BackupsDirPath());
+    }
+    else if (pressed == 20)          // Logdatei anzeigen (existiert sie noch nicht, wird ihr Ordner geoeffnet)
+    {
+        const std::wstring log = suite_safety::LogFilePath();
+        if (!log.empty() && FileExists(log))
+            ShellExecuteW(m_hwnd, L"open", log.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+        else
+        {
+            const std::wstring dir = suite_safety::DataDir();
+            if (dir.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(m_hwnd, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
+                ShowModal(L"Logdatei", L"Es gibt noch keine Logdatei. Sie entsteht, sobald Privacy Shield oder Driver Updater etwas ändern.");
+        }
+    }
+    else if (pressed == 21)          // sofort nach Updates suchen, Ergebnis als Hinweis in der Fusszeile
+    {
+        m_manualCheck = true;
+        SetNote(L"Suche nach Updates …");
+        StartUpdateCheck();
+    }
     else if (pressed == 9)
     {
         const std::wstring dir = PickFolder(m_hwnd, m_draft.downloadDir);
@@ -2163,7 +2229,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     case WM_GETMINMAXINFO:
     {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
-        mmi->ptMinTrackSize.x = S(520);
+        mmi->ptMinTrackSize.x = S(920);
         mmi->ptMinTrackSize.y = S(680);
         return 0;
     }
@@ -2250,7 +2316,12 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         InvalidateRect(m_hwnd, &m_footer, FALSE);
         return 0;
     case WM_UPD_CHECKED:
-        m_updAvailable = wp != 0;
+        m_updAvailable = wp == 1;
+        if (m_manualCheck)
+        {
+            m_manualCheck = false;
+            SetNote(wp == 1 ? L"Update verfügbar: Duncan's Suite v" + (m_checkResult ? m_checkResult->version : std::wstring()) : (wp == 2 ? L"Updatesuche nicht möglich (offline?)" : L"Duncan's Suite ist aktuell (v" SUITE_VERSION L")"));
+        }
         if (m_updAvailable && m_checkResult)
             m_upd = *m_checkResult;
         if (m_updAvailable && m_hiddenToTray)

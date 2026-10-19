@@ -29,3 +29,15 @@ bool CreateRestorePoint(DWORD pointType, std::wstring& note);
 bool IsElevated();
 
 }  // namespace suite_safety
+
+namespace suite_safety {
+
+// Pfade nur berechnen (nichts anlegen) - fuer Anzeigen in der Oberflaeche
+std::wstring BackupsDirPath();
+std::wstring LogFilePath();
+
+// Gemeinsame Einstellung der Suite (%LOCALAPPDATA%\DuncansSuite\settings.ini, [Allgemein] AutoWiederherstellungspunkt, Standard: an):
+// Privacy Shield und Driver Updater legen vor kritischen Aktionen nur dann einen Wiederherstellungspunkt an, wenn sie an ist.
+bool AutoRestorePointEnabled();
+
+}  // namespace suite_safety
