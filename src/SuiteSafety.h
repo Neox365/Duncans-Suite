@@ -28,6 +28,12 @@ bool CreateRestorePoint(DWORD pointType, std::wstring& note);
 // true, wenn der Prozess mit erhoehten Rechten (Administrator) laeuft.
 bool IsElevated();
 
+// Prueft eine Datei vor der Benutzung durch ein Programm mit Adminrechten: Verknuepfung oder Besitzer ausser Administratoren/SYSTEM -> wird beiseite
+// verschoben (<Name>.untrusted_<Zeit>). true = Pfad ist frei oder vertrauenswuerdig. DataDir()/BackupsDir() liefern "" fuer nicht vertrauenswuerdige Ordner.
+bool EnsureTrustedFile(const std::wstring& path);
+// Nur lesen/pruefen: Datei existiert, ist keine Verknuepfung und gehoert Administratoren/SYSTEM.
+bool IsTrustedFile(const std::wstring& path);
+
 }  // namespace suite_safety
 
 namespace suite_safety {

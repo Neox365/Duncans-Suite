@@ -473,7 +473,7 @@ namespace
     };
 
     bool VerifyDigestSignature(HINTERNET session, const std::wstring& sigUrl, const SigCheck& check,
-                               const unsigned char (&digest)[32], std::wstring& error)
+                               const unsigned char (&digest)[32], std::wstring& error, std::string* sigOut = nullptr)
     {
         InetHandle h;
         DWORD total = 0;
@@ -487,6 +487,8 @@ namespace
                 sig.append(buf, n);
         }
         const bool valid = crypto::VerifyDigest(digest, sig.data(), sig.size(), check.key, check.keyLen);
+        if (valid && sigOut)
+            *sigOut = sig;
         if (!valid)
             error = L"Die Signatur der Datei fehlt oder ist ungültig. Aus Sicherheitsgründen wurde sie verworfen.";
         return valid;
@@ -564,6 +566,7 @@ namespace
             return false;
 
         CreateDirectoryW(dir.c_str(), nullptr);
+        std::string sigBytes;   // geprueft gueltige Signatur: wird neben der EXE abgelegt und vor dem Start erneut geprueft
         const std::wstring tmp = dir + L"\\" + fileName + L".download";
         const std::wstring dest = dir + L"\\" + fileName;
         HANDLE file = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
@@ -633,7 +636,7 @@ namespace
                 error = L"Der Download ist unvollständig.";
                 ok = false;
             }
-            else if (!VerifyDigestSignature(session, url + L".sig", sigCheck, digest, error))
+            else if (!VerifyDigestSignature(session, url + L".sig", sigCheck, digest, error, &sigBytes))
                 ok = false;   // Echtheit: nur von Duncan signierte Dateien werden abgelegt
         }
         if (hash)
@@ -648,7 +651,43 @@ namespace
         }
         if (!ok)
             DeleteFileW(tmp.c_str());
+        else if (!sigBytes.empty())
+        {
+            const std::wstring sigPath = dest + L".sig";
+            HANDLE sf = CreateFileW(sigPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (sf != INVALID_HANDLE_VALUE)
+            {
+                DWORD w = 0;
+                WriteFile(sf, sigBytes.data(), static_cast<DWORD>(sigBytes.size()), &w, nullptr);
+                CloseHandle(sf);
+            }
+        }
         return ok;
+    }
+
+    // Prueft vor dem Start, ob eine EXE im Benutzerordner noch die Datei ist, die wir signiert ausgeliefert haben (<Datei>.sig daneben).
+    // Wichtig fuer Programme mit Adminrechten: ein Benutzerordner ist fuer jedes Programm des Nutzers beschreibbar.
+    bool VerifyFileSignature(const std::wstring& path, const unsigned char* key, size_t keyLen)
+    {
+        auto readAll = [](const std::wstring& p, std::string& out, size_t maxBytes) {
+            HANDLE f = CreateFileW(p.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+            if (f == INVALID_HANDLE_VALUE)
+                return false;
+            LARGE_INTEGER sz{};
+            bool ok = GetFileSizeEx(f, &sz) && sz.QuadPart > 0 && static_cast<unsigned long long>(sz.QuadPart) <= maxBytes;
+            if (ok)
+            {
+                out.resize(static_cast<size_t>(sz.QuadPart));
+                DWORD got = 0;
+                ok = ReadFile(f, &out[0], static_cast<DWORD>(out.size()), &got, nullptr) && got == out.size();
+            }
+            CloseHandle(f);
+            return ok;
+        };
+        std::string exe, sig;
+        unsigned char digest[32] = {};
+        return readAll(path, exe, 64u << 20) && readAll(path + L".sig", sig, 64) && crypto::Sha256(exe.data(), exe.size(), digest) &&
+               crypto::VerifyDigest(digest, sig.data(), sig.size(), key, keyLen);
     }
 
     // ---- Update-Pruefung (GitHub Releases) -------------------------------------------------------
@@ -1814,6 +1853,20 @@ void SuiteWindow::Launch(int index)
         return;
     }
 
+    // Programme mit Adminrechten (Driver Updater, Privacy Shield) aus dem Benutzerordner nur starten, wenn die EXE noch zu ihrer
+    // Signatur passt. Fehlt die Signatur (aeltere Installation) oder wurde die Datei veraendert, laedt die Suite sie neu und prueft sie.
+    {
+        const std::wstring local = LocalAppData();
+        const bool adminTool = _wcsicmp(t.exe, L"DuncansDriverUpdater.exe") == 0 || _wcsicmp(t.exe, L"DuncansPrivacy.exe") == 0;
+        const bool inUserDir = !local.empty() && t.path.size() > local.size() && _wcsnicmp(t.path.c_str(), local.c_str(), local.size()) == 0;
+        if (adminTool && inUserDir && !VerifyFileSignature(t.path, kSuitePublicKey, sizeof(kSuitePublicKey)) && (t.downloadBase || t.directUrl))
+        {
+            SetNote(std::wstring(t.title) + L": Signatur fehlt oder passt nicht – die Datei wird neu geladen und geprüft …");
+            StartDownload(index);
+            return;
+        }
+    }
+
     const std::wstring dir = t.path.substr(0, t.path.find_last_of(L"\\/"));
     SHELLEXECUTEINFOW sei{};
     sei.cbSize = sizeof(sei);
@@ -2077,7 +2130,7 @@ void SuiteWindow::OnClick(int, int)
     {
         const std::wstring dir = suite_safety::BackupsDir();
         if (dir.empty() || reinterpret_cast<INT_PTR>(ShellExecuteW(m_hwnd, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL)) <= 32)
-            ShowModal(L"Backup-Ordner", L"Der Backup-Ordner konnte nicht geöffnet werden:\n" + suite_safety::BackupsDirPath());
+            ShowModal(L"Backup-Ordner", L"Es gibt noch keinen Backup-Ordner (er entsteht, sobald Privacy Shield etwas ändert) oder er ist nicht vertrauenswürdig:\n" + suite_safety::BackupsDirPath());
     }
     else if (pressed == 20)          // Logdatei anzeigen (existiert sie noch nicht, wird ihr Ordner geoeffnet)
     {

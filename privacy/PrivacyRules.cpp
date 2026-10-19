@@ -96,17 +96,20 @@ namespace {
 
     bool ReadBackup(const std::wstring& id, std::wstring& out) {
         wchar_t buf[2048] = {};
-        GetPrivateProfileStringW(L"Backup", id.c_str(), L"\x01", buf, 2048, BackupPath().c_str());
+        const std::wstring bp = BackupPath();
+        if (bp.empty()) return false;
+        GetPrivateProfileStringW(L"Backup", id.c_str(), L"\x01", buf, 2048, bp.c_str());
         if (buf[0] == L'\x01' && buf[1] == 0) return false;
         out = buf;
         return true;
     }
 
     bool WriteBackup(const std::wstring& id, const std::wstring& value) {
-        return WritePrivateProfileStringW(L"Backup", id.c_str(), value.c_str(), BackupPath().c_str()) != 0;
+        const std::wstring bp = BackupPath();
+        return !bp.empty() && WritePrivateProfileStringW(L"Backup", id.c_str(), value.c_str(), bp.c_str()) != 0;
     }
 
-    void DropBackup(const std::wstring& id) { WritePrivateProfileStringW(L"Backup", id.c_str(), nullptr, BackupPath().c_str()); }
+    void DropBackup(const std::wstring& id) { const std::wstring bp = BackupPath(); if (!bp.empty()) WritePrivateProfileStringW(L"Backup", id.c_str(), nullptr, bp.c_str()); }
 
     Value Target(const RegOp& op) {
         Value v;
@@ -151,16 +154,19 @@ namespace {
 
 std::wstring BackupPath() {
     if (!g_backupPath.empty()) return g_backupPath;
-    // Standard: %ProgramData%\DuncansSuite\Backups\privacy_backup.ini (Fallback: Datei neben der EXE-Arbeitsumgebung)
+    // %ProgramData%\DuncansSuite\Backups\privacy_backup.ini. Ordner muss von Administratoren stammen (sonst ""): ein Benutzer
+    // koennte sonst Sicherungswerte unterschieben, die beim Wiederherstellen mit Adminrechten in die Registry geschrieben werden.
     const std::wstring dir = suite_safety::BackupsDir();
-    if (dir.empty()) { g_backupPath = L"DuncansPrivacyShield_backup.ini"; return g_backupPath; }
-    g_backupPath = dir + L"\\privacy_backup.ini";
+    if (dir.empty()) return L"";
+    const std::wstring path = dir + L"\\privacy_backup.ini";
+    if (!suite_safety::EnsureTrustedFile(path)) return L"";    // fremde/verknuepfte Datei konnte nicht beiseite geschoben werden
+    g_backupPath = path;
     // Einmalige Uebernahme der Sicherung aus frueheren Versionen (%LOCALAPPDATA%\DuncansPrivacyShield\backup.ini)
     if (GetFileAttributesW(g_backupPath.c_str()) == INVALID_FILE_ATTRIBUTES) {
         wchar_t local[MAX_PATH] = {};
         if (SUCCEEDED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, SHGFP_TYPE_CURRENT, local))) {
             const std::wstring old = std::wstring(local) + L"\\DuncansPrivacyShield\\backup.ini";
-            if (GetFileAttributesW(old.c_str()) != INVALID_FILE_ATTRIBUTES && CopyFileW(old.c_str(), g_backupPath.c_str(), TRUE)) {
+            if (suite_safety::IsTrustedFile(old) && CopyFileW(old.c_str(), g_backupPath.c_str(), TRUE)) {   // nur Dateien, die ein Administrator-Prozess angelegt hat
                 MoveFileExW(old.c_str(), (old + L".migrated").c_str(), MOVEFILE_REPLACE_EXISTING);
                 suite_safety::Log(L"PrivacyShield", L"Sicherung aus früherer Version übernommen: " + old + L" -> " + g_backupPath);
             }
@@ -172,7 +178,9 @@ std::wstring BackupPath() {
 
 bool HasBackup() {
     wchar_t buf[64] = {};
-    GetPrivateProfileStringW(L"Backup", nullptr, L"", buf, 64, BackupPath().c_str());   // Schluesselliste; leer = keine Eintraege
+    const std::wstring bp = BackupPath();
+    if (bp.empty()) return false;
+    GetPrivateProfileStringW(L"Backup", nullptr, L"", buf, 64, bp.c_str());   // Schluesselliste; leer = keine Eintraege
     return buf[0] != 0;
 }
 
@@ -188,7 +196,7 @@ bool Apply(const Setting& s, std::wstring& error) {
         std::wstring ignore;
         if (ReadBackup(OpId(op), ignore)) continue;
         const std::wstring before = Encode(ReadValue(op));
-        if (!WriteBackup(OpId(op), before)) { error = L"Die Sicherungsdatei kann nicht geschrieben werden: " + BackupPath(); suite_safety::Log(L"PrivacyShield", L"FEHLER Sicherung: " + OpId(op) + L" -> " + BackupPath()); return false; }
+        if (!WriteBackup(OpId(op), before)) { error = L"Die Sicherungsdatei kann nicht geschrieben werden oder der Ordner ist nicht vertrauenswürdig (%ProgramData%\\DuncansSuite\\Backups muss Administratoren gehören)."; suite_safety::Log(L"PrivacyShield", L"FEHLER Sicherung: " + OpId(op) + L" -> " + BackupPath()); return false; }
         suite_safety::Log(L"PrivacyShield", L"Sicherung " + OpId(op) + L" = " + before);
     }
     // 2) Zielwerte schreiben; bei einem Fehler mittendrin alles wieder zuruecknehmen (keine halb angewendete Einstellung)
