@@ -112,6 +112,13 @@ struct PdfiumApi {
     FPDF_BOOL (*AnnotAppendAttachmentPoints)(void* annot, const FS_QUADPOINTSF*) = nullptr;
     FPDF_BOOL (*AnnotSetRect)(void* annot, const FS_RECTF*) = nullptr;
     FPDF_BOOL (*AnnotSetStringValue)(void* annot, const char* key, const unsigned short* value) = nullptr;
+    int (*PageGetAnnotCount)(FPDF_PAGE) = nullptr;
+    void* (*PageGetAnnot)(FPDF_PAGE, int index) = nullptr;
+    FPDF_BOOL (*PageRemoveAnnot)(FPDF_PAGE, int index) = nullptr;
+    int (*AnnotGetSubtype)(void* annot) = nullptr;
+    size_t (*AnnotCountAttachmentPoints)(void* annot) = nullptr;
+    FPDF_BOOL (*AnnotGetAttachmentPoints)(void* annot, size_t quadIndex, FS_QUADPOINTSF*) = nullptr;
+    FPDF_BOOL (*AnnotGetRect)(void* annot, FS_RECTF*) = nullptr;
     // Seitenobjekte / Bilder (fpdf_edit.h) fuer das Verkleinern
     int (*PageCountObjects)(FPDF_PAGE) = nullptr;
     void* (*PageGetObject)(FPDF_PAGE, int index) = nullptr;

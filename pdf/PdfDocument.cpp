@@ -102,6 +102,13 @@ bool PdfDocument::InitLibrary() {
         && Load("FPDFAnnot_AppendAttachmentPoints", g_api.AnnotAppendAttachmentPoints)
         && Load("FPDFAnnot_SetRect", g_api.AnnotSetRect)
         && Load("FPDFAnnot_SetStringValue", g_api.AnnotSetStringValue)
+        && Load("FPDFPage_GetAnnotCount", g_api.PageGetAnnotCount)
+        && Load("FPDFPage_GetAnnot", g_api.PageGetAnnot)
+        && Load("FPDFPage_RemoveAnnot", g_api.PageRemoveAnnot)
+        && Load("FPDFAnnot_GetSubtype", g_api.AnnotGetSubtype)
+        && Load("FPDFAnnot_CountAttachmentPoints", g_api.AnnotCountAttachmentPoints)
+        && Load("FPDFAnnot_GetAttachmentPoints", g_api.AnnotGetAttachmentPoints)
+        && Load("FPDFAnnot_GetRect", g_api.AnnotGetRect)
         && Load("FPDFPage_CountObjects", g_api.PageCountObjects)
         && Load("FPDFPage_GetObject", g_api.PageGetObject)
         && Load("FPDFPageObj_GetType", g_api.PageObjGetType)
@@ -422,6 +429,42 @@ bool PdfDocument::AddHighlight(int index, int startChar, int charCount, unsigned
     g_api.ClosePage(page);
     if (ok) m_modified = true; else g_error = L"Hier ist kein Text zum Markieren.";
     return ok;
+}
+
+bool PdfDocument::RemoveHighlightAt(int index, int w, int h, int dx, int dy) {
+    if (!m_doc) return false;
+    void* page = g_api.LoadPage(m_doc, index);
+    if (!page) return false;
+    bool removed = false;
+    double px = 0, py = 0;
+    if (g_api.DeviceToPage(page, 0, 0, w, h, Rotation(index), dx, dy, &px, &py)) {
+        const float tol = 2.5f;                                      // etwas Toleranz in PDF-Punkten
+        auto inside = [&](float l, float b, float r, float t) { return px >= l - tol && px <= r + tol && py >= b - tol && py <= t + tol; };
+        for (int i = g_api.PageGetAnnotCount(page) - 1; i >= 0; --i) {   // rueckwaerts, damit Indizes beim Entfernen gueltig bleiben
+            void* a = g_api.PageGetAnnot(page, i);
+            if (!a) continue;
+            bool hit = false;
+            if (g_api.AnnotGetSubtype(a) == FPDF_ANNOT_HIGHLIGHT) {
+                const size_t quads = g_api.AnnotCountAttachmentPoints(a);
+                for (size_t q = 0; q < quads && !hit; ++q) {
+                    FS_QUADPOINTSF qp{};
+                    if (!g_api.AnnotGetAttachmentPoints(a, q, &qp)) continue;
+                    const float l = std::min(std::min(qp.x1, qp.x2), std::min(qp.x3, qp.x4)), r = std::max(std::max(qp.x1, qp.x2), std::max(qp.x3, qp.x4));
+                    const float b = std::min(std::min(qp.y1, qp.y2), std::min(qp.y3, qp.y4)), t = std::max(std::max(qp.y1, qp.y2), std::max(qp.y3, qp.y4));
+                    hit = inside(l, b, r, t);
+                }
+                if (quads == 0) {
+                    FS_RECTF rc{};
+                    if (g_api.AnnotGetRect(a, &rc)) hit = inside(rc.left, rc.bottom, rc.right, rc.top);
+                }
+            }
+            g_api.PageCloseAnnot(a);
+            if (hit && g_api.PageRemoveAnnot(page, i)) removed = true;
+        }
+    }
+    g_api.ClosePage(page);
+    if (removed) m_modified = true;
+    return removed;
 }
 
 bool PdfDocument::AddNote(int index, int w, int h, int dx, int dy, const std::wstring& text) {

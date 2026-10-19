@@ -23,7 +23,7 @@ using std::min;
 #include "PdfDocument.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.1.23"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.1.24"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -57,7 +57,7 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
     C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS, C_CROP, C_UNCROP,
-    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
+    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
 };
 
 struct Item {
@@ -106,9 +106,10 @@ struct App {
     int dragHit = -1, dragStartY = 0, dragInsert = -1;
     std::vector<int> dragPages;
 
-    // Anmerkungen: 0 = kein Werkzeug, 1 = Text markieren, 2 = Notiz setzen, 3 = Zuschnitt aufziehen
+    // Anmerkungen: 0 = kein Werkzeug, 1 = Text markieren, 2 = Notiz setzen, 3 = Zuschnitt aufziehen, 4 = Radierer (Markierung entfernen)
     int tool = 0;
     bool selDrag = false;                  // Textauswahl beim Markieren laeuft
+    bool eraseDrag = false;                // Radierer: Maustaste gedrueckt, Markierungen werden entfernt
     int selPage = -1, selA = -1, selB = -1;
     bool cropDrag = false;                 // Zuschnitt-Rahmen wird aufgezogen
     POINT cropA{}, cropB{};                // Eckpunkte in Canvas-Koordinaten
@@ -241,6 +242,7 @@ void BuildItems() {
     add(C_MERGE, L"Merge", 0, true);
     add(C_FIND, L"Suchen", 0, true);
     add(C_HILITE, L"Marker", 0, true);
+    add(C_ERASE, L"⌫", 40, true);   // Radierer: entfernt Markierungen
     add(C_NOTE, L"Notiz", 0, true);
     add(C_CROP, L"Zuschnitt", 0, true);
     add(C_NONE, L"", 0, false);
@@ -287,15 +289,65 @@ void SaveMarkerColor() {
 }
 
 // Allgemeine Einstellungen (Dialog hinter dem Zahnrad), gespeichert in settings.ini [Allgemein]
+constexpr int kNHot = 11;   // Anzahl der frei belegbaren Tastenkuerzel
 struct Prefs {
     bool singleKeys = true;     // Einzelbuchstaben-Hotkeys (H, N, C, U, R)
     int zoomMode = 0;           // 0 Seitenbreite, 1 Originalgroesse, 2 letzter Zoom
     bool bakeRot = true;        // Drehung beim Speichern in die Datei schreiben
     bool lastFit = true;
     double lastZoom = 1.0;
+    // Belegung der aenderbaren Tastenkuerzel (Reihenfolge = Anzeige im Einstellungsdialog)
+    struct Bind { UINT vk; bool ctrl; };
+    Bind bind[kNHot]{};
 } cfg;
 
+struct HotkeyDef { int cmd; const wchar_t* label; UINT vk; bool ctrl; };
+const HotkeyDef kHot[kNHot] = {
+    { C_HILITE, L"Text markieren", 'H', false }, { C_NOTE, L"Notiz hinzufügen", 'N', false },
+    { C_CROP, L"Zuschnitt aufziehen", 'C', false }, { C_UNCROP, L"Zuschnitt zurücksetzen", 'U', false },
+    { C_ROTR, L"Seite drehen (+Umschalt: links)", 'R', false },
+    { C_ERASE, L"Markierung entfernen", 'E', false },
+    { C_OPEN, L"Öffnen", 'O', true }, { C_SAVE, L"Speichern", 'S', true },
+    { C_FIND, L"Suchen", 'F', true }, { C_DELETE, L"Seite löschen", VK_DELETE, false }, { C_SIDE, L"Seitenleiste", 'B', true },
+};
+
+void ResetBindings() { for (int i = 0; i < kNHot; ++i) cfg.bind[i] = { kHot[i].vk, kHot[i].ctrl }; }
+
+// Einzelbuchstaben-/Ziffern-Kuerzel ohne Strg: nur aktiv, wenn "Einzelbuchstaben-Hotkeys" an ist
+bool IsSingleKey(const Prefs::Bind& b) { return !b.ctrl && ((b.vk >= 'A' && b.vk <= 'Z') || (b.vk >= '0' && b.vk <= '9')); }
+
+// Index der Aktion zu dieser Taste (-1 = keine)
+int FindBinding(UINT vk, bool ctrl) {
+    for (int i = 0; i < kNHot; ++i) if (cfg.bind[i].vk == vk && cfg.bind[i].ctrl == ctrl) return i;
+    return -1;
+}
+
+std::wstring KeyName(const Prefs::Bind& b) {
+    std::wstring n;
+    switch (b.vk) {
+    case 0: return L"–";
+    case VK_DELETE: n = L"Entf"; break;
+    case VK_BACK: n = L"Rück"; break;
+    case VK_INSERT: n = L"Einfg"; break;
+    case VK_HOME: n = L"Pos1"; break;
+    case VK_END: n = L"Ende"; break;
+    case VK_PRIOR: n = L"Bild ↑"; break;
+    case VK_NEXT: n = L"Bild ↓"; break;
+    case VK_SPACE: n = L"Leertaste"; break;
+    case VK_TAB: n = L"Tab"; break;
+    default:
+        if ((b.vk >= 'A' && b.vk <= 'Z') || (b.vk >= '0' && b.vk <= '9')) n = std::wstring(1, static_cast<wchar_t>(b.vk));
+        else if (b.vk >= VK_F1 && b.vk <= VK_F12) n = L"F" + std::to_wstring(b.vk - VK_F1 + 1);
+        else {
+            wchar_t buf[32] = {};
+            if (GetKeyNameTextW(static_cast<LONG>(MapVirtualKeyW(b.vk, MAPVK_VK_TO_VSC) << 16), buf, 32) > 0) n = buf; else n = L"?";
+        }
+    }
+    return (b.ctrl ? L"Strg+" : L"") + n;
+}
+
 void LoadPrefs() {
+    ResetBindings();
     const std::wstring ini = SettingsPath();
     if (!ini.empty()) {
         cfg.singleKeys = GetPrivateProfileIntW(L"Allgemein", L"EinzelbuchstabenHotkeys", 1, ini.c_str()) != 0;
@@ -303,6 +355,16 @@ void LoadPrefs() {
         cfg.bakeRot = GetPrivateProfileIntW(L"Allgemein", L"DrehungSpeichern", 1, ini.c_str()) != 0;
         cfg.lastFit = GetPrivateProfileIntW(L"Allgemein", L"LetzterZoomBreite", 1, ini.c_str()) != 0;
         cfg.lastZoom = std::clamp(GetPrivateProfileIntW(L"Allgemein", L"LetzterZoom", 1000, ini.c_str()) / 1000.0, 0.1, 8.0);
+        for (int i = 0; i < kNHot; ++i) {                                          // eigene Tastenbelegung: "Aktion<i>=<vk>,<strg>"
+            wchar_t key[24], val[32] = {};
+            swprintf(key, 24, L"Aktion%d", i);
+            GetPrivateProfileStringW(L"Hotkeys", key, L"", val, 32, ini.c_str());
+            unsigned vk = 0, c = 0;
+            if (swscanf(val, L"%u,%u", &vk, &c) == 2 && vk > 0 && vk < 256) cfg.bind[i] = { vk, c != 0 };
+        }
+        for (int i = 0; i < kNHot; ++i)                                            // doppelte Belegung (z. B. von Hand bearbeitet): Standard
+            for (int j = i + 1; j < kNHot; ++j)
+                if (cfg.bind[i].vk == cfg.bind[j].vk && cfg.bind[i].ctrl == cfg.bind[j].ctrl) { ResetBindings(); i = j = kNHot; }
     }
     PdfDocument::SetBakeRotations(cfg.bakeRot);
 }
@@ -316,6 +378,12 @@ void SavePrefs() {
     put(L"DrehungSpeichern", cfg.bakeRot ? 1 : 0);
     put(L"LetzterZoomBreite", cfg.lastFit ? 1 : 0);
     put(L"LetzterZoom", std::lround(cfg.lastZoom * 1000));
+    for (int i = 0; i < kNHot; ++i) {
+        wchar_t key[24];
+        swprintf(key, 24, L"Aktion%d", i);
+        const std::wstring v = std::to_wstring(cfg.bind[i].vk) + L"," + (cfg.bind[i].ctrl ? L"1" : L"0");
+        WritePrivateProfileStringW(L"Hotkeys", key, v.c_str(), ini.c_str());
+    }
 }
 
 // Windows-Standard-Farbdialog; die gewaehlte Farbe wird zur eigenen Markerfarbe (Palettenplatz 6) und bleibt aktiv
@@ -394,7 +462,7 @@ void DrawToolbar(HDC dc, int width) {
         const bool enabled = ItemEnabled(it);
         const bool hot = enabled && static_cast<int>(i) == g.hot;
         const bool pressed = hot && static_cast<int>(i) == g.down;
-        const bool active = (it.cmd == C_SIDE && g.sideVisible) || (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2) || (it.cmd == C_CROP && g.tool == 3);
+        const bool active = (it.cmd == C_SIDE && g.sideVisible) || (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2) || (it.cmd == C_CROP && g.tool == 3) || (it.cmd == C_ERASE && g.tool == 4);
         COLORREF fill = pressed ? RGB(28, 31, 39) : hot ? kCardHover : (it.cmd == C_OPEN ? kAccent : kCardRaised);
         COLORREF txt = !enabled ? RGB(95, 100, 112) : (it.cmd == C_OPEN && !hot) ? RGB(8, 20, 36) : kText;
         if (it.cmd == C_OPEN && hot) txt = kText;
@@ -414,8 +482,8 @@ int HitToolbar(POINT p) {
 // ---------- Seitenleiste: Layout & Zeichnen ----------
 const struct { int cmd; const wchar_t* label; } kTools[] = {
     { C_ROTL, L"Seite nach links drehen" }, { C_ROTR, L"Seite nach rechts drehen" },
-    { C_DELETE, L"Seite(n) löschen  (Entf)" }, { C_FIND, L"Suchen  (Strg+F)" },
-    { C_HILITE, L"Text markieren  (H)" }, { C_NOTE, L"Notiz hinzufügen  (N)" }, { C_COMPRESS, L"Datei verkleinern …" },
+    { C_DELETE, L"Seite(n) löschen" }, { C_FIND, L"Im Dokument suchen" },
+    { C_HILITE, L"Text markieren" }, { C_ERASE, L"Markierung entfernen" }, { C_NOTE, L"Notiz hinzufügen" }, { C_COMPRESS, L"Datei verkleinern …" },
     { C_MERGE, L"PDF anhängen (Merge)" }, { C_SAVE, L"Speichern unter …" },
     { C_FITW, L"Auf Seitenbreite einpassen" }, { C_ACTUAL, L"Originalgröße (100 %)" },
 };
@@ -672,8 +740,8 @@ LRESULT CALLBACK SearchEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == VK_RETURN) { SearchStep(shift ? -1 : 1); return 0; }
         if (wp == VK_F3) { SearchStep(shift ? -1 : 1); return 0; }
         if (wp == VK_PRIOR || wp == VK_NEXT) { HandleKey(static_cast<UINT>(wp)); return 0; }
-        if (ctrl && (wp == 'O' || wp == 'S' || wp == 'M' || wp == 'B')) { HandleKey(static_cast<UINT>(wp)); return 0; }
-        if (ctrl && wp == 'F') { SendMessageW(h, EM_SETSEL, 0, -1); return 0; }
+        if (ctrl && FindBinding(static_cast<UINT>(wp), true) >= 0 && kHot[FindBinding(static_cast<UINT>(wp), true)].cmd == C_FIND) { SendMessageW(h, EM_SETSEL, 0, -1); return 0; }
+        if (ctrl && (wp == 'M' || FindBinding(static_cast<UINT>(wp), true) >= 0)) { HandleKey(static_cast<UINT>(wp)); return 0; }
     }
     if (msg == WM_CHAR && (wp == VK_RETURN || wp == VK_ESCAPE)) return 0;   // kein Signalton
     return CallWindowProcW(g_oldEditProc, h, msg, wp, lp);
@@ -1075,7 +1143,10 @@ struct SetState {
     bool single = true, bake = true;
     int zoom = 0, color = 0;
     int hot = -1;                                   // 1 Hotkeys, 2 Drehung, 10-12 Zoom, 20-25 Farbe, 30 OK, 31 Abbrechen
-    RECT card1{}, rcSingle{}, rcZoomRow{}, rcColorRow{}, rcBake{}, rcZoom[3]{}, rcColor[6]{}, rcOk{}, rcCancel{};
+    RECT card1{}, rcSingle{}, rcZoomRow{}, rcColorRow{}, rcBake{}, rcZoom[3]{}, rcColor[6]{}, rcOk{}, rcCancel{}, rcKey[kNHot]{}, rcReset{};
+    Prefs::Bind bind[kNHot]{};                         // Entwurf der Tastenbelegung
+    int capture = -1;                               // Zeile, die gerade auf einen Tastendruck wartet
+    std::wstring msg;                               // Hinweis zur Tastenbelegung (z. B. bereits belegt)
     int secY[3]{};                                  // Ueberschriften der drei Bereiche
     int height = 0;
 } *g_set = nullptr;
@@ -1086,7 +1157,7 @@ void SetDoLayout(SetState& s) {
     const int W = S(kSetW), pad = S(20), lab = S(26);
     int y = S(58);
     s.secY[0] = y; y += lab;
-    s.card1 = RECT{ pad, y, W - pad, y + S(5 * 24 + 22) }; y = s.card1.bottom + S(8);
+    s.card1 = RECT{ pad, y, W - pad, y + S(6 * 24 + 22) }; y = s.card1.bottom + S(8);
     s.rcSingle = RECT{ pad, y, W - pad, y + S(48) }; y = s.rcSingle.bottom + S(18);
     s.secY[1] = y; y += lab;
     s.rcZoomRow = RECT{ pad, y, W - pad, y + S(52) }; y = s.rcZoomRow.bottom + S(8);
@@ -1097,6 +1168,12 @@ void SetDoLayout(SetState& s) {
     s.rcOk = RECT{ W - pad - bw, y, W - pad, y + bh };
     s.rcCancel = RECT{ s.rcOk.left - S(10) - bw, y, s.rcOk.left - S(10), y + bh };
     s.height = y + bh + pad;
+    s.rcReset = RECT{ pad, y, pad + S(190), y + bh };
+    const int hcol = (s.card1.right - s.card1.left) / 2;      // Tastenfelder der Hotkey-Liste (links 5, rechts 5)
+    for (int i = 0; i < kNHot; ++i) {
+        const int kx = s.card1.left + (i < 6 ? 0 : hcol) + S(10), ky = s.card1.top + S(11) + (i % 6) * S(24);
+        s.rcKey[i] = RECT{ kx, ky + S(1), kx + S(96), ky + S(23) };
+    }
     const int cw = S(100), cg = S(6);                // Zoom-Auswahl (3 Felder rechts)
     for (int i = 0; i < 3; ++i) {
         const int right = s.rcZoomRow.right - S(12) - (2 - i) * (cw + cg);
@@ -1111,6 +1188,8 @@ void SetDoLayout(SetState& s) {
 }
 
 int SetHit(const SetState& s, POINT p) {
+    for (int i = 0; i < kNHot; ++i) if (PtInRect(&s.rcKey[i], p)) return 50 + i;
+    if (PtInRect(&s.rcReset, p)) return 40;
     if (PtInRect(&s.rcOk, p)) return 30;
     if (PtInRect(&s.rcCancel, p)) return 31;
     if (PtInRect(&s.rcSingle, p)) return 1;
@@ -1148,19 +1227,19 @@ void SetPaint(HWND hwnd) {
 
     // Hotkey-Liste
     FillRound(mem, s.card1, S(10), kCardRaised, kBorder);
-    static const wchar_t* keysL[5] = { L"H", L"N", L"C", L"U", L"R / ⇧R" };
-    static const wchar_t* descL[5] = { L"Text markieren", L"Notiz hinzufügen", L"Zuschnitt aufziehen", L"Zuschnitt zurücksetzen", L"Seite drehen" };
-    static const wchar_t* keysR[5] = { L"Strg+O", L"Strg+S", L"Strg+F", L"Entf", L"Strg+0 / 1" };
-    static const wchar_t* descR[5] = { L"Öffnen", L"Speichern", L"Suchen", L"Seite löschen", L"Breite / 100 %" };
-    const int colW = (s.card1.right - s.card1.left) / 2, kw = S(86);
-    for (int i = 0; i < 5; ++i) {
-        const int ty = s.card1.top + S(11) + i * S(24);
-        const COLORREF kc = s.single ? kAccent : RGB(95, 100, 112), dtc = s.single ? kText : RGB(120, 126, 140);
-        DrawTextC(mem, g.font, keysL[i], RECT{ s.card1.left + S(16), ty, s.card1.left + S(16) + kw, ty + S(24) }, kc, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        DrawTextC(mem, g.font, descL[i], RECT{ s.card1.left + S(16) + kw, ty, s.card1.left + colW, ty + S(24) }, dtc, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-        DrawTextC(mem, g.font, keysR[i], RECT{ s.card1.left + colW + S(8), ty, s.card1.left + colW + S(8) + kw, ty + S(24) }, kAccent, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        DrawTextC(mem, g.font, descR[i], RECT{ s.card1.left + colW + S(8) + kw, ty, s.card1.right - S(10), ty + S(24) }, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    const int colW = (s.card1.right - s.card1.left) / 2;
+    for (int i = 0; i < kNHot; ++i) {                  // Taste anklicken, dann die neue Taste druecken
+        const RECT& k = s.rcKey[i];
+        const bool cap = s.capture == i, hot = s.hot == 50 + i;
+        const bool off = IsSingleKey(s.bind[i]) && !s.single;                       // Einzelbuchstabe, aber Einzelbuchstaben-Hotkeys aus
+        FillRound(mem, k, S(7), cap ? kAccent : (hot ? kCardHover : RGB(36, 40, 50)), cap ? kAccent : (hot ? RGB(110, 118, 140) : kBorder));
+        DrawTextC(mem, g.font, cap ? L"Taste drücken …" : KeyName(s.bind[i]), k, cap ? RGB(8, 20, 36) : (off ? RGB(120, 126, 140) : kAccent));
+        const int dl = k.right + S(8), dr = (i < 6 ? s.card1.left + colW : s.card1.right) - S(6);
+        DrawTextC(mem, g.fontSmall, kHot[i].label, RECT{ dl, k.top, dr, k.bottom }, off ? RGB(120, 126, 140) : kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
+    if (s.capture >= 0 || !s.msg.empty())
+        DrawTextC(mem, g.fontSmall, !s.msg.empty() ? s.msg : std::wstring(L"Taste (mit oder ohne Strg) drücken – Esc bricht ab"),
+                  RECT{ pad + S(200), s.secY[0], cr.right - pad, s.secY[0] + S(22) }, !s.msg.empty() ? RGB(255, 170, 60) : kAccent, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     auto row = [&](const RECT& r, bool hot) { FillRound(mem, r, S(10), hot ? kCardHover : kCardRaised, hot ? RGB(96, 104, 126) : kBorder); };
     row(s.rcSingle, s.hot == 1);
     DrawTextC(mem, g.font, L"Einzelbuchstaben-Hotkeys aktivieren (z. B. H, N)", RECT{ s.rcSingle.left + S(16), s.rcSingle.top, s.rcSingle.right - S(70), s.rcSingle.bottom }, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -1200,6 +1279,7 @@ void SetPaint(HWND hwnd) {
         FillRound(mem, r, S(10), fill, primary ? fill : (hot ? RGB(96, 104, 126) : kBorder));
         DrawTextC(mem, g.font, label, r, primary ? RGB(8, 20, 36) : kText);
     };
+    button(s.rcReset, false, s.hot == 40, L"Tasten zurücksetzen");
     button(s.rcCancel, false, s.hot == 31, L"Abbrechen");
     button(s.rcOk, true, s.hot == 30, L"Speichern");
     BitBlt(dc, 0, 0, cr.right, cr.bottom, mem, 0, 0, SRCCOPY);
@@ -1221,7 +1301,9 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_LBUTTONUP: {
         const int h = SetHit(s, POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
-        if (h == 1) s.single = !s.single;
+        if (h >= 50 && h < 60) { s.capture = (s.capture == h - 50) ? -1 : h - 50; s.msg.clear(); }
+        else if (h == 40) { for (int i = 0; i < kNHot; ++i) s.bind[i] = { kHot[i].vk, kHot[i].ctrl }; s.capture = -1; s.msg.clear(); }
+        else if (h == 1) s.single = !s.single;
         else if (h == 2) s.bake = !s.bake;
         else if (h >= 10 && h <= 12) s.zoom = h - 10;
         else if (h >= 20 && h <= 25) {
@@ -1246,6 +1328,7 @@ LRESULT CALLBACK SettingsProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 void ShowSettings() {
     SetState st;
     st.single = cfg.singleKeys; st.bake = cfg.bakeRot; st.zoom = cfg.zoomMode; st.color = g.hlSel;
+    for (int i = 0; i < kNHot; ++i) st.bind[i] = cfg.bind[i];
     g_set = &st;
     SetDoLayout(st);
     RECT cr{ 0, 0, S(kSetW), st.height };
@@ -1263,7 +1346,23 @@ void ShowSettings() {
         const BOOL r = GetMessageW(&m, nullptr, 0, 0);
         if (r == 0) { PostQuitMessage(static_cast<int>(m.wParam)); break; }
         if (r < 0) break;
-        if (m.message == WM_KEYDOWN) {
+        if (m.message == WM_KEYDOWN || m.message == WM_SYSKEYDOWN) {
+            if (st.capture >= 0) {                                   // neue Taste fuer die gewaehlte Aktion
+                const UINT vk = static_cast<UINT>(m.wParam);
+                if (vk == VK_SHIFT || vk == VK_CONTROL || vk == VK_MENU || vk == VK_LWIN || vk == VK_RWIN) continue;   // nur Modifikator
+                if (vk == VK_ESCAPE) { st.capture = -1; InvalidateRect(hwnd, nullptr, FALSE); continue; }
+                const bool ctrl = GetKeyState(VK_CONTROL) < 0;
+                // fest vergebene Tasten der Anwendung
+                const bool reserved = vk == VK_RETURN || vk == VK_F3 || vk == VK_PRIOR || vk == VK_NEXT || vk == VK_UP || vk == VK_DOWN || vk == VK_LEFT || vk == VK_RIGHT
+                    || (ctrl && (vk == 'A' || vk == 'M' || vk == '0' || vk == '1' || vk == VK_OEM_PLUS || vk == VK_OEM_MINUS || vk == VK_ADD || vk == VK_SUBTRACT));
+                int clash = -1;
+                for (int i = 0; i < kNHot; ++i) if (i != st.capture && st.bind[i].vk == vk && st.bind[i].ctrl == ctrl) clash = i;
+                if (reserved) st.msg = L"Diese Taste ist fest vergeben.";
+                else if (clash >= 0) st.msg = std::wstring(L"Bereits belegt: ") + kHot[clash].label;
+                else { st.bind[st.capture] = { vk, ctrl }; st.msg.clear(); st.capture = -1; }
+                InvalidateRect(hwnd, nullptr, FALSE);
+                continue;
+            }
             if (m.wParam == VK_ESCAPE) { st.done = true; continue; }
             if (m.wParam == VK_RETURN) { st.ok = true; st.done = true; continue; }
         }
@@ -1276,6 +1375,7 @@ void ShowSettings() {
     g_set = nullptr;
     if (!st.ok) return;
     cfg.singleKeys = st.single; cfg.bakeRot = st.bake; cfg.zoomMode = st.zoom;
+    for (int i = 0; i < kNHot; ++i) cfg.bind[i] = st.bind[i];
     g.hlSel = st.color; g.hlColor = SwatchColor(st.color);
     PdfDocument::SetBakeRotations(cfg.bakeRot);
     SavePrefs();
@@ -1284,6 +1384,9 @@ void ShowSettings() {
     InvalidateRect(g.side, nullptr, FALSE);
     ShowToast(L"Einstellungen gespeichert");
 }
+
+// Radierer: entfernt Markierungen an der Mausposition (Canvas-Koordinaten)
+void EraseAtPoint(int x, int y);
 
 // Obere linke Ecke der angezeigten Seite im Canvas (Client-Koordinaten)
 void PageOrigin(int& ox, int& oy) {
@@ -1299,6 +1402,16 @@ void RefreshAfterEdit(int page) {
     UpdateCanvas(true);
     InvalidateRect(g.side, nullptr, FALSE);
     UpdateTitle();
+}
+
+void EraseAtPoint(int x, int y) {
+    int ox, oy; PageOrigin(ox, oy);
+    const int dx = x - ox, dy = y - oy;
+    if (!g.doc.IsOpen() || dx < 0 || dy < 0 || dx >= g.pageW || dy >= g.pageH) return;
+    if (g.doc.RemoveHighlightAt(g.page, g.pageW, g.pageH, dx, dy)) {
+        RefreshAfterEdit(g.page);
+        ShowToast(L"Markierung entfernt – noch nicht gespeichert");
+    }
 }
 
 std::wstring FormatBytes(unsigned long long b) {
@@ -1414,15 +1527,16 @@ void RunCommand(int cmd) {
         InvalidateToolbar();
         break;
     }
-    case C_HILITE: case C_NOTE: {
+    case C_HILITE: case C_NOTE: case C_ERASE: {
         if (!g.doc.IsOpen()) break;
-        const int want = cmd == C_HILITE ? 1 : 2;
+        const int want = cmd == C_HILITE ? 1 : (cmd == C_ERASE ? 4 : 2);
         g.tool = g.tool == want ? 0 : want;
         g.selDrag = false;
         InvalidateToolbar();
         InvalidateRect(g.canvas, nullptr, FALSE);
         if (g.tool == 1) ShowToast(L"Marker: Text mit der Maus überstreichen (Esc beendet)");
         else if (g.tool == 2) ShowToast(L"Notiz: auf die Stelle klicken (Esc beendet)");
+        else if (g.tool == 4) ShowToast(L"Radierer: auf eine Markierung klicken oder darüberfahren (Esc beendet)");
         SetFocus(g.canvas);
         break;
     }
@@ -1487,13 +1601,19 @@ void RunCommand(int cmd) {
 
 void HandleKey(UINT vk) {
     const bool ctrl = GetKeyState(VK_CONTROL) < 0, shift = GetKeyState(VK_SHIFT) < 0;
+    {   // frei belegbare Tastenkuerzel (Einstellungen -> Tastenkuerzel)
+        const int b = FindBinding(vk, ctrl);
+        if (b >= 0 && (!IsSingleKey(cfg.bind[b]) || cfg.singleKeys)) {
+            const int cmd = kHot[b].cmd;
+            if (cmd == C_OPEN || cmd == C_SAVE || cmd == C_FIND || cmd == C_SIDE) { RunCommand(cmd); return; }
+            if (!g.doc.IsOpen()) return;
+            RunCommand(cmd == C_ROTR && shift ? C_ROTL : cmd);
+            return;
+        }
+    }
     if (ctrl) {
         switch (vk) {
-        case 'O': RunCommand(C_OPEN); return;
-        case 'S': RunCommand(C_SAVE); return;
-        case 'B': RunCommand(C_SIDE); return;
         case 'M': RunCommand(C_MERGE); return;
-        case 'F': RunCommand(C_FIND); return;
         case 'A':
             if (g.doc.IsOpen()) { g.sel.assign(g.doc.PageCount(), 1); InvalidateRect(g.side, nullptr, FALSE); }
             return;
@@ -1510,13 +1630,7 @@ void HandleKey(UINT vk) {
         if (g.tool) { g.tool = 0; g.selDrag = g.cropDrag = false; InvalidateToolbar(); InvalidateRect(g.canvas, nullptr, FALSE); }
         else CloseSearch();
         break;
-    case 'C': if (cfg.singleKeys) RunCommand(C_CROP); break;
-    case 'U': if (cfg.singleKeys) RunCommand(C_UNCROP); break;
-    case 'H': if (cfg.singleKeys) RunCommand(C_HILITE); break;
-    case 'N': if (cfg.singleKeys) RunCommand(C_NOTE); break;
     case VK_F3: SearchStep(shift ? -1 : 1); break;
-    case VK_DELETE: RunCommand(C_DELETE); break;
-    case 'R': if (cfg.singleKeys) RunCommand(shift ? C_ROTL : C_ROTR); break;
     case VK_PRIOR: RunCommand(C_PREV); break;
     case VK_NEXT: RunCommand(C_NEXT); break;
     case VK_HOME: GoToPage(0); break;
@@ -1700,6 +1814,10 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g.cropA = g.cropB = POINT{ p.x, p.y };
                 SetCapture(hwnd);
                 InvalidateRect(hwnd, nullptr, FALSE);
+            } else if (g.tool == 4) {
+                g.eraseDrag = true;
+                SetCapture(hwnd);
+                EraseAtPoint(p.x, p.y);
             } else if (g.tool == 1) {
                 const int c = g.doc.CharAt(g.page, g.pageW, g.pageH, dx, dy);
                 if (c >= 0) { g.selDrag = true; g.selPage = g.page; g.selA = g.selB = c; SetCapture(hwnd); InvalidateRect(hwnd, nullptr, FALSE); }
@@ -1729,6 +1847,7 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             FormRedrawNow();
             return 0;
         }
+        if (g.eraseDrag) { EraseAtPoint(GET_X_LPARAM(lp), GET_Y_LPARAM(lp)); return 0; }
         if (g.selDrag) {
             int ox, oy; PageOrigin(ox, oy);
             const int c = g.doc.CharAt(g.selPage, g.pageW, g.pageH, GET_X_LPARAM(lp) - ox, GET_Y_LPARAM(lp) - oy);
@@ -1736,6 +1855,7 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_LBUTTONUP:
+        if (g.eraseDrag) { g.eraseDrag = false; if (GetCapture() == hwnd) ReleaseCapture(); return 0; }
         if (g.formMouse) {
             g.formMouse = false;
             if (GetCapture() == hwnd) ReleaseCapture();

@@ -51,6 +51,7 @@ public:
     // Text markieren / kommentieren. Koordinaten in Pixeln der gerenderten Seite (w x h, aktuelle Drehung).
     int CharAt(int index, int w, int h, int dx, int dy) const;                    // Zeichenindex an der Position oder -1
     bool AddHighlight(int index, int startChar, int charCount, unsigned long rgb = 0x00EBFF /* COLORREF: Gelb */);   // Hervorhebung in der Farbe rgb (COLORREF 0x00BBGGRR)
+    bool RemoveHighlightAt(int index, int w, int h, int dx, int dy);              // Radierer: entfernt Markierungen unter dem Punkt (Pixel der gerenderten Seite)
     bool AddNote(int index, int w, int h, int dx, int dy, const std::wstring& text);   // Notiz-Symbol mit Kommentar
 
     struct CompressStats { unsigned long long before = 0, after = 0; int images = 0, recompressed = 0; };
