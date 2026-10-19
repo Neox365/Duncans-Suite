@@ -7,8 +7,8 @@
 1 ICON "privacy.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,6,1,0
-PRODUCTVERSION 0,6,1,0
+FILEVERSION 0,6,2,0
+PRODUCTVERSION 0,6,2,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -18,11 +18,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Duncan"
             VALUE "FileDescription", "Duncan's Privacy Shield"
-            VALUE "FileVersion", "0.6.1"
+            VALUE "FileVersion", "0.6.2"
             VALUE "InternalName", "DuncansPrivacy"
             VALUE "OriginalFilename", "DuncansPrivacy.exe"
             VALUE "ProductName", "Duncan's Privacy Shield"
-            VALUE "ProductVersion", "0.6.1"
+            VALUE "ProductVersion", "0.6.2"
         END
     END
     BLOCK "VarFileInfo"

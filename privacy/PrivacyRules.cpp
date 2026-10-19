@@ -266,7 +266,7 @@ const std::vector<Setting>& AllSettings() {
           { { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\ContentDeliveryManager", L"SubscribedContent-338388Enabled", ValType::Dword, 0, nullptr } }, {} },
         { 13, L"Telemetrie & Diagnosedaten", L"Treiber-Updates über Windows Update verhindern",
           L"Windows sucht und installiert Gerätetreiber nicht mehr automatisch über Windows Update (Richtlinie SearchOrderConfig = 0).",
-          { { Hive::Machine, L"SOFTWARE\Policies\Microsoft\Windows\DriverSearching", L"SearchOrderConfig", ValType::Dword, 0, nullptr } }, {} },
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\DriverSearching", L"SearchOrderConfig", ValType::Dword, 0, nullptr } }, {} },
         { 5, L"Startmenü-Suche", L"Web- und Bing-Ergebnisse im Startmenü aus",
           L"Die Suche im Startmenü zeigt nur noch lokale Treffer (Apps, Dateien, Einstellungen) und sendet keine Eingaben an Bing.",
           { { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search", L"BingSearchEnabled", ValType::Dword, 0, nullptr },
@@ -294,7 +294,7 @@ const std::vector<Setting>& AllSettings() {
           { { Hive::User, L"SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsCopilot", L"TurnOffWindowsCopilot", ValType::Dword, 1, nullptr } }, {} },
         { 12, L"System-Tracking", L"Aktivitätsverlauf (Timeline) deaktivieren",
           L"Windows speichert nicht mehr, welche Apps und Dateien du nutzt, und synchronisiert keinen Aktivitätsverlauf.",
-          { { Hive::Machine, L"SOFTWARE\Policies\Microsoft\Windows\System", L"EnableActivityFeed", ValType::Dword, 0, nullptr } }, {} },
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\System", L"EnableActivityFeed", ValType::Dword, 0, nullptr } }, {} },
     };
     return all;
 }

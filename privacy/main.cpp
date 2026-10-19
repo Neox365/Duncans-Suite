@@ -29,7 +29,7 @@ using std::min;
 #include "PrivacyRules.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.1"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.6.2"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
