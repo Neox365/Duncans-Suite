@@ -35,7 +35,7 @@ Gespeichert in `%LOCALAPPDATA%\DuncansDriverUpdater\settings.ini`. Einen Autosta
 `DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: drei Karten starten **Duncan's Tidy** (`DuncansTidy.exe`),
 den **Driver Updater** (`DuncansDriverUpdater.exe`) und den **PDF Reader** (`DuncansPdf.exe`). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
 `%LOCALAPPDATA%\DuncansTidy`. Ist Tidy nicht installiert, zeigt die Karte „Nicht installiert“ und den Button **Herunterladen**: Ein Klick lädt die neueste `DuncansTidy.exe` per HTTPS von den GitHub-Releases (`Neox365/Duncans-Tidy-ToolSet`) nach `%LOCALAPPDATA%\DuncansTidy`, prüft die SHA-256-Summe aus `DuncansTidy.exe.sha256` und schaltet den Button danach auf „Starten“. Fehlt eine andere EXE, erscheint ein Dark-Dialog mit den durchsuchten Pfaden. Der Footer zeigt die Version
-und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Banner vereint beide Programme: Der Besen von Tidy fegt eine rote Schmutzspur weg und hinterlässt eine saubere grüne Leiterbahn, der Prüf-Chip des Driver Updaters folgt und hakt die Knoten ab (Start-Animation, danach ruhend). Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
+und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Banner zeigt einen leuchtenden Datenstrom in den Farben der drei Programme (Gold = Tidy, Cyan = Driver Updater, Magenta = PDF Reader); beim Start pulsiert er einmalig kurz (ca. 1,8 s, per Timer), danach bleibt er ruhig. Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
 und ins Startmenü.
 
 ### Automatische Updates der Suite
@@ -118,7 +118,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.8.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.9.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 

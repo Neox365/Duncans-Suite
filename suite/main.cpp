@@ -43,7 +43,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.8"
+#define SUITE_VERSION L"1.1.9"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -1089,7 +1089,7 @@ bool SuiteWindow::Create(HINSTANCE instance, int showCommand)
     {
         m_introT = 0.0f;
         m_introStart = GetTickCount64() + 250;
-        SetTimer(m_hwnd, 2, 16, nullptr);
+        SetTimer(m_hwnd, 2, 33, nullptr);
     }
     ShowWindow(m_hwnd, showCommand);
     UpdateWindow(m_hwnd);
@@ -1171,7 +1171,7 @@ void SuiteWindow::Layout()
     RECT rc{};
     GetClientRect(m_hwnd, &rc);
     const int m = S(28);
-    m_banner = { m, S(18), rc.right - m, S(18) + S(116) };
+    m_banner = { m, S(18), rc.right - m, S(18) + S(150) };
     m_footer = { m, rc.bottom - S(60), rc.right - m, rc.bottom - S(14) };
     m_folderRect = { m_footer.right - S(200), m_footer.top + S(4), m_footer.right, m_footer.top + S(4) + S(38) };
 
@@ -1321,12 +1321,27 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         // ein gemeinsamer Banner fuer beide Programme: Besen (Tidy) + Pruef-Chip (Driver Updater)
         DrawSuiteScene(dc, m_banner, m_introT, static_cast<int>(m_dpi));
     }
+    // Icon + Titel mittig unter der Welle
     const int iconSize = S(48);
+    int textW = 0;
+    {
+        HGDIOBJ oldFont = SelectObject(dc, m_fontTitle);
+        SIZE sz{};
+        GetTextExtentPoint32W(dc, L"Duncan's Suite", 14, &sz);
+        textW = sz.cx;
+        SelectObject(dc, m_fontSmall);
+        GetTextExtentPoint32W(dc, L"System- & Treiber-Optimierung", 29, &sz);
+        textW = std::max<int>(textW, sz.cx);
+        SelectObject(dc, oldFont);
+    }
+    const int groupW = iconSize + S(16) + textW;
+    const int groupX = (m_banner.left + m_banner.right - groupW) / 2;
+    const int rowTop = m_banner.top + S(78);
     if (m_icon)
-        DrawIconEx(dc, m_banner.left + S(24), m_banner.top + S(16), m_icon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
-    const int titleX = m_banner.left + S(24) + iconSize + S(16);
-    DrawLabel(dc, m_fontTitle, kText, { titleX, m_banner.top + S(10), m_banner.right - S(20), m_banner.top + S(46) }, L"Duncan's Suite");
-    DrawLabel(dc, m_fontSmall, kTextDim, { titleX, m_banner.top + S(46), m_banner.right - S(20), m_banner.top + S(66) },
+        DrawIconEx(dc, groupX, rowTop, m_icon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
+    const int titleX = groupX + iconSize + S(16);
+    DrawLabel(dc, m_fontTitle, kText, { titleX, rowTop - S(6), titleX + textW + S(8), rowTop + S(30) }, L"Duncan's Suite");
+    DrawLabel(dc, m_fontSmall, kTextDim, { titleX, rowTop + S(30), titleX + textW + S(8), rowTop + S(50) },
               L"System- & Treiber-Optimierung");
 
     // Zahnrad oben rechts im Banner
@@ -2213,7 +2228,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         {
             const ULONGLONG now = GetTickCount64();
             const double elapsed = now > m_introStart ? static_cast<double>(now - m_introStart) : 0.0;   // 250 ms Anlaufpause
-            m_introT = static_cast<float>(std::clamp(elapsed / 1200.0, 0.0, 1.0));
+            m_introT = static_cast<float>(std::clamp(elapsed / 1800.0, 0.0, 1.0));
             if (m_introT >= 1.0f)
                 KillTimer(m_hwnd, 2);
             InvalidateRect(m_hwnd, &m_banner, FALSE);

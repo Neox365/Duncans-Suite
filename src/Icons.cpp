@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <vector>
 
 // gdiplus.h erwartet min/max im globalen Namensraum (NOMINMAX ist gesetzt)
@@ -548,126 +549,95 @@ void DrawSuiteScene(HDC dc, const RECT& area, float t, int scalePx)
     const REAL u = std::max<REAL>(1.0f, scalePx / 96.0f);
     const REAL kPi = 3.14159265f;
 
-    const REAL x0 = area.left + 26 * u, x1 = area.right - 26 * u;
-    const REAL base = static_cast<REAL>(area.bottom) - 16 * u;
+    const REAL x0 = area.left + 8 * u, x1 = area.right - 8 * u;
     if (x1 - x0 < 200 * u)
         return;
     t = std::clamp(t, 0.0f, 1.0f);
-    // sanft anfahren und abbremsen (ease-in-out)
-    const REAL ease = t < 0.5f ? 4.0f * t * t * t : 1.0f - std::pow(-2.0f * t + 2.0f, 3.0f) / 2.0f;
-    const REAL restX = x0 + (x1 - x0) * 0.68f;
-    const REAL bx = x0 + (restX - x0) * ease;
-    const REAL tilt = 16.0f + 12.0f * std::sin(t * 9.4f) * (1.0f - t * t);   // Wippen beim Fegen, in Ruhe 16 Grad
-    const REAL swing = std::sin(t * 22.0f) * (1.0f - t) ;                    // Staub huepft nur waehrend der Fahrt
+    // einmaliges sanftes Aufleuchten (0 -> 1 -> 0), danach ruhiger Normalzustand
+    const REAL pulse = std::sin(t * kPi);
+    const REAL yc = area.top + 54 * u, amp = 24 * u;
 
-    const Color green(255, 74, 222, 128), accent(255, 64, 156, 255);
-
-    // saubere Leiterbahn hinter dem Besen
-    if (bx - 26 * u > x0 + 8 * u)
-    {
-        LinearGradientBrush fade(PointF(x0, 0), PointF(bx - 24 * u, 0), Color(0, 74, 222, 128), green);
-        Pen done(&fade, 3.4f * u);
-        done.SetStartCap(LineCapRound);
-        done.SetEndCap(LineCapRound);
+    const auto env = [&](REAL s) { const REAL d = (s - 0.25f) / 0.2f; return 0.55f + 0.9f * std::exp(-d * d); };
+    const auto wave = [&](REAL x, REAL k) {
+        const REAL s = (x - x0) / (x1 - x0);
+        const REAL edge = std::sin(s * kPi);   // Enden laufen zusammen
+        return yc + amp * 0.9f * std::sin(s * 2.0f * kPi * 1.1f + 0.53f)
+                  + k * 2.6f * u * env(s) * edge * std::sin(s * kPi * 2.4f + k * 0.55f);
+    };
+    const auto makeBrush = [&](BYTE a) {
+        auto* b = new LinearGradientBrush(PointF(x0, 0), PointF(x1, 0), Color(0, 255, 190, 60), Color(0, 255, 60, 120));
+        const Color cols[7] = { Color(0, 255, 180, 50), Color(a, 255, 185, 55), Color(a, 255, 210, 110), Color(a, 70, 195, 255),
+                                Color(a, 235, 80, 160), Color(a, 255, 60, 110), Color(0, 255, 60, 110) };
+        const REAL pos[7] = { 0.0f, 0.1f, 0.32f, 0.5f, 0.74f, 0.9f, 1.0f };
+        b->SetInterpolationColors(cols, pos, 7);
+        return b;
+    };
+    const auto curve = [&](Pen& pen, REAL k) {
         std::vector<PointF> pts;
-        for (REAL x = x0; x <= bx - 24 * u; x += 6 * u)
-            pts.push_back(PointF(x, base + 1.2f * u * std::sin((x - x0) / (60 * u))));
-        if (pts.size() > 2)
-            g.DrawCurve(&done, pts.data(), static_cast<INT>(pts.size()));
-    }
+        for (REAL x = x0; x <= x1; x += 5 * u)
+            pts.push_back(PointF(x, wave(x, k)));
+        g.DrawCurve(&pen, pts.data(), static_cast<INT>(pts.size()));
+    };
 
-    // Schmutzspur vor dem Besen (rot, wellig)
+    // Lichtfleck in der Mitte (dauerhaft, beim Start staerker)
     {
-        Pen dirt(Color(255, 251, 113, 133), 3.2f * u);
-        dirt.SetLineJoin(LineJoinRound);
-        dirt.SetStartCap(LineCapRound);
-        dirt.SetEndCap(LineCapRound);
-        std::vector<PointF> pts;
-        const REAL rs = bx + 34 * u;
-        for (REAL x = rs; x <= x1; x += 4 * u)
-        {
-            const REAL k = (x - rs) / (x1 - rs);
-            pts.push_back(PointF(x, base - 2 * u - 11 * u * std::sin(k * kPi) + 4.5f * u * k * std::sin(x * 0.85f / u)));
-        }
-        if (pts.size() > 2)
-            g.DrawLines(&dirt, pts.data(), static_cast<INT>(pts.size()));
+        const REAL cx = x0 + (x1 - x0) * 0.6f, cy = wave(cx, 0), r = 60 * u;
+        GraphicsPath gp;
+        gp.AddEllipse(cx - r, cy - r * 0.75f, 2 * r, 1.5f * r);
+        PathGradientBrush pg(&gp);
+        pg.SetCenterColor(Color(static_cast<BYTE>(70 + 90 * pulse), 60, 180, 255));
+        const Color edge(0, 60, 180, 255);
+        INT n = 1;
+        pg.SetSurroundColors(&edge, &n);
+        g.FillPath(&pg, &gp);
     }
-
-    // Pruef-Chip folgt dem Besen und haekt Knoten ab
-    const REAL chipX = bx - 100 * u;
-    const REAL spacing = 46 * u;
-    for (REAL x = x0 + spacing; x < bx - 30 * u; x += spacing)
+    // breiter Schein + engerer Schein
+    for (int pass = 0; pass < 2; ++pass)
     {
-        if (x < chipX - 8 * u)
+        const BYTE ga = static_cast<BYTE>((pass ? 50 : 24) + 70 * pulse);
+        std::unique_ptr<LinearGradientBrush> gb(makeBrush(ga));
+        Pen glow(gb.get(), ((pass ? 9.0f : 20.0f) + 8.0f * pulse) * u);
+        glow.SetStartCap(LineCapRound);
+        glow.SetEndCap(LineCapRound);
+        curve(glow, 0);
+    }
+    // Strahlenbuendel aus feinen Linien, Kern kraeftig
+    for (int k = -4; k <= 4; ++k)
+    {
+        const int a = std::abs(k);
+        const BYTE al = static_cast<BYTE>(std::min(255.0f, (a == 0 ? 235.0f : 150.0f - a * 18.0f) + 20.0f * pulse));
+        std::unique_ptr<LinearGradientBrush> lb(makeBrush(al));
+        Pen pen(lb.get(), (a == 0 ? 3.0f : (a < 3 ? 1.5f : 1.0f)) * u);
+        pen.SetStartCap(LineCapRound);
+        pen.SetEndCap(LineCapRound);
+        curve(pen, static_cast<REAL>(k));
+    }
+    // Schaltkreis-Abzweige mit Endpunkten im mittleren Bereich
+    {
+        std::unique_ptr<LinearGradientBrush> cb(makeBrush(190));
+        Pen br(cb.get(), 1.1f * u);
+        SolidBrush node(Color(230, 120, 215, 255));
+        for (int i = 0; i < 4; ++i)
         {
-            SolidBrush halo(Color(40, 74, 222, 128));
-            g.FillEllipse(&halo, x - 7 * u, base - 7 * u, 14 * u, 14 * u);
-            SolidBrush fill(green);
-            g.FillEllipse(&fill, x - 3.6f * u, base - 3.6f * u, 7.2f * u, 7.2f * u);
-        }
-        else
-        {
-            Pen ring(Color(150, 64, 156, 255), 1.4f * u);
-            g.DrawEllipse(&ring, x - 3.4f * u, base - 3.4f * u, 6.8f * u, 6.8f * u);
+            const REAL xs = x0 + (x1 - x0) * (0.50f + 0.045f * i);
+            const REAL ys = wave(xs, static_cast<REAL>(i - 2));
+            const REAL dir = (i % 2) ? 1.0f : -1.0f;
+            const REAL xe = xs + 30 * u + i * 6 * u, ye = ys + dir * (10 + i * 3) * u;
+            const PointF p[3] = { PointF(xs, ys), PointF(xs + 12 * u, ye), PointF(xe, ye) };
+            g.DrawLines(&br, p, 3);
+            g.FillEllipse(&node, xe - 2 * u, ye - 2 * u, 4 * u, 4 * u);
         }
     }
-    if (chipX > x0 + 14 * u)
+    // Funken und Datenpunkte um die Welle (Gold links, Cyan Mitte, Magenta rechts)
+    for (int i = 0; i < 38; ++i)
     {
-        const REAL chip = 24 * u;
-        const REAL cy = base - 30 * u;
-        GraphicsPath beam;
-        PointF bp[4] = { PointF(chipX - 6 * u, cy + chip * 0.5f), PointF(chipX + 6 * u, cy + chip * 0.5f),
-                         PointF(chipX + 24 * u, base), PointF(chipX - 24 * u, base) };
-        beam.AddPolygon(bp, 4);
-        LinearGradientBrush bb(PointF(0, cy + chip * 0.5f), PointF(0, base), Color(80, 64, 156, 255), Color(0, 64, 156, 255));
-        g.FillPath(&bb, &beam);
-
-        GraphicsPath body;
-        AddRoundRect(body, chipX - chip / 2, cy - chip / 2, chip, chip, 5 * u);
-        SolidBrush bodyFill(Color(255, 20, 26, 40));
-        g.FillPath(&bodyFill, &body);
-        Pen outline(accent, 2.0f * u);
-        outline.SetLineJoin(LineJoinRound);
-        g.DrawPath(&outline, &body);
-        Pen pin(accent, 1.8f * u);
-        pin.SetStartCap(LineCapRound);
-        pin.SetEndCap(LineCapRound);
-        for (int i = -1; i <= 1; ++i)
-        {
-            const REAL o = i * 7.5f * u;
-            g.DrawLine(&pin, chipX + o, cy - chip / 2, chipX + o, cy - chip / 2 - 4 * u);
-            g.DrawLine(&pin, chipX + o, cy + chip / 2, chipX + o, cy + chip / 2 + 4 * u);
-            g.DrawLine(&pin, chipX - chip / 2, cy + o, chipX - chip / 2 - 4 * u, cy + o);
-            g.DrawLine(&pin, chipX + chip / 2, cy + o, chipX + chip / 2 + 4 * u, cy + o);
-        }
-        SolidBrush arrow(green);
-        PointF tri[3] = { PointF(chipX, cy - 6 * u), PointF(chipX - 6 * u, cy + 4.5f * u), PointF(chipX + 6 * u, cy + 4.5f * u) };
-        g.FillPolygon(&arrow, tri, 3);
-    }
-
-    // Besen (wie in Duncan's Tidy): Stiel, Zwinge, Borstenkopf, Staub
-    g.TranslateTransform(bx, base);
-    g.RotateTransform(tilt);
-    g.ScaleTransform(u * 0.85f, u * 0.85f);
-    Pen wood(Color(255, 214, 160, 110), 5.5f);
-    wood.SetStartCap(LineCapRound);
-    wood.SetEndCap(LineCapRound);
-    g.DrawLine(&wood, 0.0f, -24.0f, 0.0f, -78.0f);
-    SolidBrush ferrule(Color(255, 251, 146, 60));
-    g.FillRectangle(&ferrule, -13.0f, -32.0f, 26.0f, 13.0f);
-    SolidBrush head(Color(255, 251, 191, 36));
-    PointF hp[4] = { PointF(-13, -19), PointF(13, -19), PointF(27, 2), PointF(-27, 2) };
-    g.FillPolygon(&head, hp, 4);
-    Pen bristle(Color(255, 217, 119, 6), 1.6f);
-    for (int i = 0; i < 7; ++i)
-        g.DrawLine(&bristle, -11.0f + i * 22.0f / 6.0f, -19.0f, -25.0f + i * 50.0f / 6.0f, 1.0f);
-    SolidBrush dust(Color(200, 255, 255, 255));
-    for (int i = 0; i < 7; ++i)
-    {
-        const REAL r = 1.6f + (i % 3) * 0.7f;
-        const REAL ph = swing * 6.0f + i * 1.7f;
-        const REAL hop = swing != 0.0f ? 4.0f * std::sin(ph) : 0.0f;
-        const REAL drift = swing != 0.0f ? 3.0f * std::cos(ph) : 0.0f;
-        g.FillEllipse(&dust, 30.0f + i * 6.0f + drift, -32.0f - (i % 3) * 8.0f + hop, r * 2, r * 2);
+        const REAL s = 0.04f + 0.92f * ((i * 37) % 38) / 37.0f;
+        const REAL x = x0 + (x1 - x0) * s;
+        const REAL dy = (((i * 53) % 17) - 8) * 2.6f * u;
+        const REAL y = wave(x, 0) + dy;
+        const Color c = s < 0.38f ? Color(255, 255, 190, 70) : (s < 0.66f ? Color(255, 110, 210, 255) : Color(255, 255, 80, 140));
+        SolidBrush dot(Color(static_cast<BYTE>(60 + 110 * (1.0f - std::fabs(dy) / (24 * u)) + 40 * pulse), c.GetR(), c.GetG(), c.GetB()));
+        const REAL r = (0.8f + (i % 3) * 0.55f) * u;
+        g.FillEllipse(&dot, x - r, y - r, 2 * r, 2 * r);
     }
 }
