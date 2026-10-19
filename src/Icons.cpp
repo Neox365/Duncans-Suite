@@ -641,3 +641,80 @@ void DrawSuiteScene(HDC dc, const RECT& area, float t, int scalePx)
         g.FillEllipse(&dot, x - r, y - r, 2 * r, 2 * r);
     }
 }
+
+void DrawSuiteLogo(HDC dc, const RECT& box, int scalePx)
+{
+    if (!g_token)
+        return;
+    (void)scalePx;
+    Graphics g(dc);
+    g.SetSmoothingMode(SmoothingModeAntiAlias);
+    const REAL size = static_cast<REAL>(std::min(box.right - box.left, box.bottom - box.top));
+    g.TranslateTransform(static_cast<REAL>(box.left), static_cast<REAL>(box.top));
+    g.ScaleTransform(size / 64.0f, size / 64.0f);   // ab hier Koordinaten 0..64
+
+    GraphicsPath tile;
+    AddRoundRect(tile, 0.5f, 0.5f, 63.0f, 63.0f, 15.0f);
+    SolidBrush tileFill(Color(255, 20, 26, 40));
+    g.FillPath(&tileFill, &tile);
+    Pen tileEdge(Color(255, 52, 58, 76), 1.0f);
+    g.DrawPath(&tileEdge, &tile);
+
+    // Chip (Driver Updater) als Grundform, Rahmen und Pins im Verlauf Gold -> Cyan -> Magenta (wie die Welle)
+    LinearGradientBrush grad(PointF(10.0f, 0.0f), PointF(54.0f, 0.0f), Color(255, 255, 190, 60), Color(255, 255, 70, 130));
+    const Color cols[3] = { Color(255, 255, 190, 60), Color(255, 70, 190, 255), Color(255, 255, 70, 130) };
+    const REAL pos[3] = { 0.0f, 0.5f, 1.0f };
+    grad.SetInterpolationColors(cols, pos, 3);
+
+    GraphicsPath chip;
+    AddRoundRect(chip, 15.0f, 15.0f, 34.0f, 34.0f, 8.0f);
+    SolidBrush chipFill(Color(255, 18, 24, 40));
+    g.FillPath(&chipFill, &chip);
+    Pen pin(&grad, 2.4f);
+    pin.SetStartCap(LineCapRound);
+    pin.SetEndCap(LineCapRound);
+    for (int i = -1; i <= 1; ++i)
+    {
+        const REAL o = 32.0f + i * 9.0f;
+        g.DrawLine(&pin, o, 15.0f, o, 9.0f);
+        g.DrawLine(&pin, o, 49.0f, o, 55.0f);
+        g.DrawLine(&pin, 15.0f, o, 9.0f, o);
+        g.DrawLine(&pin, 49.0f, o, 55.0f, o);
+    }
+    Pen frame(&grad, 3.0f);
+    g.DrawPath(&frame, &chip);
+
+    // PDF Reader: Dokument im Chip
+    const Color red(255, 251, 100, 130);
+    GraphicsPath doc;
+    AddRoundRect(doc, 24.0f, 21.0f, 15.0f, 20.0f, 2.5f);
+    SolidBrush docFill(Color(255, 44, 26, 40));
+    g.FillPath(&docFill, &doc);
+    Pen docPen(red, 2.0f);
+    g.DrawPath(&docPen, &doc);
+    Pen line(red, 1.7f);
+    line.SetStartCap(LineCapRound);
+    line.SetEndCap(LineCapRound);
+    g.DrawLine(&line, 28.0f, 27.0f, 35.0f, 27.0f);
+    g.DrawLine(&line, 28.0f, 31.5f, 35.0f, 31.5f);
+    g.DrawLine(&line, 28.0f, 36.0f, 32.0f, 36.0f);
+
+    // Tidy: Besen faegt diagonal ueber die untere rechte Ecke
+    GraphicsState st = g.Save();
+    g.TranslateTransform(40.0f, 51.0f);
+    g.RotateTransform(38.0f);
+    g.ScaleTransform(0.4f, 0.4f);
+    Pen wood(Color(255, 214, 160, 110), 6.0f);
+    wood.SetStartCap(LineCapRound);
+    wood.SetEndCap(LineCapRound);
+    g.DrawLine(&wood, 0.0f, -24.0f, 0.0f, -78.0f);
+    SolidBrush ferrule(Color(255, 251, 146, 60));
+    g.FillRectangle(&ferrule, -13.0f, -32.0f, 26.0f, 13.0f);
+    SolidBrush head(Color(255, 251, 191, 36));
+    PointF hp[4] = { PointF(-13, -19), PointF(13, -19), PointF(27, 2), PointF(-27, 2) };
+    g.FillPolygon(&head, hp, 4);
+    Pen bristle(Color(255, 217, 119, 6), 2.0f);
+    for (int i = 0; i < 7; ++i)
+        g.DrawLine(&bristle, -11.0f + i * 22.0f / 6.0f, -19.0f, -25.0f + i * 50.0f / 6.0f, 1.0f);
+    g.Restore(st);
+}

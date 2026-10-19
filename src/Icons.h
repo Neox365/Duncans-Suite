@@ -51,3 +51,6 @@ void DrawScanScene(HDC dc, const RECT& area, float probe, int phase, int scalePx
 // dahinter faehrt der Pruef-Chip (Driver Updater) und haekt die Knoten gruen ab.
 // t = Fortschritt der Start-Animation (0 = Besen links am Start, 1 = Ruheposition).
 void DrawSuiteScene(HDC dc, const RECT& area, float t, int scalePx);
+
+// Gemeinsames Suite-Logo: Besen (Tidy), Chip (Driver Updater) und Dokument (PDF Reader) auf einer Kachel.
+void DrawSuiteLogo(HDC dc, const RECT& box, int scalePx);

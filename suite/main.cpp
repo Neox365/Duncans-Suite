@@ -43,7 +43,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.9"
+#define SUITE_VERSION L"1.1.10"
 #endif
 #ifndef DWMWA_USE_IMMERSIVE_DARK_MODE
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
@@ -1322,7 +1322,7 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         DrawSuiteScene(dc, m_banner, m_introT, static_cast<int>(m_dpi));
     }
     // Icon + Titel mittig unter der Welle
-    const int iconSize = S(48);
+    const int iconSize = S(60);
     int textW = 0;
     {
         HGDIOBJ oldFont = SelectObject(dc, m_fontTitle);
@@ -1336,12 +1336,11 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     }
     const int groupW = iconSize + S(16) + textW;
     const int groupX = (m_banner.left + m_banner.right - groupW) / 2;
-    const int rowTop = m_banner.top + S(78);
-    if (m_icon)
-        DrawIconEx(dc, groupX, rowTop, m_icon, iconSize, iconSize, 0, nullptr, DI_NORMAL);
+    const int rowTop = m_banner.top + S(76);
+    DrawSuiteLogo(dc, RECT{ groupX, rowTop, groupX + iconSize, rowTop + iconSize }, static_cast<int>(m_dpi));
     const int titleX = groupX + iconSize + S(16);
-    DrawLabel(dc, m_fontTitle, kText, { titleX, rowTop - S(6), titleX + textW + S(8), rowTop + S(30) }, L"Duncan's Suite");
-    DrawLabel(dc, m_fontSmall, kTextDim, { titleX, rowTop + S(30), titleX + textW + S(8), rowTop + S(50) },
+    DrawLabel(dc, m_fontTitle, kText, { titleX, rowTop + S(0), titleX + textW + S(8), rowTop + S(34) }, L"Duncan's Suite");
+    DrawLabel(dc, m_fontSmall, kTextDim, { titleX, rowTop + S(34), titleX + textW + S(8), rowTop + S(54) },
               L"System- & Treiber-Optimierung");
 
     // Zahnrad oben rechts im Banner
