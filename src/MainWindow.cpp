@@ -18,7 +18,7 @@
 #include "../common/Gfx.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.1.24"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.1.25"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER

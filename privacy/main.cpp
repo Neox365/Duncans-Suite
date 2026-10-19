@@ -31,7 +31,7 @@ using std::min;
 #include "../common/Gfx.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.2"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.6.3"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER

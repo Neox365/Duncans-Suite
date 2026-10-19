@@ -48,7 +48,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.26"
+#define SUITE_VERSION L"1.1.27"
 #endif
 
 namespace
@@ -2344,7 +2344,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     case WM_UPD_CHECKED:
     {
         m_updAvailable = wp == 1;
-        std::wstring modNote;   // z. B. "Tidy v1.1.5, PDF Reader v1.1.26"
+        std::wstring modNote;   // z. B. "Tidy v1.1.5, PDF Reader v1.1.27"
         for (int i = 0; i < 4; ++i)
         {
             m_tools[i].newVersion = ((lp >> i) & 1) && m_modRemote && i < static_cast<int>(m_modRemote->size()) ? (*m_modRemote)[i] : std::wstring();
