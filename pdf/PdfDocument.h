@@ -62,8 +62,38 @@ public:
     bool SaveCopy(const std::wstring& path);
     bool Modified() const { return m_modified; }
 
+    // Zuschneiden: setzt den sichtbaren Bereich (CropBox) der Seiten auf einen Ausschnitt der angezeigten Seite.
+    // Koordinaten als Anteile 0..1 der angezeigten Seite (links/oben = 0); der Seiteninhalt bleibt in der Datei erhalten.
+    bool CropPages(const std::vector<int>& indices, double fx0, double fy0, double fx1, double fy1);
+    bool ResetCrop(const std::vector<int>& indices);       // CropBox = MediaBox
+
+    // Formulare (AcroForm) ausfuellen. Die Koordinaten sind Pixel der gerenderten Seite (w x h, aktuelle Drehung).
+    bool HasForms();
+    HBITMAP RenderPageForm(int index, int w, int h);       // wie RenderPage, aber mit Formularfeldern (Fokus, Auswahl, Markierung)
+    enum FormMouseKind { FormDown, FormUp, FormMove };
+    bool FormMouse(FormMouseKind kind, int index, int w, int h, int dx, int dy);   // true = Ereignis behandelt
+    int FormFieldAt(int index, int w, int h, int dx, int dy);   // Feldtyp unter der Position oder -1
+    bool FormKey(int index, int vk, bool down, int modifiers);
+    bool FormChar(int index, int ch, int modifiers);
+    std::wstring FormSelectedText(int index);
+    bool FormReplaceSelection(int index, const std::wstring& text);
+    bool FormSelectAll(int index);
+    void FormKillFocus();                                  // uebernimmt den Feldinhalt in das Dokument
+    bool TakeFormDirty();                                  // Seite muss neu gezeichnet werden
+    static void SetFormRedrawHook(void (*hook)());         // wird aus PDFium-Rueckrufen/Timern aufgerufen
+
 private:
     void BakeRotations();                    // schreibt die Zusatzdrehungen in die Seiten
+    void CloseForm();
+    bool UseFormPage(int index);
+    HBITMAP RenderImpl(void* page, int index, int w, int h, bool withForm) const;
+    void* m_form = nullptr;
+    void* m_formInfo = nullptr;
+    void* m_formPage = nullptr;
+    int m_formPageIdx = -1;
+    int m_hasForms = -1;
+    bool m_formDirty = false;
+    friend struct FormCallbacks;
     void* m_doc = nullptr;
     std::vector<char> m_data;     // PDFium liest bei FPDF_LoadMemDocument direkt aus diesem Puffer
     std::wstring m_path;

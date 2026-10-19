@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DuncansDriverUpdater VERSION 1.1.12 LANGUAGES CXX RC)
+project(DuncansDriverUpdater VERSION 1.1.13 LANGUAGES CXX RC)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

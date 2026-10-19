@@ -23,7 +23,7 @@ using std::min;
 #include "PdfDocument.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.1.12"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.1.13"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -56,7 +56,7 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
-    C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS
+    C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS, C_CROP, C_UNCROP
 };
 
 struct Item {
@@ -105,10 +105,17 @@ struct App {
     int dragHit = -1, dragStartY = 0, dragInsert = -1;
     std::vector<int> dragPages;
 
-    // Anmerkungen: 0 = kein Werkzeug, 1 = Text markieren, 2 = Notiz setzen
+    // Anmerkungen: 0 = kein Werkzeug, 1 = Text markieren, 2 = Notiz setzen, 3 = Zuschnitt aufziehen
     int tool = 0;
     bool selDrag = false;                  // Textauswahl beim Markieren laeuft
     int selPage = -1, selA = -1, selB = -1;
+    bool cropDrag = false;                 // Zuschnitt-Rahmen wird aufgezogen
+    POINT cropA{}, cropB{};                // Eckpunkte in Canvas-Koordinaten
+
+    // Formulare
+    bool formFocus = false;                // ein Text-/Auswahlfeld hat den Eingabefokus (Tasten gehen an das Feld)
+    bool formMouse = false;                // Maustaste im Formular gedrueckt
+    bool formHintShown = false;
 
     // Textsuche (Strg+F)
     bool searchOpen = false;
@@ -226,6 +233,7 @@ void BuildItems() {
     add(C_FIND, L"Suchen", 0, true);
     add(C_HILITE, L"Marker", 0, true);
     add(C_NOTE, L"Notiz", 0, true);
+    add(C_CROP, L"Zuschnitt", 0, true);
     add(C_NONE, L"", 0, false);
     add(C_ZOOMOUT, L"−", 40, true);
     add(C_ACTUAL, L"100 %", 64, true);
@@ -298,7 +306,7 @@ void DrawToolbar(HDC dc, int width) {
         const bool enabled = ItemEnabled(it);
         const bool hot = enabled && static_cast<int>(i) == g.hot;
         const bool pressed = hot && static_cast<int>(i) == g.down;
-        const bool active = (it.cmd == C_SIDE && g.sideVisible) || (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2);
+        const bool active = (it.cmd == C_SIDE && g.sideVisible) || (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2) || (it.cmd == C_CROP && g.tool == 3);
         COLORREF fill = pressed ? RGB(28, 31, 39) : hot ? kCardHover : (it.cmd == C_OPEN ? kAccent : kCardRaised);
         COLORREF txt = !enabled ? RGB(95, 100, 112) : (it.cmd == C_OPEN && !hot) ? RGB(8, 20, 36) : kText;
         if (it.cmd == C_OPEN && hot) txt = kText;
@@ -483,6 +491,7 @@ void GoToPage(int p, bool bottom) {
     if (n == 0) return;
     p = std::clamp(p, 0, n - 1);
     g.page = p;
+    g.formFocus = false;
     if (!g.selKeep) SelectOnly(p);
     g.scrollX = 0;
     g.scrollY = bottom ? 1 << 28 : 0;
@@ -508,7 +517,7 @@ void EnsureBitmap() {
     if (!g.doc.IsOpen() || g.pageW <= 0) return;
     if (g.pageBmp && g.bmpPage == g.page && g.bmpW == g.pageW && g.bmpH == g.pageH && g.bmpRot == g.doc.Rotation(g.page)) return;
     if (g.pageBmp) DeleteObject(g.pageBmp);
-    g.pageBmp = g.doc.RenderPage(g.page, g.pageW, g.pageH);
+    g.pageBmp = g.doc.HasForms() ? g.doc.RenderPageForm(g.page, g.pageW, g.pageH) : g.doc.RenderPage(g.page, g.pageW, g.pageH);
     g.bmpPage = g.page; g.bmpW = g.pageW; g.bmpH = g.pageH; g.bmpRot = g.doc.Rotation(g.page);
 }
 
@@ -691,6 +700,20 @@ void PaintCanvas(HDC dc, RECT cr) {
             HBRUSH w = CreateSolidBrush(RGB(255, 255, 255));
             FillRect(dc, &t, w); DeleteObject(w);
             DrawTextC(dc, g.font, L"Seite konnte nicht gerendert werden", t, RGB(90, 90, 90));
+        }
+        if (g.cropDrag) {                            // Zuschnitt-Rahmen: Aussenbereich abdunkeln, Rahmen zeichnen
+            using namespace Gdiplus;
+            Graphics gr(dc);
+            gr.SetClip(Rect(x, y, g.pageW, g.pageH));
+            const int l = std::min<int>(g.cropA.x, g.cropB.x), r = std::max<int>(g.cropA.x, g.cropB.x);
+            const int t = std::min<int>(g.cropA.y, g.cropB.y), b = std::max<int>(g.cropA.y, g.cropB.y);
+            SolidBrush dim(Color(140, 0, 0, 0));
+            gr.FillRectangle(&dim, Rect(x, y, g.pageW, t - y));
+            gr.FillRectangle(&dim, Rect(x, b, g.pageW, y + g.pageH - b));
+            gr.FillRectangle(&dim, Rect(x, t, l - x, b - t));
+            gr.FillRectangle(&dim, Rect(r, t, x + g.pageW - r, b - t));
+            Pen frame(Color(255, 64, 156, 255), 2.0f);
+            gr.DrawRectangle(&frame, Rect(l, t, r - l, b - t));
         }
         if (g.selDrag && g.selPage == g.page) {      // laufende Textauswahl beim Markieren
             std::vector<RECT> rs;
@@ -966,10 +989,45 @@ void OpenPath(const std::wstring& path) {
     UpdateCanvas(true);
     UpdateTitle();
     g.toast.clear();
+    g.formFocus = g.formMouse = false;
+    if (g.doc.HasForms()) ShowToast(L"Formular erkannt – Felder zum Ausfüllen einfach anklicken");
+}
+
+void ResetFormFocus() {
+    if (g.formFocus) { g.doc.FormKillFocus(); g.formFocus = false; }
+}
+
+// Nach einer Aenderung an Seitengroessen (Zuschnitt): Vorschauen, Seitenleiste und Canvas neu aufbauen
+void RefreshAllPages() {
+    ClearThumbs();
+    LayoutSidebar();
+    g.scrollX = g.scrollY = 0;
+    UpdateCanvas(true);
+    EnsureThumbVisible();
+    UpdateTitle();
 }
 
 void RunCommand(int cmd) {
+    if (cmd != C_NONE) ResetFormFocus();       // Feldinhalt uebernehmen, bevor etwas anderes passiert
     switch (cmd) {
+    case C_CROP: {
+        if (!g.doc.IsOpen()) break;
+        g.tool = g.tool == 3 ? 0 : 3;
+        g.selDrag = g.cropDrag = false;
+        InvalidateToolbar();
+        InvalidateRect(g.canvas, nullptr, FALSE);
+        if (g.tool == 3) ShowToast(L"Zuschnitt: Rahmen mit der Maus aufziehen (Esc beendet, U hebt den Zuschnitt auf)");
+        SetFocus(g.canvas);
+        break;
+    }
+    case C_UNCROP: {
+        if (!g.doc.IsOpen()) break;
+        const std::vector<int> t = TargetPages();
+        if (!g.doc.ResetCrop(t)) { ShowToast(PdfDocument::LastError(), true); break; }
+        RefreshAllPages();
+        ShowToast(L"Zuschnitt aufgehoben (" + std::to_wstring(t.size()) + L" Seite(n)) – noch nicht gespeichert");
+        break;
+    }
     case C_SIDE: g.sideVisible = !g.sideVisible; LayoutChildren(); InvalidateRect(g.main, nullptr, FALSE); break;
     case C_OPEN: {
         std::wstring p;
@@ -1096,9 +1154,11 @@ void HandleKey(UINT vk) {
     if (!g.doc.IsOpen()) return;
     switch (vk) {
     case VK_ESCAPE:
-        if (g.tool) { g.tool = 0; g.selDrag = false; InvalidateToolbar(); InvalidateRect(g.canvas, nullptr, FALSE); }
+        if (g.tool) { g.tool = 0; g.selDrag = g.cropDrag = false; InvalidateToolbar(); InvalidateRect(g.canvas, nullptr, FALSE); }
         else CloseSearch();
         break;
+    case 'C': RunCommand(C_CROP); break;
+    case 'U': RunCommand(C_UNCROP); break;
     case 'H': RunCommand(C_HILITE); break;
     case 'N': RunCommand(C_NOTE); break;
     case VK_F3: SearchStep(shift ? -1 : 1); break;
@@ -1145,6 +1205,64 @@ void ScrollMessage(HWND hwnd, int bar, WPARAM wp, int& pos, int line, int pageSt
     pos = p;
 }
 
+// ---------- Formulare: Neuzeichnen, Zwischenablage ----------
+void FormRedrawNow() {
+    if (!g.doc.IsOpen() || !g.doc.TakeFormDirty()) return;
+    if (g.pageBmp) { DeleteObject(g.pageBmp); g.pageBmp = nullptr; g.bmpPage = -1; }
+    InvalidateRect(g.canvas, nullptr, FALSE);
+}
+
+void RefreshAfterFormEdit() {       // Vorschau der Seite und Titel (Stern) aktualisieren
+    if (g.page >= 0 && g.page < static_cast<int>(g.thumbs.size()) && g.thumbs[g.page]) { DeleteObject(g.thumbs[g.page]); g.thumbs[g.page] = nullptr; }
+    InvalidateRect(g.side, nullptr, FALSE);
+    UpdateTitle();
+}
+
+void FormRedrawHook() { if (g.canvas) PostMessageW(g.canvas, WM_APP + 1, 0, 0); }
+
+void ClipboardSet(const std::wstring& text) {
+    if (!OpenClipboard(g.main)) return;
+    EmptyClipboard();
+    HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (text.size() + 1) * sizeof(wchar_t));
+    if (mem) {
+        memcpy(GlobalLock(mem), text.c_str(), (text.size() + 1) * sizeof(wchar_t));
+        GlobalUnlock(mem);
+        if (!SetClipboardData(CF_UNICODETEXT, mem)) GlobalFree(mem);
+    }
+    CloseClipboard();
+}
+
+std::wstring ClipboardGet() {
+    std::wstring out;
+    if (!OpenClipboard(g.main)) return out;
+    if (HANDLE h = GetClipboardData(CF_UNICODETEXT)) {
+        if (const wchar_t* p = static_cast<const wchar_t*>(GlobalLock(h))) { out = p; GlobalUnlock(h); }
+    }
+    CloseClipboard();
+    return out;
+}
+
+// Taste an das fokussierte Formularfeld weiterreichen (true = behandelt)
+bool FormKeyDown(UINT vk) {
+    if (!g.formFocus || !g.doc.IsOpen()) return false;
+    const bool ctrl = GetKeyState(VK_CONTROL) < 0, shift = GetKeyState(VK_SHIFT) < 0, alt = GetKeyState(VK_MENU) < 0;
+    if (vk == VK_ESCAPE) { ResetFormFocus(); FormRedrawNow(); RefreshAfterFormEdit(); return true; }
+    if (ctrl) {
+        if (vk == 'A') { g.doc.FormSelectAll(g.page); FormRedrawNow(); return true; }
+        if (vk == 'C' || vk == 'X') {
+            const std::wstring t = g.doc.FormSelectedText(g.page);
+            if (!t.empty()) { ClipboardSet(t); if (vk == 'X') g.doc.FormReplaceSelection(g.page, L""); }
+            FormRedrawNow();
+            return true;
+        }
+        if (vk == 'V') { const std::wstring t = ClipboardGet(); if (!t.empty()) g.doc.FormReplaceSelection(g.page, t); FormRedrawNow(); return true; }
+        return false;                                         // andere Strg-Kuerzel (Speichern, Oeffnen ...) normal behandeln
+    }
+    g.doc.FormKey(g.page, static_cast<int>(vk), true, (shift ? 1 : 0) | (alt ? 4 : 0));
+    FormRedrawNow();
+    return true;
+}
+
 LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_ERASEBKGND: return 1;
@@ -1158,6 +1276,7 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_TIMER:
         if (wp == 1) { KillTimer(hwnd, 1); g.toast.clear(); InvalidateRect(hwnd, nullptr, FALSE); }
         else if (wp == 2) { KillTimer(hwnd, 2); RunSearch(); }       // kurz nach der letzten Eingabe suchen
+        else if (wp == 3) { KillTimer(hwnd, 3); FormRedrawNow(); }   // Formular neu zeichnen
         return 0;
     case WM_COMMAND:
         if (LOWORD(wp) == 100 && HIWORD(wp) == EN_CHANGE) SetTimer(hwnd, 2, 400, nullptr);
@@ -1206,11 +1325,29 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (PtInRect(&l.panel, p)) { SetFocus(g.searchEdit); return 0; }
         }
         SetFocus(hwnd);
-        if (g.tool && g.doc.IsOpen()) {                                  // Marker- bzw. Notiz-Werkzeug
+        if (!g.tool && g.doc.IsOpen() && g.doc.HasForms()) {            // Formularfelder ausfuellen
+            int ox, oy; PageOrigin(ox, oy);
+            const int dx = p.x - ox, dy = p.y - oy;
+            if (dx >= 0 && dy >= 0 && dx < g.pageW && dy < g.pageH) {
+                g.doc.FormMouse(PdfDocument::FormDown, g.page, g.pageW, g.pageH, dx, dy);
+                const int type = g.doc.FormFieldAt(g.page, g.pageW, g.pageH, dx, dy);
+                g.formFocus = type == 4 || type == 5 || type == 6;       // Kombinationsfeld, Liste, Textfeld
+                g.formMouse = true;
+                SetCapture(hwnd);
+                FormRedrawNow();
+            } else ResetFormFocus();
+            return 0;
+        }
+        if (g.tool && g.doc.IsOpen()) {                                  // Marker-, Notiz- bzw. Zuschnitt-Werkzeug
             int ox, oy; PageOrigin(ox, oy);
             const int dx = p.x - ox, dy = p.y - oy;
             if (dx < 0 || dy < 0 || dx >= g.pageW || dy >= g.pageH) return 0;
-            if (g.tool == 1) {
+            if (g.tool == 3) {
+                g.cropDrag = true;
+                g.cropA = g.cropB = POINT{ p.x, p.y };
+                SetCapture(hwnd);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            } else if (g.tool == 1) {
                 const int c = g.doc.CharAt(g.page, g.pageW, g.pageH, dx, dy);
                 if (c >= 0) { g.selDrag = true; g.selPage = g.page; g.selA = g.selB = c; SetCapture(hwnd); InvalidateRect(hwnd, nullptr, FALSE); }
             } else {
@@ -1224,6 +1361,21 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_MOUSEMOVE:
+        if (g.cropDrag) {
+            int ox, oy; PageOrigin(ox, oy);
+            g.cropB.x = std::clamp<int>(GET_X_LPARAM(lp), ox, ox + g.pageW);
+            g.cropB.y = std::clamp<int>(GET_Y_LPARAM(lp), oy, oy + g.pageH);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (!g.tool && g.doc.IsOpen() && g.doc.HasForms()) {
+            int ox, oy; PageOrigin(ox, oy);
+            const int dx = GET_X_LPARAM(lp) - ox, dy = GET_Y_LPARAM(lp) - oy;
+            if ((dx >= 0 && dy >= 0 && dx < g.pageW && dy < g.pageH) || g.formMouse)
+                g.doc.FormMouse(PdfDocument::FormMove, g.page, g.pageW, g.pageH, dx, dy);
+            FormRedrawNow();
+            return 0;
+        }
         if (g.selDrag) {
             int ox, oy; PageOrigin(ox, oy);
             const int c = g.doc.CharAt(g.selPage, g.pageW, g.pageH, GET_X_LPARAM(lp) - ox, GET_Y_LPARAM(lp) - oy);
@@ -1231,6 +1383,36 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_LBUTTONUP:
+        if (g.formMouse) {
+            g.formMouse = false;
+            if (GetCapture() == hwnd) ReleaseCapture();
+            int ox, oy; PageOrigin(ox, oy);
+            g.doc.FormMouse(PdfDocument::FormUp, g.page, g.pageW, g.pageH, GET_X_LPARAM(lp) - ox, GET_Y_LPARAM(lp) - oy);
+            FormRedrawNow();
+            RefreshAfterFormEdit();
+            return 0;
+        }
+        if (g.cropDrag) {
+            g.cropDrag = false;
+            if (GetCapture() == hwnd) ReleaseCapture();
+            int ox, oy; PageOrigin(ox, oy);
+            const double fx0 = double(std::min(g.cropA.x, g.cropB.x) - ox) / g.pageW, fx1 = double(std::max(g.cropA.x, g.cropB.x) - ox) / g.pageW;
+            const double fy0 = double(std::min(g.cropA.y, g.cropB.y) - oy) / g.pageH, fy1 = double(std::max(g.cropA.y, g.cropB.y) - oy) / g.pageH;
+            if (fx1 - fx0 < 0.02 || fy1 - fy0 < 0.02) { InvalidateRect(hwnd, nullptr, FALSE); return 0; }   // nur ein Klick
+            const std::vector<int> t = TargetPages();
+            const std::wstring q = L"Auf diesen Ausschnitt zuschneiden?\n\nGilt für " + std::to_wstring(t.size()) + (t.size() == 1 ? L" Seite" : L" Seiten") +
+                L" (Auswahl in der Seitenleiste; Strg+A wählt alle). Der Seiteninhalt bleibt in der Datei erhalten, nur der sichtbare Bereich ändert sich – "
+                L"mit der Taste U lässt sich der Zuschnitt wieder aufheben.";
+            if (MessageBoxW(g.main, q.c_str(), kAppTitle, MB_YESNO | MB_ICONQUESTION) == IDYES) {
+                if (g.doc.CropPages(t, fx0, fy0, fx1, fy1)) {
+                    g.tool = 0;
+                    InvalidateToolbar();
+                    RefreshAllPages();
+                    ShowToast(L"Zugeschnitten (" + std::to_wstring(t.size()) + L" Seite(n)) – noch nicht gespeichert");
+                } else ShowToast(PdfDocument::LastError(), true);
+            } else InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (g.selDrag) {
             g.selDrag = false;
             if (GetCapture() == hwnd) ReleaseCapture();
@@ -1244,9 +1426,33 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_SETCURSOR:
         if (g.tool && LOWORD(lp) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, g.tool == 1 ? IDC_IBEAM : IDC_CROSS)); return TRUE; }
+        if (!g.tool && LOWORD(lp) == HTCLIENT && g.doc.IsOpen() && g.doc.HasForms()) {     // Mauszeiger ueber Formularfeldern
+            POINT cp; GetCursorPos(&cp); ScreenToClient(hwnd, &cp);
+            int ox, oy; PageOrigin(ox, oy);
+            const int dx = cp.x - ox, dy = cp.y - oy;
+            if (dx >= 0 && dy >= 0 && dx < g.pageW && dy < g.pageH) {
+                const int type = g.doc.FormFieldAt(g.page, g.pageW, g.pageH, dx, dy);
+                if (type >= 0) { SetCursor(LoadCursorW(nullptr, (type == 6 || type == 4) ? IDC_IBEAM : IDC_HAND)); return TRUE; }
+            }
+        }
         break;
-    case WM_KEYDOWN: HandleKey(static_cast<UINT>(wp)); return 0;
-    case WM_GETDLGCODE: return DLGC_WANTALLKEYS;
+    case WM_APP + 1:                                     // PDFium meldet: Formular neu zeichnen (gebuendelt)
+        SetTimer(hwnd, 3, 16, nullptr);
+        return 0;
+    case WM_KEYDOWN:
+        if (FormKeyDown(static_cast<UINT>(wp))) return 0;
+        HandleKey(static_cast<UINT>(wp));
+        return 0;
+    case WM_KEYUP:
+        if (g.formFocus && g.doc.IsOpen() && GetKeyState(VK_CONTROL) >= 0) g.doc.FormKey(g.page, static_cast<int>(wp), false, 0);
+        return 0;
+    case WM_CHAR:
+        if (g.formFocus && g.doc.IsOpen() && GetKeyState(VK_CONTROL) >= 0 && (wp >= 32 || wp == 8 || wp == 13)) {
+            g.doc.FormChar(g.page, static_cast<int>(wp), 0);
+            FormRedrawNow();
+        }
+        return 0;
+    case WM_GETDLGCODE: return DLGC_WANTALLKEYS | DLGC_WANTCHARS;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -1593,6 +1799,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     g.inst = inst;
+    PdfDocument::SetFormRedrawHook(&FormRedrawHook);
     Gdiplus::GdiplusStartupInput gsi;
     Gdiplus::GdiplusStartup(&g_gdipToken, &gsi, nullptr);
 

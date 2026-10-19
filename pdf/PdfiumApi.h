@@ -38,6 +38,30 @@ struct FPDF_IMAGEOBJ_METADATA {
     int marked_content_id;
 };
 
+struct FPDF_SYSTEMTIME { unsigned short year, month, dayOfWeek, day, hour, minute, second, milliseconds; };
+// Rueckrufe der PDFium-Formularumgebung (Version 1 der Struktur, ohne XFA)
+struct FPDF_FORMFILLINFO {
+    int version;
+    void (*Release)(FPDF_FORMFILLINFO*);
+    void (*FFI_Invalidate)(FPDF_FORMFILLINFO*, FPDF_PAGE, double, double, double, double);
+    void (*FFI_OutputSelectedRect)(FPDF_FORMFILLINFO*, FPDF_PAGE, double, double, double, double);
+    void (*FFI_SetCursor)(FPDF_FORMFILLINFO*, int);
+    int (*FFI_SetTimer)(FPDF_FORMFILLINFO*, int elapse, void (*callback)(int));
+    void (*FFI_KillTimer)(FPDF_FORMFILLINFO*, int);
+    FPDF_SYSTEMTIME (*FFI_GetLocalTime)(FPDF_FORMFILLINFO*);
+    void (*FFI_OnChange)(FPDF_FORMFILLINFO*);
+    FPDF_PAGE (*FFI_GetPage)(FPDF_FORMFILLINFO*, FPDF_DOCUMENT, int);
+    FPDF_PAGE (*FFI_GetCurrentPage)(FPDF_FORMFILLINFO*, FPDF_DOCUMENT);
+    int (*FFI_GetRotation)(FPDF_FORMFILLINFO*, FPDF_PAGE);
+    void (*FFI_ExecuteNamedAction)(FPDF_FORMFILLINFO*, const char*);
+    void (*FFI_SetTextFieldFocus)(FPDF_FORMFILLINFO*, const unsigned short*, unsigned long, FPDF_BOOL);
+    void (*FFI_DoURIAction)(FPDF_FORMFILLINFO*, const char*);
+    void (*FFI_DoGoToAction)(FPDF_FORMFILLINFO*, int, int, float*, int);
+    void* m_pJsPlatform;
+    FPDF_BOOL xfa_disabled;   // nur ab Version 2 gelesen; hier mit 0/true gefuellt, falls ein Build mehr liest
+    void* xfa_reserved[16];
+};
+
 enum { FPDF_ANNOT = 0x01, FPDF_LCD_TEXT = 0x02 };
 enum { FPDFBitmap_Gray = 1, FPDFBitmap_BGR = 2, FPDFBitmap_BGRx = 3, FPDFBitmap_BGRA = 4 };
 enum { FPDF_ANNOT_TEXT = 1, FPDF_ANNOT_HIGHLIGHT = 9 };
@@ -102,4 +126,27 @@ struct PdfiumApi {
     int (*BitmapGetStride)(FPDF_BITMAP) = nullptr;
     void* (*BitmapGetBuffer)(FPDF_BITMAP) = nullptr;
     int (*BitmapGetFormat)(FPDF_BITMAP) = nullptr;
+    // Seitenbereiche (fpdf_transformpage.h)
+    void (*PageSetCropBox)(FPDF_PAGE, float left, float bottom, float right, float top) = nullptr;
+    FPDF_BOOL (*PageGetMediaBox)(FPDF_PAGE, float* left, float* bottom, float* right, float* top) = nullptr;
+    // Formulare (fpdf_formfill.h); das Formular-Handle ist ein undurchsichtiger Zeiger
+    void* (*FormInit)(FPDF_DOCUMENT, FPDF_FORMFILLINFO*) = nullptr;
+    void (*FormExit)(void* form) = nullptr;
+    int (*GetFormType)(FPDF_DOCUMENT) = nullptr;
+    void (*FormAfterLoadPage)(FPDF_PAGE, void* form) = nullptr;
+    void (*FormBeforeClosePage)(FPDF_PAGE, void* form) = nullptr;
+    void (*FFLDraw)(void* form, FPDF_BITMAP, FPDF_PAGE, int sx, int sy, int sw, int sh, int rotate, int flags) = nullptr;
+    FPDF_BOOL (*FormLButtonDown)(void* form, FPDF_PAGE, int modifier, double x, double y) = nullptr;
+    FPDF_BOOL (*FormLButtonUp)(void* form, FPDF_PAGE, int modifier, double x, double y) = nullptr;
+    FPDF_BOOL (*FormMouseMove)(void* form, FPDF_PAGE, int modifier, double x, double y) = nullptr;
+    FPDF_BOOL (*FormKeyDown)(void* form, FPDF_PAGE, int keyCode, int modifier) = nullptr;
+    FPDF_BOOL (*FormKeyUp)(void* form, FPDF_PAGE, int keyCode, int modifier) = nullptr;
+    FPDF_BOOL (*FormChar)(void* form, FPDF_PAGE, int ch, int modifier) = nullptr;
+    FPDF_BOOL (*FormKillFocus)(void* form) = nullptr;
+    void (*FormHighlightColor)(void* form, int fieldType, unsigned long color) = nullptr;
+    void (*FormHighlightAlpha)(void* form, unsigned char alpha) = nullptr;
+    int (*FormFieldAtPoint)(void* form, FPDF_PAGE, double x, double y) = nullptr;
+    unsigned long (*FormGetSelectedText)(void* form, FPDF_PAGE, void* buffer, unsigned long len) = nullptr;
+    void (*FormReplaceSelection)(void* form, FPDF_PAGE, const unsigned short* text) = nullptr;
+    FPDF_BOOL (*FormSelectAllText)(void* form, FPDF_PAGE) = nullptr;
 };

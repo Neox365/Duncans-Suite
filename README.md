@@ -118,7 +118,7 @@ Mit MinGW wird statisch gelinkt, es sind keine zusätzlichen DLLs nötig.
 ISCC.exe installer\installer.iss
 ```
 
-Ergebnis: `release\DuncansSuite_Setup_1.1.12.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
+Ergebnis: `release\DuncansSuite_Setup_1.1.13.exe` (Admin-Installer, Startmenü, optionale Desktop-Verknüpfung, Deinstaller).
 
 ## Projektstruktur
 
@@ -151,6 +151,8 @@ Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im
 - **Suche:** `Strg+F` öffnet ein Suchfeld oben rechts, Treffer werden auf der Seite markiert (aktueller Treffer kräftiger), Anzeige „x / y“.
 - **Seiten umordnen:** Vorschauen in der Seitenleiste per Drag & Drop verschieben (auch mehrere ausgewählte Seiten zusammen); eine Linie zeigt die Einfügeposition.
 - **Anmerkungen:** *Marker* (`H`) hebt per Maus überstrichenen Text gelb hervor, *Notiz* (`N`) setzt an der angeklickten Stelle eine Notiz mit Text. Beides wird als echte PDF-Anmerkung gespeichert; `Esc` beendet das Werkzeug.
+- **Zuschnitt:** *Zuschnitt* (`C`) zieht einen Rahmen auf der Seite auf; nach der Bestätigung wird der sichtbare Bereich (CropBox) der ausgewählten Seiten (sonst der aktuellen; `Strg+A` in der Seitenleiste wählt alle) darauf gesetzt. Der Seiteninhalt bleibt in der Datei erhalten, `U` hebt den Zuschnitt wieder auf.
+- **Formulare ausfüllen:** PDFs mit AcroForm-Feldern werden erkannt (Felder leicht blau hinterlegt). Textfelder, Kontrollkästchen, Optionsfelder, Auswahllisten und Schaltflächen lassen sich direkt anklicken und ausfüllen (Tastatur, `Strg+C/X/V/A`, `Esc` verlässt das Feld). Die Eingaben werden beim Speichern in die Datei geschrieben. XFA-Formulare werden nicht unterstützt.
 - **Datei verkleinern** (Tab „Werkzeuge“): Bilder werden auf höchstens 150 dpi heruntergerechnet und mit JPEG-Qualität 70 neu kodiert, nur benutzte Objekte kommen in die neue Datei. Lesezeichen und Formularfelder gehen dabei verloren; das geöffnete Dokument bleibt unverändert.
 - **Speichern:** schreibt eine Kopie mit allen Änderungen (Drehungen, gelöschte und angehängte Seiten); das Original bleibt unverändert.
 
@@ -161,6 +163,7 @@ Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im
 | `Bild auf` / `Bild ab`, `Pos1` / `Ende` | Seiten blättern |
 | `Entf`, `R` / `Umschalt+R` | ausgewählte Seiten löschen / drehen |
 | `H` / `N` | Marker- bzw. Notiz-Werkzeug ein-/ausschalten |
+| `C` / `U` | Zuschnitt-Werkzeug ein-/ausschalten / Zuschnitt aufheben |
 | `Strg+A`, `Strg+M`, `Strg+B` | alle Seiten wählen, Merge, Seitenleiste ein-/ausblenden |
 | `Strg+Plus` / `Strg+Minus`, `Strg+0`, `Strg+1` | Zoom, Seitenbreite, 100 % |
 

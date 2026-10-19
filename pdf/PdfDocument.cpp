@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <map>
 
 using std::min;
 using std::max;
@@ -113,7 +114,28 @@ bool PdfDocument::InitLibrary() {
         && Load("FPDFBitmap_GetHeight", g_api.BitmapGetHeight)
         && Load("FPDFBitmap_GetStride", g_api.BitmapGetStride)
         && Load("FPDFBitmap_GetBuffer", g_api.BitmapGetBuffer)
-        && Load("FPDFBitmap_GetFormat", g_api.BitmapGetFormat);
+        && Load("FPDFBitmap_GetFormat", g_api.BitmapGetFormat)
+        && Load("FPDFPage_SetCropBox", g_api.PageSetCropBox)
+        && Load("FPDFPage_GetMediaBox", g_api.PageGetMediaBox)
+        && Load("FPDFDOC_InitFormFillEnvironment", g_api.FormInit)
+        && Load("FPDFDOC_ExitFormFillEnvironment", g_api.FormExit)
+        && Load("FPDF_GetFormType", g_api.GetFormType)
+        && Load("FORM_OnAfterLoadPage", g_api.FormAfterLoadPage)
+        && Load("FORM_OnBeforeClosePage", g_api.FormBeforeClosePage)
+        && Load("FPDF_FFLDraw", g_api.FFLDraw)
+        && Load("FORM_OnLButtonDown", g_api.FormLButtonDown)
+        && Load("FORM_OnLButtonUp", g_api.FormLButtonUp)
+        && Load("FORM_OnMouseMove", g_api.FormMouseMove)
+        && Load("FORM_OnKeyDown", g_api.FormKeyDown)
+        && Load("FORM_OnKeyUp", g_api.FormKeyUp)
+        && Load("FORM_OnChar", g_api.FormChar)
+        && Load("FORM_ForceToKillFocus", g_api.FormKillFocus)
+        && Load("FPDF_SetFormFieldHighlightColor", g_api.FormHighlightColor)
+        && Load("FPDF_SetFormFieldHighlightAlpha", g_api.FormHighlightAlpha)
+        && Load("FPDFPage_HasFormFieldAtPoint", g_api.FormFieldAtPoint)
+        && Load("FORM_GetSelectedText", g_api.FormGetSelectedText)
+        && Load("FORM_ReplaceSelection", g_api.FormReplaceSelection)
+        && Load("FORM_SelectAllText", g_api.FormSelectAllText);
     if (!ok) {
         g_error = L"pdfium.dll ist nicht kompatibel (Funktionen fehlen). Bitte eine aktuelle 64-Bit-Version verwenden.";
         FreeLibrary(g_api.module);
@@ -153,6 +175,7 @@ bool PdfDocument::Open(const std::wstring& path, const std::string& password) {
 }
 
 void PdfDocument::Close() {
+    CloseForm();
     if (m_doc) g_api.CloseDocument(m_doc);
     m_doc = nullptr;
     m_data.clear();
@@ -184,11 +207,7 @@ bool PdfDocument::PageSize(int index, double& w, double& h) const {
     return w > 0 && h > 0;
 }
 
-HBITMAP PdfDocument::RenderPage(int index, int w, int h) const {
-    if (!m_doc || w <= 0 || h <= 0) return nullptr;
-    void* page = g_api.LoadPage(m_doc, index);
-    if (!page) return nullptr;
-
+HBITMAP PdfDocument::RenderImpl(void* page, int index, int w, int h, bool withForm) const {
     BITMAPINFO bi{};
     bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
     bi.bmiHeader.biWidth = w;
@@ -203,15 +222,25 @@ HBITMAP PdfDocument::RenderPage(int index, int w, int h) const {
         if (pb) {
             g_api.BitmapFillRect(pb, 0, 0, w, h, 0xFFFFFFFF);
             g_api.RenderPageBitmap(pb, page, 0, 0, w, h, Rotation(index), FPDF_ANNOT | FPDF_LCD_TEXT);
+            if (withForm && m_form) g_api.FFLDraw(m_form, pb, page, 0, 0, w, h, Rotation(index), FPDF_ANNOT | FPDF_LCD_TEXT);
             g_api.BitmapDestroy(pb);
         }
     }
+    return bmp;
+}
+
+HBITMAP PdfDocument::RenderPage(int index, int w, int h) const {
+    if (!m_doc || w <= 0 || h <= 0) return nullptr;
+    void* page = g_api.LoadPage(m_doc, index);
+    if (!page) return nullptr;
+    HBITMAP bmp = RenderImpl(page, index, w, h, false);
     g_api.ClosePage(page);
     return bmp;
 }
 
 bool PdfDocument::Append(const std::wstring& otherPath) {
     if (!m_doc) return false;
+    CloseForm();
     std::vector<char> data;
     if (!ReadFileBytes(otherPath, data)) { g_error = L"Die Datei konnte nicht gelesen werden."; return false; }
     void* src = g_api.LoadMemDocument(data.data(), static_cast<int>(data.size()), nullptr);
@@ -226,6 +255,7 @@ bool PdfDocument::Append(const std::wstring& otherPath) {
 
 bool PdfDocument::DeletePages(std::vector<int> indices) {
     if (!m_doc) return false;
+    CloseForm();
     const int n = PageCount();
     std::sort(indices.begin(), indices.end());
     indices.erase(std::unique(indices.begin(), indices.end()), indices.end());
@@ -302,6 +332,7 @@ void PdfDocument::BakeRotations() {
 
 bool PdfDocument::MovePages(const std::vector<int>& indices, int insertBefore, std::vector<int>* newOrder) {
     if (!m_doc || indices.empty()) return false;
+    CloseForm();
     const int n = PageCount();
     std::vector<int> idx = indices;
     std::sort(idx.begin(), idx.end());
@@ -495,6 +526,7 @@ namespace {
 
 bool PdfDocument::SaveCompressed(const std::wstring& path, int maxDpi, int jpegQuality, CompressStats& stats) {
     if (!m_doc) return false;
+    CloseForm();
     stats = CompressStats{};
     BakeRotations();
 
@@ -597,6 +629,7 @@ bool PdfDocument::SaveCompressed(const std::wstring& path, int maxDpi, int jpegQ
 
 bool PdfDocument::SaveCopy(const std::wstring& path) {
     if (!m_doc) return false;
+    CloseForm();
     BakeRotations();
     Writer w{};
     w.version = 1;
@@ -612,4 +645,210 @@ bool PdfDocument::SaveCopy(const std::wstring& path) {
     if (!ok) { DeleteFileW(tmp.c_str()); g_error = L"Speichern fehlgeschlagen."; return false; }
     m_modified = false;
     return true;
+}
+
+// ---------- Zuschneiden ----------
+bool PdfDocument::CropPages(const std::vector<int>& indices, double fx0, double fy0, double fx1, double fy1) {
+    if (!m_doc || indices.empty()) return false;
+    if (fx0 > fx1) std::swap(fx0, fx1);
+    if (fy0 > fy1) std::swap(fy0, fy1);
+    fx0 = std::clamp(fx0, 0.0, 1.0); fx1 = std::clamp(fx1, 0.0, 1.0);
+    fy0 = std::clamp(fy0, 0.0, 1.0); fy1 = std::clamp(fy1, 0.0, 1.0);
+    if (fx1 - fx0 < 0.02 || fy1 - fy0 < 0.02) { g_error = L"Der Ausschnitt ist zu klein."; return false; }
+    CloseForm();
+    int done = 0;
+    for (int index : indices) {
+        double w = 0, h = 0;
+        if (!PageSize(index, w, h)) continue;                       // angezeigte Groesse in Punkt (inkl. Zusatzdrehung)
+        void* page = g_api.LoadPage(m_doc, index);
+        if (!page) continue;
+        const int dw = std::max(1, static_cast<int>(w * 16)), dh = std::max(1, static_cast<int>(h * 16));   // Geraetepixel mit 16facher Genauigkeit
+        double ax = 0, ay = 0, bx = 0, by = 0;
+        const bool ok = g_api.DeviceToPage(page, 0, 0, dw, dh, Rotation(index), static_cast<int>(fx0 * dw), static_cast<int>(fy0 * dh), &ax, &ay)
+                     && g_api.DeviceToPage(page, 0, 0, dw, dh, Rotation(index), static_cast<int>(fx1 * dw), static_cast<int>(fy1 * dh), &bx, &by);
+        if (ok) {
+            g_api.PageSetCropBox(page, static_cast<float>(std::min(ax, bx)), static_cast<float>(std::min(ay, by)),
+                                 static_cast<float>(std::max(ax, bx)), static_cast<float>(std::max(ay, by)));
+            ++done;
+        }
+        g_api.ClosePage(page);
+    }
+    if (!done) { g_error = L"Der Zuschnitt konnte nicht gesetzt werden."; return false; }
+    m_modified = true;
+    return true;
+}
+
+bool PdfDocument::ResetCrop(const std::vector<int>& indices) {
+    if (!m_doc) return false;
+    CloseForm();
+    int done = 0;
+    for (int index : indices) {
+        void* page = g_api.LoadPage(m_doc, index);
+        if (!page) continue;
+        float l = 0, b = 0, r = 0, t = 0;
+        if (g_api.PageGetMediaBox(page, &l, &b, &r, &t)) { g_api.PageSetCropBox(page, l, b, r, t); ++done; }
+        g_api.ClosePage(page);
+    }
+    if (!done) { g_error = L"Der Zuschnitt konnte nicht aufgehoben werden."; return false; }
+    m_modified = true;
+    return true;
+}
+
+// ---------- Formulare ----------
+namespace {
+    void (*g_redrawHook)() = nullptr;
+    std::map<int, void (*)(int)>& TimerMap() { static std::map<int, void (*)(int)> m; return m; }
+    void CALLBACK FormTimerProc(HWND, UINT, UINT_PTR id, DWORD) {
+        auto it = TimerMap().find(static_cast<int>(id));
+        if (it != TimerMap().end()) it->second(static_cast<int>(id));
+    }
+}
+
+struct FormCallbacks {
+    struct Info : FPDF_FORMFILLINFO { PdfDocument* owner; };
+    static PdfDocument* Owner(FPDF_FORMFILLINFO* p) { return static_cast<Info*>(p)->owner; }
+    static void Release(FPDF_FORMFILLINFO*) {}
+    static void Invalidate(FPDF_FORMFILLINFO* p, FPDF_PAGE, double, double, double, double) {
+        Owner(p)->m_formDirty = true;
+        if (g_redrawHook) g_redrawHook();
+    }
+    static void OutputSelectedRect(FPDF_FORMFILLINFO*, FPDF_PAGE, double, double, double, double) {}
+    static void SetCursor(FPDF_FORMFILLINFO*, int) {}
+    static int SetTimer(FPDF_FORMFILLINFO*, int elapse, void (*cb)(int)) {
+        // Timer ohne Fenster: der Rueckruf kommt ueber die Nachrichtenschleife; die Id merken wir fuer KillTimer
+        const UINT_PTR id = ::SetTimer(nullptr, 0, static_cast<UINT>(elapse), &FormTimerProc);
+        TimerMap()[static_cast<int>(id)] = cb;
+        return static_cast<int>(id);
+    }
+    static void KillTimer(FPDF_FORMFILLINFO*, int id) { ::KillTimer(nullptr, static_cast<UINT_PTR>(id)); TimerMap().erase(id); }
+    static FPDF_SYSTEMTIME GetLocalTime(FPDF_FORMFILLINFO*) {
+        SYSTEMTIME st; ::GetLocalTime(&st);
+        return FPDF_SYSTEMTIME{ st.wYear, st.wMonth, st.wDayOfWeek, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds };
+    }
+    static void OnChange(FPDF_FORMFILLINFO* p) { Owner(p)->m_modified = true; }
+    static FPDF_PAGE GetPage(FPDF_FORMFILLINFO* p, FPDF_DOCUMENT, int idx) { PdfDocument* d = Owner(p); return d->m_formPageIdx == idx ? d->m_formPage : nullptr; }
+    static FPDF_PAGE GetCurrentPage(FPDF_FORMFILLINFO* p, FPDF_DOCUMENT) { return Owner(p)->m_formPage; }
+    static int GetRotation(FPDF_FORMFILLINFO*, FPDF_PAGE) { return 0; }
+    static void NamedAction(FPDF_FORMFILLINFO*, const char*) {}
+    static void SetTextFieldFocus(FPDF_FORMFILLINFO*, const unsigned short*, unsigned long, FPDF_BOOL) {}
+    static void DoURI(FPDF_FORMFILLINFO*, const char*) {}
+    static void DoGoTo(FPDF_FORMFILLINFO*, int, int, float*, int) {}
+};
+
+void PdfDocument::SetFormRedrawHook(void (*hook)()) { g_redrawHook = hook; }
+
+void PdfDocument::CloseForm() {
+    if (m_form) {
+        g_api.FormKillFocus(m_form);
+        if (m_formPage) { g_api.FormBeforeClosePage(m_formPage, m_form); g_api.ClosePage(m_formPage); }
+        g_api.FormExit(m_form);
+    }
+    delete static_cast<FormCallbacks::Info*>(m_formInfo);
+    m_form = nullptr; m_formInfo = nullptr; m_formPage = nullptr; m_formPageIdx = -1;
+    m_hasForms = -1;
+    m_formDirty = false;
+}
+
+bool PdfDocument::HasForms() {
+    if (!m_doc) return false;
+    if (m_hasForms < 0) m_hasForms = g_api.GetFormType(m_doc) == 1 ? 1 : 0;   // 1 = AcroForm (XFA wird nicht unterstuetzt)
+    return m_hasForms == 1;
+}
+
+bool PdfDocument::UseFormPage(int index) {
+    if (!m_doc || !HasForms()) return false;
+    if (!m_form) {
+        auto* info = new FormCallbacks::Info{};
+        info->version = 1;
+        info->Release = &FormCallbacks::Release;
+        info->FFI_Invalidate = &FormCallbacks::Invalidate;
+        info->FFI_OutputSelectedRect = &FormCallbacks::OutputSelectedRect;
+        info->FFI_SetCursor = &FormCallbacks::SetCursor;
+        info->FFI_SetTimer = &FormCallbacks::SetTimer;
+        info->FFI_KillTimer = &FormCallbacks::KillTimer;
+        info->FFI_GetLocalTime = &FormCallbacks::GetLocalTime;
+        info->FFI_OnChange = &FormCallbacks::OnChange;
+        info->FFI_GetPage = &FormCallbacks::GetPage;
+        info->FFI_GetCurrentPage = &FormCallbacks::GetCurrentPage;
+        info->FFI_GetRotation = &FormCallbacks::GetRotation;
+        info->FFI_ExecuteNamedAction = &FormCallbacks::NamedAction;
+        info->FFI_SetTextFieldFocus = &FormCallbacks::SetTextFieldFocus;
+        info->FFI_DoURIAction = &FormCallbacks::DoURI;
+        info->FFI_DoGoToAction = &FormCallbacks::DoGoTo;
+        info->owner = this;
+        m_form = g_api.FormInit(m_doc, info);
+        if (!m_form) { delete info; return false; }
+        m_formInfo = info;
+        g_api.FormHighlightColor(m_form, 0, 0xFFE4DD);   // alle Feldarten leicht blau hinterlegen
+        g_api.FormHighlightAlpha(m_form, 100);
+    }
+    if (m_formPageIdx != index || !m_formPage) {
+        g_api.FormKillFocus(m_form);
+        if (m_formPage) { g_api.FormBeforeClosePage(m_formPage, m_form); g_api.ClosePage(m_formPage); m_formPage = nullptr; }
+        m_formPage = g_api.LoadPage(m_doc, index);
+        m_formPageIdx = m_formPage ? index : -1;
+        if (m_formPage) g_api.FormAfterLoadPage(m_formPage, m_form);
+    }
+    return m_formPage != nullptr;
+}
+
+HBITMAP PdfDocument::RenderPageForm(int index, int w, int h) {
+    if (!m_doc || w <= 0 || h <= 0) return nullptr;
+    if (!UseFormPage(index)) return RenderPage(index, w, h);
+    m_formDirty = false;
+    return RenderImpl(m_formPage, index, w, h, true);
+}
+
+bool PdfDocument::TakeFormDirty() { const bool d = m_formDirty; m_formDirty = false; return d; }
+
+int PdfDocument::FormFieldAt(int index, int w, int h, int dx, int dy) {
+    if (!UseFormPage(index)) return -1;
+    double px = 0, py = 0;
+    if (!g_api.DeviceToPage(m_formPage, 0, 0, w, h, Rotation(index), dx, dy, &px, &py)) return -1;
+    return g_api.FormFieldAtPoint(m_form, m_formPage, px, py);
+}
+
+bool PdfDocument::FormMouse(FormMouseKind kind, int index, int w, int h, int dx, int dy) {
+    if (!UseFormPage(index)) return false;
+    double px = 0, py = 0;
+    if (!g_api.DeviceToPage(m_formPage, 0, 0, w, h, Rotation(index), dx, dy, &px, &py)) return false;
+    switch (kind) {
+    case FormDown: return g_api.FormLButtonDown(m_form, m_formPage, 0, px, py) != 0;
+    case FormUp:   return g_api.FormLButtonUp(m_form, m_formPage, 0, px, py) != 0;
+    default:       return g_api.FormMouseMove(m_form, m_formPage, 0, px, py) != 0;
+    }
+}
+
+bool PdfDocument::FormKey(int index, int vk, bool down, int modifiers) {
+    if (!UseFormPage(index)) return false;
+    return (down ? g_api.FormKeyDown(m_form, m_formPage, vk, modifiers) : g_api.FormKeyUp(m_form, m_formPage, vk, modifiers)) != 0;
+}
+
+bool PdfDocument::FormChar(int index, int ch, int modifiers) {
+    if (!UseFormPage(index)) return false;
+    return g_api.FormChar(m_form, m_formPage, ch, modifiers) != 0;
+}
+
+std::wstring PdfDocument::FormSelectedText(int index) {
+    if (!UseFormPage(index)) return L"";
+    const unsigned long bytes = g_api.FormGetSelectedText(m_form, m_formPage, nullptr, 0);
+    if (bytes <= 2) return L"";
+    std::vector<unsigned short> buf(bytes / 2 + 1, 0);
+    g_api.FormGetSelectedText(m_form, m_formPage, buf.data(), bytes);
+    return std::wstring(reinterpret_cast<wchar_t*>(buf.data()));
+}
+
+bool PdfDocument::FormReplaceSelection(int index, const std::wstring& text) {
+    if (!UseFormPage(index)) return false;
+    g_api.FormReplaceSelection(m_form, m_formPage, reinterpret_cast<const unsigned short*>(text.c_str()));
+    return true;
+}
+
+bool PdfDocument::FormSelectAll(int index) {
+    if (!UseFormPage(index)) return false;
+    return g_api.FormSelectAllText(m_form, m_formPage) != 0;
+}
+
+void PdfDocument::FormKillFocus() {
+    if (m_form) g_api.FormKillFocus(m_form);
 }
