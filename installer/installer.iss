@@ -3,7 +3,7 @@
 ; Komplett-Installer (alle Programme enthalten):                                    ISCC.exe /DFull=1 installer\installer.iss
 
 #define MyAppName      "Duncan's Driver Updater"
-#define MyAppVersion   "1.1.29"
+#define MyAppVersion   "1.1.30"
 #define MyAppPublisher "Duncan"
 #define MyAppExeName   "DuncansDriverUpdater.exe"
 ; Duncan's Suite: zentraler Launcher (Haupt-Startverknuepfung fuer Desktop und Startmenue)
