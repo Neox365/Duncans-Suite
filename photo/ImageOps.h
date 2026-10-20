@@ -4,6 +4,8 @@
 // initialisiert hat (CoInitializeEx).
 #include <windows.h>
 #include <wincodec.h>
+#include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -17,7 +19,7 @@ struct InfoRow {
 struct ImageInfo {
     UINT width = 0, height = 0;
     ULONGLONG fileSize = 0;
-    FILETIME modified{};
+    FILETIME modified{}, created{};
     int orientation = 1;  // EXIF-Orientation 1..8
     bool hasExif = false;
     bool hasGps = false;
@@ -25,6 +27,22 @@ struct ImageInfo {
 };
 
 bool IsSupportedImage(const std::wstring& path);
+
+// Schnelle Metadaten fuer Sortieren/Filtern: Aufnahmezeit (UTC als FILETIME-Wert, 0 = unbekannt) und GPS-Block.
+struct QuickMeta {
+    ULONGLONG taken = 0;
+    bool hasGps = false;
+};
+bool ReadQuickMeta(const std::wstring& path, QuickMeta& out);
+
+// EXIF-Zeitstempel "YYYY:MM:DD HH:MM:SS" (Ortszeit) -> UTC als FILETIME-Wert; false bei ungueltigem Text.
+bool ParseExifDate(const std::wstring& s, ULONGLONG& utc);
+
+// Doppelte Bilder: Inhaltshash der ganzen Datei (zwei unabhaengige 64-Bit-Laeufe) und 64-Bit-Differenzhash
+// (dHash, 9x8 Graustufen) fuer "sieht gleich aus". HammingDistance vergleicht zwei dHashes.
+bool HashFile(const std::wstring& path, uint64_t& h1, uint64_t& h2);
+bool ComputeDHash(const std::wstring& path, uint64_t& hash);
+int HammingDistance(uint64_t a, uint64_t b);
 
 bool ReadImageInfo(const std::wstring& path, ImageInfo& out);
 
@@ -53,6 +71,30 @@ bool CropImage(const std::wstring& src, const std::wstring& dst, double x0, doub
 // Verkleinert so, dass die laengste Kante <= maxEdge ist (nie vergroessern), JPEG Q85, ohne Metadaten
 // (zum Teilen gedacht). Drehung wird eingebrannt.
 bool ResizeImage(const std::wstring& src, const std::wstring& dst, UINT maxEdge, std::wstring* err = nullptr);
+
+// ---- Bildkorrektur (Helligkeit, Kontrast, Saettigung, Horizont) ----
+struct EditParams {
+    int brightness = 0, contrast = 0, saturation = 0;  // -100..+100
+    double angle = 0;                                    // Horizont ausrichten, Grad (-45..+45), positiv = im Uhrzeigersinn
+    bool IsIdentity() const { return !brightness && !contrast && !saturation && angle > -0.005 && angle < 0.005; }
+};
+
+// Faktor, mit dem das Bild nach dem Drehen um angleDeg wieder randlos (gleiches Seitenverhaeltnis) zugeschnitten wird.
+double StraightenScale(double w, double h, double angleDeg);
+
+// Farbkorrektur an BGRA-Pixeln (nicht vormultipliziert), Alpha bleibt unveraendert.
+void ApplyColor(BYTE* bgra, size_t pixelCount, const EditParams& p);
+
+// Dreht px (w x h, BGRA) um p.angle, schneidet randlos zu und wendet die Farbkorrektur an; w/h werden angepasst.
+// Gleiche Funktion fuer Live-Vorschau-Daten und Speichern, damit beides gleich aussieht.
+bool ApplyEdits(std::vector<BYTE>& px, UINT& w, UINT& h, const EditParams& p);
+
+// Laedt das Bild aufrecht (EXIF-Drehung angewendet) als BGRA, verkleinert auf maxEdge (nie vergroessert).
+bool LoadPixels(const std::wstring& path, UINT maxEdge, std::vector<BYTE>& bgra, UINT& w, UINT& h);
+
+// Wendet p auf das Vollbild an und schreibt es nach dst (dst darf gleich src sein). Re-Encode (JPEG Q95),
+// Metadaten bleiben erhalten.
+bool EditImage(const std::wstring& src, const std::wstring& dst, const EditParams& p, std::wstring* err = nullptr);
 
 // Dreht um 90 Grad (verlustbehaftet bei JPEG, Metadaten bleiben erhalten).
 bool RotateImage(const std::wstring& path, bool clockwise, std::wstring* err = nullptr);

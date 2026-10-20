@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <new>
 
 using Microsoft::WRL::ComPtr;
 
@@ -153,6 +154,8 @@ struct EncodeOpts {
     double cx0 = 0, cy0 = 0, cx1 = 1, cy1 = 1;
     UINT maxEdge = 0;            // > 0: laengste Kante auf diesen Wert verkleinern (nie vergroessern)
     float quality = 0.95f;       // nur JPEG
+    // Optional: bearbeitet die (aufrechten) BGRA-Pixel vor dem Schreiben; darf die Groesse aendern.
+    std::function<bool(std::vector<BYTE>&, UINT&, UINT&)> pixelEdit;
 };
 
 // Drehung der Pixel, dann Encode in dasselbe Containerformat ohne Metadaten
@@ -191,6 +194,33 @@ bool Reencode(const std::wstring& src, const std::wstring& dst, const EncodeOpts
             return false;
         }
         cur = fr;
+    }
+    if (o.pixelEdit) {
+        UINT pw = 0, ph = 0;
+        cur->GetSize(&pw, &ph);
+        ComPtr<IWICFormatConverter> cv;
+        std::vector<BYTE> px;
+        try {
+            px.resize((size_t)pw * ph * 4);
+        } catch (const std::bad_alloc&) {
+            SetErr(err, L"Zu wenig Arbeitsspeicher fuer dieses Bild");
+            return false;
+        }
+        if (FAILED(f->CreateFormatConverter(&cv)) ||
+            FAILED(cv->Initialize(cur.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                  WICBitmapPaletteTypeCustom)) ||
+            FAILED(cv->CopyPixels(nullptr, pw * 4, (UINT)px.size(), px.data()))) {
+            SetErr(err, L"Pixel konnten nicht gelesen werden");
+            return false;
+        }
+        if (!o.pixelEdit(px, pw, ph)) { SetErr(err, L"Bearbeiten fehlgeschlagen"); return false; }
+        ComPtr<IWICBitmap> edited;
+        if (FAILED(f->CreateBitmapFromMemory(pw, ph, GUID_WICPixelFormat32bppBGRA, pw * 4, (UINT)px.size(), px.data(),
+                                             &edited))) {
+            SetErr(err, L"Ergebnis konnte nicht aufgebaut werden");
+            return false;
+        }
+        cur = edited;
     }
     if (o.crop) {
         UINT cw = 0, ch = 0;
@@ -326,6 +356,222 @@ bool IsSupportedImage(const std::wstring& path) {
     return false;
 }
 
+bool ParseExifDate(const std::wstring& s, ULONGLONG& utc) {
+    int y, mo, d, h, mi, se;
+    if (s.size() < 19 || swscanf_s(s.c_str(), L"%d:%d:%d %d:%d:%d", &y, &mo, &d, &h, &mi, &se) != 6) return false;
+    if (y < 1900 || y > 2999 || mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59 ||
+        se < 0 || se > 60)
+        return false;
+    SYSTEMTIME local{}, st{};
+    local.wYear = (WORD)y; local.wMonth = (WORD)mo; local.wDay = (WORD)d;
+    local.wHour = (WORD)h; local.wMinute = (WORD)mi; local.wSecond = (WORD)std::min(se, 59);
+    FILETIME ft;
+    if (!TzSpecificLocalTimeToSystemTime(nullptr, &local, &st) || !SystemTimeToFileTime(&st, &ft)) return false;
+    utc = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    return true;
+}
+
+bool ReadQuickMeta(const std::wstring& path, QuickMeta& out) {
+    out = QuickMeta{};
+    auto f = MakeFactory();
+    if (!f) return false;
+    ComPtr<IWICBitmapDecoder> dec;
+    if (FAILED(f->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)))
+        return false;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICMetadataQueryReader> q;
+    if (FAILED(dec->GetFrame(0, &frame)) || FAILED(frame->GetMetadataQueryReader(&q))) return true;
+    PROPVARIANT pv;
+    std::wstring s;
+    for (const wchar_t* tag : {L"/ifd/exif/{ushort=36867}", L"/ifd/exif/{ushort=36868}", L"/ifd/{ushort=306}"}) {
+        if (Query(q.Get(), tag, &pv)) {
+            const bool ok = AsString(pv, s) && ParseExifDate(s, out.taken);
+            PropVariantClear(&pv);
+            if (ok) break;
+        }
+    }
+    double lat, lon;
+    if (ReadGpsCoord(q.Get(), 2, 1, lat) && ReadGpsCoord(q.Get(), 4, 3, lon)) {
+        out.hasGps = true;
+    } else if (Query(q.Get(), L"/ifd/gps/{ushort=1}", &pv)) {
+        out.hasGps = true;
+        PropVariantClear(&pv);
+    }
+    return true;
+}
+
+bool HashFile(const std::wstring& path, uint64_t& h1, uint64_t& h2) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    h1 = 1469598103934665603ull;  // FNV-1a
+    h2 = 0x9E3779B97F4A7C15ull;   // zweiter Lauf mit anderem Startwert und Multiplikator
+    std::vector<BYTE> buf(1 << 20);
+    bool ok = true;
+    for (;;) {
+        DWORD got = 0;
+        if (!ReadFile(h, buf.data(), (DWORD)buf.size(), &got, nullptr)) { ok = false; break; }
+        if (got == 0) break;
+        for (DWORD i = 0; i < got; ++i) {
+            h1 = (h1 ^ buf[i]) * 1099511628211ull;
+            h2 = (h2 ^ buf[i]) * 0x2545F4914F6CDD1Dull + i;
+        }
+    }
+    CloseHandle(h);
+    return ok;
+}
+
+bool ComputeDHash(const std::wstring& path, uint64_t& hash) {
+    auto f = MakeFactory();
+    if (!f) return false;
+    ComPtr<IWICBitmapDecoder> dec;
+    if (FAILED(f->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)))
+        return false;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter> conv;
+    ComPtr<IWICBitmapScaler> scaler;
+    if (FAILED(dec->GetFrame(0, &frame)) || FAILED(f->CreateFormatConverter(&conv)) ||
+        FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat8bppGray, WICBitmapDitherTypeNone, nullptr, 0,
+                                WICBitmapPaletteTypeCustom)) ||
+        FAILED(f->CreateBitmapScaler(&scaler)) ||
+        FAILED(scaler->Initialize(conv.Get(), 9, 8, WICBitmapInterpolationModeFant)))
+        return false;
+    BYTE px[9 * 8];
+    if (FAILED(scaler->CopyPixels(nullptr, 9, sizeof px, px))) return false;
+    hash = 0;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) hash = (hash << 1) | (px[y * 9 + x] < px[y * 9 + x + 1] ? 1u : 0u);
+    return true;
+}
+
+int HammingDistance(uint64_t a, uint64_t b) {
+    uint64_t v = a ^ b;
+    int n = 0;
+    for (; v; v &= v - 1) ++n;
+    return n;
+}
+
+double StraightenScale(double w, double h, double angleDeg) {
+    const double a = std::fabs(angleDeg) * 3.14159265358979323846 / 180.0;
+    if (w <= 0 || h <= 0) return 1.0;
+    const double ratio = std::max(w / h, h / w);
+    return 1.0 / (std::cos(a) + std::sin(a) * ratio);
+}
+
+void ApplyColor(BYTE* px, size_t n, const EditParams& p) {
+    const bool bc = p.brightness != 0 || p.contrast != 0, sat = p.saturation != 0;
+    if (!bc && !sat) return;
+    BYTE lut[256];
+    const double f = p.contrast < 0 ? 1.0 + p.contrast / 100.0 : 1.0 + p.contrast / 100.0 * 2.0;  // 0 .. 3
+    for (int i = 0; i < 256; ++i) {
+        const double v = ((i / 255.0 - 0.5) * f + 0.5 + p.brightness / 200.0) * 255.0;
+        lut[i] = (BYTE)std::clamp((int)std::lround(v), 0, 255);
+    }
+    const int sq = (int)std::lround((1.0 + p.saturation / 100.0) * 256.0);  // 0 .. 512
+    for (size_t i = 0; i < n; ++i, px += 4) {
+        int b = lut[px[0]], g = lut[px[1]], r = lut[px[2]];
+        if (sat) {
+            const int gray = (77 * r + 150 * g + 29 * b) >> 8;
+            r = std::clamp(gray + (((r - gray) * sq) >> 8), 0, 255);
+            g = std::clamp(gray + (((g - gray) * sq) >> 8), 0, 255);
+            b = std::clamp(gray + (((b - gray) * sq) >> 8), 0, 255);
+        }
+        px[0] = (BYTE)b; px[1] = (BYTE)g; px[2] = (BYTE)r;
+    }
+}
+
+bool ApplyEdits(std::vector<BYTE>& px, UINT& w, UINT& h, const EditParams& p) {
+    if (w == 0 || h == 0 || px.size() < (size_t)w * h * 4) return false;
+    if (std::fabs(p.angle) > 0.005) {
+        const double s = StraightenScale(w, h, p.angle);
+        const UINT ow = std::max(1u, (UINT)std::lround(w * s)), oh = std::max(1u, (UINT)std::lround(h * s));
+        std::vector<BYTE> out;
+        try {
+            out.resize((size_t)ow * oh * 4);
+        } catch (const std::bad_alloc&) {
+            return false;
+        }
+        const double rad = p.angle * 3.14159265358979323846 / 180.0, c = std::cos(rad), sn = std::sin(rad);
+        const double cxs = w / 2.0, cys = h / 2.0, cxo = ow / 2.0, cyo = oh / 2.0;
+        for (UINT y = 0; y < oh; ++y) {
+            BYTE* dst = &out[(size_t)y * ow * 4];
+            for (UINT x = 0; x < ow; ++x, dst += 4) {
+                const double dx = x + 0.5 - cxo, dy = y + 0.5 - cyo;
+                // Umkehrung der Drehung im Uhrzeigersinn; -0.5: Pixelmitte
+                const double sx = std::clamp(cxs + dx * c + dy * sn - 0.5, 0.0, w - 1.0);
+                const double sy = std::clamp(cys - dx * sn + dy * c - 0.5, 0.0, h - 1.0);
+                const UINT x0 = (UINT)sx, y0 = (UINT)sy, x1 = std::min(x0 + 1, w - 1), y1 = std::min(y0 + 1, h - 1);
+                const double fx = sx - x0, fy = sy - y0;
+                const BYTE* p00 = &px[((size_t)y0 * w + x0) * 4];
+                const BYTE* p10 = &px[((size_t)y0 * w + x1) * 4];
+                const BYTE* p01 = &px[((size_t)y1 * w + x0) * 4];
+                const BYTE* p11 = &px[((size_t)y1 * w + x1) * 4];
+                for (int ch = 0; ch < 4; ++ch) {
+                    const double top = p00[ch] + (p10[ch] - p00[ch]) * fx, bot = p01[ch] + (p11[ch] - p01[ch]) * fx;
+                    dst[ch] = (BYTE)std::clamp((int)std::lround(top + (bot - top) * fy), 0, 255);
+                }
+            }
+        }
+        px.swap(out);
+        w = ow;
+        h = oh;
+    }
+    ApplyColor(px.data(), (size_t)w * h, p);
+    return true;
+}
+
+bool LoadPixels(const std::wstring& path, UINT maxEdge, std::vector<BYTE>& bgra, UINT& w, UINT& h) {
+    auto f = MakeFactory();
+    if (!f) return false;
+    ComPtr<IWICBitmapDecoder> dec;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(f->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) ||
+        FAILED(dec->GetFrame(0, &frame)))
+        return false;
+    ComPtr<IWICBitmapSource> cur = frame;
+    const WICBitmapTransformOptions t = OrientationToTransform(ReadOrientation(frame.Get()));
+    if (t != WICBitmapTransformRotate0) {
+        ComPtr<IWICBitmapFlipRotator> fr;
+        if (SUCCEEDED(f->CreateBitmapFlipRotator(&fr)) && SUCCEEDED(fr->Initialize(cur.Get(), t))) cur = fr;
+    }
+    ComPtr<IWICFormatConverter> cv;
+    if (FAILED(f->CreateFormatConverter(&cv)) ||
+        FAILED(cv->Initialize(cur.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                              WICBitmapPaletteTypeCustom)))
+        return false;
+    cur = cv;
+    UINT sw = 0, sh = 0;
+    cur->GetSize(&sw, &sh);
+    if (!sw || !sh) return false;
+    if (maxEdge && std::max(sw, sh) > maxEdge) {
+        const double sc = (double)maxEdge / std::max(sw, sh);
+        const UINT nw = std::max(1u, (UINT)std::lround(sw * sc)), nh = std::max(1u, (UINT)std::lround(sh * sc));
+        ComPtr<IWICBitmapScaler> scaler;
+        if (FAILED(f->CreateBitmapScaler(&scaler)) ||
+            FAILED(scaler->Initialize(cur.Get(), nw, nh, WICBitmapInterpolationModeFant)))
+            return false;
+        cur = scaler;
+        sw = nw;
+        sh = nh;
+    }
+    try {
+        bgra.resize((size_t)sw * sh * 4);
+    } catch (const std::bad_alloc&) {
+        return false;
+    }
+    if (FAILED(cur->CopyPixels(nullptr, sw * 4, (UINT)bgra.size(), bgra.data()))) return false;
+    w = sw;
+    h = sh;
+    return true;
+}
+
+bool EditImage(const std::wstring& src, const std::wstring& dst, const EditParams& p, std::wstring* err) {
+    EncodeOpts o;
+    o.keepMetadata = true;
+    o.pixelEdit = [&p](std::vector<BYTE>& px, UINT& w, UINT& h) { return ApplyEdits(px, w, h, p); };
+    return Reencode(src, dst, o, err);
+}
+
 WICBitmapTransformOptions OrientationToTransform(int o) {
     switch (o) {
         case 2: return WICBitmapTransformFlipHorizontal;
@@ -358,6 +604,7 @@ bool ReadImageInfo(const std::wstring& path, ImageInfo& info) {
     if (GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &fa)) {
         info.fileSize = ((ULONGLONG)fa.nFileSizeHigh << 32) | fa.nFileSizeLow;
         info.modified = fa.ftLastWriteTime;
+        info.created = fa.ftCreationTime;
     }
     auto f = MakeFactory();
     if (!f) return false;
