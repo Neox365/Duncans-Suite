@@ -4,6 +4,7 @@
 // initialisiert hat (CoInitializeEx).
 #include <windows.h>
 #include <wincodec.h>
+#include <wrl/client.h>
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -28,6 +29,12 @@ struct ImageInfo {
 
 bool IsSupportedImage(const std::wstring& path);
 
+// Liefert die Quelle auf genau tw x th verkleinert. JPEG wird dabei schon beim Dekodieren auf 1/2, 1/4 oder 1/8
+// gebracht (DCT-Skalierung), das ist bei grossen Fotos um ein Vielfaches schneller als erst voll zu dekodieren.
+// Gemeinsam genutzt von Thumbnails, Duplikat-Hash und Bearbeiten-Vorschau. nullptr bei Fehlern.
+Microsoft::WRL::ComPtr<IWICBitmapSource> ScaledSource(IWICImagingFactory* f, IWICBitmapFrameDecode* frame, UINT tw,
+                                                      UINT th);
+
 // Schnelle Metadaten fuer Sortieren/Filtern: Aufnahmezeit (UTC als FILETIME-Wert, 0 = unbekannt) und GPS-Block.
 struct QuickMeta {
     ULONGLONG taken = 0;
@@ -38,11 +45,20 @@ bool ReadQuickMeta(const std::wstring& path, QuickMeta& out);
 // EXIF-Zeitstempel "YYYY:MM:DD HH:MM:SS" (Ortszeit) -> UTC als FILETIME-Wert; false bei ungueltigem Text.
 bool ParseExifDate(const std::wstring& s, ULONGLONG& utc);
 
-// Doppelte Bilder: Inhaltshash der ganzen Datei (zwei unabhaengige 64-Bit-Laeufe) und 64-Bit-Differenzhash
-// (dHash, 9x8 Graustufen) fuer "sieht gleich aus". HammingDistance vergleicht zwei dHashes.
+// Doppelte Bilder: Inhaltshash der ganzen Datei (zwei unabhaengige 64-Bit-Laeufe) fuer "byte-identisch" ...
 bool HashFile(const std::wstring& path, uint64_t& h1, uint64_t& h2);
-bool ComputeDHash(const std::wstring& path, uint64_t& hash);
+
+// ... und eine Signatur fuer "sieht gleich aus": 64-Bit-Differenzhash (dHash, Helligkeitsverlauf einer 9x8-Verkleinerung)
+// plus die 9x8 Farbwerte selbst. Der dHash allein erkennt nur die Struktur und wuerde z. B. gleich aufgebaute Bilder in
+// anderen Farben verwechseln; die Farben schliessen das aus.
+struct ImageSig {
+    uint64_t dhash = 0;
+    BYTE bgr[9 * 8 * 3] = {};
+};
+bool ComputeSignature(const std::wstring& path, ImageSig& out);
 int HammingDistance(uint64_t a, uint64_t b);
+// Aehnlich = dHash-Abstand <= maxHamming UND mittlere Farbabweichung (je Kanal, 0..255) <= maxColorDiff.
+bool SignaturesSimilar(const ImageSig& a, const ImageSig& b, int maxHamming, int maxColorDiff);
 
 bool ReadImageInfo(const std::wstring& path, ImageInfo& out);
 

@@ -1,5 +1,6 @@
 #include "ImageOps.h"
 #include "ByteStrip.h"
+#include "WicCompat.h"
 
 #include <wrl/client.h>
 #include <wincodecsdk.h>
@@ -7,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <new>
 
 using Microsoft::WRL::ComPtr;
@@ -356,6 +358,46 @@ bool IsSupportedImage(const std::wstring& path) {
     return false;
 }
 
+Microsoft::WRL::ComPtr<IWICBitmapSource> ScaledSource(IWICImagingFactory* f, IWICBitmapFrameDecode* frame, UINT tw,
+                                                      UINT th) {
+    UINT w = 0, h = 0;
+    frame->GetSize(&w, &h);
+    ComPtr<IWICBitmapSource> src = frame;
+    if (tw * 2 <= w && th * 2 <= h) {
+        ComPtr<IWICBitmapSourceTransform> xf;
+        if (SUCCEEDED(frame->QueryInterface(IID_PPV_ARGS(&xf)))) {
+            UINT cw = tw, ch = th;
+            WICPixelFormatGUID pf = GUID_WICPixelFormat32bppPBGRA;
+            if (SUCCEEDED(xf->GetClosestSize(&cw, &ch)) && SUCCEEDED(xf->GetClosestPixelFormat(&pf)) && cw >= tw &&
+                ch >= th) {
+                UINT bpp = 0;  // Format muss ein normales Pixelformat sein (nicht indiziert)
+                ComPtr<IWICComponentInfo> ci;
+                ComPtr<IWICPixelFormatInfo> pfi;
+                if (SUCCEEDED(f->CreateComponentInfo(pf, &ci)) && SUCCEEDED(ci.As(&pfi))) pfi->GetBitsPerPixel(&bpp);
+                if (bpp > 0 && bpp <= 64) {
+                    const UINT stride = (cw * bpp + 7) / 8;
+                    std::vector<BYTE> buf((size_t)stride * ch);
+                    if (SUCCEEDED(xf->CopyPixels(nullptr, cw, ch, &pf, WICBitmapTransformRotate0, stride,
+                                                 (UINT)buf.size(), buf.data()))) {
+                        ComPtr<IWICBitmap> bmp;
+                        if (SUCCEEDED(f->CreateBitmapFromMemory(cw, ch, pf, stride, (UINT)buf.size(), buf.data(), &bmp)))
+                            src = bmp;
+                    }
+                }
+            }
+        }
+    }
+    UINT sw = 0, sh = 0;
+    src->GetSize(&sw, &sh);
+    if (sw != tw || sh != th) {
+        ComPtr<IWICBitmapScaler> sc;
+        if (FAILED(f->CreateBitmapScaler(&sc)) || FAILED(sc->Initialize(src.Get(), tw, th, WICBitmapInterpolationModeFant)))
+            return nullptr;
+        src = sc;
+    }
+    return src;
+}
+
 bool ParseExifDate(const std::wstring& s, ULONGLONG& utc) {
     int y, mo, d, h, mi, se;
     if (s.size() < 19 || swscanf_s(s.c_str(), L"%d:%d:%d %d:%d:%d", &y, &mo, &d, &h, &mi, &se) != 6) return false;
@@ -409,39 +451,76 @@ bool HashFile(const std::wstring& path, uint64_t& h1, uint64_t& h2) {
     std::vector<BYTE> buf(1 << 20);
     bool ok = true;
     for (;;) {
-        DWORD got = 0;
-        if (!ReadFile(h, buf.data(), (DWORD)buf.size(), &got, nullptr)) { ok = false; break; }
-        if (got == 0) break;
-        for (DWORD i = 0; i < got; ++i) {
-            h1 = (h1 ^ buf[i]) * 1099511628211ull;
-            h2 = (h2 ^ buf[i]) * 0x2545F4914F6CDD1Dull + i;
+        DWORD total = 0;  // Puffer ganz fuellen, damit die Blockgrenzen (und damit der Hash) immer gleich liegen
+        while (total < buf.size()) {
+            DWORD got = 0;
+            if (!ReadFile(h, buf.data() + total, (DWORD)buf.size() - total, &got, nullptr)) { ok = false; break; }
+            if (got == 0) break;
+            total += got;
         }
+        if (!ok || total == 0) break;
+        DWORD i = 0;
+        for (; i + 8 <= total; i += 8) {  // 8 Byte pro Schritt: ~8x schneller als bytewise
+            uint64_t w;
+            std::memcpy(&w, &buf[i], 8);
+            h1 = (h1 ^ w) * 1099511628211ull;
+            h1 ^= h1 >> 29;
+            h2 = (h2 + w) * 0x2545F4914F6CDD1Dull;
+            h2 ^= h2 >> 31;
+        }
+        for (; i < total; ++i) {
+            h1 = (h1 ^ buf[i]) * 1099511628211ull;
+            h2 = (h2 + buf[i]) * 0x2545F4914F6CDD1Dull;
+        }
+        if (total < buf.size()) break;
     }
     CloseHandle(h);
     return ok;
 }
 
-bool ComputeDHash(const std::wstring& path, uint64_t& hash) {
+bool ComputeSignature(const std::wstring& path, ImageSig& out) {
     auto f = MakeFactory();
     if (!f) return false;
     ComPtr<IWICBitmapDecoder> dec;
     if (FAILED(f->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)))
         return false;
     ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(dec->GetFrame(0, &frame))) return false;
+    // Erst auf 9x8 verkleinern (bei JPEG schon beim Dekodieren); Palettenbilder gehen ueber den Format-Konverter,
+    // weil der Skalierer keine indizierten Formate kann.
+    ComPtr<IWICBitmapSource> src = ScaledSource(f.Get(), frame.Get(), 9, 8);
+    if (!src) {
+        ComPtr<IWICFormatConverter> pre;
+        ComPtr<IWICBitmapScaler> scaler;
+        if (FAILED(f->CreateFormatConverter(&pre)) ||
+            FAILED(pre->Initialize(frame.Get(), GUID_WICPixelFormat24bppBGR, WICBitmapDitherTypeNone, nullptr, 0,
+                                   WICBitmapPaletteTypeCustom)) ||
+            FAILED(f->CreateBitmapScaler(&scaler)) ||
+            FAILED(scaler->Initialize(pre.Get(), 9, 8, WICBitmapInterpolationModeFant)))
+            return false;
+        src = scaler;
+    }
     ComPtr<IWICFormatConverter> conv;
-    ComPtr<IWICBitmapScaler> scaler;
-    if (FAILED(dec->GetFrame(0, &frame)) || FAILED(f->CreateFormatConverter(&conv)) ||
-        FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat8bppGray, WICBitmapDitherTypeNone, nullptr, 0,
+    if (FAILED(f->CreateFormatConverter(&conv)) ||
+        FAILED(conv->Initialize(src.Get(), GUID_WICPixelFormat24bppBGR, WICBitmapDitherTypeNone, nullptr, 0,
                                 WICBitmapPaletteTypeCustom)) ||
-        FAILED(f->CreateBitmapScaler(&scaler)) ||
-        FAILED(scaler->Initialize(conv.Get(), 9, 8, WICBitmapInterpolationModeFant)))
+        FAILED(conv->CopyPixels(nullptr, 9 * 3, sizeof out.bgr, out.bgr)))
         return false;
-    BYTE px[9 * 8];
-    if (FAILED(scaler->CopyPixels(nullptr, 9, sizeof px, px))) return false;
-    hash = 0;
+    auto luma = [&](int x, int y) {
+        const BYTE* p = &out.bgr[(y * 9 + x) * 3];
+        return (29 * p[0] + 150 * p[1] + 77 * p[2]) >> 8;
+    };
+    out.dhash = 0;
     for (int y = 0; y < 8; ++y)
-        for (int x = 0; x < 8; ++x) hash = (hash << 1) | (px[y * 9 + x] < px[y * 9 + x + 1] ? 1u : 0u);
+        for (int x = 0; x < 8; ++x) out.dhash = (out.dhash << 1) | (luma(x, y) < luma(x + 1, y) ? 1u : 0u);
     return true;
+}
+
+bool SignaturesSimilar(const ImageSig& a, const ImageSig& b, int maxHamming, int maxColorDiff) {
+    if (HammingDistance(a.dhash, b.dhash) > maxHamming) return false;
+    int sum = 0;
+    for (size_t i = 0; i < sizeof a.bgr; ++i) sum += std::abs((int)a.bgr[i] - (int)b.bgr[i]);
+    return sum <= maxColorDiff * (int)sizeof a.bgr;
 }
 
 int HammingDistance(uint64_t a, uint64_t b) {
@@ -528,7 +607,16 @@ bool LoadPixels(const std::wstring& path, UINT maxEdge, std::vector<BYTE>& bgra,
     if (FAILED(f->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)) ||
         FAILED(dec->GetFrame(0, &frame)))
         return false;
+    UINT fw = 0, fh = 0;
+    frame->GetSize(&fw, &fh);
+    if (!fw || !fh) return false;
     ComPtr<IWICBitmapSource> cur = frame;
+    if (maxEdge && std::max(fw, fh) > maxEdge) {
+        const double sc = (double)maxEdge / std::max(fw, fh);
+        cur = ScaledSource(f.Get(), frame.Get(), std::max(1u, (UINT)std::lround(fw * sc)),
+                           std::max(1u, (UINT)std::lround(fh * sc)));
+        if (!cur) return false;
+    }
     const WICBitmapTransformOptions t = OrientationToTransform(ReadOrientation(frame.Get()));
     if (t != WICBitmapTransformRotate0) {
         ComPtr<IWICBitmapFlipRotator> fr;
@@ -542,18 +630,6 @@ bool LoadPixels(const std::wstring& path, UINT maxEdge, std::vector<BYTE>& bgra,
     cur = cv;
     UINT sw = 0, sh = 0;
     cur->GetSize(&sw, &sh);
-    if (!sw || !sh) return false;
-    if (maxEdge && std::max(sw, sh) > maxEdge) {
-        const double sc = (double)maxEdge / std::max(sw, sh);
-        const UINT nw = std::max(1u, (UINT)std::lround(sw * sc)), nh = std::max(1u, (UINT)std::lround(sh * sc));
-        ComPtr<IWICBitmapScaler> scaler;
-        if (FAILED(f->CreateBitmapScaler(&scaler)) ||
-            FAILED(scaler->Initialize(cur.Get(), nw, nh, WICBitmapInterpolationModeFant)))
-            return false;
-        cur = scaler;
-        sw = nw;
-        sh = nh;
-    }
     try {
         bgra.resize((size_t)sw * sh * 4);
     } catch (const std::bad_alloc&) {
