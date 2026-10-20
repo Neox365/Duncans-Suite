@@ -3,6 +3,7 @@ project(DuncansDriverUpdater VERSION 1.1.25 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
 set(SUITE_VER "1.1.27")
 set(PDF_VER "1.1.24")
+set(PHOTO_VER "0.1.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -120,3 +121,22 @@ else()
     target_link_options(DuncansPrivacyShield PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
 target_link_libraries(DuncansPrivacyShield PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32)
+
+# ---- Duncan's Photo Commander: Foto-Verwaltung (Direct2D/DirectWrite/WIC), EXIF-/GPS-Cleaner ----
+add_executable(DuncansPhotoCommander WIN32
+    photo/main.cpp
+    photo/ImageOps.cpp
+    photo/ThumbnailLoader.cpp
+    resources/photo.rc
+)
+target_compile_definitions(DuncansPhotoCommander PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"${PHOTO_VER}\")
+if(MSVC)
+    target_compile_options(DuncansPhotoCommander PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET DuncansPhotoCommander PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(DuncansPhotoCommander PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(DuncansPhotoCommander PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
+    target_link_options(DuncansPhotoCommander PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
+endif()
+target_link_libraries(DuncansPhotoCommander PRIVATE d2d1 dwrite windowscodecs ole32 oleaut32 shell32 shlwapi uuid dwmapi user32 gdi32 propsys)

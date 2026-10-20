@@ -7,7 +7,18 @@ Windows-Programmsammlung in C++ / Win32 mit einheitlichem Dark-UI, Sprache der P
 | **Duncan's Suite** | Launcher: startet die Programme, lädt fehlende per Ein-Klick-Download und aktualisiert sich selbst |
 | **Duncan's Driver Updater** | Hardware- und Treiber-Manager (Scan, Update-Erkennung, Installation über Windows Update) |
 | **Duncan's PDF Reader** | PDF-Betrachter und -Werkzeug (PDFium) |
+| **Duncan's Photo Commander** | Foto-Verwaltung (Ordnerbaum, asynchrones Thumbnail-Grid, EXIF-/GPS-Cleaner), Quellen in `photo/` – Grundgerüst |
 | **Duncan's Tidy** | System-Cleaner und Optimierer, eigenes Projekt ([Neox365/Duncans-Tidy-ToolSet](https://github.com/Neox365/Duncans-Tidy-ToolSet)); die Suite lädt es nur herunter und startet es |
+
+## Duncan's Photo Commander (Grundgerüst)
+
+Win32 + Direct2D/DirectWrite + WIC in `photo/`, Ziel `DuncansPhotoCommander.exe` (Farben aus `common/Theme.h` über `photo/Theme.h`).
+Topbar (Ordner öffnen, Vollbild, Stapelverarbeitung, Zahnrad), links Ordnerbaum, Mitte Thumbnail-Grid mit asynchronem WIC-Laden,
+rechts Detail-Panel (EXIF, Auflösung, Dateigröße) mit Schnellaktionen (Drehen, Zuschneiden-Platzhalter, EXIF entfernen).
+
+- **Async-Thumbnails:** Worker-Pool (Kerne−1, eigene COM-/WIC-Instanz); der UI-Thread meldet bei jedem Scroll die gewünschte Liste (Vorschau > sichtbar > Vorlauf), die Warteschlange wird ersetzt. JPEGs werden per `IWICBitmapSourceTransform` direkt DCT-verkleinert, EXIF-Orientation wird berücksichtigt.
+- **EXIF-/GPS-Cleaner:** JPEG ohne Rotations-Tag verlustfrei (APP1/Exif/XMP, APP3–13/15 und Kommentare werden auf Byte-Ebene entfernt, ICC/JFIF bleiben); JPEG mit Rotations-Tag, PNG, TIFF, JXR per WIC-Re-Encode (JPEG Q95, Drehung eingebrannt). BMP/GIF/WebP werden nicht unterstützt. Einzelbild: Kopie `*_clean.*` oder Original überschreiben; Stapel: Kopien in `bereinigt/`.
+- **Stand:** Auf Windows noch **nicht gebaut oder getestet** (MinGW-Syntaxcheck der Quellen lief durch). „Zuschneiden“ ist Platzhalter, „Vollbild“ schaltet nur das Fenster um, Einstellungen werden noch nicht gespeichert, Ordnerbaum/-listing laufen synchron im UI-Thread. Noch nicht im Suite-Launcher und im Installer eingetragen.
 
 ## Duncan's Driver Updater
 
