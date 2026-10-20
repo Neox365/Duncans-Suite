@@ -31,7 +31,7 @@
 #include "ThumbnailLoader.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.4"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.2.5"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -119,6 +119,8 @@ struct MetaResult {
 struct MetaState {
     std::mutex mutex;
     std::vector<MetaResult> results;
+    std::vector<std::wstring> todo;
+    std::atomic<size_t> next{0}, workersLeft{0};
     std::atomic<bool> cancel{false}, done{false}, pending{false};
 };
 
@@ -314,6 +316,7 @@ private:
     void StartDupSearch();
     void OnDup();
     void EndDupMode();
+    void ClearDupMarks();
     void BrowseForFolder();
     GridM Metrics() const;
     int HitGrid(float x, float y) const;
@@ -336,6 +339,9 @@ private:
     void ToggleFullscreen();
     void ShowSettings();
     void StripSelected();
+    std::wstring ChooseOutput(const std::wstring& src, const wchar_t* suffix, const wchar_t* question, const wchar_t* title);
+    void FinishWrite(const std::wstring& src, const std::wstring& dst, const std::wstring& doneInPlace,
+                     const std::wstring& doneCopy);
     void RotateSelected(bool cw);
     void DeleteSelected();
     void ShowBatchMenu();
@@ -441,7 +447,7 @@ private:
     // Bildbetrachter
     bool m_viewer = false, m_cropping = false, m_cropDragging = false, m_panning = false, m_fullByViewer = false;
     float m_vZoom = 1.f, m_vPanX = 0, m_vPanY = 0;
-    POINT m_dragStart{}, m_dragLast{};
+    POINT m_dragStart{};
     float m_panStartX = 0, m_panStartY = 0;
     double m_crop[4] = {0, 0, 1, 1};       // x0, y0, x1, y1 als Bruchteile des aufrechten Bildes
     double m_cropAnchor[2] = {0, 0};
@@ -597,6 +603,7 @@ void App::DiscardDevice() {
     brush.Reset();
     rt.Reset();
     for (auto& it : m_items) it.thumb.Reset();
+    for (auto& it : m_hidden) it.thumb.Reset();  // Bitmaps gehoeren zum alten Render-Target
     m_preview.Reset();
     m_editBmp.Reset();
     m_loaded = 0;
@@ -1228,28 +1235,38 @@ void App::StartMetaPass() {
         return;
     }
     auto st = std::make_shared<MetaState>();
+    st->todo = std::move(todo);
     m_meta = st;
     HWND hwnd = m_hwnd;
-    std::thread([st, hwnd, todo = std::move(todo)] {
-        const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
-        size_t sinceFlush = 0;
-        for (const auto& path : todo) {
-            if (st->cancel) break;
-            imgops::QuickMeta qm;
-            imgops::ReadQuickMeta(path, qm);  // bei Fehlern bleiben die Standardwerte (kein Datum, kein GPS)
-            {
-                std::lock_guard<std::mutex> lk(st->mutex);
-                st->results.push_back({path, qm.taken, qm.hasGps});
+    // Pro Bild ein Decoder: auf mehreren Kernen ist das bei grossen Ordnern merklich schneller als ein Thread
+    const unsigned hw = std::thread::hardware_concurrency();
+    const unsigned nWorkers = std::max(1u, std::min(3u, hw > 1 ? hw - 1 : 1u));
+    st->workersLeft = nWorkers;
+    for (unsigned t = 0; t < nWorkers; ++t) {
+        std::thread([st, hwnd] {
+            const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+            size_t sinceFlush = 0;
+            for (;;) {
+                const size_t i = st->next.fetch_add(1);
+                if (i >= st->todo.size() || st->cancel) break;
+                imgops::QuickMeta qm;
+                imgops::ReadQuickMeta(st->todo[i], qm);  // bei Fehlern bleiben die Standardwerte (kein Datum, kein GPS)
+                {
+                    std::lock_guard<std::mutex> lk(st->mutex);
+                    st->results.push_back({st->todo[i], qm.taken, qm.hasGps});
+                }
+                if (++sinceFlush >= 32) {
+                    sinceFlush = 0;
+                    if (!st->pending.exchange(true)) PostMessageW(hwnd, WM_APP_META, 0, 0);
+                }
             }
-            if (++sinceFlush >= 32) {
-                sinceFlush = 0;
-                if (!st->pending.exchange(true)) PostMessageW(hwnd, WM_APP_META, 0, 0);
+            if (SUCCEEDED(hr)) CoUninitialize();
+            if (st->workersLeft.fetch_sub(1) == 1) {  // der letzte Worker meldet "fertig"
+                st->done = true;
+                PostMessageW(hwnd, WM_APP_META, 0, 0);
             }
-        }
-        st->done = true;
-        PostMessageW(hwnd, WM_APP_META, 0, 0);
-        if (SUCCEEDED(hr)) CoUninitialize();
-    }).detach();
+        }).detach();
+    }
 }
 
 void App::OnMeta() {
@@ -1341,9 +1358,10 @@ void App::OnDup() {
         groups.swap(st->groups);
     }
     if (m_viewer) ExitViewer();
+    ClearDupMarks();
     std::unordered_map<std::wstring, Item*> byPath;
-    for (auto& it : m_items) { it.dupGroup = it.dupRank = 0; byPath[it.path] = &it; }
-    for (auto& it : m_hidden) { it.dupGroup = it.dupRank = 0; byPath[it.path] = &it; }
+    for (auto& it : m_items) byPath[it.path] = &it;
+    for (auto& it : m_hidden) byPath[it.path] = &it;
 
     int gid = 0;
     size_t extras = 0;
@@ -1397,11 +1415,15 @@ void App::OnDup() {
     Invalidate();
 }
 
+void App::ClearDupMarks() {
+    for (auto* list : {&m_items, &m_hidden})
+        for (auto& it : *list) it.dupGroup = it.dupRank = 0, it.dupExact = false;
+}
+
 void App::EndDupMode() {
     if (!m_dupMode) return;
     m_dupMode = false;
-    for (auto& it : m_items) it.dupGroup = it.dupRank = 0;
-    for (auto& it : m_hidden) it.dupGroup = it.dupRank = 0;
+    ClearDupMarks();
     ApplyFilter();
     if (m_sel >= 0) EnsureVisible(m_sel);
     SetStatus(FolderStatus());
@@ -1757,6 +1779,24 @@ void App::ShowSettings() {
     DestroyMenu(m);
 }
 
+// Zieldatei fuer "Kopie anlegen oder Original ersetzen" (Zahnrad-Einstellung). Leer = Nutzer hat abgebrochen.
+std::wstring App::ChooseOutput(const std::wstring& src, const wchar_t* suffix, const wchar_t* question, const wchar_t* title) {
+    if (!m_settings.overwriteOriginals) return UniquePath(WithSuffix(src, suffix));
+    return MessageBoxW(m_hwnd, question, title, MB_YESNO | MB_ICONWARNING) == IDYES ? src : std::wstring();
+}
+
+// Nach dem Schreiben: Original neu einlesen bzw. die neue Kopie in die Liste aufnehmen und auswaehlen.
+void App::FinishWrite(const std::wstring& src, const std::wstring& dst, const std::wstring& doneInPlace,
+                      const std::wstring& doneCopy) {
+    if (_wcsicmp(dst.c_str(), src.c_str()) == 0) {
+        ReloadItem(m_sel);
+        SetStatus(doneInPlace);
+    } else {
+        m_pendingStatus = doneCopy;
+        OpenFolder(m_folder, dst, true);
+    }
+}
+
 void App::StripSelected() {
     if (m_sel < 0) return;
     if (!m_viewer && SelCount() > 1) {
@@ -1764,27 +1804,21 @@ void App::StripSelected() {
         return;
     }
     const std::wstring src = m_items[m_sel].path, name = m_items[m_sel].name;
-    std::wstring dst = src, err;
-    if (!m_settings.overwriteOriginals) {
-        dst = UniquePath(WithSuffix(src, L"_clean"));
-    } else if (MessageBoxW(m_hwnd, L"Alle Metadaten (inkl. Kamera und GPS) im ORIGINAL unwiderruflich entfernen?",
-                           L"EXIF entfernen", MB_YESNO | MB_ICONWARNING) != IDYES) {
-        return;
-    }
+    std::wstring err;
+    const std::wstring dst = ChooseOutput(src, L"_clean",
+                                          L"Alle Metadaten (inkl. Kamera und GPS) im ORIGINAL unwiderruflich entfernen?",
+                                          L"EXIF entfernen");
+    if (dst.empty()) return;
     if (!imgops::StripMetadata(src, dst, &err)) {
         SetStatus(L"EXIF entfernen fehlgeschlagen: " + err);
         return;
     }
     imgops::ImageInfo check;   // Gegenprobe: sind die Standortdaten wirklich weg?
     const bool gpsLeft = imgops::ReadImageInfo(dst, check) && check.hasGps;
-    if (dst == src) {
-        ReloadItem(m_sel);
-        SetStatus(gpsLeft ? L"Achtung: Standortdaten sind noch vorhanden: " + name : L"Metadaten entfernt: " + name);
-    } else {
-        m_pendingStatus = gpsLeft ? L"Achtung: Standortdaten sind in der Kopie noch vorhanden: " + dst
-                                  : L"Bereinigte Kopie erstellt (ohne Kamera- und GPS-Daten): " + FileNameOf(dst);
-        OpenFolder(m_folder, dst, true);  // Kopie in die Liste aufnehmen
-    }
+    FinishWrite(src, dst,
+                gpsLeft ? L"Achtung: Standortdaten sind noch vorhanden: " + name : L"Metadaten entfernt: " + name,
+                gpsLeft ? L"Achtung: Standortdaten sind in der Kopie noch vorhanden: " + dst
+                        : L"Bereinigte Kopie erstellt (ohne Kamera- und GPS-Daten): " + FileNameOf(dst));
 }
 
 void App::RotateSelected(bool cw) {
@@ -1834,8 +1868,7 @@ void App::DeleteSelected() {
                            L" in den Papierkorb verschoben";
     if (m_dupMode) {  // die Gruppen stimmen nach dem Loeschen nicht mehr: zurueck zur normalen Ansicht
         m_dupMode = false;
-        for (auto& it : m_items) it.dupGroup = it.dupRank = 0;
-        for (auto& it : m_hidden) it.dupGroup = it.dupRank = 0;
+        ClearDupMarks();
     }
     OpenFolder(m_folder, next, true);
 }
@@ -2228,25 +2261,17 @@ void App::CancelCrop() {
 void App::ApplyCrop() {
     if (!m_cropping || !m_cropHas || m_sel < 0) return;
     const std::wstring src = m_items[m_sel].path, name = m_items[m_sel].name;
-    std::wstring dst = src, err;
-    if (!m_settings.overwriteOriginals) {
-        dst = UniquePath(WithSuffix(src, L"_crop"));
-    } else if (MessageBoxW(m_hwnd, L"Das ORIGINAL durch den Ausschnitt ersetzen? Das lässt sich nicht rückgängig machen.",
-                           L"Zuschneiden", MB_YESNO | MB_ICONWARNING) != IDYES) {
-        return;
-    }
+    std::wstring err;
+    const std::wstring dst = ChooseOutput(src, L"_crop",
+                                          L"Das ORIGINAL durch den Ausschnitt ersetzen? Das lässt sich nicht rückgängig machen.",
+                                          L"Zuschneiden");
+    if (dst.empty()) return;
     if (!imgops::CropImage(src, dst, m_crop[0], m_crop[1], m_crop[2], m_crop[3], &err)) {
         SetStatus(L"Zuschneiden fehlgeschlagen: " + err);
         return;
     }
     CancelCrop();
-    if (dst == src) {
-        ReloadItem(m_sel);
-        SetStatus(L"Zugeschnitten: " + name);
-    } else {
-        m_pendingStatus = L"Zugeschnittene Kopie erstellt: " + FileNameOf(dst);
-        OpenFolder(m_folder, dst, true);
-    }
+    FinishWrite(src, dst, L"Zugeschnitten: " + name, L"Zugeschnittene Kopie erstellt: " + FileNameOf(dst));
 }
 
 void App::OnViewerKey(WPARAM vk) {
@@ -2723,13 +2748,11 @@ void App::SaveEdit(bool saveAs) {
             SetStatus(L"Das Format muss das des Originals bleiben (." + ExtOf(src) + L").");
             return;
         }
-    } else if (m_settings.overwriteOriginals) {
-        if (MessageBoxW(m_hwnd, L"Das ORIGINAL durch die bearbeitete Fassung ersetzen? Das lässt sich nicht rückgängig machen.",
-                        L"Bearbeiten", MB_YESNO | MB_ICONWARNING) != IDYES)
-            return;
-        dst = src;
     } else {
-        dst = UniquePath(WithSuffix(src, L"_edit"));
+        dst = ChooseOutput(src, L"_edit",
+                           L"Das ORIGINAL durch die bearbeitete Fassung ersetzen? Das lässt sich nicht rückgängig machen.",
+                           L"Bearbeiten");
+        if (dst.empty()) return;
     }
     HCURSOR old = SetCursor(LoadCursor(nullptr, IDC_WAIT));
     const bool ok = imgops::EditImage(src, dst, m_ep, &err);
@@ -2739,15 +2762,10 @@ void App::SaveEdit(bool saveAs) {
         return;
     }
     EndEdit();
-    if (_wcsicmp(dst.c_str(), src.c_str()) == 0) {
-        ReloadItem(m_sel);
-        SetStatus(L"Korrekturen gespeichert: " + name);
-    } else if (ParentOf(dst) == m_folder) {
-        m_pendingStatus = L"Bearbeitete Kopie gespeichert: " + FileNameOf(dst);
-        OpenFolder(m_folder, dst, true);
-    } else {
-        SetStatus(L"Bearbeitete Kopie gespeichert: " + dst);
-    }
+    if (_wcsicmp(dst.c_str(), src.c_str()) == 0 || _wcsicmp(ParentOf(dst).c_str(), m_folder.c_str()) == 0)
+        FinishWrite(src, dst, L"Korrekturen gespeichert: " + name, L"Bearbeitete Kopie gespeichert: " + FileNameOf(dst));
+    else
+        SetStatus(L"Bearbeitete Kopie gespeichert: " + dst);  // liegt ausserhalb des offenen Ordners
 }
 
 void App::OnDropFiles(HDROP drop) {
