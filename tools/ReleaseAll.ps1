@@ -26,7 +26,7 @@ Write-Host "Suite-Version: $ver (Tag $tag)"
 if (-not (Test-Path (Join-Path $env:USERPROFILE 'DuncansSuite-Signing\signing_private.blob'))) { throw 'Privater Schluessel fehlt (tools\MakeSigningKey.ps1)' }
 foreach ($c in 'cmake', 'gh') { if (-not (Get-Command $c -ErrorAction SilentlyContinue)) { throw "$c nicht gefunden" } }
 $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
-if (-not $iscc) { $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
+if (-not $iscc) { $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:ProgramFiles\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
 if (-not $iscc) { throw 'Inno Setup 6 (ISCC.exe) nicht gefunden' }
 $branch = (git rev-parse --abbrev-ref HEAD).Trim()
 if ($branch -ne 'main') { Write-Warning "Du bist auf '$branch', nicht auf 'main'." }
@@ -41,8 +41,9 @@ if (-not (Test-Path (Join-Path $root 'pdf\third_party\pdfium.dll'))) { & (Join-P
 if (-not (Test-Path (Join-Path $root 'pdf\third_party\pdfium.dll'))) { throw 'pdfium.dll fehlt' }
 
 Step 'Bauen (Release, x64)'
-Run 'cmake' @('-S', $root, '-B', (Join-Path $root 'build'), '-A', 'x64')
-Run 'cmake' @('--build', (Join-Path $root 'build'), '--config', 'Release')
+$buildDir = Join-Path $root 'build-release'   # eigener Ordner, damit eine andere Konfiguration in 'build' nicht stoert
+Run 'cmake' @('-S', $root, '-B', $buildDir, '-A', 'x64')
+Run 'cmake' @('--build', $buildDir, '--config', 'Release')
 foreach ($f in 'DuncansSuite.exe', 'DuncansDriverUpdater.exe', 'DuncansPdf.exe', 'DuncansPrivacy.exe', 'DuncansPhotoCommander.exe', 'pdfium.dll') {
     if (-not (Test-Path (Join-Path $rel $f))) { throw "release\$f fehlt nach dem Build" }
 }

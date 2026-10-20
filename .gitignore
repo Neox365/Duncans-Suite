@@ -9,3 +9,4 @@ _archiv/
 .vs/
 pdf/third_party/pdfium.dll
 !resources/vendor_releases.json.sig
+build-release/

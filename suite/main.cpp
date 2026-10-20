@@ -48,7 +48,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.28"
+#define SUITE_VERSION L"1.1.29"
 #endif
 
 namespace
@@ -994,7 +994,7 @@ private:
           L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/version.txt", {},
           L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/pdfium.dll", L"pdfium.dll" },
         { L"DuncansPrivacy.exe", L"Duncan's Privacy Shield",
-          L"Datenschutz- & Telemetrie-Manager. Schaltet Hintergrund-Tracking, Diagnosedaten und unnötige Windows-Dienste per Klick stumm.",
+          L"Datenschutz- & Telemetrie-Manager. Schaltet Tracking, Diagnosedaten und unnötige Windows-Dienste per Klick stumm.",
           CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPrivacy.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },

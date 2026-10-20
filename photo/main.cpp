@@ -30,7 +30,7 @@
 #include "ThumbnailLoader.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.0"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.2.1"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -41,6 +41,7 @@ constexpr UINT WM_APP_THUMBS = WM_APP + 1;
 constexpr UINT WM_APP_BATCH = WM_APP + 2;      // wParam = fertig, lParam = gesamt
 constexpr UINT WM_APP_BATCHDONE = WM_APP + 3;  // Ergebnis steht in den Batch-Zaehlern der App
 constexpr UINT WM_APP_SCAN = WM_APP + 4;       // Ordnerlisting fertig
+constexpr UINT WM_APP_TREE = WM_APP + 5;       // Unterordner eines Baumknotens gelesen
 constexpr UINT_PTR TIMER_SCROLL = 1;
 constexpr int kMaxThumbSize = 320, kMinThumbSize = 96;
 constexpr UINT kShareEdge = 2048;               // Stapel "Verkleinern": laengste Kante in Pixeln
@@ -80,6 +81,7 @@ struct TreeNode {
     std::wstring name, path;
     int depth = 0;
     bool expanded = false, loaded = false, empty = false;
+    bool loading = false, wantExpand = false;   // Unterordner werden im Hintergrund gelesen
     TreeNode* parent = nullptr;
     std::vector<std::unique_ptr<TreeNode>> children;
 };
@@ -90,6 +92,16 @@ struct Item {
     ComPtr<ID2D1Bitmap> thumb;
     bool failed = false;
     bool selected = false;
+};
+
+// Ergebnis des Unterordner-Lesens (Hintergrundthread -> UI-Thread). Der Knoten selbst wird nur im UI-Thread angefasst.
+struct TreeResult {
+    TreeNode* node = nullptr;
+    std::vector<std::wstring> names;
+};
+struct TreeState {
+    std::mutex mutex;
+    std::vector<TreeResult> done;
 };
 
 struct FileEntry {
@@ -246,7 +258,8 @@ private:
 
     // --- Ordnerbaum
     void InitTreeRoots();
-    void EnsureChildren(TreeNode* n);
+    void LoadChildrenAsync(TreeNode* n);
+    void OnTreeLoaded();
     void Flatten();
     void ToggleNode(TreeNode* n);
 
@@ -343,6 +356,7 @@ private:
 
     // Ordnerlisting im Hintergrund
     std::shared_ptr<ScanState> m_scan = std::make_shared<ScanState>();
+    std::shared_ptr<TreeState> m_treeState = std::make_shared<TreeState>();
     std::atomic<uint32_t> m_scanGen{0};
     bool m_scanning = false;
     std::wstring m_pendingSelect;
@@ -652,7 +666,8 @@ void App::DrawTree() {
         if (n == m_selNode) FillRR(r, 5 * k, Theme::Accent, 0.22f);
         else if ((int)i == m_hoverRow) FillRR(r, 5 * k, Theme::Card);
         float x = rcTree.left + 12 * k + n->depth * 16 * k;
-        if (!n->empty) Txt(n->expanded ? L"▾" : L"▸", {x, y, x + 16 * k, y + rh}, fCenter.Get(), Theme::TextDim);
+        if (n->loading) Txt(L"…", {x, y, x + 16 * k, y + rh}, fCenter.Get(), Theme::TextDim);
+        else if (!n->empty) Txt(n->expanded ? L"▾" : L"▸", {x, y, x + 16 * k, y + rh}, fCenter.Get(), Theme::TextDim);
         Txt(n->name, {x + 18 * k, y, rcTree.right - 12 * k, y + rh}, fNormal.Get(),
             n == m_selNode ? Theme::Text : 0xC3C8D2);
     }
@@ -798,31 +813,65 @@ void App::InitTreeRoots() {
     Flatten();
 }
 
-void App::EnsureChildren(TreeNode* n) {
-    if (n->loaded) return;
-    n->loaded = true;
-    WIN32_FIND_DATAW fd;
+// Unterordner im Hintergrund lesen: Netzlaufwerke und grosse Ordner blockieren die Oberflaeche nicht.
+void App::LoadChildrenAsync(TreeNode* n) {
+    if (n->loaded || n->loading) return;
+    n->loading = true;
+    std::shared_ptr<TreeState> st = m_treeState;
+    HWND hwnd = m_hwnd;
     std::wstring base = n->path;
     if (!base.empty() && base.back() != L'\\') base += L'\\';
-    HANDLE h = FindFirstFileExW((base + L"*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr,
-                                FIND_FIRST_EX_LARGE_FETCH);
-    if (h != INVALID_HANDLE_VALUE) {
-        do {
-            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
-            if (fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) continue;
-            if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
+    std::thread([st, hwnd, n, base] {
+        TreeResult res;
+        res.node = n;
+        WIN32_FIND_DATAW fd;
+        HANDLE h = FindFirstFileExW((base + L"*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, nullptr,
+                                    FIND_FIRST_EX_LARGE_FETCH);
+        if (h != INVALID_HANDLE_VALUE) {
+            do {
+                if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) continue;
+                if (fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) continue;
+                if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
+                res.names.push_back(fd.cFileName);
+            } while (FindNextFileW(h, &fd));
+            FindClose(h);
+        }
+        {
+            std::lock_guard<std::mutex> lk(st->mutex);
+            st->done.push_back(std::move(res));
+        }
+        PostMessageW(hwnd, WM_APP_TREE, 0, 0);
+    }).detach();
+}
+
+void App::OnTreeLoaded() {
+    std::vector<TreeResult> done;
+    {
+        std::lock_guard<std::mutex> lk(m_treeState->mutex);
+        done.swap(m_treeState->done);
+    }
+    for (auto& r : done) {
+        TreeNode* n = r.node;  // Knoten werden waehrend der Programmlaufzeit nie entfernt
+        std::wstring base = n->path;
+        if (!base.empty() && base.back() != L'\\') base += L'\\';
+        for (auto& name : r.names) {
             auto c = std::make_unique<TreeNode>();
-            c->name = fd.cFileName;
-            c->path = base + fd.cFileName;
+            c->name = name;
+            c->path = base + name;
             c->depth = n->depth + 1;
             c->parent = n;
             n->children.push_back(std::move(c));
-        } while (FindNextFileW(h, &fd));
-        FindClose(h);
+        }
+        std::sort(n->children.begin(), n->children.end(),
+                  [](auto& a, auto& b) { return StrCmpLogicalW(a->name.c_str(), b->name.c_str()) < 0; });
+        n->empty = n->children.empty();
+        n->loaded = true;
+        n->loading = false;
+        if (n->wantExpand && !n->empty) n->expanded = true;
+        n->wantExpand = false;
     }
-    std::sort(n->children.begin(), n->children.end(),
-              [](auto& a, auto& b) { return StrCmpLogicalW(a->name.c_str(), b->name.c_str()) < 0; });
-    n->empty = n->children.empty();
+    Flatten();
+    Invalidate();
 }
 
 void App::Flatten() {
@@ -836,7 +885,12 @@ void App::Flatten() {
 }
 
 void App::ToggleNode(TreeNode* n) {
-    if (!n->expanded) EnsureChildren(n);
+    if (!n->loaded) {  // erst lesen, aufgeklappt wird beim Eintreffen des Ergebnisses
+        n->wantExpand = true;
+        LoadChildrenAsync(n);
+        Invalidate();
+        return;
+    }
     if (!n->empty) n->expanded = !n->expanded;
     Flatten();
 }
@@ -1897,6 +1951,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         case WM_DROPFILES: OnDropFiles(reinterpret_cast<HDROP>(wp)); return 0;
         case WM_APP_THUMBS: Invalidate(); return 0;
         case WM_APP_SCAN: OnScanDone(); return 0;
+        case WM_APP_TREE: OnTreeLoaded(); return 0;
         case WM_APP_BATCH: {
             wchar_t b[128];
             swprintf_s(b, L"Stapelverarbeitung: %llu / %llu   (Esc bricht ab)", (unsigned long long)m_bDone.load(),
