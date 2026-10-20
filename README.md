@@ -7,7 +7,23 @@ Windows-Programmsammlung in C++ / Win32 mit einheitlichem Dark-UI, Sprache der P
 | **Duncan's Suite** | Launcher: startet die Programme, lädt fehlende per Ein-Klick-Download und aktualisiert sich selbst |
 | **Duncan's Driver Updater** | Hardware- und Treiber-Manager (Scan, Update-Erkennung, Installation über Windows Update) |
 | **Duncan's PDF Reader** | PDF-Betrachter und -Werkzeug (PDFium) |
+| **Duncan's Photo Commander** | Foto-Verwaltung (Ordnerbaum, asynchrones Thumbnail-Grid, EXIF-/GPS-Cleaner), Quellen in `photo/` – Grundgerüst |
 | **Duncan's Tidy** | System-Cleaner und Optimierer, eigenes Projekt ([Neox365/Duncans-Tidy-ToolSet](https://github.com/Neox365/Duncans-Tidy-ToolSet)); die Suite lädt es nur herunter und startet es |
+
+## Duncan's Photo Commander
+
+Win32 + Direct2D/DirectWrite + WIC in `photo/`, Ziel `DuncansPhotoCommander.exe` (Farben aus `common/Theme.h` über `photo/Theme.h`).
+Topbar (Ordner öffnen, Vollbild, Stapelverarbeitung, Zahnrad), links Ordnerbaum, Mitte Thumbnail-Grid, rechts Detail-Panel (EXIF, Auflösung, Dateigröße) mit Schnellaktionen.
+Start mit Ordner oder Bild als Argument (`DuncansPhotoCommander.exe "C:\Fotos\a.jpg"`) oder per Drag & Drop auf das Fenster.
+
+- **Thumbnail-Grid:** asynchrones WIC-Laden (Worker-Pool, eigene COM-/WIC-Instanz je Thread; die Warteschlange wird bei jedem Scroll ersetzt, JPEGs werden per DCT-Skalierung verkleinert, EXIF-Drehung wird berücksichtigt). Das Ordnerlisting läuft im Hintergrund. Mehrfachauswahl mit Strg/Umschalt-Klick, Umschalt+Pfeile und Strg+A; Sortierung nach Name, Datum oder Größe (auf-/absteigend); Entf verschiebt Bilder in den Papierkorb.
+- **Bildbetrachter:** Doppelklick oder Enter (Vollbild-Knopf mit gewähltem Bild öffnet ihn im Vollbild). Mausrad zoomt zum Mauszeiger, Ziehen verschiebt, Doppelklick wechselt zwischen Einpassen und 100 %; ←/→ blättern, `0` einpassen, `1` 100 %, `+`/`-` Zoom, `R` / Umschalt+`R` drehen, `C` zuschneiden, Entf löschen, Esc schließt. Das Bild wird bis 5000 px Kantenlänge geladen (100 % bezieht sich auf die Originalgröße).
+- **Zuschneiden:** Ausschnitt im Betrachter aufziehen, Enter speichert als Kopie `*_crop.*` (oder überschreibt das Original, siehe Zahnrad). Re-Encode (JPEG Q95), Metadaten bleiben erhalten.
+- **EXIF-/GPS-Cleaner:** JPEG ohne Rotations-Tag und WebP verlustfrei auf Byte-Ebene (JPEG: APP1/Exif/XMP, APP3–13/15 und Kommentare; WebP: EXIF-/XMP-Chunks; ICC-Profil bleibt). JPEG mit Rotations-Tag, PNG, TIFF, JXR per WIC-Re-Encode (JPEG Q95, Drehung eingebrannt); BMP hat keine Metadaten und wird kopiert; GIF/HEIC werden übersprungen. Nach jedem Bereinigen prüft das Programm, ob die Standortdaten wirklich weg sind.
+- **Stapelverarbeitung** (Menü am Knopf, gilt für die Auswahl oder alle Bilder des Ordners, mit Fortschritt in der Statusleiste und Abbruch per Esc): EXIF/GPS entfernen (Kopien im Ordner `bereinigt` oder Originale überschreiben), fürs Teilen verkleinern (längste Kante 2048 px, JPEG Q85, ohne Metadaten, Ordner `verkleinert`), alle 90° drehen. Das Ergebnis nennt, wie viele Bilder Standortdaten enthielten, übersprungen wurden oder fehlschlugen.
+- **Einstellungen:** Zahnrad: Thumbnail-Größe, Sortierung, „Original überschreiben“; gespeichert in `%LOCALAPPDATA%\DuncansPhotoCommander\settings.ini` (inklusive zuletzt geöffnetem Ordner).
+- **Release:** Download/Update über das Release `modules` im Suite-Repo (`tools\PublishModule.ps1 -Module Photo`), Karte im Launcher, im Komplett-Installer enthalten.
+- **Stand:** Der GitHub-Workflow `Windows-Build` baut alle Programme mit MSVC und testet die Byte-Bereinigung (`photo/tests`). Der Ordnerbaum liest Unterordner noch im UI-Thread; HEIC/GIF werden nicht bearbeitet.
 
 ## Duncan's Driver Updater
 
@@ -32,8 +48,8 @@ Gespeichert in `%LOCALAPPDATA%\DuncansDriverUpdater\settings.ini`. Einen Autosta
 
 ## Duncan's Suite (Launcher)
 
-`DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: drei Karten starten **Duncan's Tidy** (`DuncansTidy.exe`),
-den **Driver Updater** (`DuncansDriverUpdater.exe`) und den **PDF Reader** (`DuncansPdf.exe`). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
+`DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: fünf Karten starten **Duncan's Tidy** (`DuncansTidy.exe`),
+den **Driver Updater** (`DuncansDriverUpdater.exe`), den **PDF Reader** (`DuncansPdf.exe`), den **Privacy Shield** und den **Photo Commander** (`DuncansPhotoCommander.exe`, Download und Update über das Release `modules` wie beim Privacy Shield). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
 `%LOCALAPPDATA%\DuncansTidy`. Ist Tidy nicht installiert, zeigt die Karte „Nicht installiert“ und den Button **Herunterladen**: Ein Klick lädt die neueste `DuncansTidy.exe` per HTTPS von den GitHub-Releases (`Neox365/Duncans-Tidy-ToolSet`) nach `%LOCALAPPDATA%\DuncansTidy`, prüft die SHA-256-Summe aus `DuncansTidy.exe.sha256` und schaltet den Button danach auf „Starten“. Fehlt eine andere EXE, erscheint ein Dark-Dialog mit den durchsuchten Pfaden. Der Footer zeigt die Version
 und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Banner zeigt einen leuchtenden Datenstrom in den Farben der drei Programme (Gold = Tidy, Cyan = Driver Updater, Magenta = PDF Reader); beim Start pulsiert er einmalig kurz (ca. 1,8 s, per Timer), danach bleibt er ruhig. Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
 und ins Startmenü.

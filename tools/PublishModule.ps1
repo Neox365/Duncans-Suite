@@ -1,10 +1,11 @@
 # Veroeffentlicht EIN Programm einzeln, ohne neue Suite-Version (die Suite bietet das Update auf der jeweiligen Karte an).
 # Aufruf (nach dem Bauen, Version der EXE vorher angehoben):
 #   .\tools\PublishModule.ps1 -Module DriverUpdater      # release\DuncansDriverUpdater.exe -> Release "modules" im Suite-Repo
+#   .\tools\PublishModule.ps1 -Module Photo            # release\DuncansPhotoCommander.exe -> Release "modules" im Suite-Repo
 #   .\tools\PublishModule.ps1 -Module Privacy            # release\DuncansPrivacy.exe       -> Release "modules" im Suite-Repo
 #   .\tools\PublishModule.ps1 -Module Pdf                # release\DuncansPdf.exe (+ pdfium.dll) -> Release v1.0.0 in Neox365/Duncans-PDF-Reader
 # Tidy hat sein eigenes Release.ps1 (DownloadCleaner). Das Skript LAEDT HOCH (gh) - nur nach ausdruecklicher Freigabe ausfuehren.
-param([Parameter(Mandatory)][ValidateSet('DriverUpdater', 'Privacy', 'Pdf')][string]$Module, [switch]$DryRun)
+param([Parameter(Mandatory)][ValidateSet('DriverUpdater', 'Privacy', 'Photo', 'Pdf')][string]$Module, [switch]$DryRun)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rel = Join-Path (Split-Path -Parent $root) 'release'
@@ -23,7 +24,7 @@ if ($Module -eq 'Pdf') {
 }
 
 $repo = 'Neox365/Duncans-Suite'; $tag = 'modules'
-$exe = if ($Module -eq 'DriverUpdater') { 'DuncansDriverUpdater.exe' } else { 'DuncansPrivacy.exe' }
+$exe = switch ($Module) { 'DriverUpdater' { 'DuncansDriverUpdater.exe' } 'Photo' { 'DuncansPhotoCommander.exe' } default { 'DuncansPrivacy.exe' } }
 $ver = FileVer $exe
 & $sign (Join-Path $rel $exe)
 

@@ -3,7 +3,7 @@
 ; Komplett-Installer (alle Programme enthalten):                                    ISCC.exe /DFull=1 installer\installer.iss
 
 #define MyAppName      "Duncan's Driver Updater"
-#define MyAppVersion   "1.1.27"
+#define MyAppVersion   "1.1.28"
 #define MyAppPublisher "Duncan"
 #define MyAppExeName   "DuncansDriverUpdater.exe"
 ; Duncan's Suite: zentraler Launcher (Haupt-Startverknuepfung fuer Desktop und Startmenue)
@@ -56,6 +56,8 @@ Source: "..\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 ; Duncan's PDF Reader (PDFium wird zur Laufzeit aus pdfium.dll geladen)
 Source: "..\release\DuncansPdf.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\release\pdfium.dll"; DestDir: "{app}"; Flags: ignoreversion
+; Duncan's Photo Commander
+Source: "..\release\DuncansPhotoCommander.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Duncan's Privacy Shield (Administratorrechte, Registry-Einstellungen mit Sicherung)
 Source: "..\release\DuncansPrivacy.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Hersteller-Tabelle fuer den Grafiktreiber-Abgleich (vom Nutzer editierbar)
@@ -67,6 +69,7 @@ Name: "{group}\{#SuiteName}"; Filename: "{app}\{#SuiteExeName}"
 #ifdef Full
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\Duncan's PDF Reader"; Filename: "{app}\DuncansPdf.exe"
+Name: "{group}\Duncan's Photo Commander"; Filename: "{app}\DuncansPhotoCommander.exe"
 Name: "{group}\Duncan's Privacy Shield"; Filename: "{app}\DuncansPrivacy.exe"
 #endif
 Name: "{group}\{cm:UninstallProgram,{#SuiteName}}"; Filename: "{uninstallexe}"
@@ -78,9 +81,11 @@ Type: files; Name: "{localappdata}\DuncansDriverUpdater\DuncansDriverUpdater.exe
 Type: files; Name: "{localappdata}\DuncansPdf\DuncansPdf.exe*"
 Type: files; Name: "{localappdata}\DuncansPdf\pdfium.dll*"
 Type: files; Name: "{localappdata}\DuncansPrivacy\DuncansPrivacy.exe*"
+Type: files; Name: "{localappdata}\DuncansPhotoCommander\DuncansPhotoCommander.exe*"
 Type: dirifempty; Name: "{localappdata}\DuncansDriverUpdater"
 Type: dirifempty; Name: "{localappdata}\DuncansPdf"
 Type: dirifempty; Name: "{localappdata}\DuncansPrivacy"
+Type: dirifempty; Name: "{localappdata}\DuncansPhotoCommander"
 
 [Run]
 ; "Programm nach der Installation starten"
