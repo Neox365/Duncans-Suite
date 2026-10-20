@@ -1,0 +1,31 @@
+name: Windows-Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Konfigurieren (MSVC, x64)
+        run: cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+
+      - name: Alle Programme bauen (Release)
+        run: cmake --build build --config Release
+
+      - name: Test der Metadaten-Bereinigung auf Byte-Ebene
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat" || call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+          cl /nologo /std:c++17 /EHsc /W4 photo\tests\ByteStripTest.cpp /Fe:build\ByteStripTest.exe /Fo:build\ByteStripTest.obj
+          build\ByteStripTest.exe
+
+      - name: EXE-Dateien als Artefakt ablegen (unsigniert)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: release/*.exe

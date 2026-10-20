@@ -1,7 +1,7 @@
 #include "ThumbnailLoader.h"
 #include "ImageOps.h"
 
-#include <wincodec.h>
+#include "WicCompat.h"
 #include <wrl/client.h>
 #include <algorithm>
 #include <cmath>

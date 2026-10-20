@@ -37,8 +37,22 @@ WICBitmapTransformOptions OrientationToTransform(int orientation);
 //  - JPEG ohne Rotations-Tag: verlustfrei, Segmente werden auf Byte-Ebene entfernt.
 //  - JPEG mit Rotations-Tag / PNG / TIFF: Re-Encode ueber WIC (JPEG Qualitaet 95),
 //    die Drehung wird dabei in die Pixel eingebrannt.
-//  - BMP/GIF/WebP: false + Fehlertext (nicht unterstuetzt).
+//  - WebP: verlustfrei, EXIF-/XMP-Chunks werden entfernt. BMP: hat keine Metadaten, wird nur kopiert.
+//  - GIF/HEIC: false + Fehlertext (nicht unterstuetzt).
 bool StripMetadata(const std::wstring& src, const std::wstring& dst, std::wstring* err = nullptr);
+
+// Formate, die StripMetadata bzw. die Re-Encode-Funktionen (Drehen, Zuschneiden, Verkleinern) verarbeiten.
+bool CanStripMetadata(const std::wstring& path);
+bool CanReencode(const std::wstring& path);
+
+// Schneidet einen Ausschnitt aus (Bruchteile 0..1 des aufrecht stehenden Bildes) und schreibt ihn nach dst
+// (dst darf gleich src sein). Re-Encode (JPEG Q95), Metadaten bleiben erhalten, Orientation wird eingebrannt.
+bool CropImage(const std::wstring& src, const std::wstring& dst, double x0, double y0, double x1, double y1,
+               std::wstring* err = nullptr);
+
+// Verkleinert so, dass die laengste Kante <= maxEdge ist (nie vergroessern), JPEG Q85, ohne Metadaten
+// (zum Teilen gedacht). Drehung wird eingebrannt.
+bool ResizeImage(const std::wstring& src, const std::wstring& dst, UINT maxEdge, std::wstring* err = nullptr);
 
 // Dreht um 90 Grad (verlustbehaftet bei JPEG, Metadaten bleiben erhalten).
 bool RotateImage(const std::wstring& path, bool clockwise, std::wstring* err = nullptr);

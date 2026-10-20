@@ -48,7 +48,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.27"
+#define SUITE_VERSION L"1.1.28"
 #endif
 
 namespace

@@ -1,4 +1,5 @@
 #include "ImageOps.h"
+#include "ByteStrip.h"
 
 #include <wrl/client.h>
 #include <wincodecsdk.h>
@@ -143,51 +144,22 @@ bool WriteAll(const std::wstring& path, const std::vector<BYTE>& data) {
     return ok;
 }
 
-bool IsIccSegment(const std::vector<BYTE>& d, size_t payload, size_t len) {
-    static const char tag[] = "ICC_PROFILE";
-    return len >= sizeof(tag) && memcmp(&d[payload], tag, sizeof(tag) - 1) == 0;
-}
-
-// Behaelt: JFIF (APP0), ICC-Profil (APP2), Adobe (APP14) und alle Bildsegmente.
-// Entfernt: Exif/XMP (APP1), MPF & Co (APP2 ohne ICC), APP3..APP13, APP15, Kommentare.
-bool StripJpegBytes(const std::vector<BYTE>& in, std::vector<BYTE>& out) {
-    if (in.size() < 4 || in[0] != 0xFF || in[1] != 0xD8) return false;
-    out.clear();
-    out.reserve(in.size());
-    out.push_back(0xFF);
-    out.push_back(0xD8);
-    size_t i = 2;
-    while (i + 2 <= in.size()) {
-        if (in[i] != 0xFF) return false;
-        BYTE m = in[i + 1];
-        if (m == 0xFF) { ++i; continue; }  // Fuell-Bytes
-        if (m == 0xDA || m == 0xD9) {      // SOS / EOI: Rest unveraendert uebernehmen
-            out.insert(out.end(), in.begin() + i, in.end());
-            return true;
-        }
-        if (m == 0x01 || (m >= 0xD0 && m <= 0xD8)) {  // Marker ohne Laenge
-            out.push_back(0xFF);
-            out.push_back(m);
-            i += 2;
-            continue;
-        }
-        if (i + 4 > in.size()) return false;
-        size_t len = ((size_t)in[i + 2] << 8) | in[i + 3];
-        if (len < 2 || i + 2 + len > in.size()) return false;
-        bool drop = m == 0xE1 || (m >= 0xE3 && m <= 0xED) || m == 0xEF || m == 0xFE ||
-                    (m == 0xE2 && !IsIccSegment(in, i + 4, len - 2));
-        if (!drop) out.insert(out.end(), in.begin() + i, in.begin() + i + 2 + len);
-        i += 2 + len;
-    }
-    return false;
-}
-
 // ---- WIC Re-Encode ----------------------------------------------------------
+
+struct EncodeOpts {
+    int rotateCw = 0;            // 0/90/180/270 zusaetzlich zur EXIF-Orientation
+    bool keepMetadata = false;
+    bool crop = false;           // Ausschnitt in Bruchteilen (0..1) des aufrecht stehenden Bildes
+    double cx0 = 0, cy0 = 0, cx1 = 1, cy1 = 1;
+    UINT maxEdge = 0;            // > 0: laengste Kante auf diesen Wert verkleinern (nie vergroessern)
+    float quality = 0.95f;       // nur JPEG
+};
 
 // Drehung der Pixel, dann Encode in dasselbe Containerformat ohne Metadaten
 // (keepMetadata=false) bzw. mit kopierten Metadaten und Orientation=1.
-bool Reencode(const std::wstring& src, const std::wstring& dst, int extraRotateCw, bool keepMetadata,
-              std::wstring* err) {
+bool Reencode(const std::wstring& src, const std::wstring& dst, const EncodeOpts& o, std::wstring* err) {
+    const int extraRotateCw = o.rotateCw;
+    const bool keepMetadata = o.keepMetadata;
     auto f = MakeFactory();
     if (!f) { SetErr(err, L"WIC nicht verfuegbar"); return false; }
 
@@ -220,6 +192,39 @@ bool Reencode(const std::wstring& src, const std::wstring& dst, int extraRotateC
         }
         cur = fr;
     }
+    if (o.crop) {
+        UINT cw = 0, ch = 0;
+        cur->GetSize(&cw, &ch);
+        auto px = [](double frac, UINT total) { return (UINT)std::clamp((long long)std::llround(frac * total), 0ll, (long long)total); };
+        UINT x0 = std::min(px(o.cx0, cw), cw - 1), y0 = std::min(px(o.cy0, ch), ch - 1);
+        UINT x1 = std::max(px(o.cx1, cw), x0 + 1), y1 = std::max(px(o.cy1, ch), y0 + 1);
+        WICRect rc{(INT)x0, (INT)y0, (INT)(std::min(x1, cw) - x0), (INT)(std::min(y1, ch) - y0)};
+        ComPtr<IWICBitmapClipper> cl;
+        if (FAILED(f->CreateBitmapClipper(&cl)) || FAILED(cl->Initialize(cur.Get(), &rc))) {
+            SetErr(err, L"Zuschneiden fehlgeschlagen");
+            return false;
+        }
+        cur = cl;
+    }
+    if (o.maxEdge > 0) {
+        UINT sw = 0, sh = 0;
+        cur->GetSize(&sw, &sh);
+        if (std::max(sw, sh) > o.maxEdge) {
+            const double sc = (double)o.maxEdge / std::max(sw, sh);
+            const UINT nw = std::max(1u, (UINT)std::lround(sw * sc)), nh = std::max(1u, (UINT)std::lround(sh * sc));
+            ComPtr<IWICFormatConverter> cv;   // Skalierer arbeitet nicht mit Palettenformaten
+            ComPtr<IWICBitmapScaler> scaler;
+            if (FAILED(f->CreateFormatConverter(&cv)) ||
+                FAILED(cv->Initialize(cur.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                                      WICBitmapPaletteTypeCustom)) ||
+                FAILED(f->CreateBitmapScaler(&scaler)) ||
+                FAILED(scaler->Initialize(cv.Get(), nw, nh, WICBitmapInterpolationModeFant))) {
+                SetErr(err, L"Verkleinern fehlgeschlagen");
+                return false;
+            }
+            cur = scaler;
+        }
+    }
 
     ComPtr<IWICBitmapEncoder> enc;
     if (FAILED(f->CreateEncoder(container, nullptr, &enc))) {
@@ -243,7 +248,7 @@ bool Reencode(const std::wstring& src, const std::wstring& dst, int extraRotateC
         VARIANT v;
         VariantInit(&v);
         v.vt = VT_R4;
-        v.fltVal = 0.95f;
+        v.fltVal = o.quality;
         props->Write(1, &opt, &v);
     }
     out->Initialize(props.Get());
@@ -276,11 +281,11 @@ bool Reencode(const std::wstring& src, const std::wstring& dst, int extraRotateC
         if (SUCCEEDED(frame.As(&br)) && SUCCEEDED(out.As(&bw)) && SUCCEEDED(bw->InitializeFromBlockReader(br.Get()))) {
             ComPtr<IWICMetadataQueryWriter> qw;
             if (SUCCEEDED(out->GetMetadataQueryWriter(&qw))) {
-                PROPVARIANT o;
-                PropVariantInit(&o);
-                o.vt = VT_UI2;
-                o.uiVal = 1;  // Pixel sind bereits aufrecht
-                qw->SetMetadataByName(L"/app1/ifd/{ushort=274}", &o);
+                PROPVARIANT ori;
+                PropVariantInit(&ori);
+                ori.vt = VT_UI2;
+                ori.uiVal = 1;  // Pixel sind bereits aufrecht
+                qw->SetMetadataByName(L"/app1/ifd/{ushort=274}", &ori);
             }
         }
     }
@@ -445,7 +450,7 @@ bool StripMetadata(const std::wstring& src, const std::wstring& dst, std::wstrin
         }
         if (orientation <= 1) {
             std::vector<BYTE> in, out;
-            if (!ReadAll(src, in) || !StripJpegBytes(in, out)) {
+            if (!ReadAll(src, in) || !bytes::StripJpeg(in, out)) {
                 SetErr(err, L"JPEG konnte nicht verarbeitet werden");
                 return false;
             }
@@ -457,16 +462,80 @@ bool StripMetadata(const std::wstring& src, const std::wstring& dst, std::wstrin
             }
             return true;
         }
-        return Reencode(src, dst, 0, false, err);
+        return Reencode(src, dst, EncodeOpts{}, err);
     }
     if (ext == L"png" || ext == L"tif" || ext == L"tiff" || ext == L"jxr" || ext == L"wdp")
-        return Reencode(src, dst, 0, false, err);
-    SetErr(err, L"Format wird (noch) nicht unterstuetzt");
+        return Reencode(src, dst, EncodeOpts{}, err);
+    if (ext == L"webp") {
+        std::vector<BYTE> in, out;
+        if (!ReadAll(src, in) || !bytes::StripWebp(in, out)) {
+            SetErr(err, L"WebP konnte nicht verarbeitet werden");
+            return false;
+        }
+        std::wstring tmp = dst + L".pctmp";
+        if (!WriteAll(tmp, out) || !MoveFileExW(tmp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+            DeleteFileW(tmp.c_str());
+            SetErr(err, L"Schreiben fehlgeschlagen");
+            return false;
+        }
+        return true;
+    }
+    if (ext == L"bmp") {  // BMP kennt keine EXIF-/GPS-Daten: nichts zu entfernen, Kopie genuegt
+        if (_wcsicmp(src.c_str(), dst.c_str()) == 0) return true;
+        if (!CopyFileW(src.c_str(), dst.c_str(), FALSE)) {
+            SetErr(err, L"Kopieren fehlgeschlagen");
+            return false;
+        }
+        return true;
+    }
+    SetErr(err, L"Format wird nicht unterstuetzt (GIF, HEIC)");
     return false;
 }
 
+bool CanStripMetadata(const std::wstring& path) {
+    const std::wstring e = LowerExt(path);
+    return IsJpegExt(e) || e == L"png" || e == L"tif" || e == L"tiff" || e == L"jxr" || e == L"wdp" || e == L"webp" ||
+           e == L"bmp";
+}
+
+bool CanReencode(const std::wstring& path) {
+    const std::wstring e = LowerExt(path);
+    return IsJpegExt(e) || e == L"png" || e == L"tif" || e == L"tiff" || e == L"jxr" || e == L"wdp" || e == L"bmp";
+}
+
 bool RotateImage(const std::wstring& path, bool clockwise, std::wstring* err) {
-    return Reencode(path, path, clockwise ? 90 : 270, true, err);
+    if (!CanReencode(path)) {
+        SetErr(err, L"Drehen wird fuer dieses Format nicht unterstuetzt");
+        return false;
+    }
+    EncodeOpts o;
+    o.rotateCw = clockwise ? 90 : 270;
+    o.keepMetadata = true;
+    return Reencode(path, path, o, err);
+}
+
+bool CropImage(const std::wstring& src, const std::wstring& dst, double x0, double y0, double x1, double y1,
+               std::wstring* err) {
+    if (!CanReencode(src)) {
+        SetErr(err, L"Zuschneiden wird fuer dieses Format nicht unterstuetzt");
+        return false;
+    }
+    EncodeOpts o;
+    o.keepMetadata = true;
+    o.crop = true;
+    o.cx0 = x0; o.cy0 = y0; o.cx1 = x1; o.cy1 = y1;
+    return Reencode(src, dst, o, err);
+}
+
+bool ResizeImage(const std::wstring& src, const std::wstring& dst, UINT maxEdge, std::wstring* err) {
+    if (!CanReencode(src)) {
+        SetErr(err, L"Verkleinern wird fuer dieses Format nicht unterstuetzt");
+        return false;
+    }
+    EncodeOpts o;   // ohne Metadaten: gedacht zum Teilen
+    o.maxEdge = maxEdge;
+    o.quality = 0.85f;
+    return Reencode(src, dst, o, err);
 }
 
 }  // namespace imgops
