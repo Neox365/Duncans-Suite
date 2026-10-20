@@ -23,7 +23,7 @@ Start mit Ordner oder Bild als Argument (`DuncansPhotoCommander.exe "C:\Fotos\a.
 - **Stapelverarbeitung** (Menü am Knopf, gilt für die Auswahl oder alle Bilder des Ordners, mit Fortschritt in der Statusleiste und Abbruch per Esc): EXIF/GPS entfernen (Kopien im Ordner `bereinigt` oder Originale überschreiben), fürs Teilen verkleinern (längste Kante 2048 px, JPEG Q85, ohne Metadaten, Ordner `verkleinert`), alle 90° drehen. Das Ergebnis nennt, wie viele Bilder Standortdaten enthielten, übersprungen wurden oder fehlschlugen.
 - **Einstellungen:** Zahnrad: Thumbnail-Größe, Sortierung, „Original überschreiben“; gespeichert in `%LOCALAPPDATA%\DuncansPhotoCommander\settings.ini` (inklusive zuletzt geöffnetem Ordner).
 - **Release:** Download/Update über das Release `modules` im Suite-Repo (`tools\PublishModule.ps1 -Module Photo`), Karte im Launcher, im Komplett-Installer enthalten.
-- **Stand:** Der GitHub-Workflow `Windows-Build` baut alle Programme mit MSVC und testet die Byte-Bereinigung (`photo/tests`). Der Ordnerbaum liest Unterordner noch im UI-Thread; HEIC/GIF werden nicht bearbeitet.
+- **Stand:** Der GitHub-Workflow `Windows-Build` baut alle Programme mit MSVC und testet die Byte-Bereinigung (`photo/tests`). HEIC/GIF werden nicht bearbeitet.
 
 ## Duncan's Driver Updater
 
