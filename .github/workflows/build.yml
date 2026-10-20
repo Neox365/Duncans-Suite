@@ -28,6 +28,12 @@ jobs:
           cl /nologo /std:c++17 /EHsc /W4 photo\tests\ByteStripTest.cpp /Fe:build\ByteStripTest.exe /Fo:build\ByteStripTest.obj
           build\ByteStripTest.exe
 
+      - name: Test der Duplikatsuche und der EXIF-Zeit
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /EHsc /W4 /DUNICODE /D_UNICODE /DNOMINMAX photo\tests\DuplicatesTest.cpp photo\ImageOps.cpp /Fe:build\DuplicatesTest.exe /Fo:build\ /link windowscodecs.lib ole32.lib oleaut32.lib uuid.lib propsys.lib
+          build\DuplicatesTest.exe
+
       - name: EXE-Dateien als Artefakt ablegen (unsigniert)
         uses: actions/upload-artifact@v4
         with:

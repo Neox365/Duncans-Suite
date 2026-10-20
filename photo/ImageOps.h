@@ -4,6 +4,7 @@
 // initialisiert hat (CoInitializeEx).
 #include <windows.h>
 #include <wincodec.h>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -25,6 +26,22 @@ struct ImageInfo {
 };
 
 bool IsSupportedImage(const std::wstring& path);
+
+// Schnelle Metadaten fuer Sortieren/Filtern: Aufnahmezeit (UTC als FILETIME-Wert, 0 = unbekannt) und GPS-Block.
+struct QuickMeta {
+    ULONGLONG taken = 0;
+    bool hasGps = false;
+};
+bool ReadQuickMeta(const std::wstring& path, QuickMeta& out);
+
+// EXIF-Zeitstempel "YYYY:MM:DD HH:MM:SS" (Ortszeit) -> UTC als FILETIME-Wert; false bei ungueltigem Text.
+bool ParseExifDate(const std::wstring& s, ULONGLONG& utc);
+
+// Doppelte Bilder: Inhaltshash der ganzen Datei (zwei unabhaengige 64-Bit-Laeufe) und 64-Bit-Differenzhash
+// (dHash, 9x8 Graustufen) fuer "sieht gleich aus". HammingDistance vergleicht zwei dHashes.
+bool HashFile(const std::wstring& path, uint64_t& h1, uint64_t& h2);
+bool ComputeDHash(const std::wstring& path, uint64_t& hash);
+int HammingDistance(uint64_t a, uint64_t b);
 
 bool ReadImageInfo(const std::wstring& path, ImageInfo& out);
 

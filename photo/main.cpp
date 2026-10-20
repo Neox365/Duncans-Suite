@@ -25,12 +25,13 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Duplicates.h"
 #include "ImageOps.h"
 #include "Theme.h"
 #include "ThumbnailLoader.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.1"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.2.2"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -42,6 +43,8 @@ constexpr UINT WM_APP_BATCH = WM_APP + 2;      // wParam = fertig, lParam = gesa
 constexpr UINT WM_APP_BATCHDONE = WM_APP + 3;  // Ergebnis steht in den Batch-Zaehlern der App
 constexpr UINT WM_APP_SCAN = WM_APP + 4;       // Ordnerlisting fertig
 constexpr UINT WM_APP_TREE = WM_APP + 5;       // Unterordner eines Baumknotens gelesen
+constexpr UINT WM_APP_META = WM_APP + 6;       // Aufnahmedatum/GPS-Flags von Bildern gelesen
+constexpr UINT WM_APP_DUP = WM_APP + 7;        // Duplikatsuche: Fortschritt oder fertig
 constexpr UINT_PTR TIMER_SCROLL = 1;
 constexpr int kMaxThumbSize = 320, kMinThumbSize = 96;
 constexpr UINT kShareEdge = 2048;               // Stapel "Verkleinern": laengste Kante in Pixeln
@@ -53,8 +56,10 @@ enum ButtonId {
 };
 enum MenuId {
     MENU_SIZE_S = 100, MENU_SIZE_M, MENU_SIZE_L, MENU_OVERWRITE = 110, MENU_ABOUT = 120,
-    MENU_SORT_NAME = 130, MENU_SORT_DATE, MENU_SORT_SIZE, MENU_SORT_DESC = 135,
-    MENU_B_STRIP_COPY = 140, MENU_B_STRIP_OVERWRITE, MENU_B_RESIZE, MENU_B_ROT_CW, MENU_B_ROT_CCW
+    MENU_SORT_NAME = 130, MENU_SORT_DATE, MENU_SORT_SIZE, MENU_SORT_TAKEN, MENU_SORT_DESC = 135,
+    MENU_B_STRIP_COPY = 140, MENU_B_STRIP_OVERWRITE, MENU_B_RESIZE, MENU_B_ROT_CW, MENU_B_ROT_CCW,
+    MENU_B_DUPES, MENU_B_DUPES_END,
+    MENU_FILTER_GPS = 150
 };
 
 enum class BatchKind { StripCopy, StripOverwrite, Resize, RotateCw, RotateCcw };
@@ -62,7 +67,7 @@ enum class BatchKind { StripCopy, StripOverwrite, Resize, RotateCw, RotateCcw };
 struct Settings {
     int thumbSize = 170;              // DIP, laengste Kante
     bool overwriteOriginals = false;  // EXIF-Cleaner/Zuschneiden: Original ersetzen statt Kopie
-    int sortBy = 0;                   // 0 Name, 1 Aenderungsdatum, 2 Dateigroesse
+    int sortBy = 0;                   // 0 Name, 1 Aenderungsdatum, 2 Dateigroesse, 3 Aufnahmedatum (EXIF)
     bool sortDesc = false;
     std::wstring lastFolder;
 };
@@ -92,6 +97,32 @@ struct Item {
     ComPtr<ID2D1Bitmap> thumb;
     bool failed = false;
     bool selected = false;
+    // EXIF-Kurzinfo (wird nach dem Ordnerlisting im Hintergrund nachgeladen)
+    bool metaDone = false, hasGps = false;
+    ULONGLONG taken = 0;              // Aufnahmezeit als FILETIME (UTC), 0 = unbekannt
+    // Duplikatansicht: Gruppe (1-basiert, 0 = keine), Rang in der Gruppe (0 = behalten)
+    int dupGroup = 0, dupRank = 0;
+    bool dupExact = false;
+};
+
+struct MetaResult {
+    std::wstring path;
+    ULONGLONG taken = 0;
+    bool hasGps = false;
+};
+struct MetaState {
+    std::mutex mutex;
+    std::vector<MetaResult> results;
+    std::atomic<bool> cancel{false}, done{false}, pending{false};
+};
+
+struct DupState {
+    dup::Progress pr;
+    std::mutex mutex;
+    std::vector<dup::File> files;
+    std::vector<dup::Group> groups;
+    std::atomic<bool> done{false}, pending{false};
+    std::atomic<ULONGLONG> lastPost{0};
 };
 
 // Ergebnis des Unterordner-Lesens (Hintergrundthread -> UI-Thread). Der Knoten selbst wird nur im UI-Thread angefasst.
@@ -168,7 +199,7 @@ void LoadSettings(Settings& st) {
     st.thumbSize = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"ThumbnailGroesse", st.thumbSize, ini.c_str()),
                               kMinThumbSize, kMaxThumbSize);
     st.overwriteOriginals = GetPrivateProfileIntW(L"Allgemein", L"OriginalUeberschreiben", 0, ini.c_str()) != 0;
-    st.sortBy = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"Sortierung", 0, ini.c_str()), 0, 2);
+    st.sortBy = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"Sortierung", 0, ini.c_str()), 0, 3);
     st.sortDesc = GetPrivateProfileIntW(L"Allgemein", L"Absteigend", 0, ini.c_str()) != 0;
     wchar_t buf[2048]{};
     GetPrivateProfileStringW(L"Allgemein", L"LetzterOrdner", L"", buf, 2048, ini.c_str());
@@ -267,6 +298,14 @@ private:
     void OpenFolder(const std::wstring& path, const std::wstring& selectPath = L"", bool keepScroll = false);
     void OnScanDone();
     void SortItems();
+    bool Visible(const Item& it) const;         // Filter: nur mit Standort / Duplikatansicht
+    void ApplyFilter();                         // m_items/m_hidden nach Filter neu aufteilen, sortieren, neu laden
+    std::wstring FolderStatus() const;
+    void StartMetaPass();                       // Aufnahmedatum + GPS-Flag im Hintergrund lesen
+    void OnMeta();
+    void StartDupSearch();
+    void OnDup();
+    void EndDupMode();
     void BrowseForFolder();
     GridM Metrics() const;
     int HitGrid(float x, float y) const;
@@ -326,7 +365,7 @@ private:
     ComPtr<ID2D1SolidColorBrush> brush;
     ComPtr<IDWriteTextFormat> fNormal, fSmall, fBold, fTitle, fIcon, fCenter;
 
-    ComPtr<IDWriteTextFormat> fRight;
+    ComPtr<IDWriteTextFormat> fRight, fTag;
 
     D2D1_RECT_F rcTop{}, rcTree{}, rcGrid{}, rcDetail{}, rcStatus{};
     D2D1_RECT_F rcViewer{}, rcViewBar{};
@@ -348,6 +387,12 @@ private:
     // Grid
     std::wstring m_folder;
     std::vector<Item> m_items;
+    std::vector<Item> m_hidden;                  // durch Filter ausgeblendete Bilder des Ordners
+    bool m_gpsOnly = false;                      // Filter: nur Bilder mit Standortdaten
+    bool m_dupMode = false, m_dupRunning = false;
+    bool m_resortPending = false;                // Neusortieren/Filtern wartet, bis der Betrachter schliesst
+    std::shared_ptr<MetaState> m_meta;
+    std::shared_ptr<DupState> m_dup;
     int m_sel = -1, m_hoverItem = -1, m_anchor = -1;
     float m_gridScroll = 0, m_gridTarget = 0;
     int m_lastReqRow = -1;
@@ -482,6 +527,7 @@ void App::CreateFormats() {
     make(fCenter, L"Segoe UI", 13, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
     make(fIcon, L"Segoe UI Symbol", 20, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_CENTER);
     make(fRight, L"Segoe UI", 11, DWRITE_FONT_WEIGHT_NORMAL, DWRITE_TEXT_ALIGNMENT_TRAILING);
+    make(fTag, L"Segoe UI", 10, DWRITE_FONT_WEIGHT_SEMI_BOLD, DWRITE_TEXT_ALIGNMENT_CENTER);
 }
 
 void App::EnsureDevice() {
@@ -680,8 +726,10 @@ void App::DrawGrid() {
     Fill(rcGrid, Theme::Bg);
     rt->PushAxisAlignedClip(rcGrid, D2D1_ANTIALIAS_MODE_ALIASED);
     if (m_items.empty()) {
-        Txt(m_folder.empty() ? L"Ordner öffnen, um Bilder anzuzeigen" : L"Keine Bilder in diesem Ordner", rcGrid,
-            fCenter.Get(), Theme::TextDim);
+        Txt(m_folder.empty()   ? L"Ordner öffnen, um Bilder anzuzeigen"
+            : m_gpsOnly && !m_hidden.empty() ? L"Keine Bilder mit Standortdaten in diesem Ordner (Filter aktiv)"
+                                             : L"Keine Bilder in diesem Ordner",
+            rcGrid, fCenter.Get(), Theme::TextDim);
         rt->PopAxisAlignedClip();
         return;
     }
@@ -702,6 +750,19 @@ void App::DrawGrid() {
             else if (it.failed) Txt(L"⚠", card, fCenter.Get(), Theme::Warn);
             else FillRR(Inset(card, g.thumb * 0.35f), 6 * k, Theme::Border, 0.7f);  // Platzhalter
             if (sel) StrokeRR(card, 8 * k, Theme::Accent, 2 * k);
+            if (it.hasGps) {  // Standortdaten vorhanden: vor dem Teilen bereinigen
+                D2D1_RECT_F tag{x + g.thumb - 38 * k, y + 6 * k, x + g.thumb - 6 * k, y + 22 * k};
+                FillRR(tag, 4 * k, Theme::Danger);
+                Txt(L"GPS", tag, fTag.Get(), 0xFFFFFF);
+            }
+            if (m_dupMode && it.dupGroup > 0) {
+                const bool keep = it.dupRank == 0;
+                const std::wstring label = L"#" + std::to_wstring(it.dupGroup) +
+                                           (keep ? L" behalten" : (it.dupExact ? L" identisch" : L" ähnlich"));
+                D2D1_RECT_F tag{x + 6 * k, y + g.thumb - 22 * k, x + std::min(g.thumb - 6 * k, 104 * k), y + g.thumb - 6 * k};
+                FillRR(tag, 4 * k, keep ? Theme::Accent : Theme::Warn);
+                Txt(label, tag, fTag.Get(), 0xFFFFFF);
+            }
             if (sel && multi) {
                 D2D1_RECT_F badge{x + 6 * k, y + 6 * k, x + 24 * k, y + 24 * k};
                 FillRR(badge, 9 * k, Theme::Accent);
@@ -923,6 +984,9 @@ void App::OpenFolder(const std::wstring& path, const std::wstring& selectPath, b
     if (!keepScroll) {
         if (m_viewer) ExitViewer();
         m_items.clear();
+        m_hidden.clear();
+        if (m_dup) m_dup->pr.cancel = true;  // Duplikatsuche gilt nur fuer den alten Ordner
+        m_dupRunning = m_dupMode = false;
         m_loaded = 0;
         m_sel = m_hoverItem = m_anchor = -1;
         m_preview.Reset();
@@ -989,6 +1053,8 @@ void App::OnScanDone() {
     const std::wstring oldFocus = (m_sel >= 0 && m_sel < (int)m_items.size()) ? m_items[m_sel].path : L"";
     std::vector<Item> old;
     old.swap(m_items);
+    for (auto& h : m_hidden) old.push_back(std::move(h));  // ausgeblendete Bilder behalten ihre Kurzinfo
+    m_hidden.clear();
     std::unordered_map<std::wstring, size_t> oldIdx;
     for (size_t i = 0; i < old.size(); ++i) oldIdx[old[i].path] = i;
     m_items.reserve(files.size());
@@ -1005,7 +1071,13 @@ void App::OnScanDone() {
             if (o.size == it.size && o.mtime == it.mtime) {
                 it.thumb = std::move(o.thumb);
                 it.failed = o.failed;
+                it.metaDone = o.metaDone;
+                it.hasGps = o.hasGps;
+                it.taken = o.taken;
             }
+            it.dupGroup = o.dupGroup;
+            it.dupRank = o.dupRank;
+            it.dupExact = o.dupExact;
             it.selected = o.selected;
         }
         if (it.thumb) ++m_loaded;
@@ -1018,7 +1090,7 @@ void App::OnScanDone() {
     m_sel = m_anchor = -1;
     m_preview.Reset();
     m_infoOk = false;
-    SortItems();
+    ApplyFilter();  // Filter anwenden und sortieren
 
     const std::wstring& wantPath = !m_pendingSelect.empty() ? m_pendingSelect : (m_keepScroll ? oldFocus : std::wstring());
     int want = -1;
@@ -1035,12 +1107,247 @@ void App::OnScanDone() {
     if (m_viewer && m_items.empty()) ExitViewer();
 
     if (m_keepScroll) SetGridScroll(m_pendingScroll, true);
-    SetStatus(!m_pendingStatus.empty() ? m_pendingStatus
-                                       : m_folder + L"  ·  " + std::to_wstring(m_items.size()) + L" Bilder");
+    SetStatus(!m_pendingStatus.empty() ? m_pendingStatus : FolderStatus());
     m_pendingStatus.clear();
     m_pendingSelect.clear();
     RequestVisible();
+    StartMetaPass();
     Invalidate();
+}
+
+bool App::Visible(const Item& it) const {
+    if (m_gpsOnly && it.metaDone && !it.hasGps) return false;
+    if (m_dupMode && it.dupGroup == 0) return false;
+    return true;
+}
+
+std::wstring App::FolderStatus() const {
+    std::wstring s = m_folder + L"  ·  " + std::to_wstring(m_items.size()) + L" Bilder";
+    if (m_dupMode) s += L"  ·  Duplikatansicht (Esc beendet)";
+    else if (m_gpsOnly) s += L"  ·  nur mit Standortdaten (" + std::to_wstring(m_hidden.size()) + L" ausgeblendet)";
+    return s;
+}
+
+void App::ApplyFilter() {
+    std::vector<Item> all;
+    all.reserve(m_items.size() + m_hidden.size());
+    for (auto& it : m_items) all.push_back(std::move(it));
+    for (auto& it : m_hidden) all.push_back(std::move(it));
+    m_items.clear();
+    m_hidden.clear();
+    for (auto& it : all) {
+        if (Visible(it)) {
+            m_items.push_back(std::move(it));
+        } else {
+            it.selected = false;
+            m_hidden.push_back(std::move(it));
+        }
+    }
+    SortItems();
+    m_loader.NewGeneration();  // Indizes haben sich geaendert
+    m_lastReqRow = -1;
+    m_hoverItem = -1;
+    m_loaded = 0;
+    for (auto& it : m_items)
+        if (it.thumb) ++m_loaded;
+    if (m_sel < 0) {
+        m_preview.Reset();
+        m_infoOk = false;
+    }
+    SetGridScroll(m_gridScroll, true);
+    RequestVisible();
+    Invalidate();
+}
+
+void App::StartMetaPass() {
+    if (m_meta) m_meta->cancel = true;
+    std::vector<std::wstring> todo;
+    for (auto& it : m_items)
+        if (!it.metaDone) todo.push_back(it.path);
+    for (auto& it : m_hidden)
+        if (!it.metaDone) todo.push_back(it.path);
+    if (todo.empty()) {
+        m_meta.reset();
+        return;
+    }
+    auto st = std::make_shared<MetaState>();
+    m_meta = st;
+    HWND hwnd = m_hwnd;
+    std::thread([st, hwnd, todo = std::move(todo)] {
+        const HRESULT hr = CoInitializeEx(nullptr, COINIT_MULTITHREADED);
+        size_t sinceFlush = 0;
+        for (const auto& path : todo) {
+            if (st->cancel) break;
+            imgops::QuickMeta qm;
+            imgops::ReadQuickMeta(path, qm);  // bei Fehlern bleiben die Standardwerte (kein Datum, kein GPS)
+            {
+                std::lock_guard<std::mutex> lk(st->mutex);
+                st->results.push_back({path, qm.taken, qm.hasGps});
+            }
+            if (++sinceFlush >= 32) {
+                sinceFlush = 0;
+                if (!st->pending.exchange(true)) PostMessageW(hwnd, WM_APP_META, 0, 0);
+            }
+        }
+        st->done = true;
+        PostMessageW(hwnd, WM_APP_META, 0, 0);
+        if (SUCCEEDED(hr)) CoUninitialize();
+    }).detach();
+}
+
+void App::OnMeta() {
+    auto st = m_meta;
+    if (!st || st->cancel) return;
+    const bool done = st->done;  // vor dem Abholen lesen: ist es true, liegen alle Ergebnisse schon bereit
+    std::vector<MetaResult> res;
+    {
+        std::lock_guard<std::mutex> lk(st->mutex);
+        res.swap(st->results);
+    }
+    st->pending = false;
+    std::unordered_map<std::wstring, Item*> byPath;
+    byPath.reserve(m_items.size() + m_hidden.size());
+    for (auto& it : m_items) byPath[it.path] = &it;
+    for (auto& it : m_hidden) byPath[it.path] = &it;
+    for (auto& r : res) {
+        auto f = byPath.find(r.path);
+        if (f == byPath.end()) continue;
+        f->second->metaDone = true;
+        f->second->hasGps = r.hasGps;
+        f->second->taken = r.taken;
+    }
+    if (!done) {
+        Invalidate();
+        return;
+    }
+    m_meta.reset();
+    if (m_viewer) {
+        m_resortPending = true;  // Reihenfolge nicht unter dem geoeffneten Bild aendern
+    } else if (m_settings.sortBy == 3 || m_gpsOnly) {
+        ApplyFilter();
+        if (m_sel >= 0) EnsureVisible(m_sel);
+    }
+    if (!m_batchRunning && !m_dupRunning) SetStatus(FolderStatus());
+    Invalidate();
+}
+
+void App::StartDupSearch() {
+    if (m_batchRunning || m_dupRunning) return;
+    auto st = std::make_shared<DupState>();
+    for (auto& it : m_items) st->files.push_back({it.path, it.size});
+    for (auto& it : m_hidden) st->files.push_back({it.path, it.size});
+    if (st->files.size() < 2) {
+        SetStatus(L"Zu wenige Bilder für eine Duplikatsuche.");
+        return;
+    }
+    m_dup = st;
+    m_dupRunning = true;
+    SetStatus(L"Suche doppelte Bilder … (Esc bricht ab)");
+    HWND hwnd = m_hwnd;
+    std::thread([st, hwnd] {
+        auto tick = [&] {
+            const ULONGLONG now = GetTickCount64();
+            if (now - st->lastPost.load() < 150) return;
+            st->lastPost = now;
+            if (!st->pending.exchange(true)) PostMessageW(hwnd, WM_APP_DUP, 0, 0);
+        };
+        std::vector<dup::Group> groups = dup::Find(st->files, st->pr, tick);
+        {
+            std::lock_guard<std::mutex> lk(st->mutex);
+            st->groups = std::move(groups);
+        }
+        st->done = true;
+        PostMessageW(hwnd, WM_APP_DUP, 0, 0);
+    }).detach();
+}
+
+void App::OnDup() {
+    auto st = m_dup;
+    if (!st || !m_dupRunning) return;
+    st->pending = false;
+    if (!st->done) {
+        const wchar_t* what = st->pr.stage == 1 ? L"Vergleiche Dateien" : L"Vergleiche Bildinhalte";
+        SetStatus(std::wstring(what) + L" … " + std::to_wstring((unsigned long long)st->pr.done.load()) + L" / " +
+                  std::to_wstring((unsigned long long)st->pr.total.load()) + L"  (Esc bricht ab)");
+        Invalidate();
+        return;
+    }
+    m_dupRunning = false;
+    if (st->pr.cancel) {
+        SetStatus(L"Duplikatsuche abgebrochen");
+        Invalidate();
+        return;
+    }
+    std::vector<dup::Group> groups;
+    {
+        std::lock_guard<std::mutex> lk(st->mutex);
+        groups.swap(st->groups);
+    }
+    if (m_viewer) ExitViewer();
+    std::unordered_map<std::wstring, Item*> byPath;
+    for (auto& it : m_items) { it.dupGroup = it.dupRank = 0; byPath[it.path] = &it; }
+    for (auto& it : m_hidden) { it.dupGroup = it.dupRank = 0; byPath[it.path] = &it; }
+
+    int gid = 0;
+    size_t extras = 0;
+    for (auto& g : groups) {
+        std::vector<Item*> mem;
+        for (size_t idx : g.members) {
+            auto f = byPath.find(st->files[idx].path);
+            if (f != byPath.end()) mem.push_back(f->second);
+        }
+        if (mem.size() < 2) continue;
+        // Behalten wird die groesste Datei (bei Gleichstand die aelteste, dann nach Name); Rest nach Name
+        std::sort(mem.begin(), mem.end(), [](const Item* a, const Item* b) {
+            if (a->size != b->size) return a->size > b->size;
+            if (a->mtime != b->mtime) return a->mtime < b->mtime;
+            return StrCmpLogicalW(a->name.c_str(), b->name.c_str()) < 0;
+        });
+        ++gid;
+        for (size_t i = 0; i < mem.size(); ++i) {
+            mem[i]->dupGroup = gid;
+            mem[i]->dupRank = (int)i;
+            mem[i]->dupExact = g.exact;
+            mem[i]->selected = false;
+        }
+        extras += mem.size() - 1;
+    }
+    if (gid == 0) {
+        SetStatus(L"Keine doppelten oder ähnlichen Bilder gefunden");
+        Invalidate();
+        return;
+    }
+    for (auto& it : m_items) it.selected = false;
+    m_dupMode = true;
+    ApplyFilter();
+    // Alle ausser dem jeweils behaltenen Bild vormarkieren: Entf schiebt sie in den Papierkorb
+    int first = -1;
+    for (int i = 0; i < (int)m_items.size(); ++i) {
+        if (m_items[i].dupRank > 0) {
+            m_items[i].selected = true;
+            if (first < 0) first = i;
+        }
+    }
+    m_sel = m_anchor = -1;
+    if (first >= 0) {
+        m_anchor = first;
+        Focus(first);
+        EnsureVisible(first);
+    }
+    SetStatus(std::to_wstring(gid) + (gid == 1 ? L" Gruppe, " : L" Gruppen, ") + std::to_wstring(extras) +
+              (extras == 1 ? L" Duplikat vorgewählt" : L" Duplikate vorgewählt") +
+              L" – Entf verschiebt sie in den Papierkorb, Esc beendet die Ansicht");
+    Invalidate();
+}
+
+void App::EndDupMode() {
+    if (!m_dupMode) return;
+    m_dupMode = false;
+    for (auto& it : m_items) it.dupGroup = it.dupRank = 0;
+    for (auto& it : m_hidden) it.dupGroup = it.dupRank = 0;
+    ApplyFilter();
+    if (m_sel >= 0) EnsureVisible(m_sel);
+    SetStatus(FolderStatus());
 }
 
 void App::SortItems() {
@@ -1048,10 +1355,19 @@ void App::SortItems() {
     const std::wstring anchor = (m_anchor >= 0 && m_anchor < (int)m_items.size()) ? m_items[m_anchor].path : L"";
     const int by = m_settings.sortBy;
     const bool desc = m_settings.sortDesc;
-    std::sort(m_items.begin(), m_items.end(), [by, desc](const Item& a, const Item& b) {
+    const bool dupView = m_dupMode;
+    std::sort(m_items.begin(), m_items.end(), [by, desc, dupView](const Item& a, const Item& b) {
+        if (dupView) {  // Duplikatansicht: Gruppen zusammenhaengend, das behaltene Bild zuerst
+            if (a.dupGroup != b.dupGroup) return a.dupGroup < b.dupGroup;
+            if (a.dupRank != b.dupRank) return a.dupRank < b.dupRank;
+        }
         int c = 0;
         if (by == 1) c = a.mtime < b.mtime ? -1 : (a.mtime > b.mtime ? 1 : 0);
         else if (by == 2) c = a.size < b.size ? -1 : (a.size > b.size ? 1 : 0);
+        else if (by == 3) {  // Aufnahmedatum, ohne EXIF-Zeit gilt das Aenderungsdatum
+            const ULONGLONG ta = a.taken ? a.taken : a.mtime, tb = b.taken ? b.taken : b.mtime;
+            c = ta < tb ? -1 : (ta > tb ? 1 : 0);
+        }
         if (c == 0) c = StrCmpLogicalW(a.name.c_str(), b.name.c_str());
         return desc ? c > 0 : c < 0;
     });
@@ -1312,7 +1628,10 @@ void App::ShowSettings() {
     AppendMenuW(m, MF_STRING | (m_settings.sortBy == 0 ? MF_CHECKED : 0), MENU_SORT_NAME, L"Sortieren nach Name");
     AppendMenuW(m, MF_STRING | (m_settings.sortBy == 1 ? MF_CHECKED : 0), MENU_SORT_DATE, L"Sortieren nach Änderungsdatum");
     AppendMenuW(m, MF_STRING | (m_settings.sortBy == 2 ? MF_CHECKED : 0), MENU_SORT_SIZE, L"Sortieren nach Dateigröße");
+    AppendMenuW(m, MF_STRING | (m_settings.sortBy == 3 ? MF_CHECKED : 0), MENU_SORT_TAKEN, L"Sortieren nach Aufnahmedatum (EXIF)");
     AppendMenuW(m, MF_STRING | (m_settings.sortDesc ? MF_CHECKED : 0), MENU_SORT_DESC, L"Absteigend sortieren");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (m_gpsOnly ? MF_CHECKED : 0), MENU_FILTER_GPS, L"Nur Bilder mit Standortdaten zeigen");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (m_settings.overwriteOriginals ? MF_CHECKED : 0), MENU_OVERWRITE,
                 L"EXIF entfernen / Zuschneiden: Original überschreiben");
@@ -1331,13 +1650,19 @@ void App::ShowSettings() {
                 m_loader.NewGeneration();
                 SetGridScroll(m_gridScroll, true);
                 RequestVisible();
-            } else if (cmd == MENU_SORT_NAME || cmd == MENU_SORT_DATE || cmd == MENU_SORT_SIZE || cmd == MENU_SORT_DESC) {
+            } else if (cmd == MENU_SORT_NAME || cmd == MENU_SORT_DATE || cmd == MENU_SORT_SIZE || cmd == MENU_SORT_TAKEN ||
+                       cmd == MENU_SORT_DESC) {
                 if (cmd == MENU_SORT_DESC) m_settings.sortDesc = !m_settings.sortDesc;
                 else m_settings.sortBy = cmd - MENU_SORT_NAME;
                 SortItems();
                 m_lastReqRow = -1;
                 RequestVisible();
                 if (m_sel >= 0) EnsureVisible(m_sel);
+            } else if (cmd == MENU_FILTER_GPS) {
+                m_gpsOnly = !m_gpsOnly;
+                ApplyFilter();
+                if (m_sel >= 0) EnsureVisible(m_sel);
+                SetStatus(FolderStatus());
             } else if (cmd == MENU_OVERWRITE) {
                 m_settings.overwriteOriginals = !m_settings.overwriteOriginals;
             } else if (cmd == MENU_ABOUT) {
@@ -1426,6 +1751,11 @@ void App::DeleteSelected() {
     if (rc != 0 || op.fAnyOperationsAborted) SetStatus(L"Löschen fehlgeschlagen oder abgebrochen");
     else m_pendingStatus = std::to_wstring(idx.size()) + (idx.size() == 1 ? L" Bild" : L" Bilder") +
                            L" in den Papierkorb verschoben";
+    if (m_dupMode) {  // die Gruppen stimmen nach dem Loeschen nicht mehr: zurueck zur normalen Ansicht
+        m_dupMode = false;
+        for (auto& it : m_items) it.dupGroup = it.dupRank = 0;
+        for (auto& it : m_hidden) it.dupGroup = it.dupRank = 0;
+    }
     OpenFolder(m_folder, next, true);
 }
 
@@ -1454,6 +1784,10 @@ void App::ShowBatchMenu() {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, MENU_B_ROT_CW, L"Alle 90° nach rechts drehen");
     AppendMenuW(m, MF_STRING, MENU_B_ROT_CCW, L"Alle 90° nach links drehen");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (m_dupRunning ? MF_GRAYED : 0), MENU_B_DUPES,
+                L"Doppelte und ähnliche Bilder im Ordner suchen");
+    if (m_dupMode) AppendMenuW(m, MF_STRING, MENU_B_DUPES_END, L"Duplikatansicht beenden");
     POINT pt{0, 0};
     for (auto& b : m_btns)
         if (b.id == BTN_BATCH) pt = {(LONG)b.rc.left, (LONG)b.rc.bottom};
@@ -1466,6 +1800,8 @@ void App::ShowBatchMenu() {
         case MENU_B_RESIZE: StartBatch(BatchKind::Resize); break;
         case MENU_B_ROT_CW: StartBatch(BatchKind::RotateCw); break;
         case MENU_B_ROT_CCW: StartBatch(BatchKind::RotateCcw); break;
+        case MENU_B_DUPES: StartDupSearch(); break;
+        case MENU_B_DUPES_END: EndDupMode(); break;
     }
 }
 
@@ -1621,6 +1957,12 @@ void App::ExitViewer() {
     m_preview.Reset();  // das Detail-Panel braucht nur die kleine Vorschau
     m_previewFailed = false;
     m_lastReqRow = -1;
+    if (m_resortPending) {
+        m_resortPending = false;
+        ApplyFilter();
+        if (m_sel >= 0) EnsureVisible(m_sel);
+        SetStatus(FolderStatus());
+    }
     RequestVisible();
     Invalidate();
 }
@@ -1952,6 +2294,8 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         case WM_APP_THUMBS: Invalidate(); return 0;
         case WM_APP_SCAN: OnScanDone(); return 0;
         case WM_APP_TREE: OnTreeLoaded(); return 0;
+        case WM_APP_META: OnMeta(); return 0;
+        case WM_APP_DUP: OnDup(); return 0;
         case WM_APP_BATCH: {
             wchar_t b[128];
             swprintf_s(b, L"Stapelverarbeitung: %llu / %llu   (Esc bricht ab)", (unsigned long long)m_bDone.load(),
@@ -2128,6 +2472,8 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             const bool ctrl = GetKeyState(VK_CONTROL) < 0, shift = GetKeyState(VK_SHIFT) < 0;
             if (wp == VK_ESCAPE) {
                 if (m_batchRunning) { m_batchCancel = true; SetStatus(L"Stapelverarbeitung wird abgebrochen …"); }
+                else if (m_dupRunning && m_dup) { m_dup->pr.cancel = true; SetStatus(L"Duplikatsuche wird abgebrochen …"); }
+                else if (m_dupMode) EndDupMode();
                 else if (m_full) ToggleFullscreen();
                 return 0;
             }
@@ -2159,6 +2505,8 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             KillTimer(m_hwnd, TIMER_SCROLL);
             SaveSettingsNow();
             m_batchCancel = true;
+            if (m_meta) m_meta->cancel = true;
+            if (m_dup) m_dup->pr.cancel = true;
             if (m_batch.joinable()) m_batch.join();
             m_loader.Stop();
             PostQuitMessage(0);

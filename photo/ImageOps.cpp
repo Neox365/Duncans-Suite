@@ -326,6 +326,101 @@ bool IsSupportedImage(const std::wstring& path) {
     return false;
 }
 
+bool ParseExifDate(const std::wstring& s, ULONGLONG& utc) {
+    int y, mo, d, h, mi, se;
+    if (s.size() < 19 || swscanf_s(s.c_str(), L"%d:%d:%d %d:%d:%d", &y, &mo, &d, &h, &mi, &se) != 6) return false;
+    if (y < 1900 || y > 2999 || mo < 1 || mo > 12 || d < 1 || d > 31 || h < 0 || h > 23 || mi < 0 || mi > 59 ||
+        se < 0 || se > 60)
+        return false;
+    SYSTEMTIME local{}, st{};
+    local.wYear = (WORD)y; local.wMonth = (WORD)mo; local.wDay = (WORD)d;
+    local.wHour = (WORD)h; local.wMinute = (WORD)mi; local.wSecond = (WORD)std::min(se, 59);
+    FILETIME ft;
+    if (!TzSpecificLocalTimeToSystemTime(nullptr, &local, &st) || !SystemTimeToFileTime(&st, &ft)) return false;
+    utc = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    return true;
+}
+
+bool ReadQuickMeta(const std::wstring& path, QuickMeta& out) {
+    out = QuickMeta{};
+    auto f = MakeFactory();
+    if (!f) return false;
+    ComPtr<IWICBitmapDecoder> dec;
+    if (FAILED(f->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)))
+        return false;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICMetadataQueryReader> q;
+    if (FAILED(dec->GetFrame(0, &frame)) || FAILED(frame->GetMetadataQueryReader(&q))) return true;
+    PROPVARIANT pv;
+    std::wstring s;
+    for (const wchar_t* tag : {L"/ifd/exif/{ushort=36867}", L"/ifd/exif/{ushort=36868}", L"/ifd/{ushort=306}"}) {
+        if (Query(q.Get(), tag, &pv)) {
+            const bool ok = AsString(pv, s) && ParseExifDate(s, out.taken);
+            PropVariantClear(&pv);
+            if (ok) break;
+        }
+    }
+    double lat, lon;
+    if (ReadGpsCoord(q.Get(), 2, 1, lat) && ReadGpsCoord(q.Get(), 4, 3, lon)) {
+        out.hasGps = true;
+    } else if (Query(q.Get(), L"/ifd/gps/{ushort=1}", &pv)) {
+        out.hasGps = true;
+        PropVariantClear(&pv);
+    }
+    return true;
+}
+
+bool HashFile(const std::wstring& path, uint64_t& h1, uint64_t& h2) {
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+                           FILE_FLAG_SEQUENTIAL_SCAN, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    h1 = 1469598103934665603ull;  // FNV-1a
+    h2 = 0x9E3779B97F4A7C15ull;   // zweiter Lauf mit anderem Startwert und Multiplikator
+    std::vector<BYTE> buf(1 << 20);
+    bool ok = true;
+    for (;;) {
+        DWORD got = 0;
+        if (!ReadFile(h, buf.data(), (DWORD)buf.size(), &got, nullptr)) { ok = false; break; }
+        if (got == 0) break;
+        for (DWORD i = 0; i < got; ++i) {
+            h1 = (h1 ^ buf[i]) * 1099511628211ull;
+            h2 = (h2 ^ buf[i]) * 0x2545F4914F6CDD1Dull + i;
+        }
+    }
+    CloseHandle(h);
+    return ok;
+}
+
+bool ComputeDHash(const std::wstring& path, uint64_t& hash) {
+    auto f = MakeFactory();
+    if (!f) return false;
+    ComPtr<IWICBitmapDecoder> dec;
+    if (FAILED(f->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec)))
+        return false;
+    ComPtr<IWICBitmapFrameDecode> frame;
+    ComPtr<IWICFormatConverter> conv;
+    ComPtr<IWICBitmapScaler> scaler;
+    if (FAILED(dec->GetFrame(0, &frame)) || FAILED(f->CreateFormatConverter(&conv)) ||
+        FAILED(conv->Initialize(frame.Get(), GUID_WICPixelFormat8bppGray, WICBitmapDitherTypeNone, nullptr, 0,
+                                WICBitmapPaletteTypeCustom)) ||
+        FAILED(f->CreateBitmapScaler(&scaler)) ||
+        FAILED(scaler->Initialize(conv.Get(), 9, 8, WICBitmapInterpolationModeFant)))
+        return false;
+    BYTE px[9 * 8];
+    if (FAILED(scaler->CopyPixels(nullptr, 9, sizeof px, px))) return false;
+    hash = 0;
+    for (int y = 0; y < 8; ++y)
+        for (int x = 0; x < 8; ++x) hash = (hash << 1) | (px[y * 9 + x] < px[y * 9 + x + 1] ? 1u : 0u);
+    return true;
+}
+
+int HammingDistance(uint64_t a, uint64_t b) {
+    uint64_t v = a ^ b;
+    int n = 0;
+    for (; v; v &= v - 1) ++n;
+    return n;
+}
+
 WICBitmapTransformOptions OrientationToTransform(int o) {
     switch (o) {
         case 2: return WICBitmapTransformFlipHorizontal;

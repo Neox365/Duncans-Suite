@@ -3,7 +3,7 @@ project(DuncansDriverUpdater VERSION 1.1.25 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
 set(SUITE_VER "1.1.29")
 set(PDF_VER "1.1.24")
-set(PHOTO_VER "0.2.1")
+set(PHOTO_VER "0.2.2")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
