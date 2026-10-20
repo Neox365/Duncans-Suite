@@ -24,6 +24,7 @@
 #include <atomic>
 #include <cctype>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -33,6 +34,7 @@
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "../common/VersionUtil.h"
+#include "../common/Changelog.h"
 #include "../common/Crypto.h"
 #include "public_key.inc"        // kSuitePublicKey: Suite-Installer und PDF Reader (erzeugt von tools\MakeSigningKey.ps1)
 #include "tidy_public_key.inc"   // kTidyPublicKey: DuncansTidy.exe
@@ -696,6 +698,7 @@ namespace
     // DuncansSuite_Setup_X.Y.Z.exe gewaehlt. Pruefsumme = "digest" des Assets aus der API-Antwort.
 
     constexpr UINT WM_UPD_CHECKED = WM_APP + 3;   // wParam = 1 neuere Version gefunden, 0 keine/Fehler
+    constexpr UINT WM_CHANGES = WM_APP + 12;      // Aenderungsprotokoll aus dem Netz geladen (Ergebnis in m_changeFetch)
 
     using versionutil::IsNewer;
     using versionutil::Version;
@@ -840,6 +843,52 @@ namespace
         version = Widen(v);
         return true;
     }
+
+    // ---- Aenderungsprotokoll (Info-Dialog) ----------------------------------------------------
+    // Die Suite bringt changelog.txt als Ressource mit (Anzeige auch offline) und holt beim Oeffnen des Dialogs die
+    // aktuelle Fassung aus dem Release "modules". Der Text wird nur angezeigt, nie ausgefuehrt; changelog::Parse begrenzt ihn.
+    constexpr const wchar_t* kChangelogUrl = L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/changelog.txt";
+    constexpr int kChangelogResource = 101;
+    constexpr int kInfoTabs = 6;   // Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Suite
+
+    std::string EmbeddedChangelog()
+    {
+        HRSRC res = FindResourceW(nullptr, MAKEINTRESOURCEW(kChangelogResource), RT_RCDATA);
+        if (!res)
+            return {};
+        HGLOBAL mem = LoadResource(nullptr, res);
+        const void* data = mem ? LockResource(mem) : nullptr;
+        const DWORD size = SizeofResource(nullptr, res);
+        return data ? std::string(static_cast<const char*>(data), size) : std::string();
+    }
+
+    bool FetchChangelogText(std::string& out)
+    {
+        InetHandle session(InternetOpenW(L"DuncansSuite/" SUITE_VERSION, INTERNET_OPEN_TYPE_PRECONFIG, nullptr, nullptr, 0));
+        if (!session.h)
+            return false;
+        DWORD timeout = 10000;
+        InternetSetOptionW(session.h, INTERNET_OPTION_CONNECT_TIMEOUT, &timeout, sizeof(timeout));
+        InternetSetOptionW(session.h, INTERNET_OPTION_RECEIVE_TIMEOUT, &timeout, sizeof(timeout));
+        InetHandle h;
+        DWORD total = 0;
+        std::wstring error;
+        if (!OpenHttps(session.h, kChangelogUrl, h, total, error))
+            return false;
+        char buf[8192];
+        DWORD n = 0;
+        out.clear();
+        while (out.size() < changelog::kMaxText && InternetReadFile(h.h, buf, sizeof(buf), &n) && n > 0)
+            out.append(buf, n);
+        return !out.empty();
+    }
+
+    struct ChangeFetch
+    {
+        std::mutex mutex;
+        std::string text;
+        bool ok = false;
+    };
 
     // Laedt den Installer in den Temp-Ordner und prueft die SHA-256 aus der API-Antwort.
     bool DownloadInstaller(HWND hwnd, const UpdateInfo& info, const std::wstring& customDir, std::wstring& installerPath,
@@ -1048,6 +1097,13 @@ private:
     RECT m_btnBackup{}, m_btnLog{}, m_btnCheck{};   // Ids: 18 Wiederherstellungspunkt-Haken, 19 Backup-Ordner, 20 Logdatei, 21 Update-Suche
     bool m_manualCheck = false;                      // Update-Suche per Knopf: Ergebnis als Hinweis melden
 
+    // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..29 Reiter, 30 Schliessen
+    bool m_infoOpen = false, m_changesFetched = false, m_changesOnline = false;
+    int m_infoTab = 0, m_infoScroll = 0, m_infoMaxScroll = 0;
+    RECT m_infoRect{}, m_infoTabs[kInfoTabs]{}, m_infoClose{}, m_infoView{};
+    std::vector<changelog::Section> m_changes;       // eingebaute Fassung, nach dem Laden aus dem Netz ersetzt
+    std::shared_ptr<ChangeFetch> m_changeFetch;
+
     // Infobereich (Tray): Symbol neben der Uhr, Kontextmenue, Quick Clean, Benachrichtigung
     static constexpr UINT kTrayMsg = WM_APP + 10;     // Rueckmeldungen des Tray-Symbols
     static constexpr UINT kQuickDone = WM_APP + 11;   // Quick Clean fertig (wParam = freigegebene Bytes, lParam = Anzahl Prozesse)
@@ -1068,6 +1124,14 @@ private:
     void OpenSettings();
     void CloseSettings(bool save);
     void DrawSettings(HDC dc, int w, int h);
+    void OpenInfo();
+    void CloseInfo();
+    void DrawInfo(HDC dc, int w, int h);
+    void StartChangelogFetch();
+    void ScrollInfo(int delta);
+    const wchar_t* InfoKey(int tab) const;        // Abschnittsname in changelog.txt (EXE-Name)
+    std::wstring InfoInstalled(int tab) const;    // installierte Version, leer = nicht gefunden
+    std::wstring InfoNewVersion(int tab) const;   // neuere Version laut Update-Pruefung, leer = keine
     void DrawCheck(HDC dc, const RECT& r, bool on, bool hover, const std::wstring& label, const std::wstring& hint);
     void DrawButton(HDC dc, const RECT& r, bool primary, bool hover, bool pressed, const std::wstring& text);
 };
@@ -1370,6 +1434,24 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         SelectObject(dc, old);
     }
 
+    // Info-Button "i" links neben dem Zahnrad (Neuigkeiten aller Programme); gruener Punkt, wenn irgendwo ein Update bereitsteht
+    {
+        const int gs = S(38);
+        m_infoRect = { m_gearRect.left - S(10) - gs, m_gearRect.top, m_gearRect.left - S(10), m_gearRect.bottom };
+        const bool hover = m_hover == 23 && !m_modal && !m_settingsOpen && !m_infoOpen;
+        const bool pressed = m_press == 23 && hover;
+        FillRound(dc, m_infoRect, S(12), pressed ? RGB(24, 26, 32) : (hover ? kCardHover : kCardRaised), hover ? kBorderHover : kBorder);
+        DrawLabel(dc, m_fontHeading, hover ? kText : kTextDim, { m_infoRect.left, m_infoRect.top, m_infoRect.right, m_infoRect.bottom }, L"i", DT_CENTER | DT_VCENTER);
+        bool anyUpdate = m_updAvailable;
+        for (int i = 0; i < 5 && !anyUpdate; ++i)
+            anyUpdate = !m_tools[i].newVersion.empty();
+        if (anyUpdate)
+        {
+            const int d = S(10);
+            FillRound(dc, RECT{ m_infoRect.right - d - S(3), m_infoRect.top + S(3), m_infoRect.right - S(3), m_infoRect.top + S(3) + d }, d, kGreen, kCardRaised);
+        }
+    }
+
     // Update-Badge oben rechts im Banner (links neben dem Zahnrad)
     m_updateRect = RECT{};
     if (m_updAvailable)
@@ -1379,7 +1461,7 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
             ? (m_updProgress <= 100 ? L"Lade Update … " + std::to_wstring(m_updProgress) + L" %" : std::wstring(L"Lade Update …"))
             : (ready ? L"Installer starten (v" + m_upd.version + L")" : L"Update verfügbar (v" + m_upd.version + L")");
         const int width = std::max(TextWidth(dc, m_fontBody, label), TextWidth(dc, m_fontBody, L"Lade Update … 100 %")) + S(44);
-        const int right = m_gearRect.left - S(12);
+        const int right = m_infoRect.left - S(12);
         m_updateRect = { right - width, m_banner.top + S(18), right, m_banner.top + S(18) + S(38) };
         const bool hover = m_hover == 4 && !m_modal && !m_settingsOpen;
         const bool pressed = m_press == 4 && hover;
@@ -1422,6 +1504,8 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
 
     if (m_settingsOpen)
         DrawSettings(dc, w, h);
+    if (m_infoOpen)
+        DrawInfo(dc, w, h);
     if (m_modal)
         DrawModal(dc, w, h);
 }
@@ -1589,6 +1673,216 @@ void SuiteWindow::CloseSettings(bool save)
 }
 
 // ---- Infobereich (Tray) --------------------------------------------------------------------
+
+// ---- Info-Dialog: Neuigkeiten je Programm ----------------------------------------------------
+
+const wchar_t* SuiteWindow::InfoKey(int tab) const
+{
+    return tab >= 0 && tab < 5 ? m_tools[tab].exe : L"DuncansSuite.exe";
+}
+
+std::wstring SuiteWindow::InfoInstalled(int tab) const
+{
+    if (tab == 5)
+        return SUITE_VERSION;
+    std::wstring v;
+    if (tab >= 0 && tab < 5 && !m_tools[tab].path.empty() && FileVersionAtLeast(m_tools[tab].path, 0, 0, 0, &v))
+        return v;
+    return {};
+}
+
+std::wstring SuiteWindow::InfoNewVersion(int tab) const
+{
+    if (tab == 5)
+        return m_updAvailable ? m_upd.version : std::wstring();
+    return tab >= 0 && tab < 5 ? m_tools[tab].newVersion : std::wstring();
+}
+
+void SuiteWindow::OpenInfo()
+{
+    if (m_changes.empty())
+        m_changes = changelog::Parse(EmbeddedChangelog());
+    m_infoOpen = true;
+    m_infoScroll = 0;
+    m_infoTab = 0;
+    for (int i = 0; i < kInfoTabs; ++i)   // zuerst das Programm zeigen, fuer das ein Update bereitsteht
+        if (!InfoNewVersion(i).empty())
+        {
+            m_infoTab = i;
+            break;
+        }
+    m_hover = m_press = -1;
+    if (!m_changesFetched)
+        StartChangelogFetch();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void SuiteWindow::CloseInfo()
+{
+    m_infoOpen = false;
+    m_hover = m_press = -1;
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void SuiteWindow::ScrollInfo(int delta)
+{
+    m_infoScroll = std::clamp(m_infoScroll + delta, 0, m_infoMaxScroll);
+    InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void SuiteWindow::StartChangelogFetch()
+{
+    // Im Hintergrund laden; bei Fehlern (offline) bleibt die eingebaute Fassung stehen
+    m_changesFetched = true;
+    m_changeFetch = std::make_shared<ChangeFetch>();
+    const HWND hwnd = m_hwnd;
+    const std::shared_ptr<ChangeFetch> st = m_changeFetch;
+    std::thread([hwnd, st]()
+    {
+        std::string text;
+        const bool ok = FetchChangelogText(text);
+        {
+            std::lock_guard<std::mutex> lock(st->mutex);
+            st->ok = ok;
+            if (ok)
+                st->text = std::move(text);
+        }
+        if (IsWindow(hwnd))
+            PostMessageW(hwnd, WM_CHANGES, 0, 0);
+    }).detach();
+}
+
+void SuiteWindow::DrawInfo(HDC dc, int w, int h)
+{
+    FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
+
+    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo Commander", L"Suite" };
+    const int pad = S(22), btnH = S(38);
+    const int boxW = std::min(S(940), w - S(40)), boxH = std::min(S(700), h - S(50));
+    RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
+    DrawShadow(dc, box, S(18), static_cast<int>(m_dpi));
+    DrawPanelAA(dc, box, S(18), RGB(27, 29, 36), kBorder);
+    DrawLabel(dc, m_fontHeading, kText, { box.left + pad, box.top + pad + S(3), box.right - pad, box.top + pad + S(30) }, L"Neuigkeiten & Updates");
+
+    // Reiter: einer pro Programm (Farbe wie die Karte), gruener Punkt = Update verfuegbar
+    const int tabH = S(34), tabGap = S(8), tabTop = box.top + pad + S(42);
+    int want[kInfoTabs], sum = 0;
+    for (int i = 0; i < kInfoTabs; ++i)
+    {
+        want[i] = TextWidth(dc, m_fontBody, kNames[i]) + S(44);
+        sum += want[i];
+    }
+    const int avail = boxW - 2 * pad - (kInfoTabs - 1) * tabGap;
+    int x = box.left + pad;
+    for (int i = 0; i < kInfoTabs; ++i)
+    {
+        const int tw = sum > avail ? want[i] * avail / sum : want[i];
+        m_infoTabs[i] = { x, tabTop, x + tw, tabTop + tabH };
+        x += tw + tabGap;
+        const COLORREF color = i < 5 ? m_tools[i].color : kAccent;
+        const bool active = i == m_infoTab, hover = m_hover == 24 + i;
+        FillRound(dc, m_infoTabs[i], S(10), active ? Blend(kCardRaised, color, 22) : (hover ? kCardHover : kCardRaised),
+                  active ? color : (hover ? kBorderHover : kBorder));
+        const int dot = S(8);
+        FillRound(dc, RECT{ m_infoTabs[i].left + S(14), m_infoTabs[i].top + (tabH - dot) / 2, m_infoTabs[i].left + S(14) + dot, m_infoTabs[i].top + (tabH - dot) / 2 + dot }, dot, color, color);
+        DrawLabel(dc, m_fontBody, active || hover ? kText : kTextDim,
+                  { m_infoTabs[i].left + S(28), m_infoTabs[i].top + S(7), m_infoTabs[i].right - S(8), m_infoTabs[i].bottom }, kNames[i]);
+        if (!InfoNewVersion(i).empty())
+        {
+            const int d = S(9);
+            FillRound(dc, RECT{ m_infoTabs[i].right - d - S(4), m_infoTabs[i].top + S(4), m_infoTabs[i].right - S(4), m_infoTabs[i].top + S(4) + d }, d, kGreen, kGreen);
+        }
+    }
+
+    // Statuszeile des gewaehlten Programms
+    const std::wstring installed = InfoInstalled(m_infoTab), newer = InfoNewVersion(m_infoTab);
+    std::wstring status;
+    COLORREF statusColor = kTextDim;
+    if (!newer.empty())
+    {
+        status = (installed.empty() ? std::wstring() : L"Installiert: v" + installed + L"   ·   ") + L"Update verfügbar: v" + newer;
+        statusColor = kGreen;
+    }
+    else if (!installed.empty())
+        status = L"Installiert: v" + installed + L"   ·   aktuell";
+    else
+        status = L"Nicht installiert (die Einträge zeigen, was die aktuelle Version kann)";
+    const int statusTop = tabTop + tabH + S(14);
+    DrawLabel(dc, m_fontBody, statusColor, { box.left + pad, statusTop, box.right - pad, statusTop + S(24) }, status);
+
+    // Eintraege (scrollbar)
+    const RECT view{ box.left + pad, statusTop + S(34), box.right - pad, box.bottom - pad - btnH - S(14) };
+    m_infoView = view;
+    const int viewH = std::max(1, static_cast<int>(view.bottom - view.top));
+    const int textX = S(18), rightGap = S(18);
+    const int textW = std::max(S(100), static_cast<int>(view.right - view.left) - textX - rightGap);
+    const versionutil::Version have = versionutil::Parse(installed);
+    const changelog::Section* sec = changelog::Find(m_changes, InfoKey(m_infoTab));
+
+    // Ein Durchlauf misst nur (Gesamthoehe fuer Scroll-Grenze), der zweite zeichnet.
+    auto pass = [&](bool draw) -> int
+    {
+        int y = draw ? view.top - m_infoScroll : 0;
+        const int y0 = y;
+        if (!sec || sec->entries.empty())
+        {
+            if (draw)
+                DrawLabel(dc, m_fontBody, kTextDim, { view.left, y, view.right, y + S(24) }, L"Noch keine Einträge vorhanden.");
+            return S(24);
+        }
+        for (const changelog::Entry& e : sec->entries)
+        {
+            if (draw)
+            {
+                DrawLabel(dc, m_fontHeading, kText, { view.left, y, view.right - S(120), y + S(28) }, e.title);
+                const versionutil::Version ev = versionutil::Parse(e.title);
+                if (ev.valid && have.valid && versionutil::IsNewer(ev, have))   // juenger als die installierte Version
+                {
+                    const int tx = view.left + TextWidth(dc, m_fontHeading, e.title) + S(12);
+                    RECT chip{ tx, y + S(4), tx + S(44), y + S(24) };
+                    FillRound(dc, chip, S(8), kGreen, kGreen);
+                    DrawLabel(dc, m_fontSmall, RGB(6, 30, 18), { chip.left, chip.top + S(1), chip.right, chip.bottom }, L"NEU", DT_CENTER);
+                }
+                DrawLabel(dc, m_fontSmall, kTextDim, { view.right - S(160) - rightGap, y + S(4), view.right - rightGap, y + S(28) }, e.date, DT_RIGHT);
+            }
+            y += S(30);
+            for (const std::wstring& item : e.items)
+            {
+                const int ih = MeasureWrapped(dc, m_fontBody, item, textW);
+                if (draw)
+                {
+                    DrawLabel(dc, m_fontBody, kTextDim, { view.left + S(2), y, view.left + textX, y + S(22) }, L"•");
+                    DrawWrapped(dc, m_fontBody, kText, { view.left + textX, y, view.left + textX + textW, y + ih }, item);
+                }
+                y += ih + S(6);
+            }
+            if (draw)
+                FillAlphaRect(dc, RECT{ view.left, y + S(7), view.right - rightGap, y + S(8) }, kBorder, 255);
+            y += S(18);
+        }
+        return y - y0;
+    };
+    const int contentH = pass(false);
+    m_infoMaxScroll = std::max(0, contentH - viewH);
+    m_infoScroll = std::clamp(m_infoScroll, 0, m_infoMaxScroll);
+    SaveDC(dc);
+    IntersectClipRect(dc, view.left, view.top, view.right, view.bottom);
+    pass(true);
+    RestoreDC(dc, -1);
+    if (m_infoMaxScroll > 0)   // schmaler Scrollbalken rechts
+    {
+        const int thumbH = std::max(S(30), viewH * viewH / contentH);
+        const int thumbY = view.top + (viewH - thumbH) * m_infoScroll / m_infoMaxScroll;
+        FillRound(dc, RECT{ view.right - S(6), thumbY, view.right, thumbY + thumbH }, S(6), kBorderHover, kBorderHover);
+    }
+
+    // Fusszeile: Quelle links, Schliessen rechts
+    DrawLabel(dc, m_fontSmall, kTextDim, { box.left + pad, box.bottom - pad - btnH + S(10), box.right - pad - S(160), box.bottom - pad },
+              m_changesOnline ? L"Quelle: GitHub (aktuell)" : L"Quelle: in der Suite eingebaut");
+    const int bw = S(120);
+    m_infoClose = { box.right - pad - bw, box.bottom - pad - btnH, box.right - pad, box.bottom - pad };
+    DrawButton(dc, m_infoClose, true, m_hover == 30, m_press == 30 && m_hover == 30, L"Schließen");
+}
 
 void SuiteWindow::AddTrayIcon()
 {
@@ -2085,8 +2379,18 @@ void SuiteWindow::OnMouseMove(int x, int y)
             if (PtInRect(hit.r, pt))
                 hover = hit.id;
     }
+    else if (m_infoOpen)
+    {
+        for (int i = 0; i < kInfoTabs; ++i)
+            if (PtInRect(&m_infoTabs[i], pt))
+                hover = 24 + i;
+        if (PtInRect(&m_infoClose, pt))
+            hover = 30;
+    }
     else if (PtInRect(&m_gearRect, pt))
         hover = 6;
+    else if (PtInRect(&m_infoRect, pt))
+        hover = 23;
     else if (m_updAvailable && PtInRect(&m_updateRect, pt))
         hover = 4;
     else if (PtInRect(&m_tools[0].rect, pt))
@@ -2122,6 +2426,15 @@ void SuiteWindow::OnClick(int, int)
     }
     else if (pressed == 6)
         OpenSettings();
+    else if (pressed == 23)
+        OpenInfo();
+    else if (pressed >= 24 && pressed < 24 + kInfoTabs)
+    {
+        m_infoTab = pressed - 24;
+        m_infoScroll = 0;
+    }
+    else if (pressed == 30)
+        CloseInfo();
     else if (pressed == 7)
         m_draft.autoCheck = !m_draft.autoCheck;
     else if (pressed == 8)
@@ -2314,6 +2627,33 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             return TRUE;
         }
         break;
+    case WM_MOUSEWHEEL:
+        if (m_infoOpen && !m_modal)
+            ScrollInfo(-GET_WHEEL_DELTA_WPARAM(wp) * S(60) / WHEEL_DELTA);
+        return 0;
+    case WM_CHANGES:
+    {
+        bool ok = false;
+        std::string text;
+        if (m_changeFetch)
+        {
+            std::lock_guard<std::mutex> lock(m_changeFetch->mutex);
+            ok = m_changeFetch->ok;
+            text = m_changeFetch->text;
+        }
+        std::vector<changelog::Section> parsed;
+        if (ok)
+            parsed = changelog::Parse(text);
+        if (!parsed.empty())
+        {
+            m_changes = std::move(parsed);
+            m_changesOnline = true;
+        }
+        else
+            m_changesFetched = false;   // beim naechsten Oeffnen noch einmal versuchen
+        InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+    }
     case WM_LBUTTONDOWN:
         OnMouseMove(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
         m_press = m_hover;
@@ -2328,6 +2668,22 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         {
             m_modal = false;
             InvalidateRect(m_hwnd, nullptr, FALSE);
+        }
+        else if (m_infoOpen && !m_modal)
+        {
+            const int page = std::max(S(80), static_cast<int>(m_infoView.bottom - m_infoView.top) - S(40));
+            switch (wp)
+            {
+            case VK_ESCAPE: case VK_RETURN: CloseInfo(); break;
+            case VK_LEFT:  m_infoTab = (m_infoTab + kInfoTabs - 1) % kInfoTabs; m_infoScroll = 0; InvalidateRect(m_hwnd, nullptr, FALSE); break;
+            case VK_RIGHT: m_infoTab = (m_infoTab + 1) % kInfoTabs; m_infoScroll = 0; InvalidateRect(m_hwnd, nullptr, FALSE); break;
+            case VK_UP:    ScrollInfo(-S(48)); break;
+            case VK_DOWN:  ScrollInfo(S(48)); break;
+            case VK_PRIOR: ScrollInfo(-page); break;
+            case VK_NEXT:  ScrollInfo(page); break;
+            case VK_HOME:  ScrollInfo(-m_infoMaxScroll); break;
+            case VK_END:   ScrollInfo(m_infoMaxScroll); break;
+            }
         }
         else if (m_settingsOpen && !m_modal && (wp == VK_ESCAPE || wp == VK_RETURN))
             CloseSettings(wp == VK_RETURN);

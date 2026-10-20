@@ -6,6 +6,9 @@
 // Anwendungs-Icon
 1 ICON "suite.ico"
 
+// Aenderungsprotokoll fuer den Info-Dialog (Id 101 = kChangelogResource in suite/main.cpp)
+101 RCDATA "../changelog.txt"
+
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION 1,1,29,0
 PRODUCTVERSION 1,1,29,0

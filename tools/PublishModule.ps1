@@ -11,6 +11,8 @@ $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rel = Join-Path (Split-Path -Parent $root) 'release'
 function FileVer($f) { $v = (Get-Item (Join-Path $rel $f)).VersionInfo.FileVersion; ($v -split '\.')[0..2] -join '.' }
 $sign = Join-Path $root 'SignRelease.ps1'
+# changelog.txt (Neuigkeiten im Info-Dialog der Suite) liegt im Release "modules" des Suite-Repos und wird bei jedem Programm-Release mit hochgeladen
+$changelog = Join-Path (Split-Path -Parent $root) 'changelog.txt'
 
 if ($Module -eq 'Pdf') {
     $repo = 'Neox365/Duncans-PDF-Reader'; $tag = 'v1.0.0'
@@ -19,7 +21,10 @@ if ($Module -eq 'Pdf') {
     & $sign (Join-Path $rel 'DuncansPdf.exe') (Join-Path $rel 'pdfium.dll')
     $files = @('DuncansPdf.exe', 'DuncansPdf.exe.sig', 'pdfium.dll', 'pdfium.dll.sig', 'version.txt') | ForEach-Object { Join-Path $rel $_ }
     Write-Host "PDF Reader $ver -> $repo $tag"
-    if (-not $DryRun) { gh release upload $tag @files --clobber --repo $repo; if ($LASTEXITCODE) { throw 'Upload fehlgeschlagen' } }
+    if (-not $DryRun) {
+        gh release upload $tag @files --clobber --repo $repo; if ($LASTEXITCODE) { throw 'Upload fehlgeschlagen' }
+        $ErrorActionPreference = 'Continue'; gh release upload modules $changelog --clobber --repo Neox365/Duncans-Suite; if ($LASTEXITCODE) { Write-Warning 'changelog.txt konnte nicht ins Release modules hochgeladen werden.' }; $ErrorActionPreference = 'Stop'
+    }
     return
 }
 
@@ -43,5 +48,5 @@ if ($DryRun) { return }
 # Release "modules" einmalig als Vorab-Version anlegen (zaehlt dann nicht als "latest" der Suite)
 $ErrorActionPreference = 'Continue'; gh release view $tag --repo $repo *> $null; $viewRc = $LASTEXITCODE; $ErrorActionPreference = 'Stop'
 if ($viewRc) { gh release create $tag --repo $repo --prerelease --title "Programm-Updates (modules)" --notes "Laufende Programm-Dateien fuer die Update-Pruefung der Suite. Nicht manuell herunterladen: Installer stehen in den Suite-Releases." }
-gh release upload $tag (Join-Path $rel $exe) (Join-Path $rel "$exe.sig") $mod --clobber --repo $repo
+gh release upload $tag (Join-Path $rel $exe) (Join-Path $rel "$exe.sig") $mod $changelog --clobber --repo $repo
 if ($LASTEXITCODE) { throw 'Upload fehlgeschlagen' }

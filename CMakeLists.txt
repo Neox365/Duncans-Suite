@@ -62,6 +62,8 @@ add_executable(DuncansSuite WIN32
     src/Icons.cpp
     resources/suite.rc
 )
+# Die Suite bettet changelog.txt als Ressource ein: bei Aenderungen neu uebersetzen
+set_source_files_properties(resources/suite.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/changelog.txt")
 target_compile_definitions(DuncansSuite PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
                            SUITE_VERSION=L\"${SUITE_VER}\")
 if(MSVC)

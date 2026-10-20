@@ -66,6 +66,10 @@ Beim Start fragt die Suite im Hintergrund die GitHub-Releases (`Neox365/Duncans-
 Es wird die Release-**Liste** abgefragt statt `/releases/latest`, weil `latest` Pre-Releases ignoriert. Ist man offline
 oder GitHub nicht erreichbar, bleibt die Prüfung still.
 
+### Info-Dialog der Suite (Button „i“ links neben dem Zahnrad)
+
+Zeigt die Neuigkeiten aller Programme (Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander und der Suite selbst), je ein Reiter pro Programm, neueste Einträge zuerst; Einträge, die jünger sind als die installierte Version, tragen ein grünes „NEU“, ein grüner Punkt am Reiter und am „i“ zeigt ein bereitstehendes Update. Quelle ist `changelog.txt` im Wurzelordner: die Suite bringt eine Kopie als Ressource mit (funktioniert offline) und lädt beim Öffnen die aktuelle Fassung aus dem Release `modules` (`toolsPublishModule.ps1` lädt sie bei jedem Programm-Release hoch). Neue Einträge also einfach oben im jeweiligen Abschnitt von `changelog.txt` ergänzen (Format steht im Dateikopf); Parser-Test: `suite/tests/ChangelogTest.cpp`. Bedienung: Mausrad/Pfeiltasten scrollen, ←/→ wechseln den Reiter, Esc schließt.
+
 ### Einstellungen der Suite (Zahnrad im Banner)
 
 Ein dunkler Dialog mit *Speichern* / *Abbrechen*; gespeichert in `%LOCALAPPDATA%\DuncansSuite\settings.ini`:
