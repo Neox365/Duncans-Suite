@@ -77,6 +77,10 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.1.1 | 2026-10-20
+- Im Dialog „Rechnung erstellen“ gibt es die Checkbox „Als Standard-Absender speichern“: Absender, Adresse, Zahlungshinweis/Bankverbindung und USt-Satz werden nur noch auf Wunsch für die nächsten Rechnungen gemerkt.
+- Der Ordner-Baum spiegelt die Ordnerstruktur auch für leere Ordner und zeigt Ordner-Symbole.
+- Das Rechtsklick-Menü zeigt die Status mit Punkt in der Badge-Farbe und heißt jetzt „Im Ordner anzeigen“ und „Löschen“.
 ## 0.1.0 | 2026-10-20
 - Erste Version: Rechnungs-Manager mit Ordnerstruktur Rechnungen\<Jahr>\<Gläubiger>\ und Baum zum Filtern nach Jahr und Gläubiger.
 - Liste mit Dateiname, Gläubiger, Betrag, Fälligkeit und Status-Badge (Bezahlt, Offen, Ratenzahlung, Fixkosten); überfällige Rechnungen werden rot markiert.

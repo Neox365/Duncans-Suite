@@ -113,6 +113,18 @@ static void indexAndScan() {
             CHECK(Matches(d, L"   "));
         }
 
+    // Ordnerstruktur: auch leere Ordner, keine versteckten
+    {
+        fs::create_directories(root / "2026" / "Leer");
+        fs::create_directories(root / "2024");
+        const auto folders = ListFolders(root);
+        auto has = [&](const wchar_t* y, const wchar_t* c) {
+            return std::find(folders.begin(), folders.end(), std::make_pair(std::wstring(y), std::wstring(c))) != folders.end();
+        };
+        CHECK(has(L"2026", L"") && has(L"2026", L"Netzanbieter") && has(L"2026", L"Leer") && has(L"2024", L""));
+        CHECK(!has(L".versteckt", L"") && folders.size() == 5);   // 2026 + 3 Glaeubiger, 2024
+    }
+
     // Zielpfad: kollisionsfrei
     const fs::path t1 = TargetPath(root, L"2026", L"Netzanbieter", L"Strom Oktober.pdf");
     CHECK(t1.filename().wstring() == L"Strom Oktober (2).pdf");

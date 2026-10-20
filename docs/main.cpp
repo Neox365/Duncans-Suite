@@ -31,7 +31,7 @@
 #include "Theme.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.1.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.1.1"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -48,7 +48,8 @@ enum Id {
     B_ADD = 1, B_NEW, B_GEAR,
     D_OK = 30, D_CANCEL, D_SKIP, D_ADDROW, D_DELROW,
     D_STATUS0 = 40,                 // 40..43 Status-Auswahl im Formular
-    D_CRED0 = 50                    // 50..57 Glaeubiger-Vorschlaege
+    D_CRED0 = 50,                   // 50..57 Glaeubiger-Vorschlaege
+    D_SAVESENDER = 60               // Rechnungsdialog: "Als Standard-Absender speichern"
 };
 enum MenuId {
     M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT,
@@ -90,6 +91,7 @@ struct Dialog {
     size_t queueIdx = 0;
     std::wstring editRel;                 // Edit: relativer Pfad
     int itemRows = 3;
+    bool saveSender = true;               // Rechnung: Absender, Adresse, Zahlungshinweis und USt-Satz als Standard merken
     std::vector<std::wstring> creditorChips;
     D2D1_RECT_F box{}, totals{};
 };
@@ -517,6 +519,10 @@ void App::BuildTree() {
     const Node old = m_node >= 0 && m_node < (int)m_nodes.size() ? m_nodes[m_node] : Node{};
     std::map<std::wstring, std::map<std::wstring, int>, std::greater<std::wstring>> years;   // neueste Jahre zuerst
     for (const auto& d : m_all) years[d.year][d.creditor]++;
+    for (const auto& f : docs::ListFolders(m_rootPath)) {   // leere Jahres-/Glaeubiger-Ordner erscheinen ebenfalls
+        auto& y = years[f.first];
+        if (!f.second.empty()) y[f.second] += 0;
+    }
     m_nodes.clear();
     Node all;
     all.label = L"Alle Rechnungen";
@@ -656,7 +662,14 @@ void App::DrawTree() {
         else if (i == m_hoverNode) FillRR(row, 7 * k, Theme::CardHover);
         const float ix = 14 * k + n.depth * 16 * k;
         const unsigned tc = i == m_node ? Theme::Text : (n.depth == 0 ? Theme::Text : Theme::TextDim);
-        Txt(n.label, {ix, y, rcTree.right - 56 * k, y + kNodeH * k}, n.depth == 1 || n.depth == 0 ? fBold.Get() : fNormal.Get(), tc);
+        {   // Ordner-Symbol: Reiter + Koerper (Jahr gelb, Glaeubiger gedaempft, "Alle" in der Akzentfarbe)
+            const float cy = y + kNodeH * k / 2, w = (n.depth == 2 ? 13.f : 15.f) * k, h = (n.depth == 2 ? 9.f : 11.f) * k, top = cy - h / 2;
+            const unsigned ic = n.depth == 0 ? Theme::Accent : Theme::Installment;
+            const float a = n.depth == 2 ? 0.55f : 0.9f;
+            FillRR({ix, top - 2 * k, ix + 6 * k, top + 3 * k}, 2 * k, ic, a);
+            FillRR({ix, top, ix + w, top + h}, 2.5f * k, ic, a);
+        }
+        Txt(n.label, {ix + 22 * k, y, rcTree.right - 56 * k, y + kNodeH * k}, n.depth == 1 || n.depth == 0 ? fBold.Get() : fNormal.Get(), tc);
         Txt(std::to_wstring(n.count), {rcTree.right - 56 * k, y, rcTree.right - 16 * k, y + kNodeH * k}, fRight.Get(), Theme::TextDim);
         y += kNodeH * k;
     }
@@ -710,7 +723,8 @@ void App::DrawList() {
     }
     if (m_view.empty()) {
         const bool filtered = !m_search.ed.text.empty() || m_node != 0;
-        Txt(m_all.empty() ? L"Noch keine Rechnungen.\nPDFs hierher ziehen oder „+ Hinzufügen“ wählen."
+        Txt(m_search.ed.text.empty() && m_node != 0 && !m_all.empty() ? L"In diesem Ordner liegen noch keine Rechnungen."
+            : m_all.empty() ? L"Noch keine Rechnungen.\nPDFs hierher ziehen oder „+ Hinzufügen“ wählen."
                           : (filtered ? L"Keine Treffer für diesen Filter." : L""),
             body, fCenter.Get(), Theme::TextDim);
     }
@@ -942,6 +956,17 @@ void App::DrawInvoice() {
     Button(D_OK, ok, L"PDF erzeugen", true);
     bx = ok.left - 10 * k;
     Button(D_CANCEL, {bx - 130 * k, y, bx, y + bh}, L"Abbrechen", false);
+    {   // Checkbox unten links: Absender-Vorlage merken
+        const float bs = 22 * k;
+        const D2D1_RECT_F box{x0, y + (bh - bs) / 2, x0 + bs, y + (bh + bs) / 2};
+        const bool hover = m_hoverBtn == D_SAVESENDER;
+        FillRR(box, 6 * k, d.saveSender ? Theme::Accent : Theme::Bg);
+        StrokeRR(box, 6 * k, d.saveSender ? Theme::Accent : (hover ? Theme::TextDim : Theme::Border), 1.5f);
+        if (d.saveSender) Txt(L"\u2713", box, fCenter.Get(), 0xFFFFFF);
+        const D2D1_RECT_F label{box.right + 10 * k, y, box.right + 10 * k + 330 * k, y + bh};
+        Txt(L"Als Standard-Absender speichern", label, fNormal.Get(), hover ? Theme::Text : Theme::TextDim);
+        m_hits.push_back({D_SAVESENDER, {x0, y, label.right, y + bh}});
+    }
     for (auto& f : d.fields) DrawField(f, m_focusId == f.id);
 }
 
@@ -1509,19 +1534,22 @@ void App::ApplyInvoice() {
     m.tags = L"eigene Rechnung " + docs::CleanField(data.recipient);
     m_meta[rel] = m;
     SaveIndex();
-    // Absenderdaten fuer das naechste Mal merken
-    m_settings.issuer = data.issuer;
-    m_settings.issuerAddr = txt(1);
-    m_settings.payNote = data.note;
-    m_settings.vat = data.vatPercent;
-    SaveSettings(m_settings);
+    // Absenderdaten als Standard fuer die naechsten Rechnungen merken (nur wenn die Checkbox gesetzt ist)
+    const bool savedSender = d.saveSender;
+    if (savedSender) {
+        m_settings.issuer = data.issuer;
+        m_settings.issuerAddr = txt(1);
+        m_settings.payNote = data.note;
+        m_settings.vat = data.vatPercent;
+        SaveSettings(m_settings);
+    }
     CloseDialog();
     Refresh();
     m_sel = {rel};
     m_focusRel = m_anchorRel = rel;
     for (int i = 0; i < (int)m_view.size(); ++i)
         if (m_all[m_view[i]].rel == rel) { EnsureRowVisible(i); break; }
-    SetNote(L"Rechnung " + data.number + L" erstellt: " + target.filename().wstring());
+    SetNote(L"Rechnung " + data.number + L" erstellt: " + target.filename().wstring() + (savedSender ? L"  \u00B7  Absender als Standard gespeichert" : L""));
     ShellExecuteW(m_hwnd, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
     Invalidate();
 }
@@ -1558,28 +1586,70 @@ void App::ShowGearMenu() {
     Invalidate();
 }
 
+namespace {
+// Farbiger, weich gezeichneter Punkt als Menue-Bitmap (32 Bit, vormultipliziertes Alpha)
+HBITMAP MakeDotBitmap(unsigned rgb, int px) {
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+    bi.bmiHeader.biWidth = px;
+    bi.bmiHeader.biHeight = -px;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    void* bits = nullptr;
+    HBITMAP h = CreateDIBSection(nullptr, &bi, DIB_RGB_COLORS, &bits, nullptr, 0);
+    if (!h || !bits) return h;
+    auto* p = static_cast<uint32_t*>(bits);
+    const float r = px / 2.f - 1.f;
+    for (int y = 0; y < px; ++y)
+        for (int x = 0; x < px; ++x) {
+            const float dx = x + 0.5f - px / 2.f, dy = y + 0.5f - px / 2.f;
+            const float cov = std::clamp(r + 0.5f - std::sqrt(dx * dx + dy * dy), 0.f, 1.f);
+            const unsigned a = (unsigned)(cov * 255.f), R = (rgb >> 16) & 255, G = (rgb >> 8) & 255, B = rgb & 255;
+            p[y * px + x] = (a << 24) | ((R * a / 255) << 16) | ((G * a / 255) << 8) | (B * a / 255);
+        }
+    return h;
+}
+}  // namespace
+
 void App::ShowContextMenu(int x, int y) {
     const auto sel = SelectedDocs();
     if (sel.empty()) return;
     HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING, C_OPEN, L"Öffnen");
-    AppendMenuW(m, MF_STRING, C_SHOW, L"Im Explorer zeigen");
+    std::vector<HBITMAP> dots;   // nach dem Menue freigeben
+    AppendMenuW(m, MF_STRING, C_OPEN, L"\u00D6ffnen");
+    AppendMenuW(m, MF_STRING, C_SHOW, L"Im Ordner anzeigen");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     bool same = true;
     for (const auto* d : sel) same = same && d->m.status == sel[0]->m.status;
-    for (int i = 0; i < 4; ++i)
-        AppendMenuW(m, MF_STRING | (same && sel[0]->m.status == kStatusOrder[i] ? MF_CHECKED : 0), C_STATUS0 + i,
-                    (std::wstring(L"Markieren als: ") + kStatusLabels[i]).c_str());
+    // Reihenfolge: Bezahlt, Offen, Ratenzahlung, Fixkosten; jeweils mit Punkt in der Badge-Farbe
+    const docs::Status order[4] = {docs::Status::Paid, docs::Status::Open, docs::Status::Installment, docs::Status::Fixed};
+    const unsigned colors[4] = {Theme::Paid, Theme::Open, Theme::Installment, Theme::Fixed};
+    const int dotPx = std::max(12, (int)std::lround(14 * k));
+    for (int i = 0; i < 4; ++i) {
+        const std::wstring label = std::wstring(L"Status: ") + docs::StatusName(order[i]);
+        MENUITEMINFOW mi{sizeof(mi)};
+        mi.fMask = MIIM_ID | MIIM_STRING | MIIM_STATE | MIIM_BITMAP;
+        mi.wID = C_STATUS0 + (UINT)order[i];
+        mi.dwTypeData = const_cast<LPWSTR>(label.c_str());
+        mi.fState = same && sel[0]->m.status == order[i] ? MFS_CHECKED : MFS_UNCHECKED;
+        HBITMAP dot = MakeDotBitmap(colors[i], dotPx);
+        dots.push_back(dot);
+        mi.hbmpItem = dot;
+        InsertMenuItemW(m, GetMenuItemCount(m), TRUE, &mi);
+    }
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING | (sel.size() == 1 ? 0 : MF_GRAYED), C_EDIT, L"Bearbeiten …");
-    AppendMenuW(m, MF_STRING, C_DELETE, L"In den Papierkorb");
+    AppendMenuW(m, MF_STRING | (sel.size() == 1 ? 0 : MF_GRAYED), C_EDIT, L"Bearbeiten \u2026");
+    AppendMenuW(m, MF_STRING, C_DELETE, L"L\u00F6schen");
     POINT pt{x, y};
     ClientToScreen(m_hwnd, &pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
     DestroyMenu(m);
+    for (HBITMAP b : dots)
+        if (b) DeleteObject(b);
     if (cmd == C_OPEN) OpenDoc(*sel[0]);
     else if (cmd == C_SHOW) ShowInExplorer(*sel[0]);
-    else if (cmd >= C_STATUS0 && cmd < C_STATUS0 + 4) SetStatusOfSelected(kStatusOrder[cmd - C_STATUS0]);
+    else if (cmd >= C_STATUS0 && cmd < C_STATUS0 + 4) SetStatusOfSelected((docs::Status)(cmd - C_STATUS0));
     else if (cmd == C_EDIT && sel.size() == 1) BeginEditDialog(*sel[0]);
     else if (cmd == C_DELETE) TrashSelected();
 }
@@ -1678,6 +1748,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 else ApplyInvoice();
                 break;
             case D_CANCEL: CloseDialog(); break;
+            case D_SAVESENDER: m_dlg.saveSender = !m_dlg.saveSender; break;
             case D_SKIP: ApplyAdd(true); break;
             case D_ADDROW:
                 if (m_dlg.itemRows < kMaxItemRows) {

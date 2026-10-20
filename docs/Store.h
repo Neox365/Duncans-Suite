@@ -393,6 +393,27 @@ inline std::vector<Doc> Scan(const std::filesystem::path& root, const MetaMap& m
     return out;
 }
 
+// Jahr- und Glaeubiger-Ordner der Wurzel (auch leere): {Jahr, ""} fuer einen Jahresordner, {Jahr, Glaeubiger} darunter.
+// Versteckte Ordner (".") werden ignoriert. Damit zeigt der Baum die Ordnerstruktur, nicht nur die Ordner mit Belegen.
+inline std::vector<std::pair<std::wstring, std::wstring>> ListFolders(const std::filesystem::path& root)
+{
+    std::vector<std::pair<std::wstring, std::wstring>> out;
+    std::error_code ec;
+    auto visible = [](const std::filesystem::path& p) {
+        const std::wstring n = p.filename().wstring();
+        return !n.empty() && n[0] != L'.';
+    };
+    for (std::filesystem::directory_iterator y(root, std::filesystem::directory_options::skip_permission_denied, ec), end; !ec && y != end; y.increment(ec)) {
+        if (!y->is_directory(ec) || !visible(y->path())) continue;
+        const std::wstring year = y->path().filename().wstring();
+        out.push_back({year, L""});
+        std::error_code ec2;
+        for (std::filesystem::directory_iterator c(y->path(), std::filesystem::directory_options::skip_permission_denied, ec2), end2; !ec2 && c != end2; c.increment(ec2))
+            if (c->is_directory(ec2) && visible(c->path())) out.push_back({year, c->path().filename().wstring()});
+    }
+    return out;
+}
+
 // ---- Suche -------------------------------------------------------------------------------------------
 
 // Jedes Wort der Suche muss in Dateiname, Glaeubiger, Jahr, Schlagworten, Notiz, Status oder Betrag vorkommen.
