@@ -31,7 +31,7 @@
 #include "ThumbnailLoader.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.3"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.2.4"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -46,6 +46,8 @@ constexpr UINT WM_APP_TREE = WM_APP + 5;       // Unterordner eines Baumknotens 
 constexpr UINT WM_APP_META = WM_APP + 6;       // Aufnahmedatum/GPS-Flags von Bildern gelesen
 constexpr UINT WM_APP_DUP = WM_APP + 7;        // Duplikatsuche: Fortschritt oder fertig
 constexpr UINT_PTR TIMER_SCROLL = 1;
+constexpr UINT_PTR TIMER_SLIDE = 2;             // Diashow: naechstes Bild
+constexpr UINT_PTR TIMER_FADE = 3;              // Diashow: Steuerleiste ausblenden
 constexpr int kMaxThumbSize = 320, kMinThumbSize = 96;
 constexpr UINT kShareEdge = 2048;               // Stapel "Verkleinern": laengste Kante in Pixeln
 
@@ -53,14 +55,16 @@ enum ButtonId {
     BTN_OPEN = 1, BTN_FULLSCREEN, BTN_BATCH, BTN_SETTINGS,
     BTN_ROT_L, BTN_ROT_R, BTN_CROP, BTN_STRIP, BTN_EDIT,
     VB_PREV = 20, VB_NEXT, VB_FIT, VB_ACTUAL, VB_CLOSE, VB_DELETE, VB_CROP_OK, VB_CROP_CANCEL,
-    VB_EDIT_SAVE, VB_EDIT_SAVEAS, VB_EDIT_RESET, VB_EDIT_CANCEL
+    VB_EDIT_SAVE, VB_EDIT_SAVEAS, VB_EDIT_RESET, VB_EDIT_CANCEL,
+    VB_SLIDE_PREV, VB_SLIDE_PLAY, VB_SLIDE_NEXT, VB_SLIDE_CLOSE
 };
 enum MenuId {
     MENU_SIZE_S = 100, MENU_SIZE_M, MENU_SIZE_L, MENU_OVERWRITE = 110, MENU_ABOUT = 120,
     MENU_SORT_NAME = 130, MENU_SORT_DATE, MENU_SORT_SIZE, MENU_SORT_TAKEN, MENU_SORT_DESC = 135,
     MENU_B_STRIP_COPY = 140, MENU_B_STRIP_OVERWRITE, MENU_B_RESIZE, MENU_B_ROT_CW, MENU_B_ROT_CCW,
     MENU_B_DUPES, MENU_B_DUPES_END,
-    MENU_FILTER_GPS = 150
+    MENU_FILTER_GPS = 150,
+    MENU_SLIDE_2 = 160, MENU_SLIDE_4, MENU_SLIDE_6, MENU_SLIDE_10
 };
 
 enum class BatchKind { StripCopy, StripOverwrite, Resize, RotateCw, RotateCcw };
@@ -70,6 +74,7 @@ struct Settings {
     bool overwriteOriginals = false;  // EXIF-Cleaner/Zuschneiden: Original ersetzen statt Kopie
     int sortBy = 0;                   // 0 Name, 1 Aenderungsdatum, 2 Dateigroesse, 3 Aufnahmedatum (EXIF)
     bool sortDesc = false;
+    int slideSeconds = 4;             // Diashow: Sekunden pro Bild
     std::wstring lastFolder;
 };
 
@@ -202,6 +207,7 @@ void LoadSettings(Settings& st) {
     st.overwriteOriginals = GetPrivateProfileIntW(L"Allgemein", L"OriginalUeberschreiben", 0, ini.c_str()) != 0;
     st.sortBy = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"Sortierung", 0, ini.c_str()), 0, 3);
     st.sortDesc = GetPrivateProfileIntW(L"Allgemein", L"Absteigend", 0, ini.c_str()) != 0;
+    st.slideSeconds = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"DiashowSekunden", 4, ini.c_str()), 1, 60);
     wchar_t buf[2048]{};
     GetPrivateProfileStringW(L"Allgemein", L"LetzterOrdner", L"", buf, 2048, ini.c_str());
     st.lastFolder = buf;
@@ -217,6 +223,7 @@ void SaveSettings(const Settings& st) {
     put(L"OriginalUeberschreiben", st.overwriteOriginals ? L"1" : L"0");
     put(L"Sortierung", std::to_wstring(st.sortBy));
     put(L"Absteigend", st.sortDesc ? L"1" : L"0");
+    put(L"DiashowSekunden", std::to_wstring(st.slideSeconds));
     put(L"LetzterOrdner", st.lastFolder);
 }
 
@@ -354,6 +361,14 @@ private:
     void ApplyCrop();
     void OnViewerKey(WPARAM vk);
 
+    // --- Diashow (Vollbild, Timer, ausblendende Steuerleiste)
+    void StartSlideshow();
+    void EndSlideshow();
+    void SlideAdvance(int delta);               // mit Umbruch am Ordnerende
+    void SlideRestartTimer();
+    float SlideOverlayAlpha() const;            // 1 = Leiste sichtbar, 0 = ausgeblendet
+    void DrawSlide();
+
     // --- Bildkorrektur (Bearbeiten-Modus im Betrachter)
     void BeginEdit();
     void EndEdit();
@@ -431,6 +446,14 @@ private:
     double m_crop[4] = {0, 0, 1, 1};       // x0, y0, x1, y1 als Bruchteile des aufrechten Bildes
     double m_cropAnchor[2] = {0, 0};
     bool m_cropHas = false;
+
+    // Diashow
+    bool m_slide = false, m_slidePaused = false, m_slideFromViewer = false, m_slideToggledFull = false;
+    bool m_slideCursorHidden = false;
+    ULONGLONG m_slideLastMove = 0;               // GetTickCount64 der letzten Mausbewegung
+    POINT m_slideMouse{};
+    float m_uiAlpha = 1.f;                       // Deckkraft der Steuerleisten-Knoepfe
+    D2D1_RECT_F rcSlideBar{};
 
     // Bildkorrektur: Vorschau-Pixel (aufrecht, BGRA) + aktuelle Regler; gedreht wird erst beim Zeichnen
     bool m_editing = false, m_editHasAlpha = false;
@@ -688,6 +711,10 @@ bool App::BtnEnabled(const Btn& b) const {
         case BTN_ROT_R:
         case BTN_CROP:
         case BTN_EDIT: return has && imgops::CanReencode(m_items[m_sel].path);
+        case VB_SLIDE_PREV:
+        case VB_SLIDE_PLAY:
+        case VB_SLIDE_NEXT:
+        case VB_SLIDE_CLOSE: return SlideOverlayAlpha() > 0.05f;
         case VB_EDIT_SAVE:
         case VB_EDIT_SAVEAS:
         case VB_EDIT_RESET: return m_editing && !m_ep.IsIdentity();
@@ -700,9 +727,9 @@ void App::DrawButton(const Btn& b) {
     bool hover = m_hoverBtn == b.id;
     bool enabled = BtnEnabled(b);
     unsigned bg = b.accent ? Theme::Accent : (hover && enabled ? Theme::CardHover : Theme::Card);
-    float a = enabled ? 1.f : 0.45f;
+    float a = (enabled ? 1.f : 0.45f) * m_uiAlpha;
     FillRR(b.rc, 6 * k, bg, a);
-    if (b.accent && hover && enabled) FillRR(b.rc, 6 * k, 0xFFFFFF, 0.12f);
+    if (b.accent && hover && enabled) FillRR(b.rc, 6 * k, 0xFFFFFF, 0.12f * m_uiAlpha);
     unsigned fg = b.accent ? 0xFFFFFF : (b.danger ? Theme::Danger : Theme::Text);
     Txt(b.label, b.rc, b.icon ? fIcon.Get() : fCenter.Get(), fg, a);
 }
@@ -1602,13 +1629,17 @@ void App::Command(int id) {
     switch (id) {
         case BTN_OPEN: BrowseForFolder(); break;
         case BTN_FULLSCREEN:
-            if (m_viewer || m_sel < 0) {
-                ToggleFullscreen();
-            } else {  // Bild gewaehlt: Betrachter im Vollbild
-                EnterViewer(false);
-                if (!m_full) { ToggleFullscreen(); m_fullByViewer = true; }
-            }
+            if (m_viewer || m_items.empty()) ToggleFullscreen();  // im Betrachter: nur Vollbild an/aus
+            else StartSlideshow();                                // sonst: Diashow ab dem gewaehlten Bild
             break;
+        case VB_SLIDE_PREV: SlideAdvance(-1); break;
+        case VB_SLIDE_NEXT: SlideAdvance(1); break;
+        case VB_SLIDE_PLAY:
+            m_slidePaused = !m_slidePaused;
+            LayoutViewer();
+            if (!m_slidePaused) SlideRestartTimer();
+            break;
+        case VB_SLIDE_CLOSE: EndSlideshow(); break;
         case BTN_BATCH: ShowBatchMenu(); break;
         case BTN_SETTINGS: ShowSettings(); break;
         case BTN_ROT_L: RotateSelected(false); break;
@@ -1677,6 +1708,11 @@ void App::ShowSettings() {
     AppendMenuW(m, MF_STRING | (m_settings.overwriteOriginals ? MF_CHECKED : 0), MENU_OVERWRITE,
                 L"EXIF entfernen / Zuschneiden: Original überschreiben");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (m_settings.slideSeconds == 2 ? MF_CHECKED : 0), MENU_SLIDE_2, L"Diashow: 2 Sekunden pro Bild");
+    AppendMenuW(m, MF_STRING | (m_settings.slideSeconds == 4 ? MF_CHECKED : 0), MENU_SLIDE_4, L"Diashow: 4 Sekunden pro Bild");
+    AppendMenuW(m, MF_STRING | (m_settings.slideSeconds == 6 ? MF_CHECKED : 0), MENU_SLIDE_6, L"Diashow: 6 Sekunden pro Bild");
+    AppendMenuW(m, MF_STRING | (m_settings.slideSeconds == 10 ? MF_CHECKED : 0), MENU_SLIDE_10, L"Diashow: 10 Sekunden pro Bild");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, MENU_ABOUT, L"Über Photo Commander");
     for (auto& b : m_btns)
         if (b.id == BTN_SETTINGS) {
@@ -1704,6 +1740,10 @@ void App::ShowSettings() {
                 ApplyFilter();
                 if (m_sel >= 0) EnsureVisible(m_sel);
                 SetStatus(FolderStatus());
+            } else if (cmd >= MENU_SLIDE_2 && cmd <= MENU_SLIDE_10) {
+                static const int secs[4] = {2, 4, 6, 10};
+                m_settings.slideSeconds = secs[cmd - MENU_SLIDE_2];
+                if (m_slide && !m_slidePaused) SlideRestartTimer();
             } else if (cmd == MENU_OVERWRITE) {
                 m_settings.overwriteOriginals = !m_settings.overwriteOriginals;
             } else if (cmd == MENU_ABOUT) {
@@ -2013,6 +2053,28 @@ void App::LayoutViewer() {
     RECT cr;
     GetClientRect(m_hwnd, &cr);
     const float Wd = (float)cr.right, Ht = (float)cr.bottom, bar = 60 * k;
+    if (m_slide) {  // Diashow: das Bild nutzt den ganzen Bildschirm, nur die kleine Steuerleiste schwebt unten
+        rcViewer = {0, 0, Wd, Ht};
+        rcViewBar = {0, Ht, Wd, Ht};
+        rcEditPanel = {};
+        const float bw = 52 * k, bh = 44 * k, gap = 10 * k, total = 4 * bw + 3 * gap;
+        const float x0 = (Wd - total) / 2, y0 = Ht - 80 * k;
+        rcSlideBar = {x0 - 16 * k, y0 - 8 * k, x0 + total + 16 * k, y0 + bh + 8 * k};
+        struct SDef { int id; const wchar_t* label; };
+        const SDef sd[4] = {{VB_SLIDE_PREV, L"⏮"}, {VB_SLIDE_PLAY, m_slidePaused ? L"▶" : L"❚❚"},
+                            {VB_SLIDE_NEXT, L"⏭"}, {VB_SLIDE_CLOSE, L"✕"}};
+        m_vbtns.clear();
+        for (int i = 0; i < 4; ++i) {
+            Btn b;
+            b.id = sd[i].id;
+            b.label = sd[i].label;
+            b.icon = true;
+            b.accent = i == 1;
+            b.rc = {x0 + i * (bw + gap), y0, x0 + i * (bw + gap) + bw, y0 + bh};
+            m_vbtns.push_back(b);
+        }
+        return;
+    }
     const float panelW = m_editing ? std::min(300 * k, Wd * 0.4f) : 0.f;
     rcViewer = {0, 0, Wd - panelW, std::max(0.f, Ht - bar)};
     rcEditPanel = m_editing ? D2D1_RECT_F{Wd - panelW, 0, Wd, std::max(0.f, Ht - bar)} : D2D1_RECT_F{};
@@ -2067,7 +2129,7 @@ ID2D1Bitmap* App::ViewerBitmap() const {
 }
 
 float App::ViewerFitScale(const D2D1_SIZE_F& sz) const {
-    const float m = 12 * k;
+    const float m = m_slide ? 0.f : 12 * k;
     return std::max(0.01f, std::min((W(rcViewer) - 2 * m) / sz.width, (H(rcViewer) - 2 * m) / sz.height));
 }
 
@@ -2190,6 +2252,23 @@ void App::ApplyCrop() {
 void App::OnViewerKey(WPARAM vk) {
     const bool shift = GetKeyState(VK_SHIFT) < 0;
     const float cx = (rcViewer.left + rcViewer.right) / 2, cy = (rcViewer.top + rcViewer.bottom) / 2;
+    if (m_slide) {  // Diashow: Leertaste/P Pause, Pfeile blaettern, Esc beendet
+        switch (vk) {
+            case VK_ESCAPE: EndSlideshow(); break;
+            case VK_SPACE:
+            case 'P':
+                m_slidePaused = !m_slidePaused;
+                m_slideLastMove = GetTickCount64();  // Leiste kurz einblenden
+                m_slideCursorHidden = false;
+                LayoutViewer();
+                if (!m_slidePaused) SlideRestartTimer();
+                break;
+            case VK_RIGHT: case VK_NEXT: SlideAdvance(1); break;
+            case VK_LEFT: case VK_PRIOR: SlideAdvance(-1); break;
+        }
+        Invalidate();
+        return;
+    }
     if (m_editing) {  // Bearbeiten-Modus: nur Speichern/Abbrechen (Blaettern, Drehen, Loeschen waeren hier verwirrend)
         if (vk == VK_ESCAPE) EndEdit();
         else if (vk == VK_RETURN) SaveEdit(false);
@@ -2198,6 +2277,7 @@ void App::OnViewerKey(WPARAM vk) {
     }
     switch (vk) {
         case 'E': Command(BTN_EDIT); break;
+        case VK_F5: StartSlideshow(); break;
         case VK_ESCAPE:
             if (m_cropping) CancelCrop();
             else ExitViewer();
@@ -2223,6 +2303,10 @@ void App::OnViewerKey(WPARAM vk) {
 
 void App::DrawViewer() {
     const float Wd = rcViewBar.right, Ht = rcViewBar.bottom;
+    if (m_slide) {
+        DrawSlide();
+        return;
+    }
     Fill({0, 0, Wd, Ht}, 0x0C0D10);
     rt->PushAxisAlignedClip(rcViewer, D2D1_ANTIALIAS_MODE_ALIASED);
 
@@ -2290,6 +2374,110 @@ void App::DrawViewer() {
     Fill(rcViewBar, Theme::Topbar);
     Fill({0, rcViewBar.top, Wd, rcViewBar.top + 1}, Theme::Border);
     for (auto& b : m_vbtns) DrawButton(b);
+}
+
+// ============================================================================
+// Diashow
+// ============================================================================
+
+float App::SlideOverlayAlpha() const {
+    if (!m_slide) return 0.f;
+    const ULONGLONG dt = GetTickCount64() - m_slideLastMove;
+    if (dt < 2000) return 1.f;
+    if (dt >= 2400) return 0.f;
+    return 1.f - (float)(dt - 2000) / 400.f;  // 0,4 s ausblenden
+}
+
+void App::SlideRestartTimer() {
+    SetTimer(m_hwnd, TIMER_SLIDE, (UINT)m_settings.slideSeconds * 1000, nullptr);  // setzt die laufende Zeit zurueck
+}
+
+void App::StartSlideshow() {
+    if (m_slide || m_items.empty()) return;
+    if (m_editing) {
+        SetStatus(L"Erst das Bearbeiten beenden, dann die Diashow starten.");
+        return;
+    }
+    if (m_sel < 0) Select(0);
+    if (m_sel < 0) return;
+    if (m_cropping) CancelCrop();
+    m_slideFromViewer = m_viewer;
+    m_slideToggledFull = false;
+    m_slidePaused = false;
+    m_slide = true;
+    if (!m_viewer) EnterViewer(false);
+    if (!m_full) {
+        ToggleFullscreen();
+        if (m_slideFromViewer) m_slideToggledFull = true;
+        else m_fullByViewer = true;  // ExitViewer verlaesst den Vollbildmodus wieder
+    }
+    m_vZoom = 1.f;
+    m_vPanX = m_vPanY = 0;
+    POINT pt{};
+    GetCursorPos(&pt);
+    ScreenToClient(m_hwnd, &pt);
+    m_slideMouse = pt;
+    m_slideLastMove = GetTickCount64();  // Leiste zeigt sich anfangs kurz
+    m_slideCursorHidden = false;
+    LayoutViewer();
+    SlideRestartTimer();
+    SetTimer(m_hwnd, TIMER_FADE, 40, nullptr);
+    Invalidate();
+}
+
+void App::EndSlideshow() {
+    if (!m_slide) return;
+    m_slide = false;
+    KillTimer(m_hwnd, TIMER_SLIDE);
+    KillTimer(m_hwnd, TIMER_FADE);
+    m_slideCursorHidden = false;
+    m_uiAlpha = 1.f;
+    SetCursor(LoadCursor(nullptr, IDC_ARROW));
+    if (m_slideFromViewer) {  // zurueck in den normalen Betrachter
+        if (m_slideToggledFull && m_full) ToggleFullscreen();
+        LayoutViewer();
+        Invalidate();
+    } else {
+        ExitViewer();  // zurueck zur Normalansicht (und Vollbild aus)
+    }
+}
+
+void App::SlideAdvance(int delta) {
+    const int n = (int)m_items.size();
+    if (!m_slide || n < 2 || m_sel < 0) return;
+    Select(((m_sel + delta) % n + n) % n);
+    m_vZoom = 1.f;
+    m_vPanX = m_vPanY = 0;
+    LayoutViewer();
+    SlideRestartTimer();
+    Invalidate();
+}
+
+void App::DrawSlide() {
+    const float Wd = rcViewBar.right, Ht = rcViewBar.bottom;
+    Fill({0, 0, Wd, Ht}, 0x000000);
+    if (ID2D1Bitmap* bmp = ViewerBitmap()) {
+        rt->DrawBitmap(bmp, ViewerImageRect(), 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    } else {
+        Txt(m_previewFailed ? L"Keine Vorschau" : L"Lädt…", rcViewer, fCenter.Get(), Theme::TextDim);
+    }
+    if (m_slidePaused) {  // Hinweis bleibt sichtbar, solange pausiert ist
+        const D2D1_RECT_F pill{Wd - 110 * k, 16 * k, Wd - 16 * k, 42 * k};
+        FillRR(pill, 6 * k, 0x000000, 0.55f);
+        Txt(L"❚❚  Pause", pill, fCenter.Get(), Theme::Text, 0.9f);
+    }
+    const float a = SlideOverlayAlpha();
+    if (a <= 0.01f) return;
+    FillRR(rcSlideBar, 12 * k, 0x000000, 0.6f * a);
+    if (m_sel >= 0 && m_sel < (int)m_items.size()) {
+        wchar_t idx[32];
+        swprintf_s(idx, L"   ·   %d / %d", m_sel + 1, (int)m_items.size());
+        Txt(m_items[m_sel].name + idx, {rcSlideBar.left - 80 * k, rcSlideBar.top - 30 * k, rcSlideBar.right + 80 * k, rcSlideBar.top - 6 * k},
+            fCenter.Get(), Theme::Text, a);
+    }
+    m_uiAlpha = a;
+    for (auto& b : m_vbtns) DrawButton(b);
+    m_uiAlpha = 1.f;
 }
 
 // ============================================================================
@@ -2622,6 +2810,10 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_SETCURSOR:
+            if (LOWORD(lp) == HTCLIENT && m_slide && SlideOverlayAlpha() <= 0.f) {
+                SetCursor(nullptr);  // Diashow: Zeiger verschwindet mit der Leiste
+                return TRUE;
+            }
             if (LOWORD(lp) == HTCLIENT) {
                 SetCursor(LoadCursor(nullptr, m_cursor));
                 return TRUE;
@@ -2651,10 +2843,28 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 int row = (int)(m_gridScroll / g.cellH);
                 if (row != m_lastReqRow) { m_lastReqRow = row; RequestVisible(); }
                 Invalidate();
+            } else if (wp == TIMER_SLIDE) {
+                if (m_slide && !m_slidePaused) SlideAdvance(1);
+            } else if (wp == TIMER_FADE) {
+                if (m_slide) {
+                    const float a = SlideOverlayAlpha();
+                    if (a > 0.f) Invalidate();
+                    else if (!m_slideCursorHidden) {
+                        m_slideCursorHidden = true;
+                        SetCursor(nullptr);
+                        Invalidate();
+                    }
+                }
             }
             return 0;
         case WM_MOUSEMOVE: {
             float x = (float)GET_X_LPARAM(lp), y = (float)GET_Y_LPARAM(lp);
+            if (m_slide && ((LONG)x != m_slideMouse.x || (LONG)y != m_slideMouse.y)) {  // echte Bewegung: Leiste zeigen
+                m_slideMouse = {(LONG)x, (LONG)y};
+                m_slideLastMove = GetTickCount64();
+                m_slideCursorHidden = false;
+                Invalidate();
+            }
             if (!m_tracking) {
                 TRACKMOUSEEVENT t{sizeof(t), TME_LEAVE, m_hwnd, 0};
                 TrackMouseEvent(&t);
@@ -2735,7 +2945,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                     m_cropHas = false;
                     m_cropDragging = true;
                     SetCapture(m_hwnd);
-                } else if (!m_cropping && !m_editing && In(rcViewer, x, y)) {
+                } else if (!m_cropping && !m_editing && !m_slide && In(rcViewer, x, y)) {
                     m_panning = true;
                     m_dragStart = {(LONG)x, (LONG)y};
                     m_panStartX = m_vPanX;
@@ -2793,7 +3003,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                     Invalidate();
                     return 0;
                 }
-                if (!m_cropping && !m_editing && In(rcViewer, x, y)) {
+                if (!m_cropping && !m_editing && !m_slide && In(rcViewer, x, y)) {
                     if (std::fabs(m_vZoom - 1.f) < 0.01f) ViewerActual(x, y);
                     else ViewerFit();
                 }
@@ -2811,7 +3021,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             ScreenToClient(m_hwnd, &pt);
             const float notches = GET_WHEEL_DELTA_WPARAM(wp) / 120.f;
             if (m_viewer) {
-                if (!m_editing && In(rcViewer, (float)pt.x, (float)pt.y)) ViewerZoomAt(std::pow(1.2f, notches), (float)pt.x, (float)pt.y);
+                if (!m_editing && !m_slide && In(rcViewer, (float)pt.x, (float)pt.y)) ViewerZoomAt(std::pow(1.2f, notches), (float)pt.x, (float)pt.y);
                 return 0;
             }
             float delta = -notches;
@@ -2835,6 +3045,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 else if (m_full) ToggleFullscreen();
                 return 0;
             }
+            if (wp == VK_F5 || (wp == 'F' && !ctrl)) { StartSlideshow(); return 0; }
             int n = (int)m_items.size();
             if (n == 0) return 0;
             if (ctrl && wp == 'A') { SelectAll(); return 0; }
