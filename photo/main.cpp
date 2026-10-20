@@ -31,7 +31,7 @@
 #include "ThumbnailLoader.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.2"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.2.3"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -51,8 +51,9 @@ constexpr UINT kShareEdge = 2048;               // Stapel "Verkleinern": laengst
 
 enum ButtonId {
     BTN_OPEN = 1, BTN_FULLSCREEN, BTN_BATCH, BTN_SETTINGS,
-    BTN_ROT_L, BTN_ROT_R, BTN_CROP, BTN_STRIP,
-    VB_PREV = 20, VB_NEXT, VB_FIT, VB_ACTUAL, VB_CLOSE, VB_DELETE, VB_CROP_OK, VB_CROP_CANCEL
+    BTN_ROT_L, BTN_ROT_R, BTN_CROP, BTN_STRIP, BTN_EDIT,
+    VB_PREV = 20, VB_NEXT, VB_FIT, VB_ACTUAL, VB_CLOSE, VB_DELETE, VB_CROP_OK, VB_CROP_CANCEL,
+    VB_EDIT_SAVE, VB_EDIT_SAVEAS, VB_EDIT_RESET, VB_EDIT_CANCEL
 };
 enum MenuId {
     MENU_SIZE_S = 100, MENU_SIZE_M, MENU_SIZE_L, MENU_OVERWRITE = 110, MENU_ABOUT = 120,
@@ -352,6 +353,20 @@ private:
     void CancelCrop();
     void ApplyCrop();
     void OnViewerKey(WPARAM vk);
+
+    // --- Bildkorrektur (Bearbeiten-Modus im Betrachter)
+    void BeginEdit();
+    void EndEdit();
+    void RebuildEditBitmap();                   // Farbkorrektur auf die Vorschau-Pixel, als D2D-Bitmap
+    void SaveEdit(bool saveAs);
+    int EditSliderAt(float x, float y) const;   // Regler unter dem Punkt, sonst -1
+    D2D1_RECT_F EditSliderBlock(int i) const;
+    D2D1_RECT_F EditSliderTrack(int i) const;
+    double EditSliderValue(int i) const;
+    void SetEditSlider(int i, double v);
+    void SetEditSliderFromX(int i, float x);
+    void DrawEditPreview();
+    void DrawEditPanel();
     void OnDropFiles(HDROP drop);
     void SetStatus(const std::wstring& s) { m_status = s; }
     void Invalidate() { InvalidateRect(m_hwnd, nullptr, FALSE); }
@@ -416,6 +431,15 @@ private:
     double m_crop[4] = {0, 0, 1, 1};       // x0, y0, x1, y1 als Bruchteile des aufrechten Bildes
     double m_cropAnchor[2] = {0, 0};
     bool m_cropHas = false;
+
+    // Bildkorrektur: Vorschau-Pixel (aufrecht, BGRA) + aktuelle Regler; gedreht wird erst beim Zeichnen
+    bool m_editing = false, m_editHasAlpha = false;
+    imgops::EditParams m_ep;
+    std::vector<BYTE> m_editSrc;
+    UINT m_editW = 0, m_editH = 0;
+    ComPtr<ID2D1Bitmap> m_editBmp;
+    int m_dragSlider = -1;
+    D2D1_RECT_F rcEditPanel{};
 
     // Detail
     imgops::ImageInfo m_info;
@@ -551,6 +575,7 @@ void App::DiscardDevice() {
     rt.Reset();
     for (auto& it : m_items) it.thumb.Reset();
     m_preview.Reset();
+    m_editBmp.Reset();
     m_loaded = 0;
     m_loader.NewGeneration();
 }
@@ -602,18 +627,18 @@ void App::Layout() {
     float bw = (dw_ - 8 * k) / 2, ah = 34 * k;
     struct A { int id; const wchar_t* t; bool danger; } acts[] = {
         {BTN_ROT_L, L"↺  Links drehen", false}, {BTN_ROT_R, L"↻  Rechts drehen", false},
-        {BTN_CROP, L"Zuschneiden", false}, {BTN_STRIP, L"EXIF entfernen", true}};
-    for (int i = 0; i < 4; ++i) {
+        {BTN_CROP, L"Zuschneiden", false}, {BTN_STRIP, L"EXIF entfernen", true}, {BTN_EDIT, L"Bearbeiten …", false}};
+    for (int i = 0; i < 5; ++i) {
         Btn b;
         b.id = acts[i].id;
         b.label = acts[i].t;
         b.danger = acts[i].danger;
         b.needsSelection = true;
         float bx = dx + (i % 2) * (bw + 8 * k), byy = y + (i / 2) * (ah + 8 * k);
-        b.rc = {bx, byy, bx + bw, byy + ah};
+        b.rc = {bx, byy, i == 4 ? dx + dw_ : bx + bw, byy + ah};
         m_btns.push_back(b);
     }
-    m_infoTop = y + 2 * (ah + 8 * k) + 10 * k;
+    m_infoTop = y + 3 * (ah + 8 * k) + 10 * k;
 
     LayoutViewer();
 }
@@ -661,7 +686,11 @@ bool App::BtnEnabled(const Btn& b) const {
         case VB_CROP_OK: return m_cropHas;
         case BTN_ROT_L:
         case BTN_ROT_R:
-        case BTN_CROP: return has && imgops::CanReencode(m_items[m_sel].path);
+        case BTN_CROP:
+        case BTN_EDIT: return has && imgops::CanReencode(m_items[m_sel].path);
+        case VB_EDIT_SAVE:
+        case VB_EDIT_SAVEAS:
+        case VB_EDIT_RESET: return m_editing && !m_ep.IsIdentity();
         case BTN_STRIP: return has && imgops::CanStripMetadata(m_items[m_sel].path);
         default: return !b.needsSelection || has;
     }
@@ -816,6 +845,7 @@ void App::DrawDetails() {
         swprintf_s(res, L"%u × %u  (%.1f MP)", m_info.width, m_info.height, m_info.width * (double)m_info.height / 1e6);
         row(L"Auflösung", res);
         row(L"Dateigröße", FormatSize(m_info.fileSize));
+        row(L"Erstellt", FormatTime(m_info.created));
         row(L"Geändert", FormatTime(m_info.modified));
         head(L"EXIF");
         if (m_info.rows.empty()) row(L"", L"Keine EXIF-Daten", Theme::TextDim);
@@ -1589,6 +1619,17 @@ void App::Command(int id) {
             else BeginCrop();
             break;
         case BTN_STRIP: StripSelected(); break;
+        case BTN_EDIT:
+            if (!m_viewer) EnterViewer(false);
+            BeginEdit();
+            break;
+        case VB_EDIT_SAVE: SaveEdit(false); break;
+        case VB_EDIT_SAVEAS: SaveEdit(true); break;
+        case VB_EDIT_RESET:
+            m_ep = imgops::EditParams{};
+            RebuildEditBitmap();
+            break;
+        case VB_EDIT_CANCEL: EndEdit(); break;
         case VB_PREV: ViewerNav(-1); break;
         case VB_NEXT: ViewerNav(1); break;
         case VB_FIT: ViewerFit(); break;
@@ -1949,6 +1990,7 @@ void App::EnterViewer(bool crop) {
 
 void App::ExitViewer() {
     if (!m_viewer) return;
+    if (m_editing) EndEdit();
     m_viewer = false;
     m_cropping = m_cropDragging = m_panning = false;
     if (GetCapture() == m_hwnd) ReleaseCapture();
@@ -1971,18 +2013,26 @@ void App::LayoutViewer() {
     RECT cr;
     GetClientRect(m_hwnd, &cr);
     const float Wd = (float)cr.right, Ht = (float)cr.bottom, bar = 60 * k;
-    rcViewer = {0, 0, Wd, std::max(0.f, Ht - bar)};
+    const float panelW = m_editing ? std::min(300 * k, Wd * 0.4f) : 0.f;
+    rcViewer = {0, 0, Wd - panelW, std::max(0.f, Ht - bar)};
+    rcEditPanel = m_editing ? D2D1_RECT_F{Wd - panelW, 0, Wd, std::max(0.f, Ht - bar)} : D2D1_RECT_F{};
     rcViewBar = {0, std::max(0.f, Ht - bar), Wd, Ht};
 
     struct Def { int id; const wchar_t* label; bool accent, danger; };
     std::vector<Def> defs;
-    if (m_cropping) {
+    if (m_editing) {
+        defs = {{VB_EDIT_SAVE, L"Speichern", true, false},
+                {VB_EDIT_SAVEAS, L"Speichern unter …", false, false},
+                {VB_EDIT_RESET, L"Zurücksetzen", false, false},
+                {VB_EDIT_CANCEL, L"Abbrechen", false, false}};
+    } else if (m_cropping) {
         defs = {{VB_CROP_OK, L"Zuschneiden speichern", true, false}, {VB_CROP_CANCEL, L"Abbrechen", false, false}};
     } else {
         defs = {{VB_PREV, L"‹ Zurück", false, false},   {VB_NEXT, L"Weiter ›", false, false},
                 {BTN_ROT_L, L"↺", false, false},        {BTN_ROT_R, L"↻", false, false},
                 {VB_FIT, L"Einpassen", false, false},   {VB_ACTUAL, L"100 %", false, false},
-                {BTN_CROP, L"Zuschneiden", false, false}, {BTN_STRIP, L"EXIF entfernen", false, true},
+                {BTN_CROP, L"Zuschneiden", false, false}, {BTN_EDIT, L"Bearbeiten", false, false},
+                {BTN_STRIP, L"EXIF entfernen", false, true},
                 {VB_DELETE, L"Löschen", false, true},   {BTN_FULLSCREEN, L"Vollbild", false, false},
                 {VB_CLOSE, L"Schließen ✕", true, false}};
     }
@@ -2084,6 +2134,10 @@ void App::ViewerNav(int delta) {
     if (n == 0 || m_sel < 0) return;
     const int t = std::clamp(m_sel + delta, 0, n - 1);
     if (t == m_sel) return;
+    if (m_editing) {
+        SetStatus(L"Erst speichern oder abbrechen, dann zum nächsten Bild.");
+        return;
+    }
     if (m_cropping) CancelCrop();
     Select(t);
     m_vZoom = 1.f;
@@ -2136,7 +2190,14 @@ void App::ApplyCrop() {
 void App::OnViewerKey(WPARAM vk) {
     const bool shift = GetKeyState(VK_SHIFT) < 0;
     const float cx = (rcViewer.left + rcViewer.right) / 2, cy = (rcViewer.top + rcViewer.bottom) / 2;
+    if (m_editing) {  // Bearbeiten-Modus: nur Speichern/Abbrechen (Blaettern, Drehen, Loeschen waeren hier verwirrend)
+        if (vk == VK_ESCAPE) EndEdit();
+        else if (vk == VK_RETURN) SaveEdit(false);
+        Invalidate();
+        return;
+    }
     switch (vk) {
+        case 'E': Command(BTN_EDIT); break;
         case VK_ESCAPE:
             if (m_cropping) CancelCrop();
             else ExitViewer();
@@ -2167,7 +2228,9 @@ void App::DrawViewer() {
 
     ID2D1Bitmap* bmp = ViewerBitmap();
     const D2D1_RECT_F ir = ViewerImageRect();
-    if (bmp) {
+    if (m_editing) {
+        DrawEditPreview();
+    } else if (bmp) {
         const float scale = W(ir) / bmp->GetSize().width;
         rt->DrawBitmap(bmp, ir, 1.f,
                        scale > 2.f ? D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR : D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
@@ -2203,7 +2266,10 @@ void App::DrawViewer() {
     // Kopfzeile
     const D2D1_RECT_F top{0, 0, Wd, 36 * k};
     Fill(top, 0x000000, 0.5f);
-    if (m_cropping) {
+    if (m_editing) {
+        Txt(L"Bearbeiten   ·   Enter = speichern   ·   Esc = abbrechen", {16 * k, 0, Wd - 16 * k, 36 * k}, fNormal.Get(),
+            Theme::Text);
+    } else if (m_cropping) {
         Txt(L"Zuschneiden: Ausschnitt mit gedrückter Maustaste aufziehen   ·   Enter = speichern   ·   Esc = abbrechen",
             {16 * k, 0, Wd - 16 * k, 36 * k}, fNormal.Get(), Theme::Text);
     } else if (m_sel >= 0 && m_sel < (int)m_items.size()) {
@@ -2220,9 +2286,280 @@ void App::DrawViewer() {
         Txt(m_status, {16 * k, rcViewer.bottom - 30 * k, Wd - 16 * k, rcViewer.bottom - 6 * k}, fSmall.Get(), Theme::TextDim);
     rt->PopAxisAlignedClip();
 
+    if (m_editing) DrawEditPanel();
     Fill(rcViewBar, Theme::Topbar);
     Fill({0, rcViewBar.top, Wd, rcViewBar.top + 1}, Theme::Border);
     for (auto& b : m_vbtns) DrawButton(b);
+}
+
+// ============================================================================
+// Bildkorrektur
+// ============================================================================
+
+namespace {
+struct SliderDef { const wchar_t* label; double lo, hi; };
+const SliderDef kSliders[4] = {{L"Helligkeit", -100, 100}, {L"Kontrast", -100, 100}, {L"Sättigung", -100, 100},
+                               {L"Horizont ausrichten", -45, 45}};
+constexpr int kEditMaxEdge = 2000;  // Vorschau-Aufloesung; gespeichert wird immer aus dem Original
+
+std::wstring ExtOf(const std::wstring& path) {
+    const size_t dot = path.find_last_of(L'.'), cut = path.find_last_of(L'\\');
+    if (dot == std::wstring::npos || (cut != std::wstring::npos && dot < cut)) return L"";
+    std::wstring e = path.substr(dot + 1);
+    for (auto& c : e) c = (wchar_t)towlower(c);
+    return e;
+}
+
+// "Speichern unter": Dateiname frei waehlbar, das Format bleibt das des Originals
+std::wstring PickSavePath(HWND owner, const std::wstring& src, const std::wstring& suggestion) {
+    ComPtr<IFileSaveDialog> dlg;
+    if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return L"";
+    const std::wstring ext = ExtOf(src), spec = L"*." + ext;
+    COMDLG_FILTERSPEC fs[1] = {{L"Gleiches Format wie das Original", spec.c_str()}};
+    DWORD opts = 0;
+    dlg->GetOptions(&opts);
+    dlg->SetOptions(opts | FOS_OVERWRITEPROMPT | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    dlg->SetFileTypes(1, fs);
+    dlg->SetDefaultExtension(ext.c_str());
+    dlg->SetFileName(suggestion.c_str());
+    ComPtr<IShellItem> folder;
+    if (SUCCEEDED(SHCreateItemFromParsingName(ParentOf(src).c_str(), nullptr, IID_PPV_ARGS(&folder)))) dlg->SetFolder(folder.Get());
+    if (FAILED(dlg->Show(owner))) return L"";
+    ComPtr<IShellItem> res;
+    PWSTR p = nullptr;
+    std::wstring out;
+    if (SUCCEEDED(dlg->GetResult(&res)) && SUCCEEDED(res->GetDisplayName(SIGDN_FILESYSPATH, &p))) out = p;
+    CoTaskMemFree(p);
+    return out;
+}
+}  // namespace
+
+void App::BeginEdit() {
+    if (!m_viewer || m_editing || m_sel < 0 || m_sel >= (int)m_items.size()) return;
+    if (!imgops::CanReencode(m_items[m_sel].path)) {
+        SetStatus(L"Dieses Format kann nicht bearbeitet werden.");
+        return;
+    }
+    if (m_cropping) CancelCrop();
+    HCURSOR old = SetCursor(LoadCursor(nullptr, IDC_WAIT));
+    std::vector<BYTE> px;
+    UINT w = 0, h = 0;
+    const bool ok = imgops::LoadPixels(m_items[m_sel].path, kEditMaxEdge, px, w, h);
+    SetCursor(old);
+    if (!ok) {
+        SetStatus(L"Das Bild konnte nicht zum Bearbeiten geladen werden.");
+        return;
+    }
+    m_editHasAlpha = false;
+    for (size_t i = 3; i < px.size(); i += 4)
+        if (px[i] != 255) { m_editHasAlpha = true; break; }
+    m_editSrc = std::move(px);
+    m_editW = w;
+    m_editH = h;
+    m_ep = imgops::EditParams{};
+    m_dragSlider = -1;
+    m_editing = true;
+    m_vZoom = 1.f;
+    m_vPanX = m_vPanY = 0;
+    LayoutViewer();
+    RebuildEditBitmap();
+    SetStatus(L"Regler ziehen · Doppelklick auf einen Regler setzt ihn zurück");
+    Invalidate();
+}
+
+void App::EndEdit() {
+    if (!m_editing) return;
+    m_editing = false;
+    m_dragSlider = -1;
+    if (GetCapture() == m_hwnd) ReleaseCapture();
+    m_editSrc.clear();
+    m_editSrc.shrink_to_fit();
+    m_editBmp.Reset();
+    LayoutViewer();
+    Invalidate();
+}
+
+void App::RebuildEditBitmap() {
+    if (!m_editing || !rt || m_editSrc.empty()) return;
+    std::vector<BYTE> tmp = m_editSrc;
+    imgops::ApplyColor(tmp.data(), (size_t)m_editW * m_editH, m_ep);
+    if (m_editHasAlpha) {  // Direct2D erwartet vormultiplizierte Farben
+        for (size_t i = 0; i < tmp.size(); i += 4) {
+            const unsigned a = tmp[i + 3];
+            tmp[i] = (BYTE)(tmp[i] * a / 255);
+            tmp[i + 1] = (BYTE)(tmp[i + 1] * a / 255);
+            tmp[i + 2] = (BYTE)(tmp[i + 2] * a / 255);
+        }
+    }
+    m_editBmp.Reset();
+    rt->CreateBitmap(D2D1::SizeU(m_editW, m_editH), tmp.data(), m_editW * 4,
+                     D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
+                     &m_editBmp);
+    Invalidate();
+}
+
+D2D1_RECT_F App::EditSliderBlock(int i) const {
+    const float top = rcEditPanel.top + 56 * k + i * 74 * k;
+    return {rcEditPanel.left + 16 * k, top, rcEditPanel.right - 16 * k, top + 62 * k};
+}
+
+D2D1_RECT_F App::EditSliderTrack(int i) const {
+    const D2D1_RECT_F b = EditSliderBlock(i);
+    const float cy = b.top + 42 * k;
+    return {b.left + 8 * k, cy - 2 * k, b.right - 8 * k, cy + 2 * k};
+}
+
+int App::EditSliderAt(float x, float y) const {
+    if (!m_editing) return -1;
+    for (int i = 0; i < 4; ++i)
+        if (In(EditSliderBlock(i), x, y)) return i;
+    return -1;
+}
+
+double App::EditSliderValue(int i) const {
+    switch (i) {
+        case 0: return m_ep.brightness;
+        case 1: return m_ep.contrast;
+        case 2: return m_ep.saturation;
+        default: return m_ep.angle;
+    }
+}
+
+void App::SetEditSlider(int i, double v) {
+    const SliderDef& d = kSliders[i];
+    v = std::clamp(v, d.lo, d.hi);
+    if (i < 3) {
+        const int iv = (int)std::lround(v);
+        int& ref = i == 0 ? m_ep.brightness : (i == 1 ? m_ep.contrast : m_ep.saturation);
+        if (ref == iv) return;
+        ref = iv;
+        RebuildEditBitmap();
+    } else {
+        v = std::round(v * 10.0) / 10.0;
+        if (m_ep.angle == v) return;
+        m_ep.angle = v;  // nur eine Drehmatrix beim Zeichnen: kein Neuberechnen der Pixel
+    }
+    Invalidate();
+}
+
+void App::SetEditSliderFromX(int i, float x) {
+    const D2D1_RECT_F t = EditSliderTrack(i);
+    const SliderDef& d = kSliders[i];
+    const double f = std::clamp((x - t.left) / (t.right - t.left), 0.f, 1.f);
+    double v = d.lo + f * (d.hi - d.lo);
+    if (std::fabs(v) < (i < 3 ? 2.0 : 0.3)) v = 0;  // rastet in der Mitte ein
+    SetEditSlider(i, v);
+}
+
+void App::DrawEditPreview() {
+    if (!m_editBmp) RebuildEditBitmap();
+    if (!m_editBmp) {
+        Txt(L"Lädt…", rcViewer, fCenter.Get(), Theme::TextDim);
+        return;
+    }
+    // Die Vorschau wird nur gedreht gezeichnet (Matrix) und auf den randlosen Ausschnitt begrenzt.
+    // Beim Speichern rechnet imgops::ApplyEdits dieselbe Geometrie auf dem Original nach.
+    const float w = (float)m_editW, h = (float)m_editH;
+    const float s = (float)imgops::StraightenScale(w, h, m_ep.angle);
+    const float ow = w * s, oh = h * s, margin = 16 * k;
+    const float z = std::max(0.01f, std::min((W(rcViewer) - 2 * margin) / ow, (H(rcViewer) - 2 * margin) / oh));
+    const float cx = (rcViewer.left + rcViewer.right) / 2, cy = (rcViewer.top + rcViewer.bottom) / 2;
+    const D2D1_RECT_F out{cx - ow * z / 2, cy - oh * z / 2, cx + ow * z / 2, cy + oh * z / 2};
+    rt->PushAxisAlignedClip(out, D2D1_ANTIALIAS_MODE_ALIASED);
+    rt->SetTransform(D2D1::Matrix3x2F::Translation(-w / 2, -h / 2) * D2D1::Matrix3x2F::Scale(z, z) *
+                     D2D1::Matrix3x2F::Rotation((float)m_ep.angle) * D2D1::Matrix3x2F::Translation(cx, cy));
+    rt->DrawBitmap(m_editBmp.Get(), D2D1::RectF(0, 0, w, h), 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    rt->SetTransform(D2D1::Matrix3x2F::Identity());
+    if (m_dragSlider == 3) {  // Hilfslinien beim Ausrichten
+        SetCol(0xFFFFFF, 0.35f);
+        for (int i = 1; i <= 8; ++i) {
+            rt->DrawLine({out.left + W(out) * i / 9, out.top}, {out.left + W(out) * i / 9, out.bottom}, brush.Get(), 1.f);
+            rt->DrawLine({out.left, out.top + H(out) * i / 9}, {out.right, out.top + H(out) * i / 9}, brush.Get(), 1.f);
+        }
+    }
+    rt->PopAxisAlignedClip();
+}
+
+void App::DrawEditPanel() {
+    Fill(rcEditPanel, Theme::Panel);
+    Fill({rcEditPanel.left, rcEditPanel.top, rcEditPanel.left + 1, rcEditPanel.bottom}, Theme::Border);
+    rt->PushAxisAlignedClip(rcEditPanel, D2D1_ANTIALIAS_MODE_ALIASED);
+    const float x = rcEditPanel.left + 16 * k, wd = W(rcEditPanel) - 32 * k;
+    Txt(L"BILD BEARBEITEN", {x, rcEditPanel.top + 14 * k, x + wd, rcEditPanel.top + 36 * k}, fSmall.Get(), Theme::TextDim);
+    for (int i = 0; i < 4; ++i) {
+        const D2D1_RECT_F b = EditSliderBlock(i), t = EditSliderTrack(i);
+        const double v = EditSliderValue(i);
+        const bool changed = std::fabs(v) > 0.001;
+        wchar_t val[24];
+        if (!changed) wcscpy_s(val, L"0");
+        else if (i < 3) swprintf_s(val, L"%+d", (int)std::lround(v));
+        else swprintf_s(val, L"%+.1f°", v);
+        Txt(kSliders[i].label, {b.left, b.top + 4 * k, b.right - 70 * k, b.top + 26 * k}, fNormal.Get(), Theme::Text);
+        Txt(val, {b.right - 70 * k, b.top + 4 * k, b.right, b.top + 26 * k}, fRight.Get(),
+            changed ? Theme::Accent : Theme::TextDim);
+        FillRR(t, 2 * k, Theme::Border);
+        const double f = (v - kSliders[i].lo) / (kSliders[i].hi - kSliders[i].lo);
+        const float kx = t.left + (float)f * (t.right - t.left), mid = (t.left + t.right) / 2;
+        if (changed) FillRR({std::min(kx, mid), t.top, std::max(kx, mid), t.bottom}, 2 * k, Theme::Accent);
+        Fill({mid - 0.5f * k, t.top - 4 * k, mid + 0.5f * k, t.bottom + 4 * k}, Theme::TextDim, 0.7f);
+        const float cy = (t.top + t.bottom) / 2, r = (m_dragSlider == i ? 9.f : 8.f) * k;
+        SetCol(0xFFFFFF);
+        rt->FillEllipse(D2D1::Ellipse({kx, cy}, r, r), brush.Get());
+        SetCol(Theme::Accent);
+        rt->DrawEllipse(D2D1::Ellipse({kx, cy}, r, r), brush.Get(), 2 * k);
+    }
+    float y = EditSliderBlock(3).bottom + 14 * k;
+    const double sc = imgops::StraightenScale(1, 1, m_ep.angle);
+    if (std::fabs(m_ep.angle) > 0.005) {
+        wchar_t cut[96];
+        swprintf_s(cut, L"Randlos zugeschnitten: %d %% des Bildes bleiben.", (int)std::lround(sc * sc * 100));
+        Txt(cut, {x, y, x + wd, y + 36 * k}, fSmall.Get(), Theme::TextDim);
+        y += 40 * k;
+    }
+    Txt(L"Doppelklick auf einen Regler setzt ihn zurück.", {x, y, x + wd, y + 22 * k}, fSmall.Get(), Theme::TextDim);
+    rt->PopAxisAlignedClip();
+}
+
+void App::SaveEdit(bool saveAs) {
+    if (!m_editing || m_sel < 0 || m_sel >= (int)m_items.size()) return;
+    if (m_ep.IsIdentity()) {
+        SetStatus(L"Keine Änderungen zum Speichern.");
+        return;
+    }
+    const std::wstring src = m_items[m_sel].path, name = m_items[m_sel].name;
+    std::wstring dst, err;
+    if (saveAs) {
+        dst = PickSavePath(m_hwnd, src, FileNameOf(WithSuffix(src, L"_edit")));
+        if (dst.empty()) return;
+        if (ExtOf(dst) != ExtOf(src)) {
+            SetStatus(L"Das Format muss das des Originals bleiben (." + ExtOf(src) + L").");
+            return;
+        }
+    } else if (m_settings.overwriteOriginals) {
+        if (MessageBoxW(m_hwnd, L"Das ORIGINAL durch die bearbeitete Fassung ersetzen? Das lässt sich nicht rückgängig machen.",
+                        L"Bearbeiten", MB_YESNO | MB_ICONWARNING) != IDYES)
+            return;
+        dst = src;
+    } else {
+        dst = UniquePath(WithSuffix(src, L"_edit"));
+    }
+    HCURSOR old = SetCursor(LoadCursor(nullptr, IDC_WAIT));
+    const bool ok = imgops::EditImage(src, dst, m_ep, &err);
+    SetCursor(old);
+    if (!ok) {
+        SetStatus(L"Speichern fehlgeschlagen: " + err);
+        return;
+    }
+    EndEdit();
+    if (_wcsicmp(dst.c_str(), src.c_str()) == 0) {
+        ReloadItem(m_sel);
+        SetStatus(L"Korrekturen gespeichert: " + name);
+    } else if (ParentOf(dst) == m_folder) {
+        m_pendingStatus = L"Bearbeitete Kopie gespeichert: " + FileNameOf(dst);
+        OpenFolder(m_folder, dst, true);
+    } else {
+        SetStatus(L"Bearbeitete Kopie gespeichert: " + dst);
+    }
 }
 
 void App::OnDropFiles(HDROP drop) {
@@ -2323,6 +2660,10 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 TrackMouseEvent(&t);
                 m_tracking = true;
             }
+            if (m_viewer && m_dragSlider >= 0) {
+                SetEditSliderFromX(m_dragSlider, x);
+                return 0;
+            }
             if (m_viewer && m_cropDragging) {
                 const D2D1_RECT_F ir = ViewerImageRect();
                 if (W(ir) > 1 && H(ir) > 1) {
@@ -2356,8 +2697,9 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             }
             LPCWSTR cur = IDC_ARROW;
             if (hb || hi >= 0 || hr >= 0) cur = IDC_HAND;
+            else if (m_viewer && EditSliderAt(x, y) >= 0) cur = IDC_HAND;
             else if (m_viewer && m_cropping && In(ViewerImageRect(), x, y)) cur = IDC_CROSS;
-            else if (m_viewer && m_vZoom > 1.001f && In(rcViewer, x, y)) cur = IDC_SIZEALL;
+            else if (m_viewer && !m_editing && m_vZoom > 1.001f && In(rcViewer, x, y)) cur = IDC_SIZEALL;
             if (cur != m_cursor) { m_cursor = cur; SetCursor(LoadCursor(nullptr, cur)); }
             if (hb != m_hoverBtn || hi != m_hoverItem || hr != m_hoverRow) {
                 m_hoverBtn = hb; m_hoverItem = hi; m_hoverRow = hr;
@@ -2376,6 +2718,14 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             for (auto& b : ActiveBtns())
                 if (In(b.rc, x, y) && BtnEnabled(b)) { Command(b.id); return 0; }
             if (m_viewer) {
+                const int sl = EditSliderAt(x, y);
+                if (sl >= 0) {
+                    m_dragSlider = sl;
+                    SetCapture(m_hwnd);
+                    SetEditSliderFromX(sl, x);
+                    Invalidate();
+                    return 0;
+                }
                 const D2D1_RECT_F ir = ViewerImageRect();
                 if (m_cropping && In(ir, x, y) && W(ir) > 1 && H(ir) > 1) {
                     m_cropAnchor[0] = std::clamp((x - ir.left) / W(ir), 0.f, 1.f);
@@ -2385,7 +2735,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                     m_cropHas = false;
                     m_cropDragging = true;
                     SetCapture(m_hwnd);
-                } else if (!m_cropping && In(rcViewer, x, y)) {
+                } else if (!m_cropping && !m_editing && In(rcViewer, x, y)) {
                     m_panning = true;
                     m_dragStart = {(LONG)x, (LONG)y};
                     m_panStartX = m_vPanX;
@@ -2426,8 +2776,9 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_LBUTTONUP:
-            if (m_cropDragging || m_panning) {
+            if (m_cropDragging || m_panning || m_dragSlider >= 0) {
                 m_cropDragging = m_panning = false;
+                m_dragSlider = -1;
                 if (GetCapture() == m_hwnd) ReleaseCapture();
                 Invalidate();
             }
@@ -2435,7 +2786,14 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         case WM_LBUTTONDBLCLK: {
             float x = (float)GET_X_LPARAM(lp), y = (float)GET_Y_LPARAM(lp);
             if (m_viewer) {
-                if (!m_cropping && In(rcViewer, x, y)) {
+                const int sl = EditSliderAt(x, y);
+                if (sl >= 0) {  // Doppelklick: diesen Regler zuruecksetzen
+                    m_dragSlider = -1;
+                    SetEditSlider(sl, 0);
+                    Invalidate();
+                    return 0;
+                }
+                if (!m_cropping && !m_editing && In(rcViewer, x, y)) {
                     if (std::fabs(m_vZoom - 1.f) < 0.01f) ViewerActual(x, y);
                     else ViewerFit();
                 }
@@ -2453,7 +2811,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             ScreenToClient(m_hwnd, &pt);
             const float notches = GET_WHEEL_DELTA_WPARAM(wp) / 120.f;
             if (m_viewer) {
-                if (In(rcViewer, (float)pt.x, (float)pt.y)) ViewerZoomAt(std::pow(1.2f, notches), (float)pt.x, (float)pt.y);
+                if (!m_editing && In(rcViewer, (float)pt.x, (float)pt.y)) ViewerZoomAt(std::pow(1.2f, notches), (float)pt.x, (float)pt.y);
                 return 0;
             }
             float delta = -notches;

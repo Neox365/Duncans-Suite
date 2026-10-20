@@ -33,6 +33,8 @@ jobs:
         run: |
           cl /nologo /std:c++17 /EHsc /W4 /DUNICODE /D_UNICODE /DNOMINMAX photo\tests\DuplicatesTest.cpp photo\ImageOps.cpp /Fe:build\DuplicatesTest.exe /Fo:build\ /link windowscodecs.lib ole32.lib oleaut32.lib uuid.lib propsys.lib
           build\DuplicatesTest.exe
+          cl /nologo /std:c++17 /EHsc /W4 /DUNICODE /D_UNICODE /DNOMINMAX photo\tests\EditTest.cpp photo\ImageOps.cpp /Fe:build\EditTest.exe /Fo:build\ /link windowscodecs.lib ole32.lib oleaut32.lib uuid.lib propsys.lib
+          build\EditTest.exe
 
       - name: EXE-Dateien als Artefakt ablegen (unsigniert)
         uses: actions/upload-artifact@v4

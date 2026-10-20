@@ -18,11 +18,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Duncan"
             VALUE "FileDescription", "Duncan's Photo Commander"
-            VALUE "FileVersion", "0.2.2"
+            VALUE "FileVersion", "0.2.3"
             VALUE "InternalName", "DuncansPhotoCommander"
             VALUE "OriginalFilename", "DuncansPhotoCommander.exe"
             VALUE "ProductName", "Duncan's Photo Commander"
-            VALUE "ProductVersion", "0.2.2"
+            VALUE "ProductVersion", "0.2.3"
         END
     END
     BLOCK "VarFileInfo"
