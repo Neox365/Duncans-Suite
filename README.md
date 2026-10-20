@@ -18,7 +18,7 @@ rechts Detail-Panel (EXIF, Auflösung, Dateigröße) mit Schnellaktionen (Drehen
 
 - **Async-Thumbnails:** Worker-Pool (Kerne−1, eigene COM-/WIC-Instanz); der UI-Thread meldet bei jedem Scroll die gewünschte Liste (Vorschau > sichtbar > Vorlauf), die Warteschlange wird ersetzt. JPEGs werden per `IWICBitmapSourceTransform` direkt DCT-verkleinert, EXIF-Orientation wird berücksichtigt.
 - **EXIF-/GPS-Cleaner:** JPEG ohne Rotations-Tag verlustfrei (APP1/Exif/XMP, APP3–13/15 und Kommentare werden auf Byte-Ebene entfernt, ICC/JFIF bleiben); JPEG mit Rotations-Tag, PNG, TIFF, JXR per WIC-Re-Encode (JPEG Q95, Drehung eingebrannt). BMP/GIF/WebP werden nicht unterstützt. Einzelbild: Kopie `*_clean.*` oder Original überschreiben; Stapel: Kopien in `bereinigt/`.
-- **Stand:** Auf Windows noch **nicht gebaut oder getestet** (MinGW-Syntaxcheck der Quellen lief durch). „Zuschneiden“ ist Platzhalter, „Vollbild“ schaltet nur das Fenster um, Einstellungen werden noch nicht gespeichert, Ordnerbaum/-listing laufen synchron im UI-Thread. Noch nicht im Suite-Launcher und im Installer eingetragen.
+- **Stand:** Auf Windows noch **nicht gebaut oder getestet** (MinGW-Syntaxcheck der Quellen lief durch). „Zuschneiden“ ist Platzhalter, „Vollbild“ schaltet nur das Fenster um, Einstellungen werden noch nicht gespeichert, Ordnerbaum/-listing laufen synchron im UI-Thread.
 
 ## Duncan's Driver Updater
 
@@ -43,8 +43,8 @@ Gespeichert in `%LOCALAPPDATA%\DuncansDriverUpdater\settings.ini`. Einen Autosta
 
 ## Duncan's Suite (Launcher)
 
-`DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: drei Karten starten **Duncan's Tidy** (`DuncansTidy.exe`),
-den **Driver Updater** (`DuncansDriverUpdater.exe`) und den **PDF Reader** (`DuncansPdf.exe`). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
+`DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: fünf Karten starten **Duncan's Tidy** (`DuncansTidy.exe`),
+den **Driver Updater** (`DuncansDriverUpdater.exe`), den **PDF Reader** (`DuncansPdf.exe`), den **Privacy Shield** und den **Photo Commander** (`DuncansPhotoCommander.exe`, Download und Update über das Release `modules` wie beim Privacy Shield). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
 `%LOCALAPPDATA%\DuncansTidy`. Ist Tidy nicht installiert, zeigt die Karte „Nicht installiert“ und den Button **Herunterladen**: Ein Klick lädt die neueste `DuncansTidy.exe` per HTTPS von den GitHub-Releases (`Neox365/Duncans-Tidy-ToolSet`) nach `%LOCALAPPDATA%\DuncansTidy`, prüft die SHA-256-Summe aus `DuncansTidy.exe.sha256` und schaltet den Button danach auf „Starten“. Fehlt eine andere EXE, erscheint ein Dark-Dialog mit den durchsuchten Pfaden. Der Footer zeigt die Version
 und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Banner zeigt einen leuchtenden Datenstrom in den Farben der drei Programme (Gold = Tidy, Cyan = Driver Updater, Magenta = PDF Reader); beim Start pulsiert er einmalig kurz (ca. 1,8 s, per Timer), danach bleibt er ruhig. Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
 und ins Startmenü.

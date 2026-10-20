@@ -976,7 +976,7 @@ private:
     HFONT m_fontTitle = nullptr, m_fontCard = nullptr, m_fontHeading = nullptr, m_fontBody = nullptr, m_fontSmall = nullptr;
     HICON m_icon = nullptr;
 
-    Tool m_tools[4] = {
+    Tool m_tools[5] = {
         { L"DuncansTidy.exe", L"Duncan's Tidy",
           L"System-Reinigung & Datenmüll-Beseitigung. Räumt Downloads, temporäre Dateien und Browser-Caches auf.",
           CategoryIcon::Broom, RGB(251, 191, 36), {}, {}, {},
@@ -997,6 +997,11 @@ private:
           L"Datenschutz- & Telemetrie-Manager. Schaltet Hintergrund-Tracking, Diagnosedaten und unnötige Windows-Dienste per Klick stumm.",
           CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPrivacy.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
+        { L"DuncansPhotoCommander.exe", L"Duncan's Photo Commander",
+          L"Foto-Verwaltung. Durchsucht Ordner mit schnellen Vorschaubildern, zeigt EXIF-Daten, dreht Bilder und entfernt Standort- und Kameradaten.",
+          CategoryIcon::Image, RGB(52, 199, 120), {}, {}, {},
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPhotoCommander.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
     };
 
@@ -1086,7 +1091,7 @@ bool SuiteWindow::Create(HINSTANCE instance, int showCommand)
     IconsInit();
     m_dpi = GetDpiForSystem();
     m_hwnd = CreateWindowExW(0, kClassName, L"Duncan's Suite", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                             S(1100), S(700), nullptr, nullptr, instance, this);
+                             S(1100), S(820), nullptr, nullptr, instance, this);
     if (!m_hwnd)
         return false;
     BOOL animations = TRUE;
@@ -1192,20 +1197,21 @@ void SuiteWindow::Layout()
 
     const int top = m_banner.bottom + S(22), bottom = m_footer.top - S(16), gap = S(20);
     const int width = rc.right - 2 * m;
-    // 2 x 2 Karten: Tidy | Driver Updater / PDF Reader | Privacy Shield
-    const int h = (bottom - top - gap) / 2;
+    // Tidy | Driver Updater / PDF Reader | Privacy Shield / Photo Commander (ganze Breite)
+    const int h = (bottom - top - 2 * gap) / 3;
     const int w = (width - gap) / 2;
     m_tools[0].rect = { m, top, m + w, top + h };
     m_tools[1].rect = { m + w + gap, top, m + width, top + h };
-    m_tools[2].rect = { m, top + h + gap, m + w, bottom };
-    m_tools[3].rect = { m + w + gap, top + h + gap, m + width, bottom };
+    m_tools[2].rect = { m, top + h + gap, m + w, top + 2 * h + gap };
+    m_tools[3].rect = { m + w + gap, top + h + gap, m + width, top + 2 * h + gap };
+    m_tools[4].rect = { m, top + 2 * (h + gap), m + width, bottom };
 }
 
 void SuiteWindow::DrawCard(HDC dc, int index)
 {
     const Tool& t = m_tools[index];
     const RECT& rc = t.rect;
-    const int hid = index < 2 ? index : (index == 2 ? 5 : 17);
+    const int hid = index < 2 ? index : (index == 2 ? 5 : (index == 3 ? 17 : 22));
     const bool hover = m_hover == hid && !m_modal;
     const bool pressed = m_press == hid && hover;
     const bool found = !t.path.empty();
@@ -1401,6 +1407,8 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         DrawCard(dc, 2);
     if (RectVisible(dc, &m_tools[3].rect))
         DrawCard(dc, 3);
+    if (RectVisible(dc, &m_tools[4].rect))
+        DrawCard(dc, 4);
 
     // Footer: Version links, Hinweis in der Mitte
     DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(176), m_footer.bottom },
@@ -1947,14 +1955,14 @@ void SuiteWindow::StartUpdateCheck()
     // Alle Module zentral mitpruefen: installierte Version aus der EXE lesen, Release-Version im Hintergrund vergleichen
     struct Job { int index; std::wstring url, exe, local; };
     std::vector<Job> jobs;
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < 5; ++i)
     {
         const Tool& t = m_tools[i];
         std::wstring local;
         if (t.versionUrl && !t.path.empty() && FileVersionAtLeast(t.path, 0, 0, 0, &local))
             jobs.push_back({ i, t.versionUrl, t.exe, local });
     }
-    m_modRemote = std::make_shared<std::vector<std::wstring>>(4);
+    m_modRemote = std::make_shared<std::vector<std::wstring>>(5);
     const std::shared_ptr<std::vector<std::wstring>> modRemote = m_modRemote;
     std::thread([hwnd, result, jobs, modRemote]()
     {
@@ -2089,6 +2097,8 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = 5;
     else if (PtInRect(&m_tools[3].rect, pt))
         hover = 17;
+    else if (PtInRect(&m_tools[4].rect, pt))
+        hover = 22;
     if (hover != m_hover)
     {
         m_hover = hover;
@@ -2170,7 +2180,7 @@ void SuiteWindow::OnClick(int, int)
             StartUpdateDownload();
     }
     else
-        Launch(pressed == 5 ? 2 : (pressed == 17 ? 3 : pressed));
+        Launch(pressed == 5 ? 2 : (pressed == 17 ? 3 : (pressed == 22 ? 4 : pressed)));
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -2256,7 +2266,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
         mmi->ptMinTrackSize.x = S(920);
-        mmi->ptMinTrackSize.y = S(680);
+        mmi->ptMinTrackSize.y = S(800);
         return 0;
     }
     case WM_DPICHANGED:
@@ -2345,7 +2355,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     {
         m_updAvailable = wp == 1;
         std::wstring modNote;   // z. B. "Tidy v1.1.5, PDF Reader v1.1.27"
-        for (int i = 0; i < 4; ++i)
+        for (int i = 0; i < 5; ++i)
         {
             m_tools[i].newVersion = ((lp >> i) & 1) && m_modRemote && i < static_cast<int>(m_modRemote->size()) ? (*m_modRemote)[i] : std::wstring();
             if (!m_tools[i].newVersion.empty())
@@ -2376,7 +2386,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_DL_PROGRESS:
-        if (lp >= 0 && lp < 4)
+        if (lp >= 0 && lp < 5)
         {
             m_tools[lp].progress = static_cast<int>(wp);
             InvalidateRect(m_hwnd, &m_tools[lp].rect, FALSE);
@@ -2401,7 +2411,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             else
                 ShowModal(L"Update-Download fehlgeschlagen", m_dlMessage.empty() ? std::wstring(L"Unbekannter Fehler.") : m_dlMessage);
         }
-        else if (index >= 0 && index < 4)
+        else if (index >= 0 && index < 5)
         {
             m_tools[index].downloading = false;
             FindTools();   // Button wechselt automatisch von "Herunterladen" auf "Starten"

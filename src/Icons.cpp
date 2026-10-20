@@ -209,6 +209,15 @@ namespace
             Line(0.5f, 0.5f, 0.5f, 0.66f);
             break;
         }
+        case CategoryIcon::Image:
+            // Bilderrahmen mit Sonne und zwei Bergen
+            RRect(0.1f, 0.18f, 0.8f, 0.64f, 0.1f);
+            Dot(0.34f, 0.38f, 0.07f);
+            Line(0.14f, 0.74f, 0.4f, 0.5f);
+            Line(0.4f, 0.5f, 0.56f, 0.66f);
+            Line(0.5f, 0.6f, 0.68f, 0.44f);
+            Line(0.68f, 0.44f, 0.86f, 0.72f);
+            break;
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);

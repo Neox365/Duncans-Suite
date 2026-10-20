@@ -16,7 +16,7 @@ enum class DriverStatus
 enum class CategoryIcon
 {
     Other, Gpu, Audio, Network, Usb, Storage, Cpu, System, Input, Monitor,
-    Bluetooth, Camera, Printer, Battery, Port, Broom, Document, Shield
+    Bluetooth, Camera, Printer, Battery, Port, Broom, Document, Shield, Image
 };
 
 struct DriverInfo
