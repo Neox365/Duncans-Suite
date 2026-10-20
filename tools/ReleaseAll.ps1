@@ -1,7 +1,7 @@
 # Baut, signiert und veroeffentlicht alles fuer ein Suite-Release in einem Rutsch (auf DEINEM PC mit dem privaten Schluessel):
 #   1. Alle Programme bauen (Release, x64)           2. Module signieren (modules.txt, version.txt, .sig)
 #   3. Installer bauen (schlank + Komplett) + signieren
-#   4. Photo Commander ins Release "modules" hochladen (PublishModule.ps1 -Module Photo)
+#   4. Photo Commander und Oggys Docs-Files ins Release "modules" hochladen (PublishModule.ps1 -Module Photo / Docs)
 #   5. Suite-Release "v<Version>" mit beiden Installern und Signaturen anlegen (die Suite erkennt es als Update)
 # Voraussetzungen: cmake + Visual Studio (C++), Inno Setup 6 (ISCC.exe), GitHub-CLI "gh" (angemeldet), Signaturschluessel
 # (%USERPROFILE%\DuncansSuite-Signing\signing_private.blob), pdfium.dll (pdf\third_party\get_pdfium.ps1).
@@ -44,13 +44,13 @@ Step 'Bauen (Release, x64)'
 $buildDir = Join-Path $root 'build-release'   # eigener Ordner, damit eine andere Konfiguration in 'build' nicht stoert
 Run 'cmake' @('-S', $root, '-B', $buildDir, '-A', 'x64')
 Run 'cmake' @('--build', $buildDir, '--config', 'Release')
-foreach ($f in 'DuncansSuite.exe', 'DuncansDriverUpdater.exe', 'DuncansPdf.exe', 'DuncansPrivacy.exe', 'DuncansPhotoCommander.exe', 'pdfium.dll') {
+foreach ($f in 'DuncansSuite.exe', 'DuncansDriverUpdater.exe', 'DuncansPdf.exe', 'DuncansPrivacy.exe', 'DuncansPhotoCommander.exe', 'OggysDocsFiles.exe', 'pdfium.dll') {
     if (-not (Test-Path (Join-Path $rel $f))) { throw "release\$f fehlt nach dem Build" }
 }
 
 Step 'Module signieren'
 & (Join-Path $tools 'ModuleAssets.ps1')
-& (Join-Path $tools 'SignRelease.ps1') (Join-Path $rel 'DuncansSuite.exe') (Join-Path $rel 'DuncansPhotoCommander.exe')
+& (Join-Path $tools 'SignRelease.ps1') (Join-Path $rel 'DuncansSuite.exe') (Join-Path $rel 'DuncansPhotoCommander.exe') (Join-Path $rel 'OggysDocsFiles.exe')
 
 Step 'Installer bauen und signieren'
 Run $iscc @((Join-Path $root 'installer\installer.iss'))
@@ -65,12 +65,14 @@ Get-ChildItem $rel -Filter '*.exe*' | Select-Object Name, Length | Format-Table 
 if ($DryRun) { Write-Host 'DryRun: nichts hochgeladen.' -ForegroundColor Yellow; return }
 
 if (-not $Yes) {
-    $a = Read-Host "Photo Commander ins Release 'modules' und Suite $tag als neues Release auf GitHub hochladen? (j/N)"
+    $a = Read-Host "Photo Commander und Oggys Docs-Files ins Release 'modules' und Suite $tag als neues Release auf GitHub hochladen? (j/N)"
     if ($a -notmatch '^[jJyY]') { Write-Host 'Abgebrochen.'; return }
 }
 
 Step "Photo Commander -> Release 'modules'"
 & (Join-Path $tools 'PublishModule.ps1') -Module Photo
+Step "Oggys Docs-Files -> Release 'modules'"
+& (Join-Path $tools 'PublishModule.ps1') -Module Docs
 
 Step "Suite $tag veroeffentlichen"
 $notesText = if ($Notes) { $Notes } else { "Duncan's Suite $ver" }

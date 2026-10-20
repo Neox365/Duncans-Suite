@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.30"
+#define SUITE_VERSION L"1.1.31"
 #endif
 
 namespace
@@ -849,7 +849,8 @@ namespace
     // aktuelle Fassung aus dem Release "modules". Der Text wird nur angezeigt, nie ausgefuehrt; changelog::Parse begrenzt ihn.
     constexpr const wchar_t* kChangelogUrl = L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/changelog.txt";
     constexpr int kChangelogResource = 101;
-    constexpr int kInfoTabs = 6;   // Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Suite
+    constexpr int kToolCount = 6;   // Karten: Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Oggys Docs-Files
+    constexpr int kInfoTabs = kToolCount + 1;   // ein Reiter je Programm plus die Suite selbst
 
     std::string EmbeddedChangelog()
     {
@@ -1025,7 +1026,7 @@ private:
     HFONT m_fontTitle = nullptr, m_fontCard = nullptr, m_fontHeading = nullptr, m_fontBody = nullptr, m_fontSmall = nullptr;
     HICON m_icon = nullptr;
 
-    Tool m_tools[5] = {
+    Tool m_tools[kToolCount] = {
         { L"DuncansTidy.exe", L"Duncan's Tidy",
           L"System-Reinigung & Datenmüll-Beseitigung. Räumt Downloads, temporäre Dateien und Browser-Caches auf.",
           CategoryIcon::Broom, RGB(251, 191, 36), {}, {}, {},
@@ -1048,9 +1049,14 @@ private:
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPrivacy.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansPhotoCommander.exe", L"Duncan's Photo Commander",
-          L"Foto-Verwaltung. Durchsucht Ordner mit schnellen Vorschaubildern, zeigt EXIF-Daten, dreht Bilder und entfernt Standort- und Kameradaten.",
+          L"Foto-Verwaltung. Vorschaubilder, EXIF-Daten, Bildkorrektur, Diashow und Entfernen von Standortdaten.",
           CategoryIcon::Image, RGB(52, 199, 120), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPhotoCommander.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
+        { L"OggysDocsFiles.exe", L"Oggys Docs-Files",
+          L"Rechnungs-Manager. Sortiert Rechnungen nach Jahr und Gläubiger und erstellt eigene Rechnungen als PDF.",
+          CategoryIcon::Invoice, RGB(255, 150, 50), {}, {}, {},
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/OggysDocsFiles.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
     };
 
@@ -1097,7 +1103,7 @@ private:
     RECT m_btnBackup{}, m_btnLog{}, m_btnCheck{};   // Ids: 18 Wiederherstellungspunkt-Haken, 19 Backup-Ordner, 20 Logdatei, 21 Update-Suche
     bool m_manualCheck = false;                      // Update-Suche per Knopf: Ergebnis als Hinweis melden
 
-    // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..29 Reiter, 30 Schliessen
+    // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..30 Reiter, 32 Schliessen (31 = Karte Oggys Docs-Files)
     bool m_infoOpen = false, m_changesFetched = false, m_changesOnline = false;
     int m_infoTab = 0, m_infoScroll = 0, m_infoMaxScroll = 0;
     RECT m_infoRect{}, m_infoTabs[kInfoTabs]{}, m_infoClose{}, m_infoView{};
@@ -1261,21 +1267,21 @@ void SuiteWindow::Layout()
 
     const int top = m_banner.bottom + S(22), bottom = m_footer.top - S(16), gap = S(20);
     const int width = rc.right - 2 * m;
-    // Tidy | Driver Updater / PDF Reader | Privacy Shield / Photo Commander (ganze Breite)
+    // 2 x 3 Karten: Tidy | Driver Updater / PDF Reader | Privacy Shield / Photo Commander | Oggys Docs-Files
     const int h = (bottom - top - 2 * gap) / 3;
     const int w = (width - gap) / 2;
-    m_tools[0].rect = { m, top, m + w, top + h };
-    m_tools[1].rect = { m + w + gap, top, m + width, top + h };
-    m_tools[2].rect = { m, top + h + gap, m + w, top + 2 * h + gap };
-    m_tools[3].rect = { m + w + gap, top + h + gap, m + width, top + 2 * h + gap };
-    m_tools[4].rect = { m, top + 2 * (h + gap), m + width, bottom };
+    for (int i = 0; i < kToolCount; ++i)
+    {
+        const int col = i % 2, row = i / 2;
+        m_tools[i].rect = { m + col * (w + gap), top + row * (h + gap), m + col * (w + gap) + w, top + row * (h + gap) + h };
+    }
 }
 
 void SuiteWindow::DrawCard(HDC dc, int index)
 {
     const Tool& t = m_tools[index];
     const RECT& rc = t.rect;
-    const int hid = index < 2 ? index : (index == 2 ? 5 : (index == 3 ? 17 : 22));
+    const int hid = index < 2 ? index : (index == 2 ? 5 : (index == 3 ? 17 : (index == 4 ? 22 : 31)));
     const bool hover = m_hover == hid && !m_modal;
     const bool pressed = m_press == hid && hover;
     const bool found = !t.path.empty();
@@ -1443,7 +1449,7 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         FillRound(dc, m_infoRect, S(12), pressed ? RGB(24, 26, 32) : (hover ? kCardHover : kCardRaised), hover ? kBorderHover : kBorder);
         DrawLabel(dc, m_fontHeading, hover ? kText : kTextDim, { m_infoRect.left, m_infoRect.top, m_infoRect.right, m_infoRect.bottom }, L"i", DT_CENTER | DT_VCENTER);
         bool anyUpdate = m_updAvailable;
-        for (int i = 0; i < 5 && !anyUpdate; ++i)
+        for (int i = 0; i < kToolCount && !anyUpdate; ++i)
             anyUpdate = !m_tools[i].newVersion.empty();
         if (anyUpdate)
         {
@@ -1491,6 +1497,8 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         DrawCard(dc, 3);
     if (RectVisible(dc, &m_tools[4].rect))
         DrawCard(dc, 4);
+    if (RectVisible(dc, &m_tools[5].rect))
+        DrawCard(dc, 5);
 
     // Footer: Version links, Hinweis in der Mitte
     DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(176), m_footer.bottom },
@@ -1678,24 +1686,24 @@ void SuiteWindow::CloseSettings(bool save)
 
 const wchar_t* SuiteWindow::InfoKey(int tab) const
 {
-    return tab >= 0 && tab < 5 ? m_tools[tab].exe : L"DuncansSuite.exe";
+    return tab >= 0 && tab < kToolCount ? m_tools[tab].exe : L"DuncansSuite.exe";
 }
 
 std::wstring SuiteWindow::InfoInstalled(int tab) const
 {
-    if (tab == 5)
+    if (tab == kToolCount)
         return SUITE_VERSION;
     std::wstring v;
-    if (tab >= 0 && tab < 5 && !m_tools[tab].path.empty() && FileVersionAtLeast(m_tools[tab].path, 0, 0, 0, &v))
+    if (tab >= 0 && tab < kToolCount && !m_tools[tab].path.empty() && FileVersionAtLeast(m_tools[tab].path, 0, 0, 0, &v))
         return v;
     return {};
 }
 
 std::wstring SuiteWindow::InfoNewVersion(int tab) const
 {
-    if (tab == 5)
+    if (tab == kToolCount)
         return m_updAvailable ? m_upd.version : std::wstring();
-    return tab >= 0 && tab < 5 ? m_tools[tab].newVersion : std::wstring();
+    return tab >= 0 && tab < kToolCount ? m_tools[tab].newVersion : std::wstring();
 }
 
 void SuiteWindow::OpenInfo()
@@ -1756,7 +1764,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
 {
     FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
 
-    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo Commander", L"Suite" };
+    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo Commander", L"Oggys Docs-Files", L"Suite" };
     const int pad = S(22), btnH = S(38);
     const int boxW = std::min(S(940), w - S(40)), boxH = std::min(S(700), h - S(50));
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
@@ -1779,7 +1787,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
         const int tw = sum > avail ? want[i] * avail / sum : want[i];
         m_infoTabs[i] = { x, tabTop, x + tw, tabTop + tabH };
         x += tw + tabGap;
-        const COLORREF color = i < 5 ? m_tools[i].color : kAccent;
+        const COLORREF color = i < kToolCount ? m_tools[i].color : kAccent;
         const bool active = i == m_infoTab, hover = m_hover == 24 + i;
         FillRound(dc, m_infoTabs[i], S(10), active ? Blend(kCardRaised, color, 22) : (hover ? kCardHover : kCardRaised),
                   active ? color : (hover ? kBorderHover : kBorder));
@@ -1881,7 +1889,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
               m_changesOnline ? L"Quelle: GitHub (aktuell)" : L"Quelle: in der Suite eingebaut");
     const int bw = S(120);
     m_infoClose = { box.right - pad - bw, box.bottom - pad - btnH, box.right - pad, box.bottom - pad };
-    DrawButton(dc, m_infoClose, true, m_hover == 30, m_press == 30 && m_hover == 30, L"Schließen");
+    DrawButton(dc, m_infoClose, true, m_hover == 32, m_press == 32 && m_hover == 32, L"Schließen");
 }
 
 void SuiteWindow::AddTrayIcon()
@@ -2249,14 +2257,14 @@ void SuiteWindow::StartUpdateCheck()
     // Alle Module zentral mitpruefen: installierte Version aus der EXE lesen, Release-Version im Hintergrund vergleichen
     struct Job { int index; std::wstring url, exe, local; };
     std::vector<Job> jobs;
-    for (int i = 0; i < 5; ++i)
+    for (int i = 0; i < kToolCount; ++i)
     {
         const Tool& t = m_tools[i];
         std::wstring local;
         if (t.versionUrl && !t.path.empty() && FileVersionAtLeast(t.path, 0, 0, 0, &local))
             jobs.push_back({ i, t.versionUrl, t.exe, local });
     }
-    m_modRemote = std::make_shared<std::vector<std::wstring>>(5);
+    m_modRemote = std::make_shared<std::vector<std::wstring>>(kToolCount);
     const std::shared_ptr<std::vector<std::wstring>> modRemote = m_modRemote;
     std::thread([hwnd, result, jobs, modRemote]()
     {
@@ -2385,7 +2393,7 @@ void SuiteWindow::OnMouseMove(int x, int y)
             if (PtInRect(&m_infoTabs[i], pt))
                 hover = 24 + i;
         if (PtInRect(&m_infoClose, pt))
-            hover = 30;
+            hover = 32;
     }
     else if (PtInRect(&m_gearRect, pt))
         hover = 6;
@@ -2403,6 +2411,8 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = 17;
     else if (PtInRect(&m_tools[4].rect, pt))
         hover = 22;
+    else if (PtInRect(&m_tools[5].rect, pt))
+        hover = 31;
     if (hover != m_hover)
     {
         m_hover = hover;
@@ -2433,7 +2443,7 @@ void SuiteWindow::OnClick(int, int)
         m_infoTab = pressed - 24;
         m_infoScroll = 0;
     }
-    else if (pressed == 30)
+    else if (pressed == 32)
         CloseInfo();
     else if (pressed == 7)
         m_draft.autoCheck = !m_draft.autoCheck;
@@ -2493,7 +2503,7 @@ void SuiteWindow::OnClick(int, int)
             StartUpdateDownload();
     }
     else
-        Launch(pressed == 5 ? 2 : (pressed == 17 ? 3 : (pressed == 22 ? 4 : pressed)));
+        Launch(pressed == 5 ? 2 : (pressed == 17 ? 3 : (pressed == 22 ? 4 : (pressed == 31 ? 5 : pressed))));
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -2711,7 +2721,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     {
         m_updAvailable = wp == 1;
         std::wstring modNote;   // z. B. "Tidy v1.1.5, PDF Reader v1.1.27"
-        for (int i = 0; i < 5; ++i)
+        for (int i = 0; i < kToolCount; ++i)
         {
             m_tools[i].newVersion = ((lp >> i) & 1) && m_modRemote && i < static_cast<int>(m_modRemote->size()) ? (*m_modRemote)[i] : std::wstring();
             if (!m_tools[i].newVersion.empty())
@@ -2742,7 +2752,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_DL_PROGRESS:
-        if (lp >= 0 && lp < 5)
+        if (lp >= 0 && lp < kToolCount)
         {
             m_tools[lp].progress = static_cast<int>(wp);
             InvalidateRect(m_hwnd, &m_tools[lp].rect, FALSE);
@@ -2767,7 +2777,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             else
                 ShowModal(L"Update-Download fehlgeschlagen", m_dlMessage.empty() ? std::wstring(L"Unbekannter Fehler.") : m_dlMessage);
         }
-        else if (index >= 0 && index < 5)
+        else if (index >= 0 && index < kToolCount)
         {
             m_tools[index].downloading = false;
             FindTools();   // Button wechselt automatisch von "Herunterladen" auf "Starten"
