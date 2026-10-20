@@ -8,6 +8,7 @@ Windows-Programmsammlung in C++ / Win32 mit einheitlichem Dark-UI, Sprache der P
 | **Duncan's Driver Updater** | Hardware- und Treiber-Manager (Scan, Update-Erkennung, Installation über Windows Update) |
 | **Duncan's PDF Reader** | PDF-Betrachter und -Werkzeug (PDFium) |
 | **Duncan's Photo Commander** | Foto-Verwaltung (Ordnerbaum, asynchrones Thumbnail-Grid, EXIF-/GPS-Cleaner), Quellen in `photo/` – Grundgerüst |
+| **Oggys Docs-Files** | Rechnungs-Manager und Rechnungs-Generator (Ordner Jahr/Gläubiger, Status-Badges, PDF-Erzeugung), Quellen in `docs/` |
 | **Duncan's Tidy** | System-Cleaner und Optimierer, eigenes Projekt ([Neox365/Duncans-Tidy-ToolSet](https://github.com/Neox365/Duncans-Tidy-ToolSet)); die Suite lädt es nur herunter und startet es |
 
 ## Duncan's Photo Commander
@@ -28,6 +29,18 @@ Start mit Ordner oder Bild als Argument (`DuncansPhotoCommander.exe "C:\Fotos\a.
 - **Einstellungen:** Zahnrad: Thumbnail-Größe, Sortierung, Standort-Filter, „Original überschreiben“; gespeichert in `%LOCALAPPDATA%\DuncansPhotoCommander\settings.ini` (inklusive zuletzt geöffnetem Ordner).
 - **Release:** Download/Update über das Release `modules` im Suite-Repo (`tools\PublishModule.ps1 -Module Photo`), Karte im Launcher, im Komplett-Installer enthalten.
 - **Stand:** Der GitHub-Workflow `Windows-Build` baut alle Programme mit MSVC und testet die Byte-Bereinigung (`photo/tests`). HEIC/GIF werden nicht bearbeitet.
+
+## Oggys Docs-Files
+
+Rechnungs-Manager und Rechnungs-Generator (Win32 + Direct2D, Quellen in `docs/`, Ziel `OggysDocsFiles.exe`, gleiches dunkles Flat-Design). Start mit Dateien oder Ordnern als Argument (`OggysDocsFiles.exe "C:\Scan\Strom.pdf"`) legt sie direkt zum Erfassen an.
+
+- **Ordnerstruktur:** Alle Belege liegen unter `<Rechnungsordner>\<Jahr>\<Gläubiger>\` (Standard: `Dokumente\Rechnungen`, im Zahnrad änderbar), z. B. `Rechnungen\2026\Netzanbieter\Strom Oktober.pdf`. Wurzel und aktuelles Jahr werden beim Start angelegt, Jahr- und Gläubiger-Ordner beim Erfassen. Links zeigt ein Baum Jahre und Gläubiger mit Anzahl und filtert die Liste.
+- **Liste:** Dateiname, Gläubiger, Betrag, Fälligkeit und Status-Badge (Bezahlt grün, Offen rot, Ratenzahlung gelb, Fixkosten blau). Spaltenkopf sortiert (Standard: Fälligkeit, Belege ohne Datum zuletzt); überfällige offene Rechnungen sind rot markiert. Doppelklick/Enter öffnet die Datei, Rechtsklick: Öffnen, Im Explorer zeigen, Status setzen (auch für mehrere), Bearbeiten, Papierkorb. F2 bearbeitet, Entf löscht (Papierkorb), Strg+A wählt alle, F5 liest neu ein (auch beim Zurückwechseln ins Fenster). Die Statusleiste zeigt Anzahl, Summe der offenen Beträge und überfällige Rechnungen.
+- **Drag & Drop:** PDFs, JPG/PNG oder ganze Ordner ins Fenster ziehen (oder „+ Hinzufügen“, Strg+O): pro Datei fragt ein Formular Gläubiger (mit Vorschlägen aus vorhandenen Ordnern), Jahr, Betrag, Fälligkeit, Tags und Status ab und kopiert die Datei an den passenden Platz (Zahnrad: stattdessen verschieben). Vorhandene Dateien werden nie überschrieben („Name (2).pdf“).
+- **Suche:** Die Leiste oben (Strg+F) filtert in Echtzeit; jedes Wort muss in Dateiname, Gläubiger, Jahr, Tags, Notiz, Status, Betrag oder Fälligkeit vorkommen.
+- **Rechnungs-Generator:** „Rechnung erstellen“ (Strg+N): Gläubiger (Absender) mit Adresse, Empfänger mit Adresse, Rechnungsnummer (leer = automatisch `JJJJ-NNN`), Datum, Fälligkeit, USt-Satz, bis zu 10 Positionen (Menge × Einzelpreis, Summen live) und Zahlungshinweis. Daraus entsteht eine A4-PDF (Absender, Rechnungskopf, Empfängerfeld, Positionstabelle mit Seitenumbruch, Netto/USt/Gesamt, Zahlungshinweis, Fußzeile) direkt im passenden Ordner; sie wird als „Offen“ mit Betrag und Fälligkeit erfasst und geöffnet. Absenderdaten, Zahlungshinweis und USt-Satz merkt sich das Programm für die nächste Rechnung. Der PDF-Schreiber (`docs/PdfWriter.h`) kommt ohne Bibliothek aus (Standardschriften Helvetica, WinAnsi). Die Vorlage ist ein Entwurf: rechtliche Pflichtangaben (z. B. Steuernummer, Leistungsdatum) trägt man im Zahlungshinweis ein oder prüft sie vor dem Versand.
+- **Daten:** Betrag, Fälligkeit, Status, Tags und Notiz stehen in `.oggys-index.tsv` im Rechnungsordner (Textdatei, wandert mit dem Ordner; Schlüssel ist der relative Pfad), Einstellungen in `%LOCALAPPDATA%\OggysDocsFiles\settings.ini`. Dateien, die von außen in den Ordner gelegt werden, erscheinen automatisch als „Offen“ ohne Betrag.
+- **Tests:** `docs/tests/DocsTest.cpp` prüft Beträge, Datum, Namen, Index, Ordner-Scan, Suche, Textfeld, PDF-Aufbau (xref) und Rechnungsberechnung.
 
 ## Duncan's Driver Updater
 
@@ -53,7 +66,7 @@ Gespeichert in `%LOCALAPPDATA%\DuncansDriverUpdater\settings.ini`. Einen Autosta
 ## Duncan's Suite (Launcher)
 
 `DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: fünf Karten starten **Duncan's Tidy** (`DuncansTidy.exe`),
-den **Driver Updater** (`DuncansDriverUpdater.exe`), den **PDF Reader** (`DuncansPdf.exe`), den **Privacy Shield** und den **Photo Commander** (`DuncansPhotoCommander.exe`, Download und Update über das Release `modules` wie beim Privacy Shield). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
+den **Driver Updater** (`DuncansDriverUpdater.exe`), den **PDF Reader** (`DuncansPdf.exe`), den **Privacy Shield**, **Oggys Docs-Files** (`OggysDocsFiles.exe`) und den **Photo Commander** (`DuncansPhotoCommander.exe`, Download und Update über das Release `modules` wie beim Privacy Shield). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
 `%LOCALAPPDATA%\DuncansTidy`. Ist Tidy nicht installiert, zeigt die Karte „Nicht installiert“ und den Button **Herunterladen**: Ein Klick lädt die neueste `DuncansTidy.exe` per HTTPS von den GitHub-Releases (`Neox365/Duncans-Tidy-ToolSet`) nach `%LOCALAPPDATA%\DuncansTidy`, prüft die SHA-256-Summe aus `DuncansTidy.exe.sha256` und schaltet den Button danach auf „Starten“. Fehlt eine andere EXE, erscheint ein Dark-Dialog mit den durchsuchten Pfaden. Der Footer zeigt die Version
 und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Banner zeigt einen leuchtenden Datenstrom in den Farben der drei Programme (Gold = Tidy, Cyan = Driver Updater, Magenta = PDF Reader); beim Start pulsiert er einmalig kurz (ca. 1,8 s, per Timer), danach bleibt er ruhig. Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
 und ins Startmenü.
@@ -68,7 +81,7 @@ oder GitHub nicht erreichbar, bleibt die Prüfung still.
 
 ### Info-Dialog der Suite (Button „i“ links neben dem Zahnrad)
 
-Zeigt die Neuigkeiten aller Programme (Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander und der Suite selbst), je ein Reiter pro Programm, neueste Einträge zuerst; Einträge, die jünger sind als die installierte Version, tragen ein grünes „NEU“, ein grüner Punkt am Reiter und am „i“ zeigt ein bereitstehendes Update. Quelle ist `changelog.txt` im Wurzelordner: die Suite bringt eine Kopie als Ressource mit (funktioniert offline) und lädt beim Öffnen die aktuelle Fassung aus dem Release `modules` (`toolsPublishModule.ps1` lädt sie bei jedem Programm-Release hoch). Neue Einträge also einfach oben im jeweiligen Abschnitt von `changelog.txt` ergänzen (Format steht im Dateikopf); Parser-Test: `suite/tests/ChangelogTest.cpp`. Bedienung: Mausrad/Pfeiltasten scrollen, ←/→ wechseln den Reiter, Esc schließt.
+Zeigt die Neuigkeiten aller Programme (Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander und der Suite selbst), je ein Reiter pro Programm, neueste Einträge zuerst; Einträge, die jünger sind als die installierte Version, tragen ein grünes „NEU“, ein grüner Punkt am Reiter und am „i“ zeigt ein bereitstehendes Update. Quelle ist `changelog.txt` im Wurzelordner: die Suite bringt eine Kopie als Ressource mit (funktioniert offline) und lädt beim Öffnen die aktuelle Fassung aus dem Release `modules` (`tools\PublishModule.ps1` lädt sie bei jedem Programm-Release hoch). Neue Einträge also einfach oben im jeweiligen Abschnitt von `changelog.txt` ergänzen (Format steht im Dateikopf); Parser-Test: `suite/tests/ChangelogTest.cpp`. Bedienung: Mausrad/Pfeiltasten scrollen, ←/→ wechseln den Reiter, Esc schließt.
 
 ### Einstellungen der Suite (Zahnrad im Banner)
 

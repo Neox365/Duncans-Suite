@@ -1,9 +1,10 @@
 cmake_minimum_required(VERSION 3.20)
 project(DuncansDriverUpdater VERSION 1.1.25 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
-set(SUITE_VER "1.1.30")
+set(SUITE_VER "1.1.31")
 set(PDF_VER "1.1.24")
 set(PHOTO_VER "0.2.5")
+set(DOCS_VER "0.1.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -142,3 +143,20 @@ else()
     target_link_options(DuncansPhotoCommander PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
 target_link_libraries(DuncansPhotoCommander PRIVATE d2d1 dwrite windowscodecs ole32 oleaut32 shell32 shlwapi uuid dwmapi user32 gdi32 propsys)
+
+# ---- Oggys Docs-Files: Rechnungs-Manager und Rechnungs-Generator (Direct2D/DirectWrite) ----
+add_executable(OggysDocsFiles WIN32
+    docs/main.cpp
+    resources/docs.rc
+)
+target_compile_definitions(OggysDocsFiles PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"${DOCS_VER}\")
+if(MSVC)
+    target_compile_options(OggysDocsFiles PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET OggysDocsFiles PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(OggysDocsFiles PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(OggysDocsFiles PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type -Os -ffunction-sections -fdata-sections)
+    target_link_options(OggysDocsFiles PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
+endif()
+target_link_libraries(OggysDocsFiles PRIVATE d2d1 dwrite ole32 shell32 shlwapi uuid dwmapi user32 gdi32)

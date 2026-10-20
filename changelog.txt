@@ -76,7 +76,17 @@
 ## 0.2.0 | 2026-10-20
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
+[OggysDocsFiles.exe]
+## 0.1.0 | 2026-10-20
+- Erste Version: Rechnungs-Manager mit Ordnerstruktur Rechnungen\<Jahr>\<Gläubiger>\ und Baum zum Filtern nach Jahr und Gläubiger.
+- Liste mit Dateiname, Gläubiger, Betrag, Fälligkeit und Status-Badge (Bezahlt, Offen, Ratenzahlung, Fixkosten); überfällige Rechnungen werden rot markiert.
+- PDFs, Bilder oder ganze Ordner per Drag & Drop oder über „Hinzufügen“ aufnehmen, mit Betrag, Fälligkeit, Tags und Status.
+- Suche in Echtzeit über Gläubiger, Dateiname, Tags, Notiz, Status und Betrag.
+- Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
+
 [DuncansSuite.exe]
+## 1.1.31 | 2026-10-20
+- Neues Programm in der Suite: Oggys Docs-Files (Rechnungs-Manager und Rechnungs-Generator), die Karten stehen jetzt in drei Reihen.
 ## 1.1.30 | 2026-10-20
 - Neuer Info-Button (i) neben dem Zahnrad: Neuigkeiten aller Programme, ein Reiter pro Programm.
 ## 1.1.29 | 2026-10-20

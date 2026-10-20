@@ -218,6 +218,15 @@ namespace
             Line(0.5f, 0.6f, 0.68f, 0.44f);
             Line(0.68f, 0.44f, 0.86f, 0.72f);
             break;
+        case CategoryIcon::Invoice:
+            // Beleg: Blatt mit Textzeilen, Betragszeile und Punkt
+            RRect(0.22f, 0.1f, 0.56f, 0.8f, 0.08f);
+            Line(0.34f, 0.28f, 0.66f, 0.28f);
+            Line(0.34f, 0.42f, 0.66f, 0.42f);
+            Line(0.34f, 0.56f, 0.5f, 0.56f);
+            Line(0.34f, 0.72f, 0.54f, 0.72f);
+            Dot(0.64f, 0.72f, 0.05f);
+            break;
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);

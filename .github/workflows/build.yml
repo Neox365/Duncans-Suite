@@ -36,10 +36,16 @@ jobs:
           cl /nologo /std:c++17 /EHsc /W4 /DUNICODE /D_UNICODE /DNOMINMAX photo\tests\EditTest.cpp photo\ImageOps.cpp /Fe:build\EditTest.exe /Fo:build\ /link windowscodecs.lib ole32.lib oleaut32.lib uuid.lib propsys.lib
           build\EditTest.exe
 
+      - name: Test von Oggys Docs-Files (Betraege, Index, Suche, PDF-Schreiber)
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /EHsc /W4 /utf-8 docs\tests\DocsTest.cpp /Fe:build\DocsTest.exe /Fo:build\
+          build\DocsTest.exe
+
       - name: Test des Aenderungsprotokoll-Parsers
         shell: cmd
         run: |
-          cl /nologo /std:c++17 /EHsc /W4 suite\tests\ChangelogTest.cpp /Fe:build\ChangelogTest.exe /Fo:build\
+          cl /nologo /std:c++17 /EHsc /W4 /utf-8 suite\tests\ChangelogTest.cpp /Fe:build\ChangelogTest.exe /Fo:build\
           cd suite\tests && ..\..\build\ChangelogTest.exe
 
       - name: EXE-Dateien als Artefakt ablegen (unsigniert)
