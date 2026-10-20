@@ -5,9 +5,69 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansTidy.exe]
-## Hinweis
-- Die Änderungen von Tidy stehen in den Release-Notes im eigenen GitHub-Repository (Neox365/Duncans-Tidy-ToolSet).
-- Neue Tidy-Versionen erscheinen wie bei allen Programmen als Update auf der Karte in der Suite.
+## 1.1.6 | 2026-10-19
+- Optimieren: Temp- und Systemdateien werden deutlich schneller gelöscht, Tidy friert bei vielen Dateien nicht mehr scheinbar ein.
+## 1.1.5 | 2026-10-19
+- Update-Prüfung wird jetzt zentral von Duncan's Suite übernommen (keine eigene Prüfung beim Start mehr).
+## 1.1.4 | 2026-10-18
+- Neu: Ordner und Laufwerke per Rechtsklick analysieren (--analyze, aus der Suite), Fenster mit den 20 groessten Dateien. Dazu Arbeitsspeicher-Seite aus 1.1.3.
+## 1.1.3 | 2026-10-18
+- Neu: Seite Arbeitsspeicher mit Anzeige und RAM optimieren, Kachel auf der Uebersicht
+## 1.1.2 | 2026-10-18
+- Neu: RAM optimieren (Arbeitsspeicher freigeben), eigene Seite Arbeitsspeicher
+## 1.1.1 | 2026-10-17
+- Verbessert: Programm-Icons und Dateilisten werden im Hintergrund geladen, das Fenster friert nicht mehr ein
+- Verbessert: Flüssigeres Zeichnen und weniger Last im Dialogkopf und im Startfenster
+- Verbessert: Stabilität - Fehler in Hintergrundaufgaben beenden das Programm nicht mehr
+- Verbessert: Netzlaufwerke werden bei Autostart und Programmen nicht mehr abgefragt
+- Intern: Ungenutzten Code entfernt
+## 1.1.0 | 2026-10-17
+- Neu: Programme - Übersicht aller installierten Programme mit Icon, Herausgeber, Version und Größe
+- Neu: Deinstallieren startet das Deinstallationsprogramm des jeweiligen Programms mit Rückfrage
+- Neu: Suche und Sortierung nach Größe oder Name
+- Neu: Kachel Programme in der Übersicht
+## 1.0.3 | 2026-10-17
+- Neu: Downloads als Kacheln nach Dateityp mit Ein/Aus-Schalter pro Gruppe
+- Neu: Opera GX im Browser-Tab
+- Geändert: Einzelne Dateien schützt du über die Schutzliste
+## 1.0.2 | 2026-10-17
+- Neu: Sechs weitere Sprachen - Französisch, Spanisch, Polnisch, Portugiesisch (Brasilien), Japanisch und Chinesisch (Traditionell)
+- Neu: Sprache in den Einstellungen per Auswahlliste wählbar
+- Neu: Die Windows-Sprache wird beim ersten Start erkannt
+## 1.0.1 | 2026-10-17
+- Neu: Autostart zeigt das Programm-Icon links neben dem Namen
+- Neu: Klick auf eine Kachel zeigt Pfad und Herausgeber
+- Neu: Startauswirkung Niedrig, Mittel oder Hoch als grobe Schätzung nach Programmgröße
+- Fix: Suchleiste und Alle/Keine-Button sitzen auf einer Linie
+## 1.0.0 | 2026-10-17
+- Neu: Temp-Dateien und Systemdateien als Kacheln mit Symbol und Ein/Aus-Schalter pro Gruppe
+- Neu: Mit der Maus über eine Kachel siehst du Beispiele
+- Geändert: Einzelne Dateien schützt du über die Schutzliste
+## 0.9.9.0 | 2026-10-17
+- Neu: Alle Meldungen und Abfragen erscheinen jetzt im eigenen App-Design statt als Windows-Standardfenster
+- Neu: Schutzliste - Dateiauswahl aus Downloads im App-Design
+- Neu: Kontextmenüs im passenden Theme
+## 0.9.8.0 | 2026-10-17
+- Neu: Eigenes Fenster im App-Design, wenn beim Browser-Cache-Leeren Browser noch laufen
+- Neu: Tray-Menü mit Jetzt schnell reinigen (Temp- und Systemdateien)
+- Fix: Schutzliste - Buttons oben rechts nicht mehr abgeschnitten
+## 0.9.7.0 | 2026-10-17
+- Neu: Auto-Clean kann optional auch Temp- und Systemdateien aufräumen (Einstellungen)
+## 0.9.6.3 | 2026-10-17
+- Intern aufgeräumt: Code um rund 200 Zeilen kürzer
+- Toten Code entfernt
+## 0.9.6.2 | 2026-10-17
+- Start: Neuer Splash-Screen mit Logo und fegendem Besen, der sanft ins Hauptfenster übergeht
+- Der Splash erscheint nur bei sichtbarem Start und lässt sich mit der Besen-Animation in den Einstellungen abschalten
+## 0.9.6.1 | 2026-10-17
+- Schutzliste: Wird jetzt direkt im Programm bearbeitet (Eingabefeld, Liste mit Entfernen-Knopf, Auswahl aus Downloads) statt im Editor
+- Schutzliste: Änderungen wirken sofort auf die Listen
+## 0.9.6 | 2026-10-17
+- Browser: Laufen Browser noch, fragt das Programm vor dem Bereinigen, ob sie jetzt geschlossen werden sollen
+- Browser: Der Lauf-Status wird beim Klick live geprüft
+## 0.9.5.9 | 2026-10-17
+- Temp-Dateien und Systemdateien: Der Hinweis zum sicheren Modus ist gekürzt und wird nicht mehr abgeschnitten
+- Übersicht: Die Meldung nach dem Aufräumen zeigt nur noch die Anzahl der übersprungenen Einträge, mit mehr Abstand zwischen den Textzeilen
 
 [DuncansDriverUpdater.exe]
 ## 1.1.25 | 2026-10-19
@@ -77,6 +137,8 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.1.3 | 2026-10-20
+- Datumsfelder (Fälligkeit beim Erfassen und Bearbeiten, Rechnungsdatum und „Fällig am“ im Rechnungs-Generator) setzen die Punkte selbst: „15112026“ wird zu „15.11.2026“. Wer die Punkte selbst tippt, kann das weiterhin tun.
 ## 0.1.2 | 2026-10-20
 - Verbindung zum Duncan's PDF Reader: Doppelklick, Enter, „Öffnen“ und frisch erzeugte Rechnungen öffnen PDFs im PDF Reader, wenn er installiert ist (neben der EXE oder per Suite geladen), sonst im Standardprogramm. Abschaltbar im Zahnrad-Menü.
 ## 0.1.1 | 2026-10-20

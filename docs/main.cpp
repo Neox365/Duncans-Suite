@@ -31,7 +31,7 @@
 #include "Theme.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.1.2"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.1.3"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -72,6 +72,8 @@ struct Field {
     docs::TextEdit ed;
     D2D1_RECT_F rc{};
     float scroll = 0;
+    bool dateMask = false;     // Datumsfeld: Punkte beim Tippen automatisch setzen (docs::MaskDate)
+    size_t prevLen = 0;        // Textlaenge vor der letzten Aenderung (unterscheidet Tippen von Loeschen)
 };
 
 struct HitBtn { int id; D2D1_RECT_F rc; };
@@ -1064,6 +1066,8 @@ void App::MoveSelection(int delta, bool extend) {
 
 void App::OnFieldChanged(Field& f) {
     ResetCaret();
+    if (f.dateMask) docs::MaskDate(f.ed, f.prevLen);
+    f.prevLen = f.ed.text.size();
     if (f.id == kSearchId) {
         m_scroll = 0;
         RebuildView();
@@ -1294,6 +1298,7 @@ Field MakeField(int id, const wchar_t* label, const wchar_t* hint, const std::ws
     f.hint = hint;
     f.ed.maxLen = maxLen;
     f.ed.SetText(text);
+    f.prevLen = f.ed.text.size();
     return f;
 }
 
@@ -1323,6 +1328,7 @@ void App::BeginAddDialog() {
     d.fields.push_back(MakeField(1, L"Jahr", L"JJJJ", year, 4));
     d.fields.push_back(MakeField(2, L"Betrag (€)", L"z. B. 89,50", L"", 20));
     d.fields.push_back(MakeField(3, L"Fälligkeit", L"TT.MM.JJJJ", L"", 12));
+    d.fields.back().dateMask = true;
     d.fields.push_back(MakeField(4, L"Tags (Stichwörter)", L"z. B. strom, abschlag", L"", 100));
     d.status = docs::Status::Open;
     d.error.clear();
@@ -1429,6 +1435,7 @@ void App::BeginEditDialog(const docs::Doc& doc) {
     d.fields.push_back(MakeField(1, L"Jahr", L"JJJJ", doc.year.empty() ? TodayIso().substr(0, 4) : doc.year, 4));
     d.fields.push_back(MakeField(2, L"Betrag (€)", L"z. B. 89,50", doc.m.cents == docs::kUnknown ? L"" : docs::FormatAmount(doc.m.cents, false), 20));
     d.fields.push_back(MakeField(3, L"Fälligkeit", L"TT.MM.JJJJ", docs::FormatDate(doc.m.due), 12));
+    d.fields.back().dateMask = true;
     d.fields.push_back(MakeField(4, L"Tags (Stichwörter)", L"z. B. strom, abschlag", doc.m.tags, 100));
     d.fields.push_back(MakeField(5, L"Notiz", L"", doc.m.note, 200));
     d.status = doc.m.status;
@@ -1489,7 +1496,9 @@ void App::BeginInvoiceDialog() {
     d.fields.push_back(MakeField(3, L"Empfänger-Adresse", L"Straße | PLZ Ort", L"", 140));
     d.fields.push_back(MakeField(4, L"Rechnungsnummer", L"leer = automatisch", L"", 30));
     d.fields.push_back(MakeField(5, L"Rechnungsdatum", L"TT.MM.JJJJ", docs::FormatDate(today), 12));
+    d.fields.back().dateMask = true;
     d.fields.push_back(MakeField(6, L"Fällig am", L"TT.MM.JJJJ", docs::FormatDate(docs::AddDaysIso(today, 14)), 12));
+    d.fields.back().dateMask = true;
     d.fields.push_back(MakeField(7, L"USt-Satz (%)", L"19", std::to_wstring(m_settings.vat), 3));
     for (int i = 0; i < d.itemRows; ++i) {
         d.fields.push_back(MakeField(100 + 3 * i, L"", L"Leistung / Artikel", L"", 120));

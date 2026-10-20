@@ -161,6 +161,37 @@ static void textEdit() {
     CHECK(!e.HasSelection() && e.caret == 5);
 }
 
+static void dateMask() {
+    using namespace docs;
+    TextEdit e;
+    size_t prev = 0;
+    auto type = [&](const wchar_t* s) {
+        for (; *s; ++s) { e.Insert(std::wstring(1, *s)); MaskDate(e, prev); prev = e.text.size(); }
+    };
+    auto back = [&]() { e.Backspace(); MaskDate(e, prev); prev = e.text.size(); };
+    type(L"01");   CHECK(e.text == L"01." && e.caret == 3);
+    type(L"1");    CHECK(e.text == L"01.1");
+    type(L"2");    CHECK(e.text == L"01.12.");
+    type(L"2026"); CHECK(e.text == L"01.12.2026" && e.caret == 10);
+    type(L"9");    CHECK(e.text == L"01.12.2026");                       // maximal acht Ziffern
+    back();        CHECK(e.text == L"01.12.202");
+    back(); back(); back(); CHECK(e.text == L"01.12");                    // Punkt entfernt sich ohne erneuten Schlusspunkt
+    back();        CHECK(e.text == L"01.1");
+    back();        CHECK(e.text == L"01");
+    // selbst getippte Punkte bleiben unangetastet
+    e.SetText(L""); prev = 0;
+    type(L"1.12.2026"); CHECK(e.text == L"1.12.2026");
+    // Ersetzen einer Markierung (alles markiert, neu tippen)
+    e.SetText(L"20.10.2026"); prev = e.text.size(); e.SelectAll();
+    type(L"05"); CHECK(e.text == L"05.");
+    // Zwei-Ziffern-Jahr
+    type(L"1226"); CHECK(e.text == L"05.12.26");
+    std::wstring iso;
+    CHECK(ParseDate(e.text, iso) && iso == L"2026-12-05");
+    // Fremdzeichen: keine Maske
+    e.SetText(L""); prev = 0; type(L"ab"); CHECK(e.text == L"ab");
+}
+
 static std::string readAll(const fs::path& p) { std::ifstream f(p, std::ios::binary); return std::string(std::istreambuf_iterator<char>(f), {}); }
 
 static void pdf() {
@@ -233,7 +264,7 @@ static void pdf() {
 }
 
 int main() {
-    amounts(); dates(); names(); indexAndScan(); textEdit(); pdf();
+    amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

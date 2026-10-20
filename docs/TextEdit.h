@@ -89,4 +89,46 @@ struct TextEdit {
     void SelectAll() { anchor = 0; caret = text.size(); }
 };
 
+// Datumsmaske: beim Tippen von Ziffern setzt sie die Punkte selbst ("01" -> "01.", "0112" -> "01.12.", bis "01.12.2026",
+// mehr als acht Ziffern werden ignoriert). Greift nur, solange der Text aus Ziffern besteht und Punkte hoechstens an den
+// Stellen 3 und 6 stehen; wer selbst "1.12.2026" mit Punkten tippt, wird nicht umgebaut. Beim Loeschen (Text wird kuerzer)
+// kommt kein Schlusspunkt dazu, sonst liesse sich ein Punkt nie entfernen. prevLen = Textlaenge vor der Aenderung.
+// Rueckgabe: true, wenn der Text umgebaut wurde.
+inline bool MaskDate(TextEdit& e, size_t prevLen)
+{
+    const std::wstring& t = e.text;
+    for (size_t i = 0; i < t.size(); ++i) {
+        const wchar_t c = t[i];
+        if (c >= L'0' && c <= L'9') continue;
+        if (c == L'.' && (i == 2 || i == 5)) continue;
+        return false;
+    }
+    const bool inserted = t.size() > prevLen;
+    std::wstring digits;
+    size_t before = 0;   // Ziffern links vom Cursor
+    for (size_t i = 0; i < t.size(); ++i)
+        if (t[i] != L'.') {
+            if (digits.size() < 8) digits.push_back(t[i]);
+            if (i < e.caret && digits.size() <= 8) ++before;
+        }
+    before = std::min(before, digits.size());
+    std::wstring out;
+    for (size_t i = 0; i < digits.size(); ++i) {
+        out.push_back(digits[i]);
+        const size_t n = i + 1;
+        if ((n == 2 || n == 4) && (n < digits.size() || (inserted && n == digits.size()))) out.push_back(L'.');
+    }
+    size_t pos = 0;
+    if (before > 0) {
+        size_t cnt = 0;
+        for (pos = 0; pos < out.size(); ++pos)
+            if (out[pos] != L'.' && ++cnt == before) { ++pos; break; }
+        if (inserted && (before == 2 || before == 4) && pos < out.size() && out[pos] == L'.') ++pos;   // hinter den neuen Punkt
+    }
+    if (out == e.text) return false;
+    e.text = out;
+    e.caret = e.anchor = std::min(pos, out.size());
+    return true;
+}
+
 }  // namespace docs
