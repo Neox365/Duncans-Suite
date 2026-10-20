@@ -31,7 +31,7 @@
 #include "Theme.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.1.1"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.1.2"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -52,7 +52,7 @@ enum Id {
     D_SAVESENDER = 60               // Rechnungsdialog: "Als Standard-Absender speichern"
 };
 enum MenuId {
-    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT,
+    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105,
     C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE
 };
 
@@ -63,6 +63,7 @@ struct Settings {
     bool sortDesc = false;
     std::wstring issuer, issuerAddr, payNote;   // zuletzt benutzte Absenderdaten fuer den Rechnungs-Generator
     int vat = 19;
+    bool pdfReader = true;              // PDFs im Duncan's PDF Reader oeffnen (falls installiert), sonst Standardprogramm
 };
 
 struct Field {
@@ -140,6 +141,7 @@ void LoadSettings(Settings& st) {
     st.issuerAddr = IniString(ini, L"AbsenderAdresse");
     st.payNote = IniString(ini, L"Zahlungshinweis");
     st.vat = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"MwSt", 19, ini.c_str()), 0, 30);
+    st.pdfReader = GetPrivateProfileIntW(L"Allgemein", L"PdfReader", 1, ini.c_str()) != 0;
 }
 
 void SaveSettings(const Settings& st) {
@@ -154,6 +156,7 @@ void SaveSettings(const Settings& st) {
     put(L"AbsenderAdresse", st.issuerAddr);
     put(L"Zahlungshinweis", st.payNote);
     put(L"MwSt", std::to_wstring(st.vat));
+    put(L"PdfReader", st.pdfReader ? L"1" : L"0");
 }
 
 std::wstring ClipboardText() {
@@ -181,6 +184,20 @@ void SetClipboardText(HWND hwnd, const std::wstring& s) {
         } else GlobalFree(h);
     }
     CloseClipboard();
+}
+
+// Duncan's PDF Reader: zuerst neben dieser EXE (Installer-Ordner), sonst die per Suite geladene Kopie in %LOCALAPPDATA%\\DuncansPdf.
+std::wstring FindPdfReader() {
+    wchar_t self[MAX_PATH * 2]{};
+    GetModuleFileNameW(nullptr, self, MAX_PATH * 2);
+    std::vector<fs::path> candidates;
+    candidates.push_back(fs::path(self).parent_path() / L"DuncansPdf.exe");
+    const std::wstring local = KnownFolder(FOLDERID_LocalAppData);
+    if (!local.empty()) candidates.push_back(fs::path(local) / L"DuncansPdf" / L"DuncansPdf.exe");
+    std::error_code ec;
+    for (const auto& c : candidates)
+        if (fs::is_regular_file(c, ec)) return c.wstring();
+    return L"";
 }
 
 class App {
@@ -249,6 +266,7 @@ private:
     void SetStatusOfSelected(docs::Status s);
     void TrashSelected();
     void OpenDoc(const docs::Doc& d);
+    void OpenFile(const fs::path& file);        // PDFs im PDF Reader, alles andere (und Rueckfall) im Standardprogramm
     void ShowInExplorer(const docs::Doc& d);
     void ChangeRoot();
     void ShowGearMenu();
@@ -1108,9 +1126,21 @@ void App::FocusNext(bool back) {
 // Aktionen
 // ============================================================================
 
+void App::OpenFile(const fs::path& file) {
+    const std::wstring p = file.wstring();
+    if (m_settings.pdfReader && docs::Lower(file.extension().wstring()) == L".pdf") {
+        const std::wstring reader = FindPdfReader();
+        if (!reader.empty()) {
+            const std::wstring arg = L"\"" + p + L"\"";
+            if ((INT_PTR)ShellExecuteW(m_hwnd, L"open", reader.c_str(), arg.c_str(), nullptr, SW_SHOWNORMAL) > 32) return;
+        }
+    }
+    if ((INT_PTR)ShellExecuteW(m_hwnd, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL) <= 32)
+        SetNote(L"Die Datei konnte nicht ge\u00F6ffnet werden.");
+}
+
 void App::OpenDoc(const docs::Doc& d) {
-    const std::wstring p = AbsPath(d.rel).wstring();
-    if ((INT_PTR)ShellExecuteW(m_hwnd, L"open", p.c_str(), nullptr, nullptr, SW_SHOWNORMAL) <= 32) SetNote(L"Die Datei konnte nicht geöffnet werden.");
+    OpenFile(AbsPath(d.rel));
 }
 
 void App::ShowInExplorer(const docs::Doc& d) {
@@ -1550,7 +1580,7 @@ void App::ApplyInvoice() {
     for (int i = 0; i < (int)m_view.size(); ++i)
         if (m_all[m_view[i]].rel == rel) { EnsureRowVisible(i); break; }
     SetNote(L"Rechnung " + data.number + L" erstellt: " + target.filename().wstring() + (savedSender ? L"  \u00B7  Absender als Standard gespeichert" : L""));
-    ShellExecuteW(m_hwnd, L"open", target.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+    OpenFile(target);
     Invalidate();
 }
 
@@ -1564,6 +1594,9 @@ void App::ShowGearMenu() {
     AppendMenuW(m, MF_STRING, M_OPENROOT, L"Rechnungsordner im Explorer öffnen");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (m_settings.moveFiles ? MF_CHECKED : 0), M_MOVE, L"Beim Hinzufügen verschieben statt kopieren");
+    const bool haveReader = !FindPdfReader().empty();
+    AppendMenuW(m, MF_STRING | (m_settings.pdfReader && haveReader ? MF_CHECKED : 0) | (haveReader ? 0 : MF_GRAYED), M_PDFREADER,
+                haveReader ? L"PDFs im Duncan's PDF Reader \u00F6ffnen" : L"PDFs im Duncan's PDF Reader \u00F6ffnen (nicht gefunden)");
     AppendMenuW(m, MF_STRING, M_RESCAN, L"Neu einlesen (F5)");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, M_ABOUT, L"Über Oggys Docs-Files");
@@ -1575,6 +1608,7 @@ void App::ShowGearMenu() {
         case M_ROOT: ChangeRoot(); break;
         case M_OPENROOT: ShellExecuteW(m_hwnd, L"open", m_settings.root.c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
         case M_MOVE: m_settings.moveFiles = !m_settings.moveFiles; SaveSettings(m_settings); break;
+        case M_PDFREADER: m_settings.pdfReader = !m_settings.pdfReader; SaveSettings(m_settings); break;
         case M_RESCAN: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); break;
         case M_ABOUT: {
             const std::wstring text = L"Oggys Docs-Files\nTeil von Duncan's Suite\n\nVersion " APP_VERSION L"\n\nRechnungsordner: " + m_settings.root +

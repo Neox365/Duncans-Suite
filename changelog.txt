@@ -77,6 +77,8 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.1.2 | 2026-10-20
+- Verbindung zum Duncan's PDF Reader: Doppelklick, Enter, „Öffnen“ und frisch erzeugte Rechnungen öffnen PDFs im PDF Reader, wenn er installiert ist (neben der EXE oder per Suite geladen), sonst im Standardprogramm. Abschaltbar im Zahnrad-Menü.
 ## 0.1.1 | 2026-10-20
 - Im Dialog „Rechnung erstellen“ gibt es die Checkbox „Als Standard-Absender speichern“: Absender, Adresse, Zahlungshinweis/Bankverbindung und USt-Satz werden nur noch auf Wunsch für die nächsten Rechnungen gemerkt.
 - Der Ordner-Baum spiegelt die Ordnerstruktur auch für leere Ordner und zeigt Ordner-Symbole.
