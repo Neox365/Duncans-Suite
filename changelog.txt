@@ -1,0 +1,93 @@
+# Änderungsprotokoll der Programme (Quelle der "Neuigkeiten" im Info-Button der Suite).
+# Format: [Dateiname.exe] startet den Abschnitt eines Programms, "## Version | Datum" einen Eintrag,
+# "- Text" einen Stichpunkt (Folgezeilen mit zwei Leerzeichen davor gehören dazu). Neueste Einträge zuerst.
+# Die Suite bringt eine Kopie mit und lädt die aktuelle Fassung aus dem Release "modules"
+# (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
+
+[DuncansTidy.exe]
+## Hinweis
+- Die Änderungen von Tidy stehen in den Release-Notes im eigenen GitHub-Repository (Neox365/Duncans-Tidy-ToolSet).
+- Neue Tidy-Versionen erscheinen wie bei allen Programmen als Update auf der Karte in der Suite.
+
+[DuncansDriverUpdater.exe]
+## 1.1.25 | 2026-10-19
+- Sicherheit: Der gemeinsame Daten-Ordner unter ProgramData ist nur noch für Administratoren beschreibbar (Besitz-, Rechte- und Verknüpfungsprüfung).
+- Updates kommen jetzt einzeln über die Suite, ohne dass die ganze Suite neu installiert werden muss.
+## 1.1.5 | 2026-10-19
+- Signierte Online-Tabelle für Hersteller-Treiber (GitHub, mit Zwischenspeicher; der neueste Eintrag gewinnt).
+## 1.1.2 | 2026-10-18
+- Einstellungsdialog (Zahnrad).
+## 1.1.1 | 2026-10-18
+- Das Schließen während der Windows-Update-Suche hängt nicht mehr.
+## 1.0.0 | 2026-10-18
+- Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
+
+[DuncansPdf.exe]
+## 1.1.24 | 2026-10-19
+- Frei belegbare Tastenkürzel.
+- Radierer: entfernt eine Markierung wieder.
+- Kacheln ohne Tastenhinweis.
+## 1.1.21 | 2026-10-19
+- Marker-Farbpalette neben „Text markieren“.
+- Einstellungsdialog (Zahnrad): Hotkeys, Standard-Zoom, Markerfarbe, Drehung speichern.
+- Breitere Seitenleiste.
+## 1.1.13 | 2026-10-19
+- Seiten zuschneiden (CropBox).
+- Formulare ausfüllen (AcroForm).
+## 1.1.4 | 2026-10-19
+- Seiten per Drag & Drop umordnen.
+- Marker und Notizen.
+- Datei verkleinern.
+## 1.1.3 | 2026-10-19
+- Seiten löschen, Mehrfachauswahl, Zusammenfügen mehrerer Dateien und Textsuche.
+## 1.0.5 | 2026-10-18
+- Der PDF Reader kommt als Programm in die Suite.
+
+[DuncansPrivacy.exe]
+## 0.6.3 | 2026-10-19
+- Sicherheit: Sicherungen werden nur noch aus einem vertrauenswürdigen Ordner gelesen.
+- Der gemeinsame Daten-Ordner ist nur noch für Administratoren beschreibbar.
+## 0.6.2 | 2026-10-19
+- Korrektur: Die Registry-Pfade der Schalter „Aktivitätsverlauf“ und „Treiber-Updates“ waren fehlerhaft (fehlende Backslashes).
+## 0.6.1 | 2026-10-19
+- Neue Schalter: Aktivitätsverlauf und Treiber-Updates über Windows Update (jetzt 13 Schalter).
+## 0.6.0 | 2026-10-19
+- Neue Schalter: Copilot, Startmenü-Verlauf und Windows-Tipps.
+## 0.5.0 | 2026-10-19
+- Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
+
+[DuncansPhotoCommander.exe]
+## 0.2.5 | 2026-10-20
+- Die Ähnlichkeitssuche vergleicht zusätzlich Farben: gleich aufgebaute, aber anders gefärbte Bilder werden nicht mehr gruppiert.
+- Schnelleres Arbeiten mit großen JPEGs: Verkleinerung schon beim Dekodieren, auch bei Duplikatsuche und Bearbeiten-Vorschau.
+- Schnellerer Datei-Vergleich und paralleles Lesen von Aufnahmedatum und Standort.
+## 0.2.4 | 2026-10-20
+- Diashow im Vollbild: F5 oder Knopf „Vollbild“, Pause mit Leertaste, Pfeile zum Blättern, Esc beendet.
+- Steuerleiste blendet bei Mausbewegung ein und nach 2 Sekunden wieder aus; Zeit pro Bild 2, 4, 6 oder 10 Sekunden.
+## 0.2.3 | 2026-10-20
+- Bild bearbeiten: Helligkeit, Kontrast, Sättigung und Horizont ausrichten mit Live-Vorschau, Speichern als Kopie oder „Speichern unter“.
+- Das Detail-Panel zeigt das Erstellungsdatum.
+## 0.2.2 | 2026-10-20
+- Sortierung nach Aufnahmedatum (EXIF).
+- Filter „Nur Bilder mit Standortdaten“, Bilder mit Standort tragen ein rotes GPS-Zeichen.
+- Suche nach doppelten und ähnlichen Bildern mit vorgewählter Papierkorb-Auswahl.
+## 0.2.1 | 2026-10-20
+- Der Ordnerbaum lädt Unterordner im Hintergrund.
+## 0.2.0 | 2026-10-20
+- Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
+
+[DuncansSuite.exe]
+## 1.1.30 | 2026-10-20
+- Neuer Info-Button (i) neben dem Zahnrad: Neuigkeiten aller Programme, ein Reiter pro Programm.
+## 1.1.29 | 2026-10-20
+- Photo Commander: Karte angepasst, Release-Skript für alle Programme.
+## 1.1.28 | 2026-10-20
+- Photo Commander als neues Programm in der Suite.
+## 1.1.27 | 2026-10-19
+- Sicherheit: Die Suite prüft die Signatur, bevor sie Programme mit Administratorrechten aus dem Benutzerordner startet.
+## 1.1.25 | 2026-10-19
+- Programm-Updates einzeln über das Release „modules“, ohne neue Suite-Version.
+## 1.1.22 | 2026-10-19
+- Zentrale Update-Prüfung für alle Programme: neue Versionen erscheinen direkt auf der Karte.
+## 1.1.18 | 2026-10-19
+- Einstellungsdialog in zwei Spalten, mit Wiederherstellungspunkt-Schalter, Backup- und Log-Pfaden und Update-Suche.

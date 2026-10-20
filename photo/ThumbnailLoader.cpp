@@ -1,7 +1,6 @@
 #include "ThumbnailLoader.h"
 #include "ImageOps.h"
 
-#include "WicCompat.h"
 #include <wrl/client.h>
 #include <algorithm>
 #include <cmath>
@@ -33,46 +32,8 @@ ThumbResult Load(IWICImagingFactory* f, const ThumbRequest& r) {
     UINT tw = std::max(1u, (UINT)std::lround(w * s));
     UINT th = std::max(1u, (UINT)std::lround(h * s));
 
-    ComPtr<IWICBitmapSource> src = frame;
-
-    // JPEG: der Decoder kann beim Dekodieren direkt auf 1/2, 1/4, 1/8 verkleinern
-    // (DCT-Skalierung) -> bei 24-MP-Fotos um ein Vielfaches schneller.
-    if (s < 0.5) {
-        ComPtr<IWICBitmapSourceTransform> xf;
-        if (SUCCEEDED(frame.As(&xf))) {
-            UINT cw = tw, ch = th;
-            WICPixelFormatGUID pf = GUID_WICPixelFormat32bppPBGRA;
-            if (SUCCEEDED(xf->GetClosestSize(&cw, &ch)) && SUCCEEDED(xf->GetClosestPixelFormat(&pf)) &&
-                cw >= tw && ch >= th) {
-                ComPtr<IWICBitmapSource> tmp;
-                // Nur ueber Format-Converter absichern, falls pf kein 32bpp ist
-                UINT bpp = 0;
-                ComPtr<IWICComponentInfo> ci;
-                ComPtr<IWICPixelFormatInfo> pfi;
-                if (SUCCEEDED(f->CreateComponentInfo(pf, &ci)) && SUCCEEDED(ci.As(&pfi))) pfi->GetBitsPerPixel(&bpp);
-                if (bpp > 0 && bpp <= 64) {
-                    UINT stride = (cw * bpp + 7) / 8;
-                    std::vector<BYTE> buf((size_t)stride * ch);
-                    if (SUCCEEDED(xf->CopyPixels(nullptr, cw, ch, &pf, WICBitmapTransformRotate0, stride,
-                                                 (UINT)buf.size(), buf.data()))) {
-                        ComPtr<IWICBitmap> bmp;
-                        if (SUCCEEDED(f->CreateBitmapFromMemory(cw, ch, pf, stride, (UINT)buf.size(), buf.data(), &bmp)))
-                            src = bmp;
-                    }
-                }
-            }
-        }
-    }
-
-    UINT sw = 0, sh = 0;
-    src->GetSize(&sw, &sh);
-    if (sw != tw || sh != th) {
-        ComPtr<IWICBitmapScaler> sc;
-        if (FAILED(f->CreateBitmapScaler(&sc)) ||
-            FAILED(sc->Initialize(src.Get(), tw, th, WICBitmapInterpolationModeFant)))
-            return res;
-        src = sc;
-    }
+    ComPtr<IWICBitmapSource> src = imgops::ScaledSource(f, frame.Get(), tw, th);  // JPEG: DCT-Skalierung
+    if (!src) return res;
 
     // EXIF-Drehung (Handyfotos im Hochformat)
     WICBitmapTransformOptions t = imgops::OrientationToTransform(imgops::ReadOrientation(frame.Get()));

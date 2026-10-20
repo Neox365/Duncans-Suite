@@ -6,9 +6,12 @@
 // Anwendungs-Icon
 1 ICON "suite.ico"
 
+// Aenderungsprotokoll fuer den Info-Dialog (Id 101 = kChangelogResource in suite/main.cpp)
+101 RCDATA "../changelog.txt"
+
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,1,29,0
-PRODUCTVERSION 1,1,29,0
+FILEVERSION 1,1,30,0
+PRODUCTVERSION 1,1,30,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -18,11 +21,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Duncan"
             VALUE "FileDescription", "Duncan's Suite"
-            VALUE "FileVersion", "1.1.29"
+            VALUE "FileVersion", "1.1.30"
             VALUE "InternalName", "DuncansSuite"
             VALUE "OriginalFilename", "DuncansSuite.exe"
             VALUE "ProductName", "Duncan's Suite"
-            VALUE "ProductVersion", "1.1.29"
+            VALUE "ProductVersion", "1.1.30"
         END
     END
     BLOCK "VarFileInfo"

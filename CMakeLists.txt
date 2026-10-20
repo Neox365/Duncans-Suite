@@ -1,9 +1,9 @@
 cmake_minimum_required(VERSION 3.20)
 project(DuncansDriverUpdater VERSION 1.1.25 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
-set(SUITE_VER "1.1.29")
+set(SUITE_VER "1.1.30")
 set(PDF_VER "1.1.24")
-set(PHOTO_VER "0.2.4")
+set(PHOTO_VER "0.2.5")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -62,6 +62,8 @@ add_executable(DuncansSuite WIN32
     src/Icons.cpp
     resources/suite.rc
 )
+# Die Suite bettet changelog.txt als Ressource ein: bei Aenderungen neu uebersetzen
+set_source_files_properties(resources/suite.rc PROPERTIES OBJECT_DEPENDS "${CMAKE_SOURCE_DIR}/changelog.txt")
 target_compile_definitions(DuncansSuite PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
                            SUITE_VERSION=L\"${SUITE_VER}\")
 if(MSVC)

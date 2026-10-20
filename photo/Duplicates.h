@@ -20,7 +20,8 @@
 
 namespace dup {
 
-constexpr int kSimilarMaxDistance = 5;  // von 64 Bit; kleiner = strenger
+constexpr int kSimilarMaxDistance = 5;    // dHash-Abstand von 64 Bit; kleiner = strenger
+constexpr int kSimilarMaxColorDiff = 28;  // mittlere Farbabweichung je Kanal (0..255); trennt gleich aufgebaute, aber anders gefaerbte Bilder
 
 struct File {
     std::wstring path;
@@ -107,16 +108,16 @@ inline std::vector<Group> Find(const std::vector<File>& files, Progress& pr, con
     std::vector<size_t> reps;
     for (size_t i = 0; i < n; ++i)
         if (exactClass[i] == i) reps.push_back(i);
-    std::vector<uint64_t> dh(n, 0);
+    std::vector<imgops::ImageSig> sig(n);
     std::vector<char> dok(n, 0);
-    detail::ParallelFor(reps, pr, tick, [&](size_t i) { dok[i] = imgops::ComputeDHash(files[i].path, dh[i]); });
+    detail::ParallelFor(reps, pr, tick, [&](size_t i) { dok[i] = imgops::ComputeSignature(files[i].path, sig[i]); });
     if (pr.cancel) return {};
     for (size_t a = 0; a < reps.size(); ++a) {
         const size_t i = reps[a];
-        if (!dok[i] || dh[i] == 0 || dh[i] == ~0ull) continue;  // einfarbige Bilder tragen keine Information
+        if (!dok[i] || sig[i].dhash == 0 || sig[i].dhash == ~0ull) continue;  // einfarbige Bilder tragen keine Information
         for (size_t b = a + 1; b < reps.size(); ++b) {
             const size_t j = reps[b];
-            if (dok[j] && imgops::HammingDistance(dh[i], dh[j]) <= kSimilarMaxDistance) unite(i, j);
+            if (dok[j] && imgops::SignaturesSimilar(sig[i], sig[j], kSimilarMaxDistance, kSimilarMaxColorDiff)) unite(i, j);
         }
     }
 
