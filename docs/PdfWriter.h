@@ -65,7 +65,10 @@ class Document {
 public:
     Document() { NewPage(); }
 
-    void NewPage() { m_pages.emplace_back(); }
+    void NewPage() { m_pages.emplace_back(); m_target = static_cast<size_t>(-1); }
+    // Folgende Text/Line/FillRect-Aufrufe gehen auf Seite i (0-basiert); SelectLast() kehrt zur letzten Seite zurueck
+    void SelectPage(size_t i) { m_target = i < m_pages.size() ? i : static_cast<size_t>(-1); }
+    void SelectLast() { m_target = static_cast<size_t>(-1); }
     size_t PageCount() const { return m_pages.size(); }
 
     static double Width(const std::wstring& s, double size, bool bold = false)
@@ -78,7 +81,7 @@ public:
     // x/y in Punkt, Ursprung links unten; gray 0 = schwarz .. 1 = weiss
     void Text(double x, double y, double size, bool bold, const std::wstring& s, double gray = 0.0)
     {
-        TextTo(m_pages.back(), x, y, size, bold, s, gray);
+        TextTo(Cur(), x, y, size, bold, s, gray);
     }
     // Fusszeile auf jeder Seite: links Text, rechts "Seite i von n"
     void Footer(const std::wstring& left, double margin = 56, double y = 34)
@@ -91,6 +94,8 @@ public:
     }
 
 private:
+    size_t m_target = static_cast<size_t>(-1);
+    std::string& Cur() { return m_target < m_pages.size() ? m_pages[m_target] : m_pages.back(); }
     static void TextTo(std::string& c, double x, double y, double size, bool bold, const std::wstring& s, double gray)
     {
         char head[160];
@@ -113,13 +118,13 @@ public:
     {
         char buf[160];
         std::snprintf(buf, sizeof buf, "%.2f w %.3f G %.2f %.2f m %.2f %.2f l S\n", width, gray, x1, y1, x2, y2);
-        m_pages.back() += buf;
+        Cur() += buf;
     }
     void FillRect(double x, double y, double w, double h, double gray)
     {
         char buf[160];
         std::snprintf(buf, sizeof buf, "%.3f g %.2f %.2f %.2f %.2f re f 0 g\n", gray, x, y, w, h);
-        m_pages.back() += buf;
+        Cur() += buf;
     }
 
     // Komplette PDF-Datei. title: Dokumenttitel (Info-Dictionary, UTF-16).

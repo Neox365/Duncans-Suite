@@ -23,9 +23,33 @@ struct Data {
     std::wstring note;                         // Zahlungshinweis / Bankverbindung / Gruss
     std::vector<Item> items;
     int vatPercent = 19;
+    std::wstring owner, court;                 // Inhaber / gesetzlicher Vertreter, Amtsgericht / HRB (Fusszeile links)
+    std::wstring phone, email, web;            // Kontakt (Fusszeile Mitte)
+    std::wstring bank, iban, bic;              // Bankverbindung (Fusszeile rechts)
     std::wstring taxNo;                        // Steuernummer oder USt-IdNr. des Absenders (leer = keine Angabe)
     bool smallBusiness = false;                // Kleinunternehmer nach § 19 UStG: keine Umsatzsteuer, Hinweistext auf der PDF
 };
+
+// Standard-Schlusstext; [Gesamtsumme] und [Fälligkeitsdatum] werden beim Erzeugen eingesetzt
+inline const wchar_t* DefaultNote()
+{
+    return L"Bitte überweisen Sie den Rechnungsbetrag von [Gesamtsumme] bis zum [Fälligkeitsdatum] auf das unten genannte Konto. "
+           L"Soweit nicht anders angegeben, entspricht das Rechnungsdatum dem Leistungsdatum. Vielen Dank für Ihren Auftrag!";
+}
+
+inline std::wstring ReplaceAll(std::wstring s, const std::wstring& from, const std::wstring& to)
+{
+    for (size_t p = 0; (p = s.find(from, p)) != std::wstring::npos; p += to.size()) s.replace(p, from.size(), to);
+    return s;
+}
+
+// Platzhalter ersetzen; ohne Faelligkeit entfaellt "bis zum [Faelligkeitsdatum]"
+inline std::wstring ExpandNote(std::wstring note, long long grossCents, const std::wstring& dueIso)
+{
+    if (dueIso.empty()) note = ReplaceAll(note, L" bis zum [Fälligkeitsdatum]", L"");
+    note = ReplaceAll(note, L"[Gesamtsumme]", docs::FormatAmount(grossCents));
+    return ReplaceAll(note, L"[Fälligkeitsdatum]", docs::FormatDate(dueIso));
+}
 
 inline const wchar_t* SmallBusinessNote() { return L"Gemäß § 19 UStG wird keine Umsatzsteuer berechnet."; }
 
@@ -136,16 +160,14 @@ inline std::string BuildPdf(const Data& d)
     const double L = 56, R = pdfw::kPageW - 56, top = pdfw::kPageH - 52;
     Document pdf;
     const Totals tot = Compute(d);
+    const bool hasFooter = !(d.owner.empty() && d.court.empty() && d.taxNo.empty() && d.phone.empty() && d.email.empty() && d.web.empty() &&
+                             d.bank.empty() && d.iban.empty() && d.bic.empty());
 
     // Absender links oben
     pdf.Text(L, top, 15, true, d.issuer.empty() ? L"Rechnung" : d.issuer);
     double y = top - 16;
     for (const auto& line : SplitLines(d.issuerAddress)) {
         pdf.Text(L, y, 9, false, line, 0.35);
-        y -= 11;
-    }
-    if (!d.taxNo.empty()) {
-        pdf.Text(L, y, 9, false, std::wstring(TaxNoLabel(d.taxNo)) + L": " + d.taxNo, 0.35);
         y -= 11;
     }
     // Rechnungskopf rechts
@@ -194,7 +216,7 @@ inline std::string BuildPdf(const Data& d)
     for (size_t i = 0; i < d.items.size(); ++i) {
         const auto lines = Wrap(d.items[i].desc, cQty - 60 - cDesc, 10);
         const double h = 13.0 * std::max<size_t>(1, lines.size()) + 6;
-        if (ty - h < 190) {   // Seitenumbruch: Platz fuer Summen reservieren, auf der naechsten Seite weitermachen
+        if (ty - h < (hasFooter ? 215 : 190)) {   // Seitenumbruch: Platz fuer Summen reservieren, auf der naechsten Seite weitermachen
             pdf.NewPage();
             ty = top - 10;
             header(ty);
@@ -228,15 +250,49 @@ inline std::string BuildPdf(const Data& d)
     pdf.TextRight(cSum, ty, 12, true, docs::FormatAmount(tot.gross));
     ty -= 38;
 
-    // Zahlungshinweis
-    std::wstring pay;
-    if (!d.dueIso.empty()) pay = L"Bitte überweisen Sie den Betrag bis zum " + docs::FormatDate(d.dueIso) + L".";
-    if (!pay.empty()) { pdf.Text(L, ty, 10, false, pay); ty -= 16; }
-    if (d.smallBusiness) { pdf.Text(L, ty, 9, false, SmallBusinessNote(), 0.25); ty -= 14; }
-    for (const auto& line : Wrap(d.note, R - L, 9)) {
-        if (ty < 60) break;
-        pdf.Text(L, ty, 9, false, line, 0.25);
-        ty -= 12;
+    // Schlusstext / Zahlungshinweis (leer = Standardtext), danach der Hinweis nach § 19 UStG
+    const std::wstring closing = ExpandNote(docs::Trim(d.note).empty() ? std::wstring(DefaultNote()) : d.note, tot.gross, d.dueIso);
+    const double floorY = hasFooter ? 112 : 60;
+    for (const auto& line : Wrap(closing, R - L, 9.5)) {
+        if (ty < floorY) break;
+        pdf.Text(L, ty, 9.5, false, line, 0.15);
+        ty -= 13;
+    }
+    if (d.smallBusiness && ty >= floorY) { ty -= 4; pdf.Text(L, ty, 9, true, SmallBusinessNote(), 0.2); ty -= 14; }
+
+    // Fusszeile mit drei Spalten (auf jeder Seite): Firma / Register / Steuer | Kontakt | Bank
+    if (hasFooter) {
+        struct Col { std::vector<std::pair<bool, std::wstring>> lines; };
+        Col c[3];
+        auto add = [&](Col& col, bool bold, const std::wstring& label, const std::wstring& v) {
+            if (docs::Trim(v).empty()) return;
+            col.lines.push_back({bold, label + docs::Trim(v)});
+        };
+        add(c[0], true, L"", d.issuer);
+        add(c[0], false, L"", d.owner);
+        add(c[0], false, L"", d.court);
+        add(c[0], false, d.taxNo.empty() ? L"" : std::wstring(TaxNoLabel(d.taxNo)) + L": ", d.taxNo);
+        add(c[1], false, L"Tel.: ", d.phone);
+        add(c[1], false, L"E-Mail: ", d.email);
+        add(c[1], false, L"Web: ", d.web);
+        add(c[2], false, L"", d.bank);
+        add(c[2], false, L"IBAN: ", d.iban);
+        add(c[2], false, L"BIC: ", d.bic);
+        const double colW = (R - L - 2 * 14) / 3;
+        for (size_t pg = 0; pg < pdf.PageCount(); ++pg) {
+            pdf.SelectPage(pg);
+            pdf.Line(L, 104, R, 104, 0.5, 0.75);
+            for (int ci = 0; ci < 3; ++ci) {
+                double fy = 92;
+                for (const auto& ln : c[ci].lines)
+                    for (const auto& part : Wrap(ln.second, colW, 7.5, ln.first)) {
+                        if (fy < 52) break;
+                        pdf.Text(L + ci * (colW + 14), fy, 7.5, ln.first, part, 0.3);
+                        fy -= 9.5;
+                    }
+            }
+        }
+        pdf.SelectLast();
     }
 
     pdf.Footer(L"Erstellt mit Oggys Docs-Files");
