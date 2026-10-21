@@ -283,6 +283,24 @@ static void invoiceNumbers() {
     CHECK(docs::InvoiceNoTaken(files, L"RE-2026-004") && !docs::InvoiceNoTaken(files, L"RE-2026-005") && !docs::InvoiceNoTaken(files, L"RE-2026-00"));
 }
 
+static void installmentRate() {
+    docs::MetaMap map;
+    docs::Meta m;
+    m.cents = 5000;
+    m.status = docs::Status::Installment;
+    m.rate = L"Rate 3 von 12";
+    map[L"2026\\Bank\\Kredit.pdf"] = m;
+    const docs::MetaMap back = docs::ParseIndex(docs::SerializeIndex(map));
+    CHECK(back.size() == 1 && back.begin()->second.rate == L"Rate 3 von 12" && back.begin()->second.status == docs::Status::Installment);
+    // aelterer Index ohne 7. Spalte bleibt lesbar
+    const docs::MetaMap old = docs::ParseIndex("a.pdf\t100\t2026-01-02\tRatenzahlung\ttag\tnotiz\n");
+    CHECK(old.size() == 1 && old.begin()->second.rate.empty() && old.begin()->second.note == L"notiz");
+    docs::Doc d;
+    d.name = L"Kredit.pdf";
+    d.m = m;
+    CHECK(docs::Matches(d, L"rate 3"));
+}
+
 static void smallBusiness() {
     invoice::Data d;
     d.issuer = L"Max Muster";
@@ -308,7 +326,7 @@ static void smallBusiness() {
 }
 
 int main() {
-    amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness();
+    amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness(); installmentRate();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

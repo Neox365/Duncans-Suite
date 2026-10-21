@@ -76,6 +76,8 @@ struct Field {
     D2D1_RECT_F rc{};
     float scroll = 0;
     bool dateMask = false;     // Datumsfeld: Punkte beim Tippen automatisch setzen (docs::MaskDate)
+    bool hidden = false;       // nicht sichtbar (z. B. Ratenfeld bei anderem Status): kein Fokus, keine Anzeige
+    bool disabled = false;     // ausgegraut (z. B. USt-Satz bei Kleinunternehmern): kein Fokus, nicht editierbar
     size_t prevLen = 0;        // Textlaenge vor der letzten Aenderung (unterscheidet Tippen von Loeschen)
 };
 
@@ -252,7 +254,7 @@ private:
     }
     float TextW(const std::wstring& s, IDWriteTextFormat* f);
     void Button(int id, const D2D1_RECT_F& r, const std::wstring& label, bool accent, bool danger = false);
-    void DrawBadge(float x, float y, float h, docs::Status s);
+    float DrawBadge(float x, float y, float h, docs::Status s);   // Rueckgabe: Breite
     void DrawScrollbar(const D2D1_RECT_F& area, float scroll, float content);
     void DrawTop();
     void DrawTree();
@@ -478,7 +480,7 @@ void App::Button(int id, const D2D1_RECT_F& r, const std::wstring& label, bool a
     m_hits.push_back({id, r});
 }
 
-void App::DrawBadge(float x, float y, float h, docs::Status s) {
+float App::DrawBadge(float x, float y, float h, docs::Status s) {
     unsigned c = Theme::Open;
     switch (s) {
         case docs::Status::Paid: c = Theme::Paid; break;
@@ -495,6 +497,7 @@ void App::DrawBadge(float x, float y, float h, docs::Status s) {
     SetCol(c);
     rt->FillEllipse(D2D1::Ellipse({r.left + 12 * k, (r.top + r.bottom) / 2}, d / 2, d / 2), brush.Get());
     Txt(name, {r.left + 20 * k, r.top, r.right - 6 * k, r.bottom}, fBadge.Get(), c);
+    return w;
 }
 
 void App::DrawScrollbar(const D2D1_RECT_F& area, float scroll, float content) {
@@ -760,7 +763,9 @@ void App::DrawList() {
         std::wstring due = d.m.due.empty() ? L"–" : docs::FormatDate(d.m.due);
         if (overdue) due += L"  überfällig";
         Txt(due, {xDue, y, xDue + wDue, y + rh}, fNormal.Get(), overdue ? Theme::Danger : (d.m.due.empty() ? Theme::TextDim : Theme::Text));
-        DrawBadge(xStat, y + (rh - 24 * k) / 2, 24 * k, d.m.status);
+        const float bw = DrawBadge(xStat, y + (rh - 24 * k) / 2, 24 * k, d.m.status);
+        if (d.m.status == docs::Status::Installment && !d.m.rate.empty() && xStat + bw + 8 * k < rcList.right - 16 * k)
+            Txt(d.m.rate, {xStat + bw + 8 * k, y, rcList.right - 16 * k, y + rh}, fSmall.Get(), Theme::TextDim);
     }
     if (m_view.empty()) {
         const bool filtered = !m_search.ed.text.empty() || m_node != 0;
@@ -786,6 +791,13 @@ void App::DrawStatusBar() {
 
 // Textfeld: Rahmen, Hinweistext, Markierung, Cursor; scrollt waagerecht, damit der Cursor sichtbar bleibt
 void App::DrawField(Field& f, bool focused) {
+    if (f.hidden) return;
+    if (f.disabled) {
+        FillRR(f.rc, 8 * k, Theme::Panel);
+        StrokeRR(f.rc, 8 * k, Theme::Border, 1.f);
+        Txt(f.ed.text.empty() ? f.hint : f.ed.text, Inset(f.rc, 11 * k, 0), fNormal.Get(), Theme::TextDim, 0.45f);
+        return;
+    }
     FillRR(f.rc, 8 * k, Theme::Bg);
     StrokeRR(f.rc, 8 * k, focused ? Theme::Accent : Theme::Border, focused ? 1.5f : 1.f);
     const D2D1_RECT_F in = Inset(f.rc, 11 * k, 0);
@@ -841,7 +853,7 @@ void App::DrawAddEdit() {
     const float bw = 600 * k, pad = 24 * k, fh = 38 * k;
     const bool edit = d.kind == DlgKind::Edit;
     float height = pad + 30 * k + 24 * k + (fh + 22 * k) /*Glaeubiger*/ + 36 * k /*Chips*/ + (fh + 22 * k) /*Jahr..*/ + (fh + 22 * k) /*Tags*/ +
-                   (edit ? fh + 22 * k : 0) + 64 * k /*Status*/ + 30 * k /*Fehler*/ + 44 * k + pad;
+                   (edit ? fh + 22 * k : 0) + (d.status == docs::Status::Installment ? fh + 22 * k : 0) /*Rate*/ + 64 * k /*Status*/ + 30 * k /*Fehler*/ + 44 * k + pad;
     RECT cr;
     GetClientRect(m_hwnd, &cr);
     d.box = {(cr.right - bw) / 2, std::max(20.f * k, (cr.bottom - height) / 2), (cr.right + bw) / 2, 0};
@@ -898,6 +910,11 @@ void App::DrawAddEdit() {
         sx += w + 8 * k;
     }
     y += 64 * k;
+    if (Field* rf = FieldById(6)) {   // Ratenzahlung: Zusatzfeld "Rate / Fortschritt" unter den Status-Knoepfen
+        rf->hidden = d.status != docs::Status::Installment;
+        if (rf->hidden) rf->rc = {};
+        else { place(6, x0, fw); y += 22 * k + fh; }
+    }
     if (!d.error.empty()) Txt(d.error, {x0, y, x0 + fw, y + 26 * k}, fNormal.Get(), Theme::Danger);
     y += 30 * k;
     // Knoepfe
@@ -957,6 +974,7 @@ void App::DrawInvoice() {
     y += 24 * k + fh;
     const float quarter = (fw - 3 * gap) / 4;
     place(4, x0, quarter, y); place(5, x0 + (quarter + gap), quarter, y); place(6, x0 + 2 * (quarter + gap), quarter, y); place(7, x0 + 3 * (quarter + gap), quarter, y);
+    if (Field* v = FieldById(7)) v->disabled = d.smallBiz;   // Kleinunternehmer: USt-Satz ausgegraut, nicht editierbar
     y += 24 * k + fh;
 
     // Positionen: Beschreibung | Menge | Einzelpreis | Summe
@@ -1155,7 +1173,9 @@ void App::FocusNext(bool back) {
     int idx = -1;
     for (int i = 0; i < (int)fs_.size(); ++i)
         if (fs_[i].id == m_focusId) idx = i;
-    idx = idx < 0 ? 0 : (idx + (back ? (int)fs_.size() - 1 : 1)) % (int)fs_.size();
+    const int n = (int)fs_.size();
+    idx = idx < 0 ? 0 : (idx + (back ? n - 1 : 1)) % n;
+    for (int tries = 0; tries < n && (fs_[idx].hidden || fs_[idx].disabled); ++tries) idx = (idx + (back ? n - 1 : 1)) % n;   // ausgeblendete/graue Felder ueberspringen
     m_focusId = fs_[idx].id;
     fs_[idx].ed.SelectAll();
     ResetCaret();
@@ -1366,6 +1386,7 @@ void App::BeginAddDialog() {
     d.fields.push_back(MakeField(3, L"Fälligkeit", L"TT.MM.JJJJ", L"", 12));
     d.fields.back().dateMask = true;
     d.fields.push_back(MakeField(4, L"Tags (Stichwörter)", L"z. B. strom, abschlag", L"", 100));
+    d.fields.push_back(MakeField(6, L"Rate / Fortschritt", L"z. B. Rate 3 von 12 oder 50 € / Monat", L"", 60));
     d.status = docs::Status::Open;
     d.error.clear();
     // Vorschlaege: die am haeufigsten benutzten Glaeubiger
@@ -1414,6 +1435,7 @@ bool ReadMeta(App*, const std::vector<Field>& fields, std::wstring& cred, std::w
     if (!docs::ParseDate(get(3)->ed.text, m.due)) { error = L"Die Fälligkeit ist kein gültiges Datum (TT.MM.JJJJ)."; return false; }
     m.tags = docs::CleanField(get(4)->ed.text);
     if (const Field* n = get(5)) m.note = docs::CleanField(n->ed.text);
+    if (const Field* r = get(6)) m.rate = docs::CleanField(r->ed.text);
     return true;
 }
 }  // namespace
@@ -1427,6 +1449,7 @@ void App::ApplyAdd(bool skipOnly) {
         docs::Meta m;
         if (!ReadMeta(this, d.fields, cred, year, m, d.error)) { Invalidate(); return; }
         m.status = d.status;
+        if (m.status != docs::Status::Installment) m.rate.clear();
         const fs::path target = docs::TargetPath(m_rootPath, year, cred, fs::path(src).filename().wstring());
         std::error_code ec;
         fs::create_directories(target.parent_path(), ec);
@@ -1474,6 +1497,7 @@ void App::BeginEditDialog(const docs::Doc& doc) {
     d.fields.back().dateMask = true;
     d.fields.push_back(MakeField(4, L"Tags (Stichwörter)", L"z. B. strom, abschlag", doc.m.tags, 100));
     d.fields.push_back(MakeField(5, L"Notiz", L"", doc.m.note, 200));
+    d.fields.push_back(MakeField(6, L"Rate / Fortschritt", L"z. B. Rate 3 von 12 oder 50 € / Monat", doc.m.rate, 60));
     d.status = doc.m.status;
     std::map<std::wstring, int> cnt;
     for (const auto& x : m_all) cnt[x.creditor]++;
@@ -1494,6 +1518,7 @@ void App::ApplyEdit() {
     docs::Meta m;
     if (!ReadMeta(this, d.fields, cred, year, m, d.error)) { Invalidate(); return; }
     m.status = d.status;
+    if (m.status != docs::Status::Installment) m.rate.clear();
     std::wstring rel = doc->rel;
     const std::wstring sc = docs::SanitizeName(cred, L"Sonstige"), sy = docs::SanitizeName(year, L"Unbekannt");
     if (sc != doc->creditor || sy != doc->year) {   // Glaeubiger/Jahr geaendert: Datei in den passenden Ordner verschieben
@@ -1845,7 +1870,10 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case D_SAVESENDER: m_dlg.saveSender = !m_dlg.saveSender; break;
             case D_SMALLBIZ:
                 m_dlg.smallBiz = !m_dlg.smallBiz;
-                if (Field* v = FieldById(7)) v->label = m_dlg.smallBiz ? L"USt-Satz (entfällt)" : L"USt-Satz (%)";
+                if (Field* v = FieldById(7)) {
+                    v->label = m_dlg.smallBiz ? L"USt-Satz (entfällt)" : L"USt-Satz (%)";
+                    if (m_dlg.smallBiz && m_focusId == 7) m_focusId = kNoFocus;
+                }
                 break;
             case D_SKIP: ApplyAdd(true); break;
             case D_ADDROW:
@@ -1867,7 +1895,10 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 break;
             default:
-                if (id >= D_STATUS0 && id < D_STATUS0 + 4) m_dlg.status = kStatusOrder[id - D_STATUS0];
+                if (id >= D_STATUS0 && id < D_STATUS0 + 4) {
+                    m_dlg.status = kStatusOrder[id - D_STATUS0];
+                    if (m_focusId == 6 && m_dlg.status != docs::Status::Installment) m_focusId = kNoFocus;   // Ratenfeld wird ausgeblendet
+                }
                 else if (id >= D_CRED0 && id < D_CRED0 + 8) {
                     if (Field* f = FieldById(0); f && id - D_CRED0 < (int)m_dlg.creditorChips.size()) {
                         f->ed.SetText(m_dlg.creditorChips[id - D_CRED0]);
@@ -1967,7 +1998,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             if (m_dlg.kind != DlgKind::None) for (auto& f : m_dlg.fields) fields.push_back(&f);
             else fields.push_back(&m_search);
             for (Field* f : fields)
-                if (In(f->rc, x, y)) {
+                if (!f->hidden && !f->disabled && In(f->rc, x, y)) {
                     m_focusId = f->id;
                     FieldMouse(*f, x, shift);
                     if (msg == WM_LBUTTONDBLCLK) f->ed.SelectAll();

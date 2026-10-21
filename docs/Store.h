@@ -275,6 +275,7 @@ struct Meta {
     std::wstring due;             // ISO oder leer
     Status status = Status::Open;
     std::wstring tags, note;
+    std::wstring rate;            // Ratenzahlung: "Rate 3 von 12" / "50 € / Monat" (nur bei Status Ratenzahlung angezeigt)
 };
 using MetaMap = std::map<std::wstring, Meta>;   // Schluessel: relativer Pfad, Trenner '\'
 
@@ -298,7 +299,7 @@ inline std::string SerializeIndex(const MetaMap& map)
     for (const auto& kv : map) {
         const Meta& m = kv.second;
         out += CleanField(kv.first) + L"\t" + (m.cents == kUnknown ? L"" : std::to_wstring(m.cents)) + L"\t" + m.due + L"\t" +
-               StatusName(m.status) + L"\t" + CleanField(m.tags) + L"\t" + CleanField(m.note) + L"\n";
+               StatusName(m.status) + L"\t" + CleanField(m.tags) + L"\t" + CleanField(m.note) + L"\t" + CleanField(m.rate) + L"\n";
     }
     return WideToUtf8(out);
 }
@@ -335,6 +336,7 @@ inline MetaMap ParseIndex(const std::string& utf8)
         if (!StatusFromName(f[3], m.status)) m.status = Status::Open;
         if (f.size() > 4) m.tags = f[4];
         if (f.size() > 5) m.note = f[5];
+        if (f.size() > 6) m.rate = f[6];
         map[f[0]] = m;
     }
     return map;
@@ -422,7 +424,7 @@ inline bool Matches(const Doc& d, const std::wstring& query)
 {
     const std::wstring q = Trim(query);
     if (q.empty()) return true;
-    const std::wstring hay = Lower(d.name + L" " + d.creditor + L" " + d.year + L" " + d.m.tags + L" " + d.m.note + L" " +
+    const std::wstring hay = Lower(d.name + L" " + d.creditor + L" " + d.year + L" " + d.m.tags + L" " + d.m.note + L" " + d.m.rate + L" " +
                                    StatusName(d.m.status) + L" " + FormatAmount(d.m.cents, false) + L" " + FormatDate(d.m.due));
     size_t p = 0;
     const std::wstring lq = Lower(q);
