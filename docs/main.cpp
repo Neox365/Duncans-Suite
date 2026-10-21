@@ -49,7 +49,8 @@ enum Id {
     D_OK = 30, D_CANCEL, D_SKIP, D_ADDROW, D_DELROW,
     D_STATUS0 = 40,                 // 40..43 Status-Auswahl im Formular
     D_CRED0 = 50,                   // 50..57 Glaeubiger-Vorschlaege
-    D_SAVESENDER = 60               // Rechnungsdialog: "Als Standard-Absender speichern"
+    D_SAVESENDER = 60,              // Rechnungsdialog: "Als Standard-Absender speichern"
+    D_SMALLBIZ = 61                 // Rechnungsdialog: "Kleinunternehmer nach § 19 UStG"
 };
 enum MenuId {
     M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105,
@@ -63,6 +64,8 @@ struct Settings {
     bool sortDesc = false;
     std::wstring issuer, issuerAddr, payNote;   // zuletzt benutzte Absenderdaten fuer den Rechnungs-Generator
     int vat = 19;
+    std::wstring taxNo;                 // Steuernummer / USt-IdNr. des Absenders
+    bool smallBiz = false;              // Kleinunternehmer nach § 19 UStG (keine USt auf der Rechnung)
     bool pdfReader = true;              // PDFs im Duncan's PDF Reader oeffnen (falls installiert), sonst Standardprogramm
 };
 
@@ -94,7 +97,8 @@ struct Dialog {
     size_t queueIdx = 0;
     std::wstring editRel;                 // Edit: relativer Pfad
     int itemRows = 3;
-    bool saveSender = true;               // Rechnung: Absender, Adresse, Zahlungshinweis und USt-Satz als Standard merken
+    bool saveSender = true;               // Rechnung: Absender, Adresse, Steuernummer, Zahlungshinweis und USt-Satz als Standard merken
+    bool smallBiz = false;                // Rechnung: Kleinunternehmer nach § 19 UStG
     std::vector<std::wstring> creditorChips;
     D2D1_RECT_F box{}, totals{};
 };
@@ -144,6 +148,21 @@ void LoadSettings(Settings& st) {
     st.payNote = IniString(ini, L"Zahlungshinweis");
     st.vat = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"MwSt", 19, ini.c_str()), 0, 30);
     st.pdfReader = GetPrivateProfileIntW(L"Allgemein", L"PdfReader", 1, ini.c_str()) != 0;
+    st.taxNo = IniString(ini, L"Steuernummer");
+    st.smallBiz = GetPrivateProfileIntW(L"Allgemein", L"Kleinunternehmer", 0, ini.c_str()) != 0;
+}
+
+// Fortlaufender Rechnungszaehler je Jahr (zuletzt vergebene Nummer); wird nie zurueckgesetzt, damit keine Nummer doppelt vergeben wird
+int InvoiceCounter(int year) {
+    const std::wstring ini = SettingsPath();
+    if (ini.empty()) return 0;
+    return (int)GetPrivateProfileIntW(L"Rechnungsnummern", (L"Jahr" + std::to_wstring(year)).c_str(), 0, ini.c_str());
+}
+
+void SetInvoiceCounter(int year, int n) {
+    const std::wstring ini = SettingsPath();
+    if (ini.empty()) return;
+    WritePrivateProfileStringW(L"Rechnungsnummern", (L"Jahr" + std::to_wstring(year)).c_str(), std::to_wstring(n).c_str(), ini.c_str());
 }
 
 void SaveSettings(const Settings& st) {
@@ -159,6 +178,8 @@ void SaveSettings(const Settings& st) {
     put(L"Zahlungshinweis", st.payNote);
     put(L"MwSt", std::to_wstring(st.vat));
     put(L"PdfReader", st.pdfReader ? L"1" : L"0");
+    put(L"Steuernummer", st.taxNo);
+    put(L"Kleinunternehmer", st.smallBiz ? L"1" : L"0");
 }
 
 std::wstring ClipboardText() {
@@ -901,7 +922,7 @@ void App::DrawInvoice() {
     const float pad = 24 * k, fh = 36 * k, rowH = 42 * k;
     const float bw = std::min(940 * k, cr.right - 40 * k);
     // Titel + 3 Formularreihen + Positionskopf + Zeilen + Summenblock + Zahlungshinweis + Fehlerzeile + Knoepfe
-    const float height = std::min((float)cr.bottom - 20 * k, pad + 36 * k + 3 * (24 * k + fh) + 20 * k + d.itemRows * rowH + 46 * k + (24 * k + fh) + 26 * k + 38 * k + pad);
+    const float height = std::min((float)cr.bottom - 20 * k, pad + 36 * k + 4 * (24 * k + fh) + 20 * k + d.itemRows * rowH + 46 * k + (24 * k + fh) + 26 * k + 38 * k + pad);
     d.box = {(cr.right - bw) / 2, (cr.bottom - height) / 2, (cr.right + bw) / 2, (cr.bottom + height) / 2};
     FillRR(d.box, 14 * k, Theme::Panel);
     StrokeRR(d.box, 14 * k, Theme::Border);
@@ -921,6 +942,19 @@ void App::DrawInvoice() {
     y += 24 * k + fh;
     place(1, x0, half, y);                 place(3, x0 + half + gap, half, y);
     y += 24 * k + fh;
+    place(9, x0, half, y);                 // Steuernummer / USt-IdNr. + Kleinunternehmer-Checkbox
+    {
+        const float bs = 22 * k, cy = y + 20 * k + (fh - bs) / 2;
+        const D2D1_RECT_F box{x0 + half + gap, cy, x0 + half + gap + bs, cy + bs};
+        const bool hover = m_hoverBtn == D_SMALLBIZ;
+        FillRR(box, 6 * k, d.smallBiz ? Theme::Accent : Theme::Bg);
+        StrokeRR(box, 6 * k, d.smallBiz ? Theme::Accent : (hover ? Theme::TextDim : Theme::Border), 1.5f);
+        if (d.smallBiz) Txt(L"\u2713", box, fCenter.Get(), 0xFFFFFF);
+        const D2D1_RECT_F label{box.right + 10 * k, y + 20 * k, x0 + fw, y + 20 * k + fh};
+        Txt(L"Kleinunternehmer nach § 19 UStG", label, fNormal.Get(), hover ? Theme::Text : Theme::TextDim);
+        m_hits.push_back({D_SMALLBIZ, {x0 + half + gap, y + 20 * k, x0 + fw, y + 20 * k + fh}});
+    }
+    y += 24 * k + fh;
     const float quarter = (fw - 3 * gap) / 4;
     place(4, x0, quarter, y); place(5, x0 + (quarter + gap), quarter, y); place(6, x0 + 2 * (quarter + gap), quarter, y); place(7, x0 + 3 * (quarter + gap), quarter, y);
     y += 24 * k + fh;
@@ -934,6 +968,7 @@ void App::DrawInvoice() {
     y += 20 * k;
     invoice::Data data;
     data.vatPercent = 19;
+    data.smallBusiness = d.smallBiz;
     if (Field* v = FieldById(7)) {
         try { data.vatPercent = std::clamp(std::stoi(v->ed.text), 0, 100); } catch (...) {}
     }
@@ -962,7 +997,8 @@ void App::DrawInvoice() {
     if (d.itemRows > 1) Button(D_DELROW, {addRow.right + 8 * k, y, addRow.right + 8 * k + 130 * k, y + 30 * k}, L"− Position", false);
     // Summen live
     const invoice::Totals t = invoice::Compute(data);
-    Txt(L"Netto " + docs::FormatAmount(t.net) + L"   ·   USt " + std::to_wstring(data.vatPercent) + L" %: " + docs::FormatAmount(t.vat),
+    Txt(d.smallBiz ? std::wstring(L"Keine Umsatzsteuer (§ 19 UStG)")
+                   : L"Netto " + docs::FormatAmount(t.net) + L"   ·   USt " + std::to_wstring(data.vatPercent) + L" %: " + docs::FormatAmount(t.vat),
         {x0 + fw * 0.4f, y, x0 + fw, y + 16 * k}, fRight.Get(), Theme::TextDim);
     Txt(L"Gesamt " + docs::FormatAmount(t.gross), {x0 + fw * 0.4f, y + 16 * k, x0 + fw, y + 38 * k}, fTitleR.Get(), Theme::Text);
     y += 46 * k;
@@ -1489,17 +1525,23 @@ void App::BeginInvoiceDialog() {
     Dialog& d = m_dlg;
     d.kind = DlgKind::Invoice;
     d.title = L"Rechnung erstellen";
+    d.smallBiz = m_settings.smallBiz;
     const std::wstring today = TodayIso();
+    std::vector<std::wstring> names;
+    for (const auto& x : m_all) names.push_back(x.name);
+    const int thisYear = std::stoi(today.substr(0, 4));
+    const std::wstring nextNo = docs::FormatInvoiceNo(thisYear, docs::NextInvoiceNo(InvoiceCounter(thisYear), names, thisYear));
     d.fields.push_back(MakeField(0, L"Gläubiger (Absender)", L"Name / Firma", m_settings.issuer, 60));
     d.fields.push_back(MakeField(1, L"Absender-Adresse", L"Straße | PLZ Ort", m_settings.issuerAddr, 140));
     d.fields.push_back(MakeField(2, L"Empfänger", L"Name / Firma", L"", 60));
     d.fields.push_back(MakeField(3, L"Empfänger-Adresse", L"Straße | PLZ Ort", L"", 140));
-    d.fields.push_back(MakeField(4, L"Rechnungsnummer", L"leer = automatisch", L"", 30));
+    d.fields.push_back(MakeField(9, L"Steuernummer / USt-IdNr.", L"z. B. 12/345/67890 oder DE123456789", m_settings.taxNo, 30));
+    d.fields.push_back(MakeField(4, L"Rechnungsnummer", (L"leer = " + nextNo).c_str(), L"", 30));
     d.fields.push_back(MakeField(5, L"Rechnungsdatum", L"TT.MM.JJJJ", docs::FormatDate(today), 12));
     d.fields.back().dateMask = true;
     d.fields.push_back(MakeField(6, L"Fällig am", L"TT.MM.JJJJ", docs::FormatDate(docs::AddDaysIso(today, 14)), 12));
     d.fields.back().dateMask = true;
-    d.fields.push_back(MakeField(7, L"USt-Satz (%)", L"19", std::to_wstring(m_settings.vat), 3));
+    d.fields.push_back(MakeField(7, d.smallBiz ? L"USt-Satz (entfällt)" : L"USt-Satz (%)", L"19", std::to_wstring(m_settings.vat), 3));
     for (int i = 0; i < d.itemRows; ++i) {
         d.fields.push_back(MakeField(100 + 3 * i, L"", L"Leistung / Artikel", L"", 120));
         d.fields.push_back(MakeField(101 + 3 * i, L"", L"1", i == 0 ? L"1" : L"", 8));
@@ -1520,11 +1562,14 @@ void App::ApplyInvoice() {
     data.recipient = txt(2);
     data.recipientAddress = txt(3);
     data.note = txt(8);
+    data.taxNo = txt(9);
+    data.smallBusiness = d.smallBiz;
     if (data.issuer.empty()) { d.error = L"Bitte den Gläubiger (Absender) eintragen."; Invalidate(); return; }
     if (data.recipient.empty()) { d.error = L"Bitte den Empfänger eintragen."; Invalidate(); return; }
     if (!docs::ParseDate(txt(5), data.dateIso) || data.dateIso.empty()) { d.error = L"Das Rechnungsdatum ist ungültig (TT.MM.JJJJ)."; Invalidate(); return; }
     if (!docs::ParseDate(txt(6), data.dueIso)) { d.error = L"Das Fälligkeitsdatum ist ungültig (TT.MM.JJJJ)."; Invalidate(); return; }
     try { data.vatPercent = std::stoi(txt(7).empty() ? L"0" : txt(7)); } catch (...) { data.vatPercent = -1; }
+    if (d.smallBiz && (data.vatPercent < 0 || data.vatPercent > 100)) data.vatPercent = m_settings.vat;   // Satz entfaellt, Eingabe egal
     if (data.vatPercent < 0 || data.vatPercent > 100) { d.error = L"Der USt-Satz muss zwischen 0 und 100 liegen."; Invalidate(); return; }
     for (int i = 0; i < d.itemRows; ++i) {
         const std::wstring desc = txt(100 + 3 * i), qty = txt(101 + 3 * i), unit = txt(102 + 3 * i);
@@ -1543,18 +1588,20 @@ void App::ApplyInvoice() {
 
     const std::wstring year = data.dateIso.substr(0, 4);
     data.number = txt(4);
-    if (data.number.empty()) {   // JJJJ-NNN: naechste freie Nummer dieses Jahres anhand vorhandener Dateien "Rechnung_JJJJ-NNN_..."
-        int maxN = 0;
-        const std::wstring prefix = L"Rechnung_" + year + L"-";
-        for (const auto& x : m_all)
-            if (x.name.compare(0, prefix.size(), prefix) == 0) {
-                try { maxN = std::max(maxN, std::stoi(x.name.substr(prefix.size(), 3))); } catch (...) {}
-            }
-        wchar_t buf[8];
-        swprintf_s(buf, L"%03d", maxN + 1);
-        data.number = year + L"-" + buf;
+    std::vector<std::wstring> names;
+    for (const auto& x : m_all) names.push_back(x.name);
+    const int yearNo = std::stoi(year);
+    int usedNo = 0;   // vergebene laufende Nummer dieses Jahres (0 = freie Nummer, keine Zaehler-Aenderung)
+    if (data.number.empty()) {   // RE-JJJJ-NNN: fortlaufend, Zaehler + vorhandene Dateien (GoBD: keine Nummer doppelt, keine Luecke durch Abbrechen)
+        usedNo = docs::NextInvoiceNo(InvoiceCounter(yearNo), names, yearNo);
+        data.number = docs::FormatInvoiceNo(yearNo, usedNo);
+    } else {
+        int y = 0, n = 0;
+        if (docs::InvoiceNoTaken(names, data.number)) { d.error = L"Die Rechnungsnummer " + data.number + L" ist schon vergeben."; Invalidate(); return; }
+        if (docs::ParseInvoiceNo(data.number, y, n) && y == yearNo) usedNo = n;
     }
     const std::string pdf = invoice::BuildPdf(data);
+    if (usedNo > InvoiceCounter(yearNo)) SetInvoiceCounter(yearNo, usedNo);
     const std::wstring fname = L"Rechnung_" + data.number + L"_" + data.recipient + L".pdf";
     const fs::path target = docs::TargetPath(m_rootPath, year, data.issuer, fname);
     std::error_code ec;
@@ -1579,7 +1626,9 @@ void App::ApplyInvoice() {
         m_settings.issuer = data.issuer;
         m_settings.issuerAddr = txt(1);
         m_settings.payNote = data.note;
-        m_settings.vat = data.vatPercent;
+        if (!d.smallBiz) m_settings.vat = data.vatPercent;
+        m_settings.taxNo = data.taxNo;
+        m_settings.smallBiz = d.smallBiz;
         SaveSettings(m_settings);
     }
     CloseDialog();
@@ -1621,7 +1670,9 @@ void App::ShowGearMenu() {
         case M_RESCAN: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); break;
         case M_ABOUT: {
             const std::wstring text = L"Oggys Docs-Files\nTeil von Duncan's Suite\n\nVersion " APP_VERSION L"\n\nRechnungsordner: " + m_settings.root +
-                                      L"\nEinstellungen: %LOCALAPPDATA%\\OggysDocsFiles\\settings.ini";
+                                      L"\nEinstellungen: %LOCALAPPDATA%\\OggysDocsFiles\\settings.ini"
+                                      L"\n\nDatenschutz: Alle Daten werden zu 100 % lokal auf Ihrem Gerät gespeichert. "
+                                      L"Es erfolgt keine Übertragung personenbezogener Daten an externe Server.";
             MessageBoxW(m_hwnd, text.c_str(), L"Über", MB_OK | MB_ICONINFORMATION);
             break;
         }
@@ -1792,6 +1843,10 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 break;
             case D_CANCEL: CloseDialog(); break;
             case D_SAVESENDER: m_dlg.saveSender = !m_dlg.saveSender; break;
+            case D_SMALLBIZ:
+                m_dlg.smallBiz = !m_dlg.smallBiz;
+                if (Field* v = FieldById(7)) v->label = m_dlg.smallBiz ? L"USt-Satz (entfällt)" : L"USt-Satz (%)";
+                break;
             case D_SKIP: ApplyAdd(true); break;
             case D_ADDROW:
                 if (m_dlg.itemRows < kMaxItemRows) {

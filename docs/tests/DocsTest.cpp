@@ -263,8 +263,52 @@ static void pdf() {
     fs::remove(f);
 }
 
+static void invoiceNumbers() {
+    CHECK(docs::FormatInvoiceNo(2026, 7) == L"RE-2026-007");
+    CHECK(docs::FormatInvoiceNo(2026, 1234) == L"RE-2026-1234");
+    int y = 0, n = 0;
+    CHECK(docs::ParseInvoiceNo(L"RE-2026-007", y, n) && y == 2026 && n == 7);
+    CHECK(docs::ParseInvoiceNo(L"2025-012", y, n) && y == 2025 && n == 12);   // aelteres Format ohne Praefix
+    CHECK(!docs::ParseInvoiceNo(L"RE-2026-", y, n) && !docs::ParseInvoiceNo(L"RE-26-001", y, n) && !docs::ParseInvoiceNo(L"ABC", y, n));
+    CHECK(!docs::ParseInvoiceNo(L"RE-2026-0x1", y, n) && !docs::ParseInvoiceNo(L"", y, n));
+
+    const std::vector<std::wstring> files = {L"Rechnung_RE-2026-001_Mueller.pdf", L"Rechnung_RE-2026-004_Meier GmbH.pdf",
+                                             L"Rechnung_2026-002_Alt.pdf", L"Rechnung_RE-2025-099_X.pdf", L"Strom.pdf"};
+    CHECK(docs::MaxInvoiceNo(files, 2026) == 4);
+    CHECK(docs::MaxInvoiceNo(files, 2025) == 99);
+    CHECK(docs::MaxInvoiceNo(files, 2027) == 0);
+    CHECK(docs::NextInvoiceNo(0, files, 2026) == 5);
+    CHECK(docs::NextInvoiceNo(9, files, 2026) == 10);   // Zaehler gewinnt, wenn Rechnungen geloescht wurden (keine Wiederverwendung)
+    CHECK(docs::NextInvoiceNo(0, {}, 2026) == 1);
+    CHECK(docs::InvoiceNoTaken(files, L"RE-2026-004") && !docs::InvoiceNoTaken(files, L"RE-2026-005") && !docs::InvoiceNoTaken(files, L"RE-2026-00"));
+}
+
+static void smallBusiness() {
+    invoice::Data d;
+    d.issuer = L"Max Muster";
+    d.recipient = L"Kunde";
+    d.number = L"RE-2026-001";
+    d.dateIso = L"2026-10-21";
+    invoice::Item it;
+    it.qty = 2;
+    it.unitCents = 5000;
+    d.items.push_back(it);
+    d.vatPercent = 19;
+    CHECK(invoice::Compute(d).vat == 1900 && invoice::Compute(d).gross == 11900);
+    d.smallBusiness = true;   // Kleinunternehmer: keine USt, Brutto = Netto
+    const invoice::Totals t = invoice::Compute(d);
+    CHECK(t.vat == 0 && t.gross == 10000 && t.net == 10000);
+    CHECK(std::wstring(invoice::TaxNoLabel(L"DE123456789")) == L"USt-IdNr." && std::wstring(invoice::TaxNoLabel(L"12/345/67890")) == L"Steuernr.");
+    const std::string normal = [&] { invoice::Data n = d; n.smallBusiness = false; return invoice::BuildPdf(n); }();
+    d.taxNo = L"12/345/67890";
+    const std::string small = invoice::BuildPdf(d);
+    CHECK(small.find("%PDF-") == 0 && small != normal);
+    CHECK(normal.find("Umsatzsteuer") != std::string::npos);
+    CHECK(small.find("Umsatzsteuer 19") == std::string::npos);
+}
+
 int main() {
-    amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf();
+    amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }
