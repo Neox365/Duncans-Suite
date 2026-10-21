@@ -34,11 +34,17 @@ inline const Schema& SchemaOf(Cat c)
 {
     static const Schema s[kCatCount] = {
         {L"Benutzername", L"Passwort", L"Webseite / URL", L"Notiz"},
-        {L"Lizenznehmer / E-Mail", L"Lizenzschlüssel", L"Produkt-Webseite", L"Notiz"},
-        {L"Netzwerkname (SSID)", L"WLAN-Schlüssel", nullptr, L"Notiz"},
+        {L"Lizenznehmer / E-Mail", L"Lizenzschlüssel / Key", L"Produkt-Webseite", L"Notiz"},
+        {L"WLAN-Name (SSID)", L"WLAN-Schlüssel", nullptr, L"Notiz"},
         {nullptr, nullptr, nullptr, L"Inhalt der Notiz"},
     };
     return s[static_cast<int>(c)];
+}
+
+// Wort fuer das Geheimnis in Meldungen ("Passwort kopiert!")
+inline const wchar_t* SecretWord(Cat c)
+{
+    return c == Cat::License ? L"Lizenzschlüssel" : c == Cat::Wifi ? L"WLAN-Schlüssel" : L"Passwort";
 }
 
 struct Entry {
@@ -155,6 +161,20 @@ inline bool Parse(const std::string& utf8, std::vector<Entry>& entries)
     }
     Wipe(all);
     return true;
+}
+
+// Backup importieren: unbekannte Eintraege werden hinzugefuegt, bekannte (gleiche Id) nur ersetzt, wenn das Backup neuer ist.
+// Nichts wird geloescht; das Master-Passwort des Tresors bleibt unveraendert.
+inline void Merge(std::vector<Entry>& into, const std::vector<Entry>& from, int& added, int& updated)
+{
+    added = updated = 0;
+    for (const Entry& e : from) {
+        Entry* cur = nullptr;
+        for (Entry& x : into)
+            if (x.id == e.id) { cur = &x; break; }
+        if (!cur) { into.push_back(e); ++added; }
+        else if (e.modified > cur->modified) { *cur = e; ++updated; }
+    }
 }
 
 // ---- Suche: jedes Wort muss in Titel, Benutzername oder Tags vorkommen ----

@@ -36,6 +36,23 @@ static void serialization() {
     CHECK(vault::Parse("#DuncansVault 1\nzu\tkurz\n", out) && out.empty());
 }
 
+static void merge() {
+    auto base = sample();
+    auto backup = sample();
+    backup[0].modified = 5000; backup[0].title = L"GitHub (neu)";   // neuer als lokal (2000)
+    backup[1].modified = 0; backup[1].title = L"alt";                // aelter: bleibt lokal
+    vault::Entry n; n.id = L"zz9"; n.title = L"Neu"; n.modified = 1;
+    backup.push_back(n);
+    int added = 0, updated = 0;
+    vault::Merge(base, backup, added, updated);
+    CHECK(added == 1 && updated == 1 && base.size() == 4);
+    CHECK(base[0].title == L"GitHub (neu)" && base[1].title == L"Heimnetz" && base[3].title == L"Neu");
+    vault::Merge(base, backup, added, updated);   // zweiter Import aendert nichts mehr
+    CHECK(added == 0 && updated == 0 && base.size() == 4);
+    CHECK(std::wstring(vault::SchemaOf(vault::Cat::License).secret) == L"Lizenzschlüssel / Key" && std::wstring(vault::SchemaOf(vault::Cat::Wifi).user) == L"WLAN-Name (SSID)");
+    CHECK(std::wstring(vault::SecretWord(vault::Cat::Password)) == L"Passwort" && std::wstring(vault::SecretWord(vault::Cat::License)) == L"Lizenzschlüssel");
+}
+
 static void search() {
     const auto v = sample();
     CHECK(vault::Matches(v[0], L"github"));
@@ -157,7 +174,7 @@ static void kdf() {
 }
 
 int main() {
-    serialization(); search(); generator(); strength(); kdf(); file();
+    serialization(); merge(); search(); generator(); strength(); kdf(); file();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }
