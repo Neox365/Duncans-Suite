@@ -12,6 +12,7 @@
 #include <d2d1.h>
 #include <dwrite.h>
 #include <dwmapi.h>
+#include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
 #include <wrl/client.h>
@@ -27,7 +28,7 @@
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.1.0"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.2.0"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -51,7 +52,7 @@ enum Id {
 enum FieldId {
     F_SEARCH = 1, F_LOCKPW = 10, F_SETPW = 11, F_SETPW2 = 12,
     F_TITLE = 20, F_USER, F_SECRET, F_URL, F_TAGS, F_NOTES,
-    F_OLD = 30, F_NEW, F_NEW2
+    F_OLD = 30, F_NEW, F_NEW2, F_IMPPW
 };
 
 struct Field {
@@ -67,7 +68,7 @@ struct Field {
 struct HitBtn { int id; D2D1_RECT_F rc; };
 
 enum class Screen { Setup, Lock, Main };
-enum class DlgKind { None, Entry, ChangePw, Confirm };
+enum class DlgKind { None, Entry, ChangePw, Confirm, Import };
 
 struct Dialog {
     DlgKind kind = DlgKind::None;
@@ -247,12 +248,15 @@ private:
     void BeginChangePw();
     void ApplyChangePw();
     void BeginConfirmDelete();
+    void ExportBackup();
+    void BeginImport();
+    void ApplyImport();
     void CloseDialog();
     void GenerateInto();
     void CopyText(const std::wstring& text, bool secret, const wchar_t* what);
     void ClearClipboardIfOurs();
     void ShowGearMenu();
-    void SetNote(const std::wstring& s) { m_note = s; }
+    void SetNote(const std::wstring& s, bool sticky = false) { m_note = s; m_noteUntil = sticky ? 0 : GetTickCount64() + 7000; }
     void Invalidate() { InvalidateRect(m_hwnd, nullptr, FALSE); }
 
     // --- Eingabe
@@ -304,6 +308,7 @@ private:
     wchar_t m_hiSurrogate = 0;
     Dialog m_dlg;
     std::wstring m_note;
+    ULONGLONG m_noteUntil = 0;           // Meldung verschwindet dann von selbst (0 = bleibt stehen)
 };
 
 // ============================================================================
@@ -348,7 +353,10 @@ bool App::Create(HINSTANCE hi, int show) {
     m_screen = fs::exists(VaultPath(), ec) ? Screen::Lock : Screen::Setup;
     m_focusId = m_screen == Screen::Lock ? F_LOCKPW : F_SETPW;
     Touch();
-    SetWindowPos(m_hwnd, nullptr, 0, 0, (int)(1280 * k), (int)(800 * k), SWP_NOMOVE | SWP_NOZORDER);
+    RECT work{};   // Startgroesse nie groesser als der Arbeitsbereich (sonst verschwindet die Statusleiste unter der Taskleiste)
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    const int winW = std::min((int)(1280 * k), (int)(work.right - work.left) - (int)(20 * k)), winH = std::min((int)(800 * k), (int)(work.bottom - work.top) - (int)(20 * k));
+    SetWindowPos(m_hwnd, nullptr, work.left + (work.right - work.left - winW) / 2, work.top + (work.bottom - work.top - winH) / 2, winW, winH, SWP_NOZORDER);   // mittig im Arbeitsbereich
     ShowWindow(m_hwnd, show);
     UpdateWindow(m_hwnd);
     SetTimer(m_hwnd, TIMER_CARET, 530, nullptr);
@@ -917,8 +925,10 @@ void App::DrawSimpleDialog() {
     RECT cr;
     GetClientRect(m_hwnd, &cr);
     const float pad = 24 * k, fh = 36 * k, bw = std::min(520 * k, cr.right - 40 * k);
-    const bool confirm = d.kind == DlgKind::Confirm;
-    const float height = confirm ? pad + 36 * k + 70 * k + 30 * k + 38 * k + pad : pad + 36 * k + 3 * (24 * k + fh) + 30 * k + 30 * k + 38 * k + pad;
+    const bool confirm = d.kind == DlgKind::Confirm, imp = d.kind == DlgKind::Import;
+    const float height = confirm ? pad + 36 * k + 70 * k + 30 * k + 38 * k + pad
+                         : imp   ? pad + 36 * k + 96 * k + (24 * k + fh) + 30 * k + 38 * k + pad
+                                 : pad + 36 * k + 3 * (24 * k + fh) + 30 * k + 30 * k + 38 * k + pad;
     d.box = {(cr.right - bw) / 2, (cr.bottom - height) / 2, (cr.right + bw) / 2, (cr.bottom + height) / 2};
     FillRR(d.box, 14 * k, Theme::Panel);
     StrokeRR(d.box, 14 * k, Theme::Border);
@@ -930,15 +940,19 @@ void App::DrawSimpleDialog() {
         Txt(d.message, {x0, y, x0 + fw, y + 70 * k}, fWrap.Get(), Theme::TextDim);
         y += 70 * k;
     } else {
+        if (imp) {
+            Txt(d.message, {x0, y, x0 + fw, y + 92 * k}, fWrap.Get(), Theme::TextDim);
+            y += 96 * k;
+        }
         for (auto& f : d.fields) {
             LabeledField(f, x0, y, fw);
             y += 24 * k + fh;
         }
-        DrawStrength(x0, y - 2 * k, fw, FieldById(F_NEW) ? FieldById(F_NEW)->ed.text : L"");
+        if (d.kind == DlgKind::ChangePw) DrawStrength(x0, y - 2 * k, fw, FieldById(F_NEW) ? FieldById(F_NEW)->ed.text : L"");
     }
     const float bh = 38 * k, by = d.box.bottom - pad - bh;
     if (!d.error.empty()) Txt(d.error, {x0, by - 26 * k, x0 + fw, by - 4 * k}, fNormal.Get(), Theme::Danger);
-    Button(D_OK, {d.box.right - pad - 150 * k, by, d.box.right - pad, by + bh}, confirm ? L"Löschen" : L"Ändern", !confirm, confirm);
+    Button(D_OK, {d.box.right - pad - 150 * k, by, d.box.right - pad, by + bh}, confirm ? L"Löschen" : imp ? L"Importieren" : L"Ändern", !confirm, confirm);
     Button(D_CANCEL, {d.box.right - pad - 160 * k - 130 * k, by, d.box.right - pad - 160 * k, by + bh}, L"Abbrechen", false);
     for (auto& f : d.fields) DrawField(f, m_focusId == f.id);
 }
@@ -1025,7 +1039,7 @@ bool App::Persist() {
     std::string plain = vault::Serialize(m_entries);
     const vault::Result r = vault::SaveFile(VaultPath(), m_session, plain);
     vault::Wipe(plain);
-    if (r != vault::Result::Ok) SetNote(L"Achtung: Der Tresor konnte nicht gespeichert werden!");
+    if (r != vault::Result::Ok) SetNote(L"Achtung: Der Tresor konnte nicht gespeichert werden!", true);
     return r == vault::Result::Ok;
 }
 
@@ -1209,6 +1223,77 @@ void App::ApplyChangePw() {
     Invalidate();
 }
 
+// Backup: die verschluesselte Tresor-Datei wird unveraendert als .vault kopiert (bleibt mit dem aktuellen Master-Passwort verschluesselt)
+void App::ExportBackup() {
+    if (!Persist()) return;   // sicherstellen, dass die Datei den aktuellen Stand enthaelt
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t name[MAX_PATH]{};
+    swprintf_s(name, L"Vault-Backup-%04d-%02d-%02d.vault", st.wYear, st.wMonth, st.wDay);
+    OPENFILENAMEW ofn{sizeof(ofn)};
+    ofn.hwndOwner = m_hwnd;
+    ofn.lpstrFilter = L"Vault-Backup (*.vault)\0*.vault\0Alle Dateien (*.*)\0*.*\0";
+    ofn.lpstrFile = name;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"vault";
+    ofn.lpstrTitle = L"Verschlüsseltes Backup speichern";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&ofn)) return;
+    if (CopyFileW(VaultPath().c_str(), name, FALSE)) SetNote(L"Backup gespeichert: " + fs::path(name).filename().wstring() + L" (verschlüsselt mit dem aktuellen Master-Passwort)");
+    else SetNote(L"Das Backup konnte nicht gespeichert werden.", true);
+    Invalidate();
+}
+
+void App::BeginImport() {
+    wchar_t name[MAX_PATH]{};
+    OPENFILENAMEW ofn{sizeof(ofn)};
+    ofn.hwndOwner = m_hwnd;
+    ofn.lpstrFilter = L"Vault-Backup (*.vault)\0*.vault\0Alle Dateien (*.*)\0*.*\0";
+    ofn.lpstrFile = name;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrTitle = L"Backup importieren";
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) return;
+    m_dlg = Dialog{};
+    Dialog& d = m_dlg;
+    d.kind = DlgKind::Import;
+    d.title = L"Backup importieren";
+    d.editId = name;   // Pfad der Backup-Datei
+    d.message = L"Datei: " + fs::path(name).filename().wstring() + L"\nGib das Master-Passwort ein, mit dem dieses Backup verschlüsselt wurde. Neue Einträge werden hinzugefügt, neuere Fassungen vorhandener Einträge übernommen; nichts wird gelöscht.";
+    Field f;
+    f.id = F_IMPPW;
+    f.label = L"Master-Passwort des Backups";
+    f.mask = true;
+    f.ed.maxLen = 128;
+    d.fields.push_back(std::move(f));
+    m_focusId = F_IMPPW;
+    Invalidate();
+}
+
+void App::ApplyImport() {
+    Dialog& d = m_dlg;
+    const Field* f = FieldById(F_IMPPW);
+    if (!f || f->ed.text.empty()) { d.error = L"Bitte das Master-Passwort des Backups eingeben."; Invalidate(); return; }
+    vault::Session s;
+    std::string plain;
+    const vault::Result r = vault::OpenFile(fs::path(d.editId), f->ed.text, s, plain);
+    s.Close();
+    if (r == vault::Result::WrongPassword) { d.error = L"Falsches Passwort oder beschädigte Backup-Datei."; Invalidate(); return; }
+    if (r != vault::Result::Ok) { d.error = r == vault::Result::BadFormat ? L"Das ist keine gültige Vault-Backup-Datei." : L"Die Datei konnte nicht gelesen werden."; Invalidate(); return; }
+    std::vector<vault::Entry> imp;
+    const bool parsed = vault::Parse(plain, imp);
+    vault::Wipe(plain);
+    if (!parsed) { d.error = L"Der Inhalt des Backups konnte nicht gelesen werden."; Invalidate(); return; }
+    int added = 0, updated = 0;
+    vault::Merge(m_entries, imp, added, updated);
+    vault::Wipe(imp);
+    if (added || updated) Persist();
+    CloseDialog();
+    Rebuild();
+    SetNote(L"Backup importiert: " + std::to_wstring(added) + L" neu, " + std::to_wstring(updated) + L" aktualisiert");
+    Invalidate();
+}
+
 void App::BeginConfirmDelete() {
     const vault::Entry* e = Sel();
     if (!e) return;
@@ -1236,7 +1321,7 @@ void App::CopyText(const std::wstring& text, bool secret, const wchar_t* what) {
     if (secret) {
         m_clipText = text;
         m_clipUntil = GetTickCount64() + kClipClearMs;
-        SetNote(std::wstring(what) + L" kopiert – wird in 30 Sekunden aus der Zwischenablage gelöscht");
+        SetNote(std::wstring(what) + L" kopiert! Zwischenablage wird in 30s geleert.");
     } else {
         SetNote(std::wstring(what) + L" kopiert");
     }
@@ -1258,6 +1343,9 @@ void App::ShowGearMenu() {
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, 1, L"Master-Passwort ändern …");
     AppendMenuW(m, MF_STRING | (m_settings.autoLock ? MF_CHECKED : 0), 2, L"Nach 5 Minuten Inaktivität automatisch sperren");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, 5, L"Backup exportieren (.vault) …");
+    AppendMenuW(m, MF_STRING, 6, L"Backup importieren (.vault) …");
     AppendMenuW(m, MF_STRING, 3, L"Tresor-Ordner im Explorer öffnen");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, 4, L"Über Duncan's Vault");
@@ -1268,6 +1356,8 @@ void App::ShowGearMenu() {
     switch (cmd) {
         case 1: BeginChangePw(); break;
         case 2: m_settings.autoLock = !m_settings.autoLock; SaveSettings(m_settings); Touch(); break;
+        case 5: ExportBackup(); break;
+        case 6: BeginImport(); break;
         case 3: ShellExecuteW(m_hwnd, L"open", DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
         case 4: {
             const std::wstring text = L"Duncan's Vault\nTeil von Duncan's Suite\n\nVersion " APP_VERSION
@@ -1401,6 +1491,7 @@ void App::KeyDown(WPARAM vk) {
             }
             if (m_dlg.kind == DlgKind::Entry) ApplyEntry();
             else if (m_dlg.kind == DlgKind::ChangePw) ApplyChangePw();
+            else if (m_dlg.kind == DlgKind::Import) ApplyImport();
             else {   // Loeschen bestaetigen
                 const std::wstring id = m_dlg.editId;
                 m_entries.erase(std::remove_if(m_entries.begin(), m_entries.end(), [&](vault::Entry& x) { if (x.id == id) { vault::Wipe(x); return true; } return false; }), m_entries.end());
@@ -1429,7 +1520,7 @@ void App::KeyDown(WPARAM vk) {
             case 'N': BeginEntry(nullptr); return;
             case 'L': Lock(false); return;
             case 'C':
-                if (const vault::Entry* e = Sel(); e && !e->secret.empty()) CopyText(e->secret, true, vault::SchemaOf(e->cat).secret);
+                if (const vault::Entry* e = Sel(); e && !e->secret.empty()) CopyText(e->secret, true, vault::SecretWord(e->cat));
                 return;
         }
     }
@@ -1486,7 +1577,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case B_GEAR: ShowGearMenu(); break;
             case B_LOCK: Lock(false); break;
             case DT_COPYUSER: if (const vault::Entry* e = Sel()) CopyText(e->user, false, vault::SchemaOf(e->cat).user); break;
-            case DT_COPYSECRET: if (const vault::Entry* e = Sel()) CopyText(e->secret, true, vault::SchemaOf(e->cat).secret); break;
+            case DT_COPYSECRET: if (const vault::Entry* e = Sel()) CopyText(e->secret, true, vault::SecretWord(e->cat)); break;
             case DT_SHOW: m_reveal = !m_reveal; break;
             case DT_OPENURL:
                 if (const vault::Entry* e = Sel(); e && !e->url.empty()) {
@@ -1504,6 +1595,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case D_OK: {
                 if (m_dlg.kind == DlgKind::Entry) ApplyEntry();
                 else if (m_dlg.kind == DlgKind::ChangePw) ApplyChangePw();
+                else if (m_dlg.kind == DlgKind::Import) ApplyImport();
                 else KeyDown(VK_RETURN);   // Loeschen bestaetigen: gleicher Weg wie Enter
                 break;
             }
@@ -1561,6 +1653,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else if (wp == TIMER_SEC) {
                 const ULONGLONG now = GetTickCount64();
                 if (m_clipUntil && now >= m_clipUntil) ClearClipboardIfOurs();
+                if (m_noteUntil && now >= m_noteUntil) { m_note.clear(); m_noteUntil = 0; }
                 if (m_screen == Screen::Main && m_settings.autoLock && now - m_lastInput >= kAutoLockMs) Lock(true);
                 if (m_screen == Screen::Main) Invalidate();
             }

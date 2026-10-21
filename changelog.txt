@@ -165,6 +165,10 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.2.0 | 2026-10-21
+- Backup: Im Zahnrad-Menü lässt sich der verschlüsselte Tresor als Datei `.vault` exportieren und wieder importieren. Das Backup bleibt mit dem Master-Passwort zum Zeitpunkt des Exports verschlüsselt; beim Import gibst du dieses Passwort ein, neue Einträge werden hinzugefügt und neuere Fassungen vorhandener Einträge übernommen (es wird nichts gelöscht).
+- Kopieren-Meldung in der Statusleiste: „Passwort kopiert! Zwischenablage wird in 30s geleert.“ (je nach Eintrag „Lizenzschlüssel“ oder „WLAN-Schlüssel“), verschwindet nach wenigen Sekunden; der Countdown rechts läuft weiter.
+- Beschriftungen je Kategorie: „Lizenzschlüssel / Key“ bei Software-Lizenzen und „WLAN-Name (SSID)“ bei WLAN-Schlüsseln.
 ## 0.1.0 | 2026-10-21
 - Erste Version: lokaler Tresor für Passwörter & Accounts, Software-Lizenzen, WLAN-Schlüssel und vertrauliche Notizen.
 - Beim ersten Start legst du ein Master-Passwort fest, danach entsperrt eine Maske den Tresor. Alle Einträge liegen in einer einzigen verschlüsselten Datei (AES-256-GCM, Schlüssel per PBKDF2-HMAC-SHA256 mit 600.000 Runden), 100 % lokal, ohne Cloud, Sync oder Telemetrie.
