@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.33"
+#define SUITE_VERSION L"1.1.34"
 #endif
 
 namespace
@@ -1019,6 +1019,7 @@ private:
     void Layout();
     void Draw(HDC dc, int w, int h);
     void DrawCard(HDC dc, int index);
+    void DrawOfficeCard(HDC dc);
     void DrawModal(HDC dc, int w, int h);
     void OnMouseMove(int x, int y);
     void OnClick(int x, int y);
@@ -1076,6 +1077,8 @@ private:
     };
 
     RECT m_banner{}, m_footer{};
+    RECT m_officeRect{};     // Platzhalter-Karte "Duncan's Office" (Coming Soon), kein echtes Programm
+    static constexpr int kOfficeHid = 60;
     int  m_hover = -1;       // 0/1 Karten, 2 Ordner-Button, 3 Modal-OK
     int  m_press = -1;
     bool m_tracking = false;
@@ -1293,6 +1296,86 @@ void SuiteWindow::Layout()
         const int col = i % 3, row = i / 3;
         m_tools[i].rect = { m + col * (w + gap), top + row * (h + gap), m + col * (w + gap) + w, top + row * (h + gap) + h };
     }
+    {
+        const int col = kToolCount % 3, row = kToolCount / 3;   // naechster freier Platz im Raster
+        m_officeRect = { m + col * (w + gap), top + row * (h + gap), m + col * (w + gap) + w, top + row * (h + gap) + h };
+    }
+}
+
+void SuiteWindow::DrawOfficeCard(HDC dc)
+{
+    const RECT& rc = m_officeRect;
+    const bool hover = m_hover == kOfficeHid && !m_modal;
+    const bool pressed = m_press == kOfficeHid && hover;
+    const COLORREF color = RGB(129, 140, 248);
+    const COLORREF fill = pressed ? Blend(kCardRaised, RGB(0, 0, 0), 18) : (hover ? kCardHover : kCardRaised);
+
+    DrawShadow(dc, rc, S(18), static_cast<int>(m_dpi));
+    DrawPanelAA(dc, rc, S(18), fill, hover ? kBorderHover : kBorder);
+
+    const bool compact = (rc.bottom - rc.top) < S(300);
+    const int pad = compact ? S(20) : S(24);
+    const int tileSize = compact ? S(48) : S(84);
+    const int tileTop = compact ? S(14) : pad;
+    RECT tile{ rc.left + pad, rc.top + tileTop, rc.left + pad + tileSize, rc.top + tileTop + tileSize };
+    DrawCategoryTile(dc, tile, CategoryIcon::Document, color, fill);
+
+    int textLeft, textTop, descLeft, descTop;
+    const int textRight = rc.right - pad;
+    if (compact)
+    {
+        textLeft = tile.right + S(14);
+        textTop = tile.top + (tileSize - S(30)) / 2;
+        descLeft = rc.left + pad;
+        descTop = tile.bottom + S(6);
+    }
+    else
+    {
+        textLeft = descLeft = rc.left + pad;
+        textTop = tile.bottom + S(18);
+        descTop = textTop + S(32);
+    }
+    DrawLabel(dc, m_fontCard, kText, { textLeft, textTop, textRight, textTop + S(30) }, L"Duncan's Office");
+    const int btnH = S(38);
+    const int bottomRow = rc.bottom - pad - btnH;
+    DrawWrapped(dc, m_fontBody, kTextDim, { descLeft, descTop, textRight, compact ? bottomRow - S(4) : bottomRow - S(10) },
+                L"Office-Paket mit Writer (Texte) und Sheets (Tabellen). Kommt bald.");
+
+    // Coming-Soon-Abzeichen links, deaktivierte Pille rechts
+    const std::wstring badge = L"Coming Soon";
+    const std::wstring go = L"In Entwicklung";
+    const int goW = TextWidth(dc, m_fontBody, go) + S(44);
+    const int chipW = TextWidth(dc, m_fontSmall, badge) + S(34);
+    const bool dotOnly = chipW + S(10) + goW > rc.right - rc.left - 2 * pad;
+    RECT chip{ rc.left + pad, bottomRow + (btnH - S(26)) / 2, rc.left + pad + chipW, bottomRow + (btnH - S(26)) / 2 + S(26) };
+    if (compact)
+    {
+        chip.top = rc.bottom - pad - S(26);
+        chip.bottom = chip.top + S(26);
+    }
+    if (dotOnly)
+        chip.right = chip.left + S(26);
+    FillRound(dc, chip, S(26), Blend(fill, color, 18), Blend(fill, color, 50));
+    {
+        HBRUSH dot = CreateSolidBrush(color);
+        HPEN none = CreatePen(PS_NULL, 0, 0);
+        HGDIOBJ ob = SelectObject(dc, dot);
+        HGDIOBJ op = SelectObject(dc, none);
+        const int cy = (chip.top + chip.bottom) / 2;
+        const int dx = dotOnly ? S(10) : S(11);
+        Ellipse(dc, chip.left + dx, cy - S(3), chip.left + dx + S(6) + 1, cy + S(3) + 1);
+        SelectObject(dc, op);
+        SelectObject(dc, ob);
+        DeleteObject(dot);
+        DeleteObject(none);
+    }
+    if (!dotOnly)
+        DrawLabel(dc, m_fontSmall, color, { chip.left + S(20), chip.top + S(4), chip.right, chip.bottom }, badge, DT_CENTER);
+
+    const int btnTop = compact ? rc.bottom - pad - btnH : bottomRow;
+    RECT goRc{ rc.right - pad - goW, btnTop, rc.right - pad, btnTop + btnH };
+    FillRound(dc, goRc, S(12), Blend(fill, RGB(255, 255, 255), hover ? 14 : 6), kBorder);
+    DrawLabel(dc, m_fontBody, kTextDim, { goRc.left, goRc.top + S(8), goRc.right, goRc.bottom }, go, DT_CENTER);
 }
 
 void SuiteWindow::DrawCard(HDC dc, int index)
@@ -1527,6 +1610,8 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         DrawCard(dc, 5);
     if (RectVisible(dc, &m_tools[6].rect))
         DrawCard(dc, 6);
+    if (RectVisible(dc, &m_officeRect))
+        DrawOfficeCard(dc);
 
     // Footer: Version links, Hinweis in der Mitte
     DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(176), m_footer.bottom },
@@ -2442,6 +2527,8 @@ void SuiteWindow::OnMouseMove(int x, int y)
         for (int i = 4; i < kToolCount; ++i)
             if (PtInRect(&m_tools[i].rect, pt))
                 hover = CardHid(i);
+        if (PtInRect(&m_officeRect, pt))
+            hover = kOfficeHid;
     }
     if (hover != m_hover)
     {
@@ -2532,6 +2619,8 @@ void SuiteWindow::OnClick(int, int)
         if (!m_updDownloading)
             StartUpdateDownload();
     }
+    else if (pressed == kOfficeHid)
+        ShowModal(L"Duncan's Office", L"Duncan's Office (Writer & Sheets) – in Entwicklung.\nDas Programm ist noch nicht verfügbar und erscheint in einem späteren Update.");
     else
         Launch(CardFromHid(pressed) >= 0 ? CardFromHid(pressed) : pressed);
     InvalidateRect(m_hwnd, nullptr, FALSE);
