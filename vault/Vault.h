@@ -265,10 +265,12 @@ inline Strength Rate(const std::wstring& pw)
 //   der Schluessel ist an das Windows-Konto gebunden, die Datei ist trotzdem AES-256-GCM-verschluesselt.
 // Alles vor dem Chiffretext wird als zusaetzliche authentifizierte Daten mitgeprueft.
 constexpr unsigned kDefaultIterations = 600000;
+inline unsigned& MinIterations() { static unsigned n = 100000; return n; }   // Dateien mit weniger Runden werden abgelehnt (Tests senken den Wert)
 constexpr size_t kHeaderLen = 4 + 1 + 4 + 16 + 12;   // Version 1
 
 struct Session {
-    Bytes key, salt;
+    SecBytes key;         // Hauptschluessel: gesperrter Speicher, wird beim Freigeben ueberschrieben
+    Bytes salt;
     unsigned iterations = 0;
     bool dpapi = false;   // Tresor ohne Master-Passwort (Schluessel per Windows-Konto geschuetzt)
     Bytes blob;           // dpapi: geschuetzter Schluessel, wie er in der Datei steht
@@ -377,7 +379,7 @@ inline Result OpenFile(const std::filesystem::path& path, const std::wstring& pa
     if (data[4] == 1) {
         if (data.size() < kHeaderLen + 16 + 1) return Result::BadFormat;
         const unsigned iter = GetU32(data, 5);
-        if (iter < 1000 || iter > 20000000u) return Result::BadFormat;
+        if (iter < MinIterations() || iter > 20000000u) return Result::BadFormat;
         s.iterations = iter;
         s.salt.assign(data.begin() + 9, data.begin() + 25);
         nonce.assign(data.begin() + 25, data.begin() + 37);

@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <ctime>
+#include <new>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -28,7 +29,7 @@
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.3.0"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.3.1"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -186,6 +187,13 @@ std::wstring TimeText(long long t) {
     wchar_t buf[40];
     swprintf_s(buf, L"%02d.%02d.%04d %02d:%02d", lt.tm_mday, lt.tm_mon + 1, lt.tm_year + 1900, lt.tm_hour, lt.tm_min);
     return buf;
+}
+
+// Passwort-/Notizfeld wirklich leeren: Text ueberschreiben, nicht nur die Laenge auf 0 setzen
+void WipeField(Field& f) {
+    vault::Wipe(f.ed.text);
+    f.ed.caret = f.ed.anchor = 0;
+    f.scroll = f.vscroll = 0;
 }
 
 class App {
@@ -991,7 +999,7 @@ void App::TryUnlock() {
             vault::Wipe(plain);
             m_entries = std::move(entries);
             m_session = s;
-            m_lockPw.ed.SetText(L"");
+            WipeField(m_lockPw);
             m_lockPw.mask = true;
             m_lockErr.clear();
             m_fails = 0;
@@ -1015,7 +1023,7 @@ void App::TryUnlock() {
         ++m_fails;
         m_nextTry = GetTickCount64() + std::min(m_fails, 6) * 1000ull;   // Bremse gegen schnelles Durchprobieren
         m_lockErr = L"Falsches Master-Passwort.";
-        m_lockPw.ed.SetText(L"");
+        WipeField(m_lockPw);
     } else if (r == vault::Result::BadFormat) {
         m_lockErr = L"Die Tresor-Datei ist beschädigt oder keine Vault-Datei. Eine Sicherung kann als vault.dat.bak im Tresor-Ordner liegen (Zahnrad → Tresor-Ordner öffnen).";
     } else if (r == vault::Result::NotFound) {
@@ -1036,8 +1044,8 @@ void App::CreateVault() {
     m_session = s;
     m_entries.clear();
     if (!Persist()) { m_setErr = L"Die Tresor-Datei konnte nicht geschrieben werden."; m_session.Close(); Invalidate(); return; }
-    m_setPw.ed.SetText(L"");
-    m_setPw2.ed.SetText(L"");
+    WipeField(m_setPw);
+    WipeField(m_setPw2);
     m_setErr.clear();
     m_screen = Screen::Main;
     m_cat = -1;
@@ -1054,8 +1062,8 @@ void App::CreateVaultNoPw() {
     m_session = s;
     m_entries.clear();
     if (!Persist()) { m_setErr = L"Die Tresor-Datei konnte nicht geschrieben werden."; m_session.Close(); Invalidate(); return; }
-    m_setPw.ed.SetText(L"");
-    m_setPw2.ed.SetText(L"");
+    WipeField(m_setPw);
+    WipeField(m_setPw2);
     m_setErr.clear();
     m_screen = Screen::Main;
     m_cat = -1;
@@ -1088,7 +1096,7 @@ void App::Lock(bool automatic) {
     m_lockNoPw = m_session.dpapi;
     m_session.Close();
     m_screen = Screen::Lock;
-    m_lockPw.ed.SetText(L"");
+    WipeField(m_lockPw);
     m_lockPw.mask = true;
     m_lockErr = automatic ? L"Der Tresor wurde nach 5 Minuten Inaktivität automatisch gesperrt." : L"";
     m_focusId = m_lockNoPw ? kNoFocus : F_LOCKPW;
@@ -1248,7 +1256,9 @@ void App::ApplyChangePw() {
     if (d.mode != 1) {   // altes Passwort pruefen, indem die Datei damit geoeffnet wird
         vault::Session check;
         std::string plain;
-        const vault::Result r = vault::OpenFile(VaultPath(), txt(F_OLD), check, plain);
+        std::wstring oldPw = txt(F_OLD);
+        const vault::Result r = vault::OpenFile(VaultPath(), oldPw, check, plain);
+        vault::Wipe(oldPw);
         vault::Wipe(plain);
         check.Close();
         if (r != vault::Result::Ok) { d.error = L"Das aktuelle Master-Passwort stimmt nicht."; Invalidate(); return; }
@@ -1257,10 +1267,14 @@ void App::ApplyChangePw() {
     if (d.mode == 2) {   // Master-Passwort entfernen: Schluessel an das Windows-Konto binden
         if (!vault::NewDpapiSession(s)) { d.error = L"Der Schlüssel konnte nicht an das Windows-Konto gebunden werden."; Invalidate(); return; }
     } else {
-        const std::wstring np = txt(F_NEW);
-        if (np.size() < 8) { d.error = L"Das neue Master-Passwort braucht mindestens 8 Zeichen."; Invalidate(); return; }
-        if (np != txt(F_NEW2)) { d.error = L"Die neuen Passwörter stimmen nicht überein."; Invalidate(); return; }
-        if (!vault::NewSession(np, vault::kDefaultIterations, s)) { d.error = L"Die Verschlüsselung konnte nicht vorbereitet werden."; Invalidate(); return; }
+        std::wstring np = txt(F_NEW), np2 = txt(F_NEW2);
+        const bool tooShort = np.size() < 8, differ = np != np2;
+        const bool derived = !tooShort && !differ && vault::NewSession(np, vault::kDefaultIterations, s);
+        vault::Wipe(np);
+        vault::Wipe(np2);
+        if (tooShort) { d.error = L"Das neue Master-Passwort braucht mindestens 8 Zeichen."; Invalidate(); return; }
+        if (differ) { d.error = L"Die neuen Passwörter stimmen nicht überein."; Invalidate(); return; }
+        if (!derived) { d.error = L"Die Verschlüsselung konnte nicht vorbereitet werden."; Invalidate(); return; }
     }
     const vault::Session old = m_session;
     m_session = s;
