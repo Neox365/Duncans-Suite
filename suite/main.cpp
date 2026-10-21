@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.32"
+#define SUITE_VERSION L"1.1.33"
 #endif
 
 namespace
@@ -1308,7 +1308,7 @@ void SuiteWindow::DrawCard(HDC dc, int index)
     DrawShadow(dc, rc, S(18), static_cast<int>(m_dpi));
     DrawPanelAA(dc, rc, S(18), fill, hover ? kBorderHover : kBorder);
 
-    const bool compact = (rc.bottom - rc.top) < S(210);
+    const bool compact = (rc.bottom - rc.top) < S(300);   // das grosse Layout (Kachel oben) braucht Platz fuer Titel, Beschreibung und Knopfzeile
     const int pad = compact ? S(20) : S(24);
     const int tileSize = compact ? S(48) : S(84);
     const int tileTop = compact ? S(14) : pad;

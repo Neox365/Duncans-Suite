@@ -186,6 +186,8 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansSuite.exe]
+## 1.1.33 | 2026-10-21
+- Fehlerbehebung: Bei höheren Fenstern oder Bildschirmen fehlten auf den Karten die Beschreibungstexte (nur Symbol, Titel und Knöpfe waren zu sehen). Die Karten nutzen jetzt in diesem Größenbereich das kompakte Layout mit Beschreibung.
 ## 1.1.32 | 2026-10-21
 - Neues Programm in der Suite: Duncan's Vault (lokaler Passwort- und Lizenz-Manager). Die Karten stehen jetzt in einem 3×3-Raster, die Karten sind kompakter und das Fenster öffnet sich passend zur Bildschirmgröße.
 ## 1.1.31 | 2026-10-20
