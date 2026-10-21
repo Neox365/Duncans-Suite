@@ -137,6 +137,10 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.2.0 | 2026-10-21
+- Rechnungs-Generator: Steuernummer oder USt-IdNr. des Absenders (steht auf der PDF unter der Adresse und wird mit dem Standard-Absender gemerkt) und die Checkbox „Kleinunternehmer nach § 19 UStG“. Bei Kleinunternehmern entfällt die Umsatzsteuer-Berechnung, die PDF zeigt nur den Gesamtbetrag und den Hinweis „Gemäß § 19 UStG wird keine Umsatzsteuer berechnet.“
+- Fortlaufende Rechnungsnummern im Format RE-2026-001, RE-2026-002 … Der Zähler je Jahr wird nie zurückgesetzt, auch nicht, wenn eine Rechnung gelöscht wird; abgebrochene Dialoge verbrauchen keine Nummer. Eine von Hand eingegebene Nummer, die es schon gibt, wird abgelehnt.
+- Datenschutz-Hinweis im Dialog „Über Oggys Docs-Files“: Alle Daten bleiben zu 100 % lokal auf dem Gerät, es werden keine personenbezogenen Daten an externe Server übertragen.
 ## 0.1.3 | 2026-10-20
 - Datumsfelder (Fälligkeit beim Erfassen und Bearbeiten, Rechnungsdatum und „Fällig am“ im Rechnungs-Generator) setzen die Punkte selbst: „15112026“ wird zu „15.11.2026“. Wer die Punkte selbst tippt, kann das weiterhin tun.
 ## 0.1.2 | 2026-10-20

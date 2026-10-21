@@ -7,6 +7,7 @@
 // ".oggys-index.tsv" in der Wurzel, damit er mit dem Ordner mitwandert; Schluessel ist der relative Pfad.
 #include <algorithm>
 #include <cstdint>
+#include <cwchar>
 #include <cwctype>
 #include <filesystem>
 #include <map>
@@ -449,6 +450,60 @@ inline std::filesystem::path TargetPath(const std::filesystem::path& root, const
         p = dir / (base.wstring() + L" (" + std::to_wstring(i) + L")" + ext.wstring());
     }
     return p;
+}
+
+// ---- Fortlaufende Rechnungsnummern: RE-JJJJ-NNN ----
+inline std::wstring FormatInvoiceNo(int year, int n)
+{
+    wchar_t buf[40];
+    swprintf(buf, 40, L"RE-%04d-%03d", year, n);
+    return buf;
+}
+
+// "RE-2026-007" (oder aelteres "2026-007") -> year/n; false bei anderem Format
+inline bool ParseInvoiceNo(const std::wstring& s, int& year, int& n)
+{
+    size_t p = 0;
+    if (s.compare(0, 3, L"RE-") == 0) p = 3;
+    if (s.size() < p + 6 || s[p + 4] != L'-') return false;
+    for (size_t i = p; i < p + 4; ++i)
+        if (s[i] < L'0' || s[i] > L'9') return false;
+    size_t e = p + 5;
+    if (e >= s.size()) return false;
+    for (size_t i = e; i < s.size(); ++i)
+        if (s[i] < L'0' || s[i] > L'9') return false;
+    if (s.size() - e > 6) return false;
+    year = std::stoi(s.substr(p, 4));
+    n = std::stoi(s.substr(e));
+    return true;
+}
+
+// Hoechste Nummer des Jahres unter Dateinamen der Form "Rechnung_<Nummer>_<Empfaenger>.pdf"
+inline int MaxInvoiceNo(const std::vector<std::wstring>& fileNames, int year)
+{
+    int best = 0;
+    for (const std::wstring& name : fileNames) {
+        if (name.compare(0, 9, L"Rechnung_") != 0) continue;
+        const size_t e = name.find(L'_', 9);
+        int y = 0, n = 0;
+        if (ParseInvoiceNo(name.substr(9, e == std::wstring::npos ? std::wstring::npos : e - 9), y, n) && y == year) best = std::max(best, n);
+    }
+    return best;
+}
+
+// Naechste freie Nummer: Zaehler (nie zurueckgesetzt, auch wenn eine Rechnung geloescht wurde) und vorhandene Dateien zaehlen
+inline int NextInvoiceNo(int storedCounter, const std::vector<std::wstring>& fileNames, int year)
+{
+    return std::max(storedCounter, MaxInvoiceNo(fileNames, year)) + 1;
+}
+
+// Gibt es schon eine Rechnungsdatei mit genau dieser Nummer?
+inline bool InvoiceNoTaken(const std::vector<std::wstring>& fileNames, const std::wstring& number)
+{
+    const std::wstring prefix = L"Rechnung_" + number + L"_";
+    for (const std::wstring& name : fileNames)
+        if (name.compare(0, prefix.size(), prefix) == 0) return true;
+    return false;
 }
 
 }  // namespace docs

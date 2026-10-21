@@ -23,7 +23,17 @@ struct Data {
     std::wstring note;                         // Zahlungshinweis / Bankverbindung / Gruss
     std::vector<Item> items;
     int vatPercent = 19;
+    std::wstring taxNo;                        // Steuernummer oder USt-IdNr. des Absenders (leer = keine Angabe)
+    bool smallBusiness = false;                // Kleinunternehmer nach § 19 UStG: keine Umsatzsteuer, Hinweistext auf der PDF
 };
+
+inline const wchar_t* SmallBusinessNote() { return L"Gemäß § 19 UStG wird keine Umsatzsteuer berechnet."; }
+
+// "DE123456789" -> USt-IdNr., alles andere -> Steuernummer
+inline const wchar_t* TaxNoLabel(const std::wstring& no)
+{
+    return no.size() > 2 && no[0] >= L'A' && no[0] <= L'Z' && no[1] >= L'A' && no[1] <= L'Z' ? L"USt-IdNr." : L"Steuernr.";
+}
 
 struct Totals {
     long long net = 0, vat = 0, gross = 0;
@@ -42,7 +52,7 @@ inline Totals Compute(const Data& d)
         t.lines.push_back(LineCents(it));
         t.net += t.lines.back();
     }
-    t.vat = static_cast<long long>(std::llround(static_cast<double>(t.net) * d.vatPercent / 100.0));
+    t.vat = d.smallBusiness ? 0 : static_cast<long long>(std::llround(static_cast<double>(t.net) * d.vatPercent / 100.0));
     t.gross = t.net + t.vat;
     return t;
 }
@@ -134,6 +144,10 @@ inline std::string BuildPdf(const Data& d)
         pdf.Text(L, y, 9, false, line, 0.35);
         y -= 11;
     }
+    if (!d.taxNo.empty()) {
+        pdf.Text(L, y, 9, false, std::wstring(TaxNoLabel(d.taxNo)) + L": " + d.taxNo, 0.35);
+        y -= 11;
+    }
     // Rechnungskopf rechts
     pdf.TextRight(R, top - 2, 24, true, L"RECHNUNG", 0.15);
     const double lx = 390;
@@ -199,11 +213,13 @@ inline std::string BuildPdf(const Data& d)
     // Summen
     ty -= 10;
     if (ty < 170) { pdf.NewPage(); ty = top - 10; }
-    pdf.Text(cUnit - 70, ty, 10, false, L"Zwischensumme (netto)", 0.3);
-    pdf.TextRight(cSum, ty, 10, false, docs::FormatAmount(tot.net));
-    ty -= 15;
-    pdf.Text(cUnit - 70, ty, 10, false, L"Umsatzsteuer " + std::to_wstring(d.vatPercent) + L" %", 0.3);
-    pdf.TextRight(cSum, ty, 10, false, docs::FormatAmount(tot.vat));
+    if (!d.smallBusiness) {
+        pdf.Text(cUnit - 70, ty, 10, false, L"Zwischensumme (netto)", 0.3);
+        pdf.TextRight(cSum, ty, 10, false, docs::FormatAmount(tot.net));
+        ty -= 15;
+        pdf.Text(cUnit - 70, ty, 10, false, L"Umsatzsteuer " + std::to_wstring(d.vatPercent) + L" %", 0.3);
+        pdf.TextRight(cSum, ty, 10, false, docs::FormatAmount(tot.vat));
+    }
     ty -= 8;
     pdf.Line(cUnit - 72, ty, R, ty, 0.8, 0.3);
     ty -= 18;
@@ -216,6 +232,7 @@ inline std::string BuildPdf(const Data& d)
     std::wstring pay;
     if (!d.dueIso.empty()) pay = L"Bitte überweisen Sie den Betrag bis zum " + docs::FormatDate(d.dueIso) + L".";
     if (!pay.empty()) { pdf.Text(L, ty, 10, false, pay); ty -= 16; }
+    if (d.smallBusiness) { pdf.Text(L, ty, 9, false, SmallBusinessNote(), 0.25); ty -= 14; }
     for (const auto& line : Wrap(d.note, R - L, 9)) {
         if (ty < 60) break;
         pdf.Text(L, ty, 9, false, line, 0.25);
