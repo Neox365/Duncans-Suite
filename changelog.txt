@@ -5,6 +5,10 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansTidy.exe]
+## 1.2.0 | 2026-10-21
+- Neu: Tiefen-Reinigung mit Umschalter „Standard | Tiefen-Reinigung“ in der Kopfzeile (Übersicht, Systemdateien) und in den Einstellungen.
+- Im Tiefen-Modus zusätzlich: Shader-Caches (DirectX, NVIDIA, AMD), System-Fehlerberichte, Windows-Update- und Delivery-Optimization-Reste, Treiber-Installer-Reste (C:NVIDIA, C:AMD) und Windows-Temp.
+- Vorschau mit Anzahl und Größe je Gruppe vor dem Löschen; Systemordner, Programme und Laufwerkswurzeln werden nie gelöscht. Symbol- und Vorschau-Cache nur nach Rückfrage mit kurzem Explorer-Neustart. Auto-Clean und Schnell-Reinigung bleiben beim Standard.
 ## 1.1.6 | 2026-10-19
 - Optimieren: Temp- und Systemdateien werden deutlich schneller gelöscht, Tidy friert bei vielen Dateien nicht mehr scheinbar ein.
 ## 1.1.5 | 2026-10-19
