@@ -260,19 +260,24 @@ inline Strength Rate(const std::wstring& pw)
 }
 
 // ---- Tresor-Datei ----
-// Aufbau: "DVLT" | Version (1) | Iterationen (4, LE) | Salz (16) | Nonce (12) | Chiffretext | GCM-Tag (16).
+// Version 1 (mit Master-Passwort): "DVLT" | 1 | Iterationen (4, LE) | Salz (16) | Nonce (12) | Chiffretext | GCM-Tag (16).
+// Version 2 (ohne Master-Passwort): "DVLT" | 2 | Laenge (4, LE) | DPAPI-geschuetzter Zufallsschluessel | Nonce (12) | Chiffretext | GCM-Tag (16);
+//   der Schluessel ist an das Windows-Konto gebunden, die Datei ist trotzdem AES-256-GCM-verschluesselt.
 // Alles vor dem Chiffretext wird als zusaetzliche authentifizierte Daten mitgeprueft.
 constexpr unsigned kDefaultIterations = 600000;
-constexpr size_t kHeaderLen = 4 + 1 + 4 + 16 + 12;
+constexpr size_t kHeaderLen = 4 + 1 + 4 + 16 + 12;   // Version 1
 
 struct Session {
     Bytes key, salt;
     unsigned iterations = 0;
+    bool dpapi = false;   // Tresor ohne Master-Passwort (Schluessel per Windows-Konto geschuetzt)
+    Bytes blob;           // dpapi: geschuetzter Schluessel, wie er in der Datei steht
     bool Open() const { return key.size() == 32; }
-    void Close() { Wipe(key); salt.clear(); iterations = 0; }
+    void Close() { Wipe(key); salt.clear(); blob.clear(); iterations = 0; dpapi = false; }
 };
 
 enum class Result { Ok, NotFound, BadFormat, WrongPassword, IoError, CryptoError };
+enum class FileMode { Missing, Password, Dpapi, Invalid };
 
 inline bool NewSession(const std::wstring& password, unsigned iterations, Session& s)
 {
@@ -283,15 +288,53 @@ inline bool NewSession(const std::wstring& password, unsigned iterations, Sessio
     return DeriveKey(password, s.salt, iterations, s.key);
 }
 
+// Neuer Zufallsschluessel, per DPAPI an das Windows-Konto gebunden (Tresor ohne Master-Passwort)
+inline bool NewDpapiSession(Session& s)
+{
+    s.Close();
+    s.key.assign(32, 0);
+    if (!RandomBytes(s.key.data(), s.key.size()) || !DpapiProtect(s.key, s.blob)) { s.Close(); return false; }
+    s.dpapi = true;
+    return true;
+}
+
+// Art der Tresor-Datei am Dateikopf erkennen (ohne zu entschluesseln)
+inline FileMode ReadMode(const std::filesystem::path& path)
+{
+    std::error_code ec;
+    if (!std::filesystem::exists(path, ec)) return FileMode::Missing;
+    std::ifstream in(path, std::ios::binary);
+    unsigned char h[5]{};
+    if (!in || !in.read(reinterpret_cast<char*>(h), 5) || h[0] != 'D' || h[1] != 'V' || h[2] != 'L' || h[3] != 'T') return FileMode::Invalid;
+    return h[4] == 1 ? FileMode::Password : h[4] == 2 ? FileMode::Dpapi : FileMode::Invalid;
+}
+
+inline void PutU32(Bytes& b, unsigned v)
+{
+    for (int i = 0; i < 4; ++i) b.push_back(static_cast<unsigned char>((v >> (8 * i)) & 0xFF));
+}
+inline unsigned GetU32(const Bytes& b, size_t at)
+{
+    unsigned v = 0;
+    for (int i = 0; i < 4; ++i) v |= static_cast<unsigned>(b[at + i]) << (8 * i);
+    return v;
+}
+
 // Speichert plain verschluesselt; die vorherige Datei bleibt als <Datei>.bak erhalten, geschrieben wird atomar ueber eine .tmp-Datei.
 inline Result SaveFile(const std::filesystem::path& path, const Session& s, const std::string& plain)
 {
     if (!s.Open() || plain.empty()) return Result::CryptoError;
     Bytes nonce(12, 0);
     if (!RandomBytes(nonce.data(), nonce.size())) return Result::CryptoError;
-    Bytes head = {'D', 'V', 'L', 'T', 1};
-    for (int i = 0; i < 4; ++i) head.push_back(static_cast<unsigned char>((s.iterations >> (8 * i)) & 0xFF));
-    head.insert(head.end(), s.salt.begin(), s.salt.end());
+    Bytes head = {'D', 'V', 'L', 'T', static_cast<unsigned char>(s.dpapi ? 2 : 1)};
+    if (s.dpapi) {
+        if (s.blob.empty()) return Result::CryptoError;
+        PutU32(head, static_cast<unsigned>(s.blob.size()));
+        head.insert(head.end(), s.blob.begin(), s.blob.end());
+    } else {
+        PutU32(head, s.iterations);
+        head.insert(head.end(), s.salt.begin(), s.salt.end());
+    }
     head.insert(head.end(), nonce.begin(), nonce.end());
     Bytes cipher;
     unsigned char tag[16]{};
@@ -317,7 +360,8 @@ inline Result SaveFile(const std::filesystem::path& path, const Session& s, cons
     return Result::Ok;
 }
 
-// Entschluesselt; bei Erfolg ist s fuer weitere Speichervorgaenge (gleiches Salz/Schluessel) bereit
+// Entschluesselt; bei Erfolg ist s fuer weitere Speichervorgaenge (gleiches Salz/Schluessel) bereit.
+// Version 2 braucht kein Passwort (das Windows-Konto genuegt); passt das Konto nicht, kommt WrongPassword.
 inline Result OpenFile(const std::filesystem::path& path, const std::wstring& password, Session& s, std::string& plain)
 {
     plain.clear();
@@ -326,21 +370,36 @@ inline Result OpenFile(const std::filesystem::path& path, const std::wstring& pa
     std::ifstream in(path, std::ios::binary);
     if (!in) return Result::IoError;
     Bytes data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-    if (data.size() < kHeaderLen + 16 + 1 || data.size() > 64u * 1024 * 1024 || data[0] != 'D' || data[1] != 'V' || data[2] != 'L' || data[3] != 'T' || data[4] != 1)
-        return Result::BadFormat;
-    unsigned iter = 0;
-    for (int i = 0; i < 4; ++i) iter |= static_cast<unsigned>(data[5 + i]) << (8 * i);
-    if (iter < 1000 || iter > 20000000u) return Result::BadFormat;
+    if (data.size() < 5 + 4 + 12 + 16 + 1 || data.size() > 64u * 1024 * 1024 || data[0] != 'D' || data[1] != 'V' || data[2] != 'L' || data[3] != 'T') return Result::BadFormat;
     s.Close();
-    s.iterations = iter;
-    s.salt.assign(data.begin() + 9, data.begin() + 25);
-    const Bytes nonce(data.begin() + 25, data.begin() + 37), head(data.begin(), data.begin() + kHeaderLen);
-    if (!DeriveKey(password, s.salt, iter, s.key)) return Result::CryptoError;
-    const size_t cl = data.size() - kHeaderLen - 16;
+    size_t headLen = 0;
+    Bytes nonce;
+    if (data[4] == 1) {
+        if (data.size() < kHeaderLen + 16 + 1) return Result::BadFormat;
+        const unsigned iter = GetU32(data, 5);
+        if (iter < 1000 || iter > 20000000u) return Result::BadFormat;
+        s.iterations = iter;
+        s.salt.assign(data.begin() + 9, data.begin() + 25);
+        nonce.assign(data.begin() + 25, data.begin() + 37);
+        headLen = kHeaderLen;
+        if (!DeriveKey(password, s.salt, iter, s.key)) return Result::CryptoError;
+    } else if (data[4] == 2) {
+        const unsigned bl = GetU32(data, 5);
+        if (bl == 0 || bl > 4096 || data.size() < 9 + static_cast<size_t>(bl) + 12 + 16 + 1) return Result::BadFormat;
+        s.blob.assign(data.begin() + 9, data.begin() + 9 + bl);
+        nonce.assign(data.begin() + 9 + bl, data.begin() + 9 + bl + 12);
+        headLen = 9 + bl + 12;
+        s.dpapi = true;
+        if (!DpapiUnprotect(s.blob, s.key) || s.key.size() != 32) { s.Close(); return Result::WrongPassword; }
+    } else {
+        return Result::BadFormat;
+    }
+    const Bytes head(data.begin(), data.begin() + headLen);
+    const size_t cl = data.size() - headLen - 16;
     Bytes out;
     unsigned char tag[16];
     std::copy(data.end() - 16, data.end(), tag);
-    if (!GcmCrypt(false, s.key, nonce, head, data.data() + kHeaderLen, cl, out, tag)) {
+    if (!GcmCrypt(false, s.key, nonce, head, data.data() + headLen, cl, out, tag)) {
         s.Close();
         return Result::WrongPassword;
     }

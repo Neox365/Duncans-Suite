@@ -161,6 +161,53 @@ static void file() {
     fs::remove_all(dir, ec);
 }
 
+static void noPassword() {
+    const fs::path dir = fs::temp_directory_path() / L"duncans_vault_test_dpapi";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    const fs::path f = dir / L"vault.dat";
+    CHECK(vault::ReadMode(f) == vault::FileMode::Missing);
+    vault::Session s;
+    CHECK(vault::NewDpapiSession(s) && s.Open() && s.dpapi && !s.blob.empty() && s.blob.size() != 32);   // geschuetzter Blob ist nicht der Klartextschluessel
+    const std::string plain = vault::Serialize(sample());
+    CHECK(vault::SaveFile(f, s, plain) == vault::Result::Ok && vault::ReadMode(f) == vault::FileMode::Dpapi);
+    std::ifstream in(f, std::ios::binary);
+    const std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    in.close();
+    CHECK(raw.find("GitHub") == std::string::npos && raw.compare(0, 4, "DVLT") == 0 && raw[4] == 2);
+    vault::Bytes keyCopy = s.key;
+    CHECK(raw.find(std::string(keyCopy.begin(), keyCopy.end())) == std::string::npos);   // der Schluessel steht nicht im Klartext in der Datei
+
+    vault::Session s2;
+    std::string back;
+    CHECK(vault::OpenFile(f, L"", s2, back) == vault::Result::Ok && back == plain && s2.dpapi);   // ohne Passwort
+    CHECK(vault::OpenFile(f, L"egal", s2, back) == vault::Result::Ok && back == plain);          // Passwort wird ignoriert
+    CHECK(vault::SaveFile(f, s2, plain) == vault::Result::Ok && vault::OpenFile(f, L"", s2, back) == vault::Result::Ok);
+
+    // Manipulation (Chiffretext und Kopf) wird erkannt
+    for (size_t pos : {raw.size() - 20, size_t(12)}) {
+        std::string bad = raw;
+        bad[pos] = static_cast<char>(bad[pos] ^ 1);
+        { std::ofstream o(f, std::ios::binary | std::ios::trunc); o.write(bad.data(), static_cast<std::streamsize>(bad.size())); }
+        const vault::Result r = vault::OpenFile(f, L"", s2, back);
+        CHECK(r == vault::Result::WrongPassword || r == vault::Result::BadFormat);
+        CHECK(back.empty());
+    }
+    // Wechsel zwischen den Arten: ohne Passwort -> mit Passwort -> ohne Passwort
+    vault::Session sp;
+    CHECK(vault::NewSession(L"Neues Passwort 22", 2000, sp) && vault::SaveFile(f, sp, plain) == vault::Result::Ok && vault::ReadMode(f) == vault::FileMode::Password);
+    CHECK(vault::OpenFile(f, L"", s2, back) == vault::Result::WrongPassword);   // jetzt wird das Passwort gebraucht
+    CHECK(vault::OpenFile(f, L"Neues Passwort 22", s2, back) == vault::Result::Ok && back == plain && !s2.dpapi);
+    CHECK(vault::NewDpapiSession(s) && vault::SaveFile(f, s, plain) == vault::Result::Ok && vault::ReadMode(f) == vault::FileMode::Dpapi);
+    CHECK(vault::OpenFile(f, L"", s2, back) == vault::Result::Ok && back == plain);
+    // fremde Datei / abgeschnitten
+    { std::ofstream o(f, std::ios::binary | std::ios::trunc); o << "DVLT\x02"; }
+    CHECK(vault::ReadMode(f) == vault::FileMode::Dpapi && vault::OpenFile(f, L"", s2, back) == vault::Result::BadFormat);
+    { std::ofstream o(f, std::ios::binary | std::ios::trunc); o << "kein Tresor"; }
+    CHECK(vault::ReadMode(f) == vault::FileMode::Invalid);
+    fs::remove_all(dir, ec);
+}
+
 static void kdf() {
     vault::Bytes salt(16, 7), k1, k2, k3;
     CHECK(vault::DeriveKey(L"abc", salt, 1000, k1) && k1.size() == 32);
@@ -174,7 +221,7 @@ static void kdf() {
 }
 
 int main() {
-    serialization(); merge(); search(); generator(); strength(); kdf(); file();
+    serialization(); merge(); search(); generator(); strength(); kdf(); file(); noPassword();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

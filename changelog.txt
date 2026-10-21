@@ -165,6 +165,10 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.3.0 | 2026-10-21
+- Beim Einrichten gibt es jetzt zwei Wege: „Tresor anlegen“ mit Master-Passwort oder „Ohne Master-Passwort fortfahren“. Ein Tresor ohne Master-Passwort öffnet sich beim Start sofort; er ist weiterhin AES-256-verschlüsselt, der Schlüssel ist aber an dein Windows-Konto gebunden (Windows DPAPI). Wer bei diesem PC unter deinem Konto angemeldet ist, kann ihn öffnen; auf anderen PCs oder Konten lässt er sich nicht öffnen.
+- Im Zahnrad-Menü: „Master-Passwort festlegen“ (bei einem Tresor ohne Passwort) und „Master-Passwort entfernen“ (bei einem Tresor mit Passwort, mit Abfrage des aktuellen Passworts). Die Einträge bleiben dabei erhalten.
+- Backups von Tresoren ohne Master-Passwort sind an das Windows-Konto gebunden; für ein übertragbares Backup vorher ein Master-Passwort festlegen.
 ## 0.2.0 | 2026-10-21
 - Backup: Im Zahnrad-Menü lässt sich der verschlüsselte Tresor als Datei `.vault` exportieren und wieder importieren. Das Backup bleibt mit dem Master-Passwort zum Zeitpunkt des Exports verschlüsselt; beim Import gibst du dieses Passwort ein, neue Einträge werden hinzugefügt und neuere Fassungen vorhandener Einträge übernommen (es wird nichts gelöscht).
 - Kopieren-Meldung in der Statusleiste: „Passwort kopiert! Zwischenablage wird in 30s geleert.“ (je nach Eintrag „Lizenzschlüssel“ oder „WLAN-Schlüssel“), verschwindet nach wenigen Sekunden; der Countdown rechts läuft weiter.
