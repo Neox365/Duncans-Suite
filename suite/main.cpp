@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.31"
+#define SUITE_VERSION L"1.1.32"
 #endif
 
 namespace
@@ -849,7 +849,17 @@ namespace
     // aktuelle Fassung aus dem Release "modules". Der Text wird nur angezeigt, nie ausgefuehrt; changelog::Parse begrenzt ihn.
     constexpr const wchar_t* kChangelogUrl = L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/changelog.txt";
     constexpr int kChangelogResource = 101;
-    constexpr int kToolCount = 6;   // Karten: Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Oggys Docs-Files
+    constexpr int kToolCount = 7;   // Karten: Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Oggys Docs-Files, Duncan's Vault
+    // Kennung einer Karte fuer Hover/Klick (0 und 1 historisch direkt, 5/17/22 aus alten Versionen, ab Karte 5 einheitlich 40 + Index;
+    // die Ids 24..31 sind die Info-Reiter, 32 der Schliessen-Knopf des Info-Dialogs)
+    inline int CardHid(int index) { return index < 2 ? index : (index == 2 ? 5 : (index == 3 ? 17 : (index == 4 ? 22 : 40 + index))); }
+    inline int CardFromHid(int hid)
+    {
+        for (int i = 0; i < kToolCount; ++i)
+            if (CardHid(i) == hid)
+                return i;
+        return -1;
+    }
     constexpr int kInfoTabs = kToolCount + 1;   // ein Reiter je Programm plus die Suite selbst
 
     std::string EmbeddedChangelog()
@@ -1044,7 +1054,7 @@ private:
           L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/version.txt", {},
           L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/pdfium.dll", L"pdfium.dll" },
         { L"DuncansPrivacy.exe", L"Duncan's Privacy Shield",
-          L"Datenschutz- & Telemetrie-Manager. Schaltet Tracking, Diagnosedaten und unnötige Windows-Dienste per Klick stumm.",
+          L"Datenschutz-Manager. Schaltet Tracking, Telemetrie und unnötige Windows-Dienste per Klick ab.",
           CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPrivacy.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
@@ -1057,6 +1067,11 @@ private:
           L"Rechnungs-Manager. Sortiert Rechnungen nach Jahr und Gläubiger und erstellt eigene Rechnungen als PDF.",
           CategoryIcon::Invoice, RGB(255, 150, 50), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/OggysDocsFiles.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
+        { L"DuncansVault.exe", L"Duncan's Vault",
+          L"Lokaler Tresor für Passwörter, Software-Lizenzen, WLAN-Schlüssel und Notizen. AES-256-verschlüsselt.",
+          CategoryIcon::Vault, RGB(34, 211, 238), {}, {}, {},
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansVault.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
     };
 
@@ -1160,8 +1175,11 @@ bool SuiteWindow::Create(HINSTANCE instance, int showCommand)
 
     IconsInit();
     m_dpi = GetDpiForSystem();
+    RECT work{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
+    const int startW = std::min<int>(S(1100), work.right - work.left - S(20)), startH = std::min<int>(S(960), work.bottom - work.top - S(20));
     m_hwnd = CreateWindowExW(0, kClassName, L"Duncan's Suite", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT,
-                             S(1100), S(820), nullptr, nullptr, instance, this);
+                             startW, startH, nullptr, nullptr, instance, this);
     if (!m_hwnd)
         return false;
     BOOL animations = TRUE;
@@ -1262,17 +1280,17 @@ void SuiteWindow::Layout()
     RECT rc{};
     GetClientRect(m_hwnd, &rc);
     const int m = S(28);
-    m_banner = { m, S(18), rc.right - m, S(18) + S(150) };
+    m_banner = { m, S(18), rc.right - m, S(18) + S(134) };
     m_footer = { m, rc.bottom - S(60), rc.right - m, rc.bottom - S(14) };
 
     const int top = m_banner.bottom + S(22), bottom = m_footer.top - S(16), gap = S(20);
     const int width = rc.right - 2 * m;
-    // 2 x 3 Karten: Tidy | Driver Updater / PDF Reader | Privacy Shield / Photo Commander | Oggys Docs-Files
+    // 3 x 3 Raster: Tidy | Driver Updater | PDF Reader / Privacy Shield | Photo Commander | Oggys Docs-Files / Duncan's Vault
     const int h = (bottom - top - 2 * gap) / 3;
-    const int w = (width - gap) / 2;
+    const int w = (width - 2 * gap) / 3;
     for (int i = 0; i < kToolCount; ++i)
     {
-        const int col = i % 2, row = i / 2;
+        const int col = i % 3, row = i / 3;
         m_tools[i].rect = { m + col * (w + gap), top + row * (h + gap), m + col * (w + gap) + w, top + row * (h + gap) + h };
     }
 }
@@ -1281,7 +1299,7 @@ void SuiteWindow::DrawCard(HDC dc, int index)
 {
     const Tool& t = m_tools[index];
     const RECT& rc = t.rect;
-    const int hid = index < 2 ? index : (index == 2 ? 5 : (index == 3 ? 17 : (index == 4 ? 22 : 31)));
+    const int hid = CardHid(index);
     const bool hover = m_hover == hid && !m_modal;
     const bool pressed = m_press == hid && hover;
     const bool found = !t.path.empty();
@@ -1291,9 +1309,10 @@ void SuiteWindow::DrawCard(HDC dc, int index)
     DrawPanelAA(dc, rc, S(18), fill, hover ? kBorderHover : kBorder);
 
     const bool compact = (rc.bottom - rc.top) < S(210);
-    const int pad = S(24);
-    const int tileSize = compact ? S(64) : S(84);
-    RECT tile{ rc.left + pad, rc.top + pad, rc.left + pad + tileSize, rc.top + pad + tileSize };
+    const int pad = compact ? S(20) : S(24);
+    const int tileSize = compact ? S(48) : S(84);
+    const int tileTop = compact ? S(14) : pad;
+    RECT tile{ rc.left + pad, rc.top + tileTop, rc.left + pad + tileSize, rc.top + tileTop + tileSize };
     DrawCategoryTile(dc, tile, t.icon, t.color, fill);
 
     // Status-Chip + Starten-Pille
@@ -1309,34 +1328,39 @@ void SuiteWindow::DrawCard(HDC dc, int index)
     // Breite fuer den laengsten Text reservieren, damit die Pille beim Laden nicht springt
     const int goW = std::max(TextWidth(dc, m_fontBody, go), TextWidth(dc, m_fontBody, canDownload || downloading ? L"Lade herunter … 100 %" : go)) + S(44);
 
-    int textLeft, textTop, textRight = rc.right - pad;
+    // kompakt: Titel neben der Kachel, Beschreibung darunter ueber die volle Kartenbreite; sonst Kachel oben, Titel und Text darunter
+    int textLeft, textTop, textRight = rc.right - pad, descLeft, descTop;
     if (compact)
     {
-        textLeft = tile.right + S(20);
-        textTop = rc.top + pad - S(2);
+        textLeft = tile.right + S(14);
+        textTop = tile.top + (tileSize - S(30)) / 2;
+        descLeft = rc.left + pad;
+        descTop = tile.bottom + S(6);
     }
     else
     {
-        textLeft = rc.left + pad;
+        textLeft = descLeft = rc.left + pad;
         textTop = tile.bottom + S(18);
+        descTop = textTop + S(32);
     }
 
     DrawLabel(dc, m_fontCard, kText, { textLeft, textTop, textRight, textTop + S(30) }, t.title);
-    const int descTop = textTop + S(32);
     const int btnH = S(38);
     const int bottomRow = rc.bottom - pad - btnH;
-    RECT descRc{ textLeft, descTop, textRight, compact ? rc.bottom - pad : bottomRow - S(10) };
+    RECT descRc{ descLeft, descTop, textRight, compact ? bottomRow - S(4) : bottomRow - S(10) };   // Text endet immer ueber Chip und Knopf
     DrawWrapped(dc, m_fontBody, kTextDim, descRc, t.description);
 
     // untere Zeile: Chip links, Starten rechts
     RECT chip{ rc.left + pad, bottomRow + (btnH - S(26)) / 2, rc.left + pad + chipW, bottomRow + (btnH - S(26)) / 2 + S(26) };
     if (compact)
     {
-        chip.left = textLeft;
-        chip.right = textLeft + chipW;
         chip.top = rc.bottom - pad - S(26);
         chip.bottom = chip.top + S(26);
     }
+    // schmale Karte: ist neben dem Knopf kein Platz fuer den Text, bleibt nur der farbige Punkt
+    const bool dotOnly = chipW + S(10) + goW > rc.right - rc.left - 2 * pad;
+    if (dotOnly)
+        chip.right = chip.left + S(26);
     FillRound(dc, chip, S(26), Blend(fill, statusColor, 18), Blend(fill, statusColor, 50));
     {
         HBRUSH dot = CreateSolidBrush(statusColor);
@@ -1344,13 +1368,15 @@ void SuiteWindow::DrawCard(HDC dc, int index)
         HGDIOBJ ob = SelectObject(dc, dot);
         HGDIOBJ op = SelectObject(dc, none);
         const int cy = (chip.top + chip.bottom) / 2;
-        Ellipse(dc, chip.left + S(11), cy - S(3), chip.left + S(11) + S(6) + 1, cy + S(3) + 1);
+        const int dx = dotOnly ? S(10) : S(11);
+        Ellipse(dc, chip.left + dx, cy - S(3), chip.left + dx + S(6) + 1, cy + S(3) + 1);
         SelectObject(dc, op);
         SelectObject(dc, ob);
         DeleteObject(dot);
         DeleteObject(none);
     }
-    DrawLabel(dc, m_fontSmall, statusColor, { chip.left + S(20), chip.top + S(4), chip.right, chip.bottom }, status, DT_CENTER);
+    if (!dotOnly)
+        DrawLabel(dc, m_fontSmall, statusColor, { chip.left + S(20), chip.top + S(4), chip.right, chip.bottom }, status, DT_CENTER);
 
     RECT goRc{ rc.right - pad - goW, compact ? rc.bottom - pad - btnH : bottomRow, rc.right - pad, (compact ? rc.bottom - pad - btnH : bottomRow) + btnH };
     const bool enabled = (found || canDownload) && !downloading;
@@ -1419,7 +1445,7 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     }
     const int groupW = iconSize + S(16) + textW;
     const int groupX = (m_banner.left + m_banner.right - groupW) / 2;
-    const int rowTop = m_banner.top + S(76);
+    const int rowTop = m_banner.top + S(64);
     DrawSuiteLogo(dc, RECT{ groupX, rowTop, groupX + iconSize, rowTop + iconSize }, static_cast<int>(m_dpi));
     const int titleX = groupX + iconSize + S(16);
     DrawLabel(dc, m_fontTitle, kText, { titleX, rowTop + S(0), titleX + textW + S(8), rowTop + S(34) }, L"Duncan's Suite");
@@ -1499,6 +1525,8 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         DrawCard(dc, 4);
     if (RectVisible(dc, &m_tools[5].rect))
         DrawCard(dc, 5);
+    if (RectVisible(dc, &m_tools[6].rect))
+        DrawCard(dc, 6);
 
     // Footer: Version links, Hinweis in der Mitte
     DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(176), m_footer.bottom },
@@ -1764,7 +1792,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
 {
     FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
 
-    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo Commander", L"Oggys Docs-Files", L"Suite" };
+    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo Commander", L"Docs-Files", L"Vault", L"Suite" };
     const int pad = S(22), btnH = S(38);
     const int boxW = std::min(S(940), w - S(40)), boxH = std::min(S(700), h - S(50));
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
@@ -2409,10 +2437,12 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = 5;
     else if (PtInRect(&m_tools[3].rect, pt))
         hover = 17;
-    else if (PtInRect(&m_tools[4].rect, pt))
-        hover = 22;
-    else if (PtInRect(&m_tools[5].rect, pt))
-        hover = 31;
+    else
+    {
+        for (int i = 4; i < kToolCount; ++i)
+            if (PtInRect(&m_tools[i].rect, pt))
+                hover = CardHid(i);
+    }
     if (hover != m_hover)
     {
         m_hover = hover;
@@ -2503,7 +2533,7 @@ void SuiteWindow::OnClick(int, int)
             StartUpdateDownload();
     }
     else
-        Launch(pressed == 5 ? 2 : (pressed == 17 ? 3 : (pressed == 22 ? 4 : (pressed == 31 ? 5 : pressed))));
+        Launch(CardFromHid(pressed) >= 0 ? CardFromHid(pressed) : pressed);
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
@@ -2589,7 +2619,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
         mmi->ptMinTrackSize.x = S(920);
-        mmi->ptMinTrackSize.y = S(800);
+        mmi->ptMinTrackSize.y = S(860);
         return 0;
     }
     case WM_DPICHANGED:

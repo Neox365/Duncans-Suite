@@ -227,6 +227,15 @@ namespace
             Line(0.34f, 0.72f, 0.54f, 0.72f);
             Dot(0.64f, 0.72f, 0.05f);
             break;
+        case CategoryIcon::Vault:
+            // Tresor: Gehaeuse mit Tuerrad (Ring, Mittelpunkt, Griff) und zwei Fuessen
+            RRect(0.14f, 0.16f, 0.72f, 0.62f, 0.1f);
+            Circle(0.47f, 0.47f, 0.16f);
+            Dot(0.47f, 0.47f, 0.045f);
+            Line(0.63f, 0.47f, 0.7f, 0.47f);
+            Line(0.3f, 0.78f, 0.3f, 0.88f);
+            Line(0.7f, 0.78f, 0.7f, 0.88f);
+            break;
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);
