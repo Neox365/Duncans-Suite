@@ -4,7 +4,7 @@ project(DuncansDriverUpdater VERSION 1.1.25 LANGUAGES CXX RC)
 set(SUITE_VER "1.1.31")
 set(PDF_VER "1.1.24")
 set(PHOTO_VER "0.2.5")
-set(DOCS_VER "0.2.0")
+set(DOCS_VER "0.2.1")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
