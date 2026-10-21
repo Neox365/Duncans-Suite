@@ -175,7 +175,7 @@ static void noPassword() {
     const std::string raw((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     in.close();
     CHECK(raw.find("GitHub") == std::string::npos && raw.compare(0, 4, "DVLT") == 0 && raw[4] == 2);
-    vault::Bytes keyCopy = s.key;
+    vault::Bytes keyCopy(s.key.begin(), s.key.end());
     CHECK(raw.find(std::string(keyCopy.begin(), keyCopy.end())) == std::string::npos);   // der Schluessel steht nicht im Klartext in der Datei
 
     vault::Session s2;
@@ -209,19 +209,57 @@ static void noPassword() {
 }
 
 static void kdf() {
-    vault::Bytes salt(16, 7), k1, k2, k3;
+    vault::Bytes salt(16, 7);
+    vault::SecBytes k1, k2, k3;
     CHECK(vault::DeriveKey(L"abc", salt, 1000, k1) && k1.size() == 32);
     CHECK(vault::DeriveKey(L"abc", salt, 1000, k2) && k1 == k2);                    // deterministisch
     CHECK(vault::DeriveKey(L"abd", salt, 1000, k3) && k1 != k3);                    // anderes Passwort
     salt[0] = 8;
     CHECK(vault::DeriveKey(L"abc", salt, 1000, k3) && k1 != k3);                    // anderes Salz
     // bekannter Testvektor (RFC 7914, PBKDF2-HMAC-SHA256, "passwd"/"salt", c=1): 55 ac 04 6e 56 e3 08 9f
-    vault::Bytes s2 = {'s', 'a', 'l', 't'}, k4;
+    vault::Bytes s2 = {'s', 'a', 'l', 't'};
+    vault::SecBytes k4;
     CHECK(vault::DeriveKey(L"passwd", s2, 1, k4) && k4[0] == 0x55 && k4[1] == 0xac && k4[2] == 0x04 && k4[3] == 0x6e && k4[4] == 0x56 && k4[5] == 0xe3);
 }
 
+static void memoryProtection() {
+    // Schluessel liegen in gesperrtem Speicher (VirtualLock) und werden beim Freigeben ueberschrieben
+    const int before = vault::LockedAllocs();
+    const unsigned char* raw = nullptr;
+    {
+        vault::SecBytes k(32, 0xAB);
+        raw = k.data();
+        CHECK(vault::LockedAllocs() == before + 1 && vault::LockFailures() == 0);
+        MEMORY_BASIC_INFORMATION mbi{};
+        CHECK(VirtualQuery(raw, &mbi, sizeof mbi) && mbi.State == MEM_COMMIT);
+        vault::Wipe(k);   // sofort ueberschreiben und freigeben
+        CHECK(k.empty());
+    }
+    vault::SecBytes a(32, 1), b(a);   // Kopien bekommen eigenen gesperrten Speicher
+    CHECK(a.data() != b.data() && a == b && vault::LockFailures() == 0);
+    vault::Session s;
+    CHECK(vault::NewDpapiSession(s) && s.key.size() == 32);
+    s.Close();
+    CHECK(s.key.empty() && !s.Open());
+    // Mindestzahl an PBKDF2-Runden: Dateien mit zu wenigen Runden werden abgelehnt
+    const unsigned saved = vault::MinIterations();
+    vault::MinIterations() = 100000;
+    const fs::path dir = fs::temp_directory_path() / L"duncans_vault_test_iter";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    vault::Session weak, back;
+    std::string plain = vault::Serialize(sample()), got;
+    CHECK(vault::NewSession(L"pw-pw-pw-pw", 2000, weak) && vault::SaveFile(dir / L"v.dat", weak, plain) == vault::Result::Ok);
+    CHECK(vault::OpenFile(dir / L"v.dat", L"pw-pw-pw-pw", back, got) == vault::Result::BadFormat);
+    vault::MinIterations() = saved;
+    CHECK(vault::OpenFile(dir / L"v.dat", L"pw-pw-pw-pw", back, got) == vault::Result::Ok);
+    CHECK(vault::kDefaultIterations >= 100000);
+    fs::remove_all(dir, ec);
+}
+
 int main() {
-    serialization(); merge(); search(); generator(); strength(); kdf(); file(); noPassword();
+    vault::MinIterations() = 1000;   // die Tests arbeiten mit wenigen Runden, damit sie schnell laufen
+    serialization(); merge(); search(); generator(); strength(); kdf(); file(); noPassword(); memoryProtection();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

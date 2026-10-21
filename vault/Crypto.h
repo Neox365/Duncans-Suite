@@ -14,6 +14,7 @@
 #include <bcrypt.h>
 #include <wincrypt.h>
 
+#include <new>
 #include <string>
 #include <vector>
 
@@ -24,6 +25,41 @@ namespace vault {
 
 using Bytes = std::vector<unsigned char>;
 
+// Zaehler fuer die Speichersperre (zum Pruefen in Tests)
+inline int& LockedAllocs() { static int n = 0; return n; }
+inline int& LockFailures() { static int n = 0; return n; }
+
+// Allokator fuer Schluesselmaterial: jede Zuweisung bekommt eigene Speicherseiten (VirtualAlloc), die per VirtualLock im RAM gehalten
+// werden (landen nicht in pagefile.sys); beim Freigeben wird mit SecureZeroMemory ueberschrieben.
+template <class T>
+struct SecAlloc {
+    using value_type = T;
+    SecAlloc() = default;
+    template <class U>
+    SecAlloc(const SecAlloc<U>&) {}
+    T* allocate(size_t n)
+    {
+        const size_t bytes = n * sizeof(T);
+        void* p = VirtualAlloc(nullptr, bytes ? bytes : 1, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+        if (!p) throw std::bad_alloc();
+        if (VirtualLock(p, bytes ? bytes : 1)) ++LockedAllocs();
+        else ++LockFailures();   // Kontingent erschoepft: Schluessel bleibt nutzbar, wird aber nur beim Freigeben ueberschrieben
+        return static_cast<T*>(p);
+    }
+    void deallocate(T* p, size_t n)
+    {
+        if (!p) return;
+        SecureZeroMemory(p, n * sizeof(T));
+        VirtualUnlock(p, n * sizeof(T));
+        VirtualFree(p, 0, MEM_RELEASE);
+    }
+};
+template <class T, class U>
+bool operator==(const SecAlloc<T>&, const SecAlloc<U>&) { return true; }
+template <class T, class U>
+bool operator!=(const SecAlloc<T>&, const SecAlloc<U>&) { return false; }
+using SecBytes = std::vector<unsigned char, SecAlloc<unsigned char>>;
+
 inline void Wipe(void* p, size_t n)
 {
     if (p && n) SecureZeroMemory(p, n);
@@ -32,6 +68,11 @@ inline void Wipe(Bytes& b)
 {
     Wipe(b.data(), b.size());
     b.clear();
+}
+inline void Wipe(SecBytes& b)
+{
+    Wipe(b.data(), b.size());
+    SecBytes().swap(b);
 }
 inline void Wipe(std::string& s)
 {
@@ -68,7 +109,7 @@ inline std::wstring FromUtf8(const std::string& s)
 }
 
 // 32-Byte-Schluessel aus Passwort und Salz
-inline bool DeriveKey(const std::wstring& password, const Bytes& salt, unsigned iterations, Bytes& key)
+inline bool DeriveKey(const std::wstring& password, const Bytes& salt, unsigned iterations, SecBytes& key)
 {
     BCRYPT_ALG_HANDLE alg = nullptr;
     if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) return false;
@@ -84,7 +125,7 @@ inline bool DeriveKey(const std::wstring& password, const Bytes& salt, unsigned 
 
 // AES-256-GCM. Verschluesseln: out = Chiffretext, tag (16 Byte) wird geschrieben. Entschluesseln: tag wird geprueft;
 // false bei falschem Schluessel oder veraenderten Daten.
-inline bool GcmCrypt(bool encrypt, const Bytes& key, const Bytes& nonce, const Bytes& aad, const unsigned char* in, size_t inLen, Bytes& out,
+inline bool GcmCrypt(bool encrypt, const SecBytes& key, const Bytes& nonce, const Bytes& aad, const unsigned char* in, size_t inLen, Bytes& out,
                      unsigned char tag[16])
 {
     if (key.size() != 32 || nonce.size() != 12 || inLen == 0) return false;
@@ -116,7 +157,7 @@ inline bool GcmCrypt(bool encrypt, const Bytes& key, const Bytes& nonce, const B
 
 // Schluessel an das Windows-Benutzerkonto binden (DPAPI): nur dieser Benutzer auf diesem PC kann ihn wieder entschluesseln.
 // Dient dem Tresor "ohne Master-Passwort".
-inline bool DpapiProtect(const Bytes& in, Bytes& out)
+inline bool DpapiProtect(const SecBytes& in, Bytes& out)
 {
     static const BYTE kEntropy[] = "DuncansVault-DPAPI-1";
     DATA_BLOB src{static_cast<DWORD>(in.size()), const_cast<BYTE*>(in.data())}, ent{static_cast<DWORD>(sizeof(kEntropy) - 1), const_cast<BYTE*>(kEntropy)}, dst{};
@@ -127,7 +168,7 @@ inline bool DpapiProtect(const Bytes& in, Bytes& out)
     return true;
 }
 
-inline bool DpapiUnprotect(const Bytes& in, Bytes& out)
+inline bool DpapiUnprotect(const Bytes& in, SecBytes& out)
 {
     static const BYTE kEntropy[] = "DuncansVault-DPAPI-1";
     DATA_BLOB src{static_cast<DWORD>(in.size()), const_cast<BYTE*>(in.data())}, ent{static_cast<DWORD>(sizeof(kEntropy) - 1), const_cast<BYTE*>(kEntropy)}, dst{};
