@@ -12,11 +12,13 @@
 #endif
 #include <windows.h>
 #include <bcrypt.h>
+#include <wincrypt.h>
 
 #include <string>
 #include <vector>
 
 #pragma comment(lib, "bcrypt.lib")
+#pragma comment(lib, "crypt32.lib")
 
 namespace vault {
 
@@ -110,6 +112,30 @@ inline bool GcmCrypt(bool encrypt, const Bytes& key, const Bytes& nonce, const B
     if (hk) BCryptDestroyKey(hk);
     if (alg) BCryptCloseAlgorithmProvider(alg, 0);
     return ok;
+}
+
+// Schluessel an das Windows-Benutzerkonto binden (DPAPI): nur dieser Benutzer auf diesem PC kann ihn wieder entschluesseln.
+// Dient dem Tresor "ohne Master-Passwort".
+inline bool DpapiProtect(const Bytes& in, Bytes& out)
+{
+    static const BYTE kEntropy[] = "DuncansVault-DPAPI-1";
+    DATA_BLOB src{static_cast<DWORD>(in.size()), const_cast<BYTE*>(in.data())}, ent{static_cast<DWORD>(sizeof(kEntropy) - 1), const_cast<BYTE*>(kEntropy)}, dst{};
+    if (!CryptProtectData(&src, L"Duncan's Vault", &ent, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &dst)) return false;
+    out.assign(dst.pbData, dst.pbData + dst.cbData);
+    SecureZeroMemory(dst.pbData, dst.cbData);
+    LocalFree(dst.pbData);
+    return true;
+}
+
+inline bool DpapiUnprotect(const Bytes& in, Bytes& out)
+{
+    static const BYTE kEntropy[] = "DuncansVault-DPAPI-1";
+    DATA_BLOB src{static_cast<DWORD>(in.size()), const_cast<BYTE*>(in.data())}, ent{static_cast<DWORD>(sizeof(kEntropy) - 1), const_cast<BYTE*>(kEntropy)}, dst{};
+    if (!CryptUnprotectData(&src, nullptr, &ent, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &dst)) return false;
+    out.assign(dst.pbData, dst.pbData + dst.cbData);
+    SecureZeroMemory(dst.pbData, dst.cbData);
+    LocalFree(dst.pbData);
+    return true;
 }
 
 }  // namespace vault

@@ -28,7 +28,7 @@
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.0"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.3.0"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -45,7 +45,7 @@ enum Id {
     B_NEW = 1, B_GEAR, B_LOCK,
     C_CAT0 = 10,                    // 10..14: Alle, dann die vier Kategorien
     DT_COPYUSER = 20, DT_COPYSECRET, DT_SHOW, DT_OPENURL, DT_EDIT, DT_DELETE,
-    L_UNLOCK = 30, L_REVEAL, S_CREATE, S_REVEAL,
+    L_UNLOCK = 30, L_REVEAL, S_CREATE, S_REVEAL, S_SKIP,
     D_OK = 40, D_CANCEL, D_CAT0 = 42,   // 42..45: Kategorie im Eintragsdialog
     D_REVEAL = 46, D_GENTOGGLE, D_GENRUN, D_LENMINUS, D_LENPLUS, D_GU, D_GL, D_GD, D_GS
 };
@@ -78,6 +78,9 @@ struct Dialog {
     std::wstring editId;          // leer = neuer Eintrag
     bool reveal = false;          // Geheimnis im Klartext zeigen
     bool genOpen = false;
+    int mode = 0;                 // ChangePw: 0 aendern, 1 festlegen (bisher ohne Passwort), 2 entfernen
+    bool noPw = false;            // Import: Backup ohne Master-Passwort (Windows-Konto)
+    float msgH = 0;               // Hoehe des Hinweistexts im einfachen Dialog
     D2D1_RECT_F box{};
 };
 
@@ -234,6 +237,7 @@ private:
 
     // --- Tresor
     void TryUnlock();
+    void CreateVaultNoPw();
     void CreateVault();
     bool Persist();
     void Lock(bool automatic);
@@ -245,7 +249,7 @@ private:
     // --- Aktionen
     void BeginEntry(const vault::Entry* e);
     void ApplyEntry();
-    void BeginChangePw();
+    void BeginChangePw(int mode);
     void ApplyChangePw();
     void BeginConfirmDelete();
     void ExportBackup();
@@ -298,6 +302,7 @@ private:
 
     Field m_search, m_lockPw, m_setPw, m_setPw2;
     std::wstring m_lockErr, m_setErr;
+    bool m_lockNoPw = false;             // Tresor ohne Master-Passwort: die Sperrmaske hat nur einen Entsperren-Knopf
     int m_fails = 0;
     ULONGLONG m_nextTry = 0, m_lastInput = 0, m_clipUntil = 0;
     std::wstring m_clipText;              // was wir in die Zwischenablage gelegt haben (zum Vergleichen beim Leeren)
@@ -349,9 +354,10 @@ bool App::Create(HINSTANCE hi, int show) {
     m_setPw2.label = L"Master-Passwort wiederholen";
     m_setPw2.ed.maxLen = 128;
     m_setPw2.mask = true;
-    std::error_code ec;
-    m_screen = fs::exists(VaultPath(), ec) ? Screen::Lock : Screen::Setup;
-    m_focusId = m_screen == Screen::Lock ? F_LOCKPW : F_SETPW;
+    const vault::FileMode fm = vault::ReadMode(VaultPath());
+    m_screen = fm == vault::FileMode::Missing ? Screen::Setup : Screen::Lock;
+    m_lockNoPw = fm == vault::FileMode::Dpapi;
+    m_focusId = m_screen == Screen::Setup ? F_SETPW : (m_lockNoPw ? kNoFocus : F_LOCKPW);
     Touch();
     RECT work{};   // Startgroesse nie groesser als der Arbeitsbereich (sonst verschwindet die Statusleiste unter der Taskleiste)
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
@@ -361,6 +367,7 @@ bool App::Create(HINSTANCE hi, int show) {
     UpdateWindow(m_hwnd);
     SetTimer(m_hwnd, TIMER_CARET, 530, nullptr);
     SetTimer(m_hwnd, TIMER_SEC, 1000, nullptr);
+    if (m_lockNoPw) TryUnlock();   // Tresor ohne Master-Passwort: sofort oeffnen
     return true;
 }
 
@@ -567,7 +574,7 @@ D2D1_RECT_F CenterCard(const RECT& cr, float w, float h) {
 void App::DrawSetup() {
     RECT cr;
     GetClientRect(m_hwnd, &cr);
-    const float cw = std::min(560 * k, cr.right - 40 * k), ch = 520 * k;
+    const float cw = std::min(560 * k, cr.right - 40 * k), ch = 600 * k;
     const D2D1_RECT_F card = CenterCard(cr, cw, ch);
     FillRR(card, 16 * k, Theme::Panel);
     StrokeRR(card, 16 * k, Theme::Border);
@@ -588,9 +595,12 @@ void App::DrawSetup() {
     y += DrawStrength(x0, y, fw, m_setPw.ed.text);
     Txt(L"Wichtig: Das Master-Passwort lässt sich nicht wiederherstellen. Wer es vergisst, verliert den Zugriff auf alle Einträge.",
         {x0, y, x0 + fw, y + 40 * k}, fWrap.Get(), Theme::Warn);
-    y += 46 * k;
+    y += 40 * k;
     if (!m_setErr.empty()) Txt(m_setErr, {x0, y, x0 + fw, y + 22 * k}, fNormal.Get(), Theme::Danger);
-    Button(S_CREATE, {x0, card.bottom - 24 * k - 42 * k, x0 + fw, card.bottom - 24 * k}, L"Tresor anlegen", true);
+    Button(S_CREATE, {x0, card.bottom - 24 * k - 42 * 2 * k - 10 * k, x0 + fw, card.bottom - 24 * k - 42 * k - 10 * k}, L"Tresor anlegen", true);
+    Button(S_SKIP, {x0, card.bottom - 24 * k - 42 * k, x0 + fw, card.bottom - 24 * k}, L"Ohne Master-Passwort fortfahren", false);
+    Txt(L"Ohne Master-Passwort ist der Tresor zwar verschlüsselt, aber nur durch dein Windows-Konto geschützt: Wer bei diesem PC unter deinem Konto angemeldet ist, kann ihn öffnen. Du kannst später jederzeit ein Master-Passwort festlegen.",
+        {x0, card.bottom - 24 * k - 42 * 2 * k - 10 * k - 62 * k, x0 + fw, card.bottom - 24 * k - 42 * 2 * k - 16 * k}, fWrap.Get(), Theme::TextDim);
     DrawField(m_setPw, m_focusId == F_SETPW);
     DrawField(m_setPw2, m_focusId == F_SETPW2);
 }
@@ -614,16 +624,21 @@ void App::DrawLock() {
     y += 68 * k;
     Txt(L"Duncan's Vault", {card.left, y, card.right, y + 34 * k}, fBig.Get(), Theme::Text);
     y += 40 * k;
-    Txt(L"Gib dein Master-Passwort ein, um den Tresor zu entsperren.", {x0, y, x0 + fw, y + 24 * k}, fCenter.Get(), Theme::TextDim);
-    y += 40 * k;
-    const float revW = 92 * k;
-    m_lockPw.rc = {x0, y, x0 + fw - revW - 8 * k, y + 40 * k};
-    Button(L_REVEAL, {x0 + fw - revW, y, x0 + fw, y + 40 * k}, m_lockPw.mask ? L"Anzeigen" : L"Verbergen", false);
-    y += 52 * k;
+    if (m_lockNoPw) {
+        Txt(L"Dieser Tresor hat kein Master-Passwort und ist an dein Windows-Konto gebunden.", {x0, y, x0 + fw, y + 44 * k}, fWrap.Get(), Theme::TextDim);
+        y += 52 * k;
+    } else {
+        Txt(L"Gib dein Master-Passwort ein, um den Tresor zu entsperren.", {x0, y, x0 + fw, y + 24 * k}, fCenter.Get(), Theme::TextDim);
+        y += 40 * k;
+        const float revW = 92 * k;
+        m_lockPw.rc = {x0, y, x0 + fw - revW - 8 * k, y + 40 * k};
+        Button(L_REVEAL, {x0 + fw - revW, y, x0 + fw, y + 40 * k}, m_lockPw.mask ? L"Anzeigen" : L"Verbergen", false);
+        y += 52 * k;
+    }
     if (!m_lockErr.empty()) Txt(m_lockErr, {x0, y, x0 + fw, y + 40 * k}, fWrap.Get(), Theme::Danger);
     Button(L_UNLOCK, {x0, card.bottom - 24 * k - 42 * k, x0 + fw, card.bottom - 24 * k}, L"Entsperren", true);
     Txt(L"100 % lokal – keine Cloud, kein Sync, keine Telemetrie", {card.left, card.bottom + 10 * k, card.right, card.bottom + 32 * k}, fSmall.Get(), Theme::TextDim);
-    DrawField(m_lockPw, m_focusId == F_LOCKPW);
+    if (!m_lockNoPw) DrawField(m_lockPw, m_focusId == F_LOCKPW);
 }
 
 // ============================================================================
@@ -798,7 +813,7 @@ void App::DrawDetail() {
 void App::DrawStatusBar() {
     Fill(rcStatus, Theme::Topbar);
     Fill({0, rcStatus.top, rcStatus.right, rcStatus.top + 1}, Theme::Border);
-    const std::wstring left = !m_note.empty() ? m_note : L"Tresor entsperrt  ·  " + std::to_wstring(m_entries.size()) + L" Einträge  ·  AES-256-GCM, nur lokal gespeichert";
+    const std::wstring left = !m_note.empty() ? m_note : (m_session.dpapi ? L"Tresor entsperrt (ohne Master-Passwort, an das Windows-Konto gebunden)  ·  " : L"Tresor entsperrt  ·  ") + std::to_wstring(m_entries.size()) + L" Einträge  ·  AES-256-GCM, nur lokal gespeichert";
     Txt(left, {12 * k, rcStatus.top, rcStatus.right * 0.62f, rcStatus.bottom}, fSmall.Get(), Theme::TextDim);
     std::wstring right;
     const ULONGLONG now = GetTickCount64();
@@ -924,11 +939,11 @@ void App::DrawSimpleDialog() {
     Dialog& d = m_dlg;
     RECT cr;
     GetClientRect(m_hwnd, &cr);
-    const float pad = 24 * k, fh = 36 * k, bw = std::min(520 * k, cr.right - 40 * k);
+    const float pad = 24 * k, fh = 36 * k, bw = std::min(540 * k, cr.right - 40 * k);
     const bool confirm = d.kind == DlgKind::Confirm, imp = d.kind == DlgKind::Import;
-    const float height = confirm ? pad + 36 * k + 70 * k + 30 * k + 38 * k + pad
-                         : imp   ? pad + 36 * k + 96 * k + (24 * k + fh) + 30 * k + 38 * k + pad
-                                 : pad + 36 * k + 3 * (24 * k + fh) + 30 * k + 30 * k + 38 * k + pad;
+    const bool strength = d.kind == DlgKind::ChangePw && d.mode != 2;
+    const float msgH = confirm ? 70 : imp ? 96 : d.msgH;
+    const float height = pad + 36 * k + msgH * k + (float)d.fields.size() * (24 * k + fh) + (strength ? 30 * k : 0) + 30 * k + 38 * k + pad;
     d.box = {(cr.right - bw) / 2, (cr.bottom - height) / 2, (cr.right + bw) / 2, (cr.bottom + height) / 2};
     FillRR(d.box, 14 * k, Theme::Panel);
     StrokeRR(d.box, 14 * k, Theme::Border);
@@ -936,23 +951,19 @@ void App::DrawSimpleDialog() {
     float y = d.box.top + pad;
     Txt(d.title, {x0, y, d.box.right - pad, y + 30 * k}, fTitle.Get(), Theme::Text);
     y += 36 * k;
-    if (confirm) {
-        Txt(d.message, {x0, y, x0 + fw, y + 70 * k}, fWrap.Get(), Theme::TextDim);
-        y += 70 * k;
-    } else {
-        if (imp) {
-            Txt(d.message, {x0, y, x0 + fw, y + 92 * k}, fWrap.Get(), Theme::TextDim);
-            y += 96 * k;
-        }
-        for (auto& f : d.fields) {
-            LabeledField(f, x0, y, fw);
-            y += 24 * k + fh;
-        }
-        if (d.kind == DlgKind::ChangePw) DrawStrength(x0, y - 2 * k, fw, FieldById(F_NEW) ? FieldById(F_NEW)->ed.text : L"");
+    if (msgH > 0) {
+        Txt(d.message, {x0, y, x0 + fw, y + (msgH - 4) * k}, fWrap.Get(), Theme::TextDim);
+        y += msgH * k;
     }
+    for (auto& f : d.fields) {
+        LabeledField(f, x0, y, fw);
+        y += 24 * k + fh;
+    }
+    if (strength) DrawStrength(x0, y - 2 * k, fw, FieldById(F_NEW) ? FieldById(F_NEW)->ed.text : L"");
     const float bh = 38 * k, by = d.box.bottom - pad - bh;
     if (!d.error.empty()) Txt(d.error, {x0, by - 26 * k, x0 + fw, by - 4 * k}, fNormal.Get(), Theme::Danger);
-    Button(D_OK, {d.box.right - pad - 150 * k, by, d.box.right - pad, by + bh}, confirm ? L"Löschen" : imp ? L"Importieren" : L"Ändern", !confirm, confirm);
+    const wchar_t* okLabel = confirm ? L"Löschen" : imp ? L"Importieren" : d.mode == 1 ? L"Festlegen" : d.mode == 2 ? L"Entfernen" : L"Ändern";
+    Button(D_OK, {d.box.right - pad - 150 * k, by, d.box.right - pad, by + bh}, okLabel, !confirm, confirm || d.mode == 2);
     Button(D_CANCEL, {d.box.right - pad - 160 * k - 130 * k, by, d.box.right - pad - 160 * k, by + bh}, L"Abbrechen", false);
     for (auto& f : d.fields) DrawField(f, m_focusId == f.id);
 }
@@ -968,7 +979,7 @@ void App::TryUnlock() {
         Invalidate();
         return;
     }
-    if (m_lockPw.ed.text.empty()) { m_lockErr = L"Bitte das Master-Passwort eingeben."; Invalidate(); return; }
+    if (!m_lockNoPw && m_lockPw.ed.text.empty()) { m_lockErr = L"Bitte das Master-Passwort eingeben."; Invalidate(); return; }
     std::wstring pw = m_lockPw.ed.text;
     std::string plain;
     vault::Session s;
@@ -998,6 +1009,8 @@ void App::TryUnlock() {
             vault::Wipe(plain);
             m_lockErr = L"Der Tresor-Inhalt konnte nicht gelesen werden.";
         }
+    } else if (r == vault::Result::WrongPassword && m_lockNoPw) {
+        m_lockErr = L"Dieser Tresor ist an ein anderes Windows-Konto gebunden und lässt sich hier nicht öffnen.";
     } else if (r == vault::Result::WrongPassword) {
         ++m_fails;
         m_nextTry = GetTickCount64() + std::min(m_fails, 6) * 1000ull;   // Bremse gegen schnelles Durchprobieren
@@ -1035,6 +1048,24 @@ void App::CreateVault() {
     Invalidate();
 }
 
+void App::CreateVaultNoPw() {
+    vault::Session s;
+    if (!vault::NewDpapiSession(s)) { m_setErr = L"Der Schlüssel konnte nicht an das Windows-Konto gebunden werden."; Invalidate(); return; }
+    m_session = s;
+    m_entries.clear();
+    if (!Persist()) { m_setErr = L"Die Tresor-Datei konnte nicht geschrieben werden."; m_session.Close(); Invalidate(); return; }
+    m_setPw.ed.SetText(L"");
+    m_setPw2.ed.SetText(L"");
+    m_setErr.clear();
+    m_screen = Screen::Main;
+    m_cat = -1;
+    m_focusId = kNoFocus;
+    Rebuild();
+    Touch();
+    SetNote(L"Tresor ohne Master-Passwort angelegt. Ein Master-Passwort kannst du jederzeit im Zahnrad-Menü festlegen.", true);
+    Invalidate();
+}
+
 bool App::Persist() {
     std::string plain = vault::Serialize(m_entries);
     const vault::Result r = vault::SaveFile(VaultPath(), m_session, plain);
@@ -1050,16 +1081,17 @@ void App::Lock(bool automatic) {
     m_dlg = Dialog{};
     vault::Wipe(m_entries);
     m_view.clear();
-    m_session.Close();
     m_selId.clear();
     m_reveal = false;
     m_search.ed.SetText(L"");
     m_note.clear();
+    m_lockNoPw = m_session.dpapi;
+    m_session.Close();
     m_screen = Screen::Lock;
     m_lockPw.ed.SetText(L"");
     m_lockPw.mask = true;
     m_lockErr = automatic ? L"Der Tresor wurde nach 5 Minuten Inaktivität automatisch gesperrt." : L"";
-    m_focusId = F_LOCKPW;
+    m_focusId = m_lockNoPw ? kNoFocus : F_LOCKPW;
     Invalidate();
 }
 
@@ -1180,11 +1212,19 @@ void App::ApplyEntry() {
     Invalidate();
 }
 
-void App::BeginChangePw() {
+void App::BeginChangePw(int mode) {
     m_dlg = Dialog{};
     Dialog& d = m_dlg;
     d.kind = DlgKind::ChangePw;
-    d.title = L"Master-Passwort ändern";
+    d.mode = mode;
+    d.title = mode == 1 ? L"Master-Passwort festlegen" : mode == 2 ? L"Master-Passwort entfernen" : L"Master-Passwort ändern";
+    if (mode == 1) {
+        d.message = L"Danach fragt der Tresor beim Start dieses Passwort ab. Es lässt sich nicht wiederherstellen; wer es vergisst, verliert den Zugriff auf alle Einträge.";
+        d.msgH = 70;
+    } else if (mode == 2) {
+        d.message = L"Der Tresor wird danach ohne Master-Passwort geöffnet und ist nur noch durch dein Windows-Konto geschützt: Wer bei diesem PC unter deinem Konto angemeldet ist, kann ihn öffnen.";
+        d.msgH = 80;
+    }
     auto mk = [&](int id, const wchar_t* label) {
         Field f;
         f.id = id;
@@ -1193,33 +1233,42 @@ void App::BeginChangePw() {
         f.ed.maxLen = 128;
         d.fields.push_back(std::move(f));
     };
-    mk(F_OLD, L"Aktuelles Master-Passwort");
-    mk(F_NEW, L"Neues Master-Passwort (mindestens 8 Zeichen)");
-    mk(F_NEW2, L"Neues Master-Passwort wiederholen");
-    m_focusId = F_OLD;
+    if (mode != 1) mk(F_OLD, L"Aktuelles Master-Passwort");
+    if (mode != 2) {
+        mk(F_NEW, L"Neues Master-Passwort (mindestens 8 Zeichen)");
+        mk(F_NEW2, L"Neues Master-Passwort wiederholen");
+    }
+    m_focusId = d.fields.front().id;
     Invalidate();
 }
 
 void App::ApplyChangePw() {
     Dialog& d = m_dlg;
     auto txt = [&](int id) { const Field* f = FieldById(id); return f ? f->ed.text : std::wstring(); };
-    // altes Passwort pruefen, indem die Datei damit geoeffnet wird
-    vault::Session check;
-    std::string plain;
-    const vault::Result r = vault::OpenFile(VaultPath(), txt(F_OLD), check, plain);
-    vault::Wipe(plain);
-    check.Close();
-    if (r != vault::Result::Ok) { d.error = L"Das aktuelle Master-Passwort stimmt nicht."; Invalidate(); return; }
-    const std::wstring np = txt(F_NEW);
-    if (np.size() < 8) { d.error = L"Das neue Master-Passwort braucht mindestens 8 Zeichen."; Invalidate(); return; }
-    if (np != txt(F_NEW2)) { d.error = L"Die neuen Passwörter stimmen nicht überein."; Invalidate(); return; }
+    if (d.mode != 1) {   // altes Passwort pruefen, indem die Datei damit geoeffnet wird
+        vault::Session check;
+        std::string plain;
+        const vault::Result r = vault::OpenFile(VaultPath(), txt(F_OLD), check, plain);
+        vault::Wipe(plain);
+        check.Close();
+        if (r != vault::Result::Ok) { d.error = L"Das aktuelle Master-Passwort stimmt nicht."; Invalidate(); return; }
+    }
     vault::Session s;
-    if (!vault::NewSession(np, vault::kDefaultIterations, s)) { d.error = L"Die Verschlüsselung konnte nicht vorbereitet werden."; Invalidate(); return; }
+    if (d.mode == 2) {   // Master-Passwort entfernen: Schluessel an das Windows-Konto binden
+        if (!vault::NewDpapiSession(s)) { d.error = L"Der Schlüssel konnte nicht an das Windows-Konto gebunden werden."; Invalidate(); return; }
+    } else {
+        const std::wstring np = txt(F_NEW);
+        if (np.size() < 8) { d.error = L"Das neue Master-Passwort braucht mindestens 8 Zeichen."; Invalidate(); return; }
+        if (np != txt(F_NEW2)) { d.error = L"Die neuen Passwörter stimmen nicht überein."; Invalidate(); return; }
+        if (!vault::NewSession(np, vault::kDefaultIterations, s)) { d.error = L"Die Verschlüsselung konnte nicht vorbereitet werden."; Invalidate(); return; }
+    }
     const vault::Session old = m_session;
     m_session = s;
     if (!Persist()) { m_session = old; d.error = L"Der Tresor konnte nicht gespeichert werden."; Invalidate(); return; }
     CloseDialog();
-    SetNote(L"Master-Passwort geändert. Beim nächsten Entsperren gilt das neue Passwort.");
+    SetNote(d.mode == 1 ? L"Master-Passwort festgelegt. Beim nächsten Start wird es abgefragt."
+            : d.mode == 2 ? L"Master-Passwort entfernt. Der Tresor öffnet sich jetzt ohne Passwort (an dein Windows-Konto gebunden)."
+                          : L"Master-Passwort geändert. Beim nächsten Entsperren gilt das neue Passwort.", true);
     Invalidate();
 }
 
@@ -1239,7 +1288,9 @@ void App::ExportBackup() {
     ofn.lpstrTitle = L"Verschlüsseltes Backup speichern";
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     if (!GetSaveFileNameW(&ofn)) return;
-    if (CopyFileW(VaultPath().c_str(), name, FALSE)) SetNote(L"Backup gespeichert: " + fs::path(name).filename().wstring() + L" (verschlüsselt mit dem aktuellen Master-Passwort)");
+    if (CopyFileW(VaultPath().c_str(), name, FALSE)) SetNote(L"Backup gespeichert: " + fs::path(name).filename().wstring() +
+                                                  (m_session.dpapi ? L" (an dieses Windows-Konto gebunden – auf einem anderen PC nur nach Festlegen eines Master-Passworts importierbar)"
+                                                                   : L" (verschlüsselt mit dem aktuellen Master-Passwort)"));
     else SetNote(L"Das Backup konnte nicht gespeichert werden.", true);
     Invalidate();
 }
@@ -1254,11 +1305,18 @@ void App::BeginImport() {
     ofn.lpstrTitle = L"Backup importieren";
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&ofn)) return;
+    const vault::FileMode bm = vault::ReadMode(name);
+    if (bm != vault::FileMode::Password && bm != vault::FileMode::Dpapi) { SetNote(L"Das ist keine gültige Vault-Backup-Datei.", true); Invalidate(); return; }
     m_dlg = Dialog{};
     Dialog& d = m_dlg;
     d.kind = DlgKind::Import;
     d.title = L"Backup importieren";
     d.editId = name;   // Pfad der Backup-Datei
+    if (bm == vault::FileMode::Dpapi) {   // Backup ohne Master-Passwort: kein Passwort noetig, es zaehlt das Windows-Konto
+        d.noPw = true;
+        ApplyImport();
+        return;
+    }
     d.message = L"Datei: " + fs::path(name).filename().wstring() + L"\nGib das Master-Passwort ein, mit dem dieses Backup verschlüsselt wurde. Neue Einträge werden hinzugefügt, neuere Fassungen vorhandener Einträge übernommen; nichts wird gelöscht.";
     Field f;
     f.id = F_IMPPW;
@@ -1273,11 +1331,17 @@ void App::BeginImport() {
 void App::ApplyImport() {
     Dialog& d = m_dlg;
     const Field* f = FieldById(F_IMPPW);
-    if (!f || f->ed.text.empty()) { d.error = L"Bitte das Master-Passwort des Backups eingeben."; Invalidate(); return; }
+    if (!d.noPw && (!f || f->ed.text.empty())) { d.error = L"Bitte das Master-Passwort des Backups eingeben."; Invalidate(); return; }
     vault::Session s;
     std::string plain;
-    const vault::Result r = vault::OpenFile(fs::path(d.editId), f->ed.text, s, plain);
+    const vault::Result r = vault::OpenFile(fs::path(d.editId), d.noPw ? std::wstring() : f->ed.text, s, plain);
     s.Close();
+    if (d.noPw && r != vault::Result::Ok) {
+        CloseDialog();
+        SetNote(L"Dieses Backup ist an ein anderes Windows-Konto gebunden und lässt sich hier nicht öffnen.", true);
+        Invalidate();
+        return;
+    }
     if (r == vault::Result::WrongPassword) { d.error = L"Falsches Passwort oder beschädigte Backup-Datei."; Invalidate(); return; }
     if (r != vault::Result::Ok) { d.error = r == vault::Result::BadFormat ? L"Das ist keine gültige Vault-Backup-Datei." : L"Die Datei konnte nicht gelesen werden."; Invalidate(); return; }
     std::vector<vault::Entry> imp;
@@ -1341,7 +1405,11 @@ void App::ClearClipboardIfOurs() {
 
 void App::ShowGearMenu() {
     HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING, 1, L"Master-Passwort ändern …");
+    if (m_session.dpapi) AppendMenuW(m, MF_STRING, 1, L"Master-Passwort festlegen …");
+    else {
+        AppendMenuW(m, MF_STRING, 1, L"Master-Passwort ändern …");
+        AppendMenuW(m, MF_STRING, 7, L"Master-Passwort entfernen …");
+    }
     AppendMenuW(m, MF_STRING | (m_settings.autoLock ? MF_CHECKED : 0), 2, L"Nach 5 Minuten Inaktivität automatisch sperren");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, 5, L"Backup exportieren (.vault) …");
@@ -1354,7 +1422,8 @@ void App::ShowGearMenu() {
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
     DestroyMenu(m);
     switch (cmd) {
-        case 1: BeginChangePw(); break;
+        case 1: BeginChangePw(m_session.dpapi ? 1 : 0); break;
+        case 7: BeginChangePw(2); break;
         case 2: m_settings.autoLock = !m_settings.autoLock; SaveSettings(m_settings); Touch(); break;
         case 5: ExportBackup(); break;
         case 6: BeginImport(); break;
@@ -1378,7 +1447,7 @@ void App::ShowGearMenu() {
 
 std::vector<Field*> App::ActiveFields() {
     std::vector<Field*> v;
-    if (m_screen == Screen::Lock) v.push_back(&m_lockPw);
+    if (m_screen == Screen::Lock) { if (!m_lockNoPw) v.push_back(&m_lockPw); }
     else if (m_screen == Screen::Setup) { v.push_back(&m_setPw); v.push_back(&m_setPw2); }
     else if (m_dlg.kind != DlgKind::None) for (auto& f : m_dlg.fields) v.push_back(&f);
     else v.push_back(&m_search);
@@ -1591,6 +1660,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case L_UNLOCK: TryUnlock(); break;
             case L_REVEAL: m_lockPw.mask = !m_lockPw.mask; break;
             case S_CREATE: CreateVault(); break;
+            case S_SKIP: CreateVaultNoPw(); break;
             case D_CANCEL: CloseDialog(); break;
             case D_OK: {
                 if (m_dlg.kind == DlgKind::Entry) ApplyEntry();
