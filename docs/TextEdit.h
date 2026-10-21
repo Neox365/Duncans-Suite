@@ -11,6 +11,7 @@ struct TextEdit {
     std::wstring text;
     size_t caret = 0, anchor = 0;   // Markierung = [min, max) der beiden
     size_t maxLen = 120;
+    bool multiline = false;         // Zeilenumbrueche bleiben beim Einfuegen erhalten (Notizfelder)
 
     bool HasSelection() const { return caret != anchor; }
     size_t SelBegin() const { return std::min(caret, anchor); }
@@ -34,7 +35,7 @@ struct TextEdit {
         std::wstring s;
         for (wchar_t c : in) {
             if (c == L'\t') c = L' ';
-            if (c >= 0x20 && c != 0x7F) s.push_back(c);
+            if ((c >= 0x20 && c != 0x7F) || (multiline && c == L'\n')) s.push_back(c);
         }
         DeleteSelection();
         const size_t room = text.size() >= maxLen ? 0 : maxLen - text.size();

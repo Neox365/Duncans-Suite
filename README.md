@@ -9,6 +9,7 @@ Windows-Programmsammlung in C++ / Win32 mit einheitlichem Dark-UI, Sprache der P
 | **Duncan's PDF Reader** | PDF-Betrachter und -Werkzeug (PDFium) |
 | **Duncan's Photo Commander** | Foto-Verwaltung (Ordnerbaum, asynchrones Thumbnail-Grid, EXIF-/GPS-Cleaner), Quellen in `photo/` – Grundgerüst |
 | **Oggys Docs-Files** | Rechnungs-Manager und Rechnungs-Generator (Ordner Jahr/Gläubiger, Status-Badges, PDF-Erzeugung), Quellen in `docs/` |
+| **Duncan's Vault** | Lokaler Tresor für Passwörter, Lizenzen, WLAN-Schlüssel und Notizen (AES-256-GCM), Quellen in `vault/` |
 | **Duncan's Tidy** | System-Cleaner und Optimierer, eigenes Projekt ([Neox365/Duncans-Tidy-ToolSet](https://github.com/Neox365/Duncans-Tidy-ToolSet)); die Suite lädt es nur herunter und startet es |
 
 ## Duncan's Photo Commander
@@ -46,6 +47,18 @@ Rechnungs-Manager und Rechnungs-Generator (Win32 + Direct2D, Quellen in `docs/`,
 - **Daten:** Betrag, Fälligkeit, Status, Tags und Notiz stehen in `.oggys-index.tsv` im Rechnungsordner (Textdatei, wandert mit dem Ordner; Schlüssel ist der relative Pfad), Einstellungen in `%LOCALAPPDATA%\OggysDocsFiles\settings.ini`. Dateien, die von außen in den Ordner gelegt werden, erscheinen automatisch als „Offen“ ohne Betrag.
 - **Tests:** `docs/tests/DocsTest.cpp` prüft Beträge, Datum, Namen, Index, Ordner-Scan, Suche, Textfeld, PDF-Aufbau (xref) und Rechnungsberechnung.
 
+## Duncan's Vault
+
+Lokaler Passwort- und Lizenz-Manager (Win32 + Direct2D/DirectWrite in `vault/`, Ziel `DuncansVault.exe`, gleiche dunkle Optik, Textfelder aus `docs/TextEdit.h`).
+
+- **Master-Passwort:** Beim ersten Start legst du es fest (mindestens 8 Zeichen, mit Stärke-Anzeige); danach entsperrt eine Maske den Tresor. Es gibt **keine Wiederherstellung**. Falsche Eingaben werden gebremst (1 bis 6 Sekunden Wartezeit).
+- **Verschlüsselung (nur Windows-eigene CNG, kein Fremdcode):** AES-256 im GCM-Modus (authentifiziert, Manipulationen und falsche Passwörter werden erkannt), Schlüssel per PBKDF2-HMAC-SHA256 mit 600.000 Runden und zufälligem Salz, pro Speichern ein neuer Nonce. Dateiaufbau: `DVLT` | Version | Iterationen | Salz | Nonce | Chiffretext | Tag; der Kopf wird als zusätzliche Daten mit geprüft.
+- **Local-First:** Alles liegt in `%LOCALAPPDATA%\DuncansVault\vault.dat` (daneben die vorherige Fassung als `vault.dat.bak`, geschrieben wird atomar über eine `.tmp`-Datei). Keine Cloud, kein Sync, keine Telemetrie, keine Netzwerkzugriffe.
+- **Kategorien:** Passwörter & Accounts, Software-Lizenzen, WLAN-Schlüssel, Vertrauliche Notizen (mehrzeilige Notizfelder). Suche über Titel, Benutzernamen und Tags; Hinzufügen (Strg+N), Bearbeiten (F2/Enter), Löschen (Entf, mit Rückfrage).
+- **Generator:** Länge 8 bis 64, Groß-/Kleinbuchstaben, Ziffern, Sonderzeichen (ohne leicht verwechselbare Zeichen), kryptografischer Zufall; Stärke-Anzeige in 5 Stufen.
+- **Komfort und Sicherheit:** Ein-Klick-Kopieren von Benutzername, Passwort und Lizenzschlüssel (Strg+C kopiert das Geheimnis des gewählten Eintrags). Die Zwischenablage wird 30 Sekunden nach dem Kopieren eines Geheimnisses geleert und ist vom Windows-Zwischenablageverlauf und der Cloud-Zwischenablage ausgenommen. Automatische Sperre nach 5 Minuten Inaktivität (Zahnrad, abschaltbar), Sperren per Knopf oder Strg+L; beim Sperren werden Einträge und Schlüssel aus dem Speicher überschrieben. Passwortfelder lassen sich nicht kopieren. Zahnrad: Master-Passwort ändern, Tresor-Ordner öffnen.
+- **Tests:** `vault/tests/VaultTest.cpp` (Windows) prüft den PBKDF2-Testvektor aus RFC 7914, Roundtrip, falsches Passwort, Manipulation, Sicherung, Passwortwechsel, Serialisierung, Suche, Generator und Stärke-Bewertung. Für Tests ersetzt die Umgebungsvariable `DUNCANSVAULT_DIR` den Datenordner.
+
 ## Duncan's Driver Updater
 
 Hardware- & Treiber-Manager für Windows. Liest alle Geräte samt Treiberdaten
@@ -69,8 +82,8 @@ Gespeichert in `%LOCALAPPDATA%\DuncansDriverUpdater\settings.ini`. Einen Autosta
 
 ## Duncan's Suite (Launcher)
 
-`DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: fünf Karten starten **Duncan's Tidy** (`DuncansTidy.exe`),
-den **Driver Updater** (`DuncansDriverUpdater.exe`), den **PDF Reader** (`DuncansPdf.exe`), den **Privacy Shield**, **Oggys Docs-Files** (`OggysDocsFiles.exe`) und den **Photo Commander** (`DuncansPhotoCommander.exe`, Download und Update über das Release `modules` wie beim Privacy Shield). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
+`DuncansSuite.exe` ist ein kleines Hauptmenü im selben Dark-Stil: sieben Karten im 3×3-Raster starten **Duncan's Tidy** (`DuncansTidy.exe`),
+den **Driver Updater** (`DuncansDriverUpdater.exe`), den **PDF Reader** (`DuncansPdf.exe`), den **Privacy Shield**, **Oggys Docs-Files** (`OggysDocsFiles.exe`), **Duncan's Vault** (`DuncansVault.exe`) und den **Photo Commander** (`DuncansPhotoCommander.exe`, Download und Update über das Release `modules` wie beim Privacy Shield). Gesucht wird zuerst im Ordner der Suite, für Tidy zusätzlich in
 `%LOCALAPPDATA%\DuncansTidy`. Ist Tidy nicht installiert, zeigt die Karte „Nicht installiert“ und den Button **Herunterladen**: Ein Klick lädt die neueste `DuncansTidy.exe` per HTTPS von den GitHub-Releases (`Neox365/Duncans-Tidy-ToolSet`) nach `%LOCALAPPDATA%\DuncansTidy`, prüft die SHA-256-Summe aus `DuncansTidy.exe.sha256` und schaltet den Button danach auf „Starten“. Fehlt eine andere EXE, erscheint ein Dark-Dialog mit den durchsuchten Pfaden. Der Footer zeigt die Version
 und öffnet mit „Tools-Ordner öffnen“ den Installationsordner. Der Banner zeigt einen leuchtenden Datenstrom in den Farben der drei Programme (Gold = Tidy, Cyan = Driver Updater, Magenta = PDF Reader); beim Start pulsiert er einmalig kurz (ca. 1,8 s, per Timer), danach bleibt er ruhig. Der Installer legt die Suite als Haupt-Verknüpfung auf den Desktop
 und ins Startmenü.

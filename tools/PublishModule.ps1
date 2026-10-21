@@ -3,10 +3,11 @@
 #   .\tools\PublishModule.ps1 -Module DriverUpdater      # release\DuncansDriverUpdater.exe -> Release "modules" im Suite-Repo
 #   .\tools\PublishModule.ps1 -Module Photo            # release\DuncansPhotoCommander.exe -> Release "modules" im Suite-Repo
 #   .\tools\PublishModule.ps1 -Module Docs             # release\OggysDocsFiles.exe       -> Release "modules" im Suite-Repo
+#   .\tools\PublishModule.ps1 -Module Vault            # release\DuncansVault.exe        -> Release "modules" im Suite-Repo
 #   .\tools\PublishModule.ps1 -Module Privacy            # release\DuncansPrivacy.exe       -> Release "modules" im Suite-Repo
 #   .\tools\PublishModule.ps1 -Module Pdf                # release\DuncansPdf.exe (+ pdfium.dll) -> Release v1.0.0 in Neox365/Duncans-PDF-Reader
 # Tidy hat sein eigenes Release.ps1 (DownloadCleaner). Das Skript LAEDT HOCH (gh) - nur nach ausdruecklicher Freigabe ausfuehren.
-param([Parameter(Mandatory)][ValidateSet('DriverUpdater', 'Privacy', 'Photo', 'Docs', 'Pdf')][string]$Module, [switch]$DryRun)
+param([Parameter(Mandatory)][ValidateSet('DriverUpdater', 'Privacy', 'Photo', 'Docs', 'Vault', 'Pdf')][string]$Module, [switch]$DryRun)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rel = Join-Path (Split-Path -Parent $root) 'release'
@@ -30,7 +31,7 @@ if ($Module -eq 'Pdf') {
 }
 
 $repo = 'Neox365/Duncans-Suite'; $tag = 'modules'
-$exe = switch ($Module) { 'DriverUpdater' { 'DuncansDriverUpdater.exe' } 'Photo' { 'DuncansPhotoCommander.exe' } 'Docs' { 'OggysDocsFiles.exe' } default { 'DuncansPrivacy.exe' } }
+$exe = switch ($Module) { 'DriverUpdater' { 'DuncansDriverUpdater.exe' } 'Photo' { 'DuncansPhotoCommander.exe' } 'Docs' { 'OggysDocsFiles.exe' } 'Vault' { 'DuncansVault.exe' } default { 'DuncansPrivacy.exe' } }
 $ver = FileVer $exe
 & $sign (Join-Path $rel $exe)
 

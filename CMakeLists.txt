@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
 project(DuncansDriverUpdater VERSION 1.1.25 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
-set(SUITE_VER "1.1.31")
+set(SUITE_VER "1.1.32")
 set(PDF_VER "1.1.24")
 set(PHOTO_VER "0.2.5")
 set(DOCS_VER "0.3.0")
+set(VAULT_VER "0.1.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -160,3 +161,20 @@ else()
     target_link_options(OggysDocsFiles PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
 target_link_libraries(OggysDocsFiles PRIVATE d2d1 dwrite ole32 shell32 shlwapi uuid dwmapi user32 gdi32)
+
+# ---- Duncan's Vault: lokaler Passwort- und Lizenz-Manager (Direct2D/DirectWrite, Verschluesselung ueber Windows CNG) ----
+add_executable(DuncansVault WIN32
+    vault/main.cpp
+    resources/vault.rc
+)
+target_compile_definitions(DuncansVault PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"${VAULT_VER}\")
+if(MSVC)
+    target_compile_options(DuncansVault PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET DuncansVault PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(DuncansVault PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(DuncansVault PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type -Os -ffunction-sections -fdata-sections)
+    target_link_options(DuncansVault PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
+endif()
+target_link_libraries(DuncansVault PRIVATE d2d1 dwrite ole32 shell32 shlwapi uuid dwmapi user32 gdi32 bcrypt)

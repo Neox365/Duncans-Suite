@@ -164,7 +164,18 @@
 - Suche in Echtzeit über Gläubiger, Dateiname, Tags, Notiz, Status und Betrag.
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
+[DuncansVault.exe]
+## 0.1.0 | 2026-10-21
+- Erste Version: lokaler Tresor für Passwörter & Accounts, Software-Lizenzen, WLAN-Schlüssel und vertrauliche Notizen.
+- Beim ersten Start legst du ein Master-Passwort fest, danach entsperrt eine Maske den Tresor. Alle Einträge liegen in einer einzigen verschlüsselten Datei (AES-256-GCM, Schlüssel per PBKDF2-HMAC-SHA256 mit 600.000 Runden), 100 % lokal, ohne Cloud, Sync oder Telemetrie.
+- Suche über Titel, Benutzernamen und Tags, Kategorien mit Zähler, Anlegen, Bearbeiten und Löschen.
+- Passwort-Generator (Länge, Groß-/Kleinbuchstaben, Ziffern, Sonderzeichen) mit Stärke-Anzeige.
+- Ein-Klick-Kopieren von Benutzername, Passwort und Lizenzschlüssel; die Zwischenablage wird nach 30 Sekunden geleert und taucht nicht im Windows-Zwischenablageverlauf auf.
+- Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
+
 [DuncansSuite.exe]
+## 1.1.32 | 2026-10-21
+- Neues Programm in der Suite: Duncan's Vault (lokaler Passwort- und Lizenz-Manager). Die Karten stehen jetzt in einem 3×3-Raster, die Karten sind kompakter und das Fenster öffnet sich passend zur Bildschirmgröße.
 ## 1.1.31 | 2026-10-20
 - Neues Programm in der Suite: Oggys Docs-Files (Rechnungs-Manager und Rechnungs-Generator), die Karten stehen jetzt in drei Reihen.
 ## 1.1.30 | 2026-10-20
