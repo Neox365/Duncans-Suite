@@ -50,7 +50,9 @@ enum Id {
     D_STATUS0 = 40,                 // 40..43 Status-Auswahl im Formular
     D_CRED0 = 50,                   // 50..57 Glaeubiger-Vorschlaege
     D_SAVESENDER = 60,              // Rechnungsdialog: "Als Standard-Absender speichern"
-    D_SMALLBIZ = 61                 // Rechnungsdialog: "Kleinunternehmer nach § 19 UStG"
+    D_SMALLBIZ = 61,                // Rechnungsdialog: "Kleinunternehmer nach § 19 UStG"
+    D_PAGE0 = 62, D_PAGE1 = 63,     // Rechnungsdialog: Seite "Rechnung" / "Absender & Konto"
+    D_EXAMPLE = 64, D_CLEAR = 65    // Rechnungsdialog: "Beispiel laden" / "Felder leeren"
 };
 enum MenuId {
     M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105,
@@ -66,6 +68,7 @@ struct Settings {
     int vat = 19;
     std::wstring taxNo;                 // Steuernummer / USt-IdNr. des Absenders
     bool smallBiz = false;              // Kleinunternehmer nach § 19 UStG (keine USt auf der Rechnung)
+    std::wstring owner, court, phone, email, web, bank, iban, bic;   // Absender-Profil fuer die 3-spaltige PDF-Fusszeile
     bool pdfReader = true;              // PDFs im Duncan's PDF Reader oeffnen (falls installiert), sonst Standardprogramm
 };
 
@@ -101,6 +104,8 @@ struct Dialog {
     int itemRows = 3;
     bool saveSender = true;               // Rechnung: Absender, Adresse, Steuernummer, Zahlungshinweis und USt-Satz als Standard merken
     bool smallBiz = false;                // Rechnung: Kleinunternehmer nach § 19 UStG
+    int page = 0;                         // Rechnung: 0 = Rechnung, 1 = Absender & Konto (Fusszeile)
+    bool exampleLoaded = false;           // Rechnung: Musterdaten geladen (nichts davon wird als Standard gespeichert)
     std::vector<std::wstring> creditorChips;
     D2D1_RECT_F box{}, totals{};
 };
@@ -151,6 +156,14 @@ void LoadSettings(Settings& st) {
     st.vat = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"MwSt", 19, ini.c_str()), 0, 30);
     st.pdfReader = GetPrivateProfileIntW(L"Allgemein", L"PdfReader", 1, ini.c_str()) != 0;
     st.taxNo = IniString(ini, L"Steuernummer");
+    st.owner = IniString(ini, L"Inhaber");
+    st.court = IniString(ini, L"Registergericht");
+    st.phone = IniString(ini, L"Telefon");
+    st.email = IniString(ini, L"EMail");
+    st.web = IniString(ini, L"Webseite");
+    st.bank = IniString(ini, L"Bank");
+    st.iban = IniString(ini, L"IBAN");
+    st.bic = IniString(ini, L"BIC");
     st.smallBiz = GetPrivateProfileIntW(L"Allgemein", L"Kleinunternehmer", 0, ini.c_str()) != 0;
 }
 
@@ -181,6 +194,14 @@ void SaveSettings(const Settings& st) {
     put(L"MwSt", std::to_wstring(st.vat));
     put(L"PdfReader", st.pdfReader ? L"1" : L"0");
     put(L"Steuernummer", st.taxNo);
+    put(L"Inhaber", st.owner);
+    put(L"Registergericht", st.court);
+    put(L"Telefon", st.phone);
+    put(L"EMail", st.email);
+    put(L"Webseite", st.web);
+    put(L"Bank", st.bank);
+    put(L"IBAN", st.iban);
+    put(L"BIC", st.bic);
     put(L"Kleinunternehmer", st.smallBiz ? L"1" : L"0");
 }
 
@@ -285,7 +306,7 @@ private:
     void ApplyAdd(bool skipOnly);
     void BeginEditDialog(const docs::Doc& d);
     void ApplyEdit();
-    void BeginInvoiceDialog();
+    void BeginInvoiceDialog(int mode = 0);   // 0 = aus den Einstellungen, 1 = Beispieldaten, 2 = leere Maske
     void ApplyInvoice();
     void CloseDialog();
     void SetStatusOfSelected(docs::Status s);
@@ -939,14 +960,27 @@ void App::DrawInvoice() {
     const float pad = 24 * k, fh = 36 * k, rowH = 42 * k;
     const float bw = std::min(940 * k, cr.right - 40 * k);
     // Titel + 3 Formularreihen + Positionskopf + Zeilen + Summenblock + Zahlungshinweis + Fehlerzeile + Knoepfe
-    const float height = std::min((float)cr.bottom - 20 * k, pad + 36 * k + 4 * (24 * k + fh) + 20 * k + d.itemRows * rowH + 46 * k + (24 * k + fh) + 26 * k + 38 * k + pad);
+    const float height = std::min((float)cr.bottom - 20 * k, pad + 36 * k + 3 * (24 * k + fh) + 20 * k + d.itemRows * rowH + 46 * k + (24 * k + fh) + 26 * k + 38 * k + pad);
     d.box = {(cr.right - bw) / 2, (cr.bottom - height) / 2, (cr.right + bw) / 2, (cr.bottom + height) / 2};
     FillRR(d.box, 14 * k, Theme::Panel);
     StrokeRR(d.box, 14 * k, Theme::Border);
     const float x0 = d.box.left + pad, fw = W(d.box) - 2 * pad, gap = 14 * k;
     float y = d.box.top + pad;
-    Txt(d.title, {x0, y, d.box.right - pad, y + 30 * k}, fTitle.Get(), Theme::Text);
+    Txt(d.title, {x0, y, x0 + 250 * k, y + 30 * k}, fTitle.Get(), Theme::Text);
+    {   // Seiten-Reiter und Beispiel-/Leeren-Knoepfe in der Titelzeile
+        const float th = 30 * k;
+        Button(D_PAGE0, {x0 + 260 * k, y, x0 + 260 * k + 110 * k, y + th}, L"Rechnung", d.page == 0);
+        Button(D_PAGE1, {x0 + 380 * k, y, x0 + 380 * k + 160 * k, y + th}, L"Absender & Konto", d.page == 1);
+        const float rx = d.box.right - pad;
+        Button(D_CLEAR, {rx - 120 * k, y, rx, y + th}, L"Felder leeren", false);
+        Button(D_EXAMPLE, {rx - 120 * k - 8 * k - 130 * k, y, rx - 120 * k - 8 * k, y + th}, L"Beispiel laden", false);
+    }
     y += 36 * k;
+    for (auto& f : d.fields) {   // Felder der nicht angezeigten Seite ausblenden
+        const bool footerField = f.id >= 9 && f.id <= 17 && f.id != 8;
+        f.hidden = (d.page == 1) != footerField;
+        if (f.hidden) f.rc = {};
+    }
     auto place = [&](int id, float x, float w, float yy) {
         Field* f = FieldById(id);
         if (!f) return;
@@ -954,23 +988,34 @@ void App::DrawInvoice() {
         f->rc = {x, yy + 20 * k, x + w, yy + 20 * k + fh};
     };
     const float half = (fw - gap) / 2;
+    if (d.page == 1) {   // Absender & Konto: Steuer, Vertreter/Register, Kontakt, Bank (Inhalt der Fusszeile)
+        place(9, x0, half, y);
+        {
+            const float bs = 22 * k, cy = y + 20 * k + (fh - bs) / 2;
+            const D2D1_RECT_F box{x0 + half + gap, cy, x0 + half + gap + bs, cy + bs};
+            const bool hover = m_hoverBtn == D_SMALLBIZ;
+            FillRR(box, 6 * k, d.smallBiz ? Theme::Accent : Theme::Bg);
+            StrokeRR(box, 6 * k, d.smallBiz ? Theme::Accent : (hover ? Theme::TextDim : Theme::Border), 1.5f);
+            if (d.smallBiz) Txt(L"\u2713", box, fCenter.Get(), 0xFFFFFF);
+            const D2D1_RECT_F label{box.right + 10 * k, y + 20 * k, x0 + fw, y + 20 * k + fh};
+            Txt(L"Kleinunternehmer nach § 19 UStG", label, fNormal.Get(), hover ? Theme::Text : Theme::TextDim);
+            m_hits.push_back({D_SMALLBIZ, {x0 + half + gap, y + 20 * k, x0 + fw, y + 20 * k + fh}});
+        }
+        y += 24 * k + fh;
+        place(10, x0, half, y);  place(11, x0 + half + gap, half, y);
+        y += 24 * k + fh;
+        const float third = (fw - 2 * gap) / 3;
+        place(12, x0, third, y);  place(13, x0 + third + gap, third, y);  place(14, x0 + 2 * (third + gap), third, y);
+        y += 24 * k + fh;
+        place(15, x0, third, y);  place(16, x0 + third + gap, third, y);  place(17, x0 + 2 * (third + gap), third, y);
+        y += 24 * k + fh;
+        Txt(L"Diese Angaben stehen in der dreispaltigen Fußzeile der PDF (links Firma und Register, Mitte Kontakt, rechts Bankverbindung).",
+            {x0, y, x0 + fw, y + 22 * k}, fSmall.Get(), Theme::TextDim);
+    } else {
     // Absender / Empfaenger nebeneinander
     place(0, x0, half, y);                 place(2, x0 + half + gap, half, y);
     y += 24 * k + fh;
     place(1, x0, half, y);                 place(3, x0 + half + gap, half, y);
-    y += 24 * k + fh;
-    place(9, x0, half, y);                 // Steuernummer / USt-IdNr. + Kleinunternehmer-Checkbox
-    {
-        const float bs = 22 * k, cy = y + 20 * k + (fh - bs) / 2;
-        const D2D1_RECT_F box{x0 + half + gap, cy, x0 + half + gap + bs, cy + bs};
-        const bool hover = m_hoverBtn == D_SMALLBIZ;
-        FillRR(box, 6 * k, d.smallBiz ? Theme::Accent : Theme::Bg);
-        StrokeRR(box, 6 * k, d.smallBiz ? Theme::Accent : (hover ? Theme::TextDim : Theme::Border), 1.5f);
-        if (d.smallBiz) Txt(L"\u2713", box, fCenter.Get(), 0xFFFFFF);
-        const D2D1_RECT_F label{box.right + 10 * k, y + 20 * k, x0 + fw, y + 20 * k + fh};
-        Txt(L"Kleinunternehmer nach § 19 UStG", label, fNormal.Get(), hover ? Theme::Text : Theme::TextDim);
-        m_hits.push_back({D_SMALLBIZ, {x0 + half + gap, y + 20 * k, x0 + fw, y + 20 * k + fh}});
-    }
     y += 24 * k + fh;
     const float quarter = (fw - 3 * gap) / 4;
     place(4, x0, quarter, y); place(5, x0 + (quarter + gap), quarter, y); place(6, x0 + 2 * (quarter + gap), quarter, y); place(7, x0 + 3 * (quarter + gap), quarter, y);
@@ -1022,9 +1067,10 @@ void App::DrawInvoice() {
     y += 46 * k;
     place(8, x0, fw, y);
     y += 24 * k + fh;
-    if (!d.error.empty()) Txt(d.error, {x0, y, x0 + fw, y + 24 * k}, fNormal.Get(), Theme::Danger);
-    y += 26 * k;
+    }
     const float bh = 38 * k;
+    y = d.box.bottom - pad - bh;   // Fehlerzeile und Knoepfe sitzen auf beiden Seiten an derselben Stelle
+    if (!d.error.empty()) Txt(d.error, {x0, y - 28 * k, x0 + fw, y - 4 * k}, fNormal.Get(), Theme::Danger);
     float bx = d.box.right - pad;
     D2D1_RECT_F ok{bx - 170 * k, y, bx, y + bh};
     Button(D_OK, ok, L"PDF erzeugen", true);
@@ -1544,37 +1590,75 @@ void App::ApplyEdit() {
     Invalidate();
 }
 
-void App::BeginInvoiceDialog() {
-    if (m_dlg.kind != DlgKind::None) return;
+void App::BeginInvoiceDialog(int mode) {
+    if (mode == 0 && m_dlg.kind != DlgKind::None) return;
+    if (mode != 0 && m_dlg.kind != DlgKind::Invoice) return;
+    const int keepPage = mode ? m_dlg.page : 0;
+    const bool keepSave = mode ? m_dlg.saveSender : true, keepSmall = mode ? m_dlg.smallBiz : m_settings.smallBiz;
     m_dlg = Dialog{};
     Dialog& d = m_dlg;
     d.kind = DlgKind::Invoice;
     d.title = L"Rechnung erstellen";
-    d.smallBiz = m_settings.smallBiz;
+    d.page = keepPage;
+    d.saveSender = keepSave;
+    d.smallBiz = keepSmall;
+    d.exampleLoaded = mode == 1;
     const std::wstring today = TodayIso();
     std::vector<std::wstring> names;
     for (const auto& x : m_all) names.push_back(x.name);
     const int thisYear = std::stoi(today.substr(0, 4));
     const std::wstring nextNo = docs::FormatInvoiceNo(thisYear, docs::NextInvoiceNo(InvoiceCounter(thisYear), names, thisYear));
-    d.fields.push_back(MakeField(0, L"Gläubiger (Absender)", L"Name / Firma", m_settings.issuer, 60));
-    d.fields.push_back(MakeField(1, L"Absender-Adresse", L"Straße | PLZ Ort", m_settings.issuerAddr, 140));
-    d.fields.push_back(MakeField(2, L"Empfänger", L"Name / Firma", L"", 60));
-    d.fields.push_back(MakeField(3, L"Empfänger-Adresse", L"Straße | PLZ Ort", L"", 140));
-    d.fields.push_back(MakeField(9, L"Steuernummer / USt-IdNr.", L"z. B. 12/345/67890 oder DE123456789", m_settings.taxNo, 30));
-    d.fields.push_back(MakeField(4, L"Rechnungsnummer", (L"leer = " + nextNo).c_str(), L"", 30));
+    const std::wstring defNote = m_settings.payNote.empty() ? std::wstring(invoice::DefaultNote()) : m_settings.payNote;
+    // Vorbelegung je Modus: 0 = gespeichertes Absender-Profil, 1 = Beispiel mit Musterdaten, 2 = leer
+    struct Item3 { const wchar_t* desc; const wchar_t* qty; const wchar_t* unit; };
+    std::wstring issuer, addr, tax, owner, court, phone, mail, web, bank, iban, bic, rcp, rcpAddr, number, note = defNote;
+    std::wstring vat = std::to_wstring(m_settings.vat);
+    std::vector<Item3> items;
+    if (mode == 0) {
+        issuer = m_settings.issuer; addr = m_settings.issuerAddr; tax = m_settings.taxNo; owner = m_settings.owner; court = m_settings.court;
+        phone = m_settings.phone; mail = m_settings.email; web = m_settings.web; bank = m_settings.bank; iban = m_settings.iban; bic = m_settings.bic;
+    } else if (mode == 1) {
+        issuer = L"Mustermann Webdesign"; addr = L"Musterstraße 12 | 12345 Musterstadt"; tax = L"12/345/67890";
+        owner = L"Inhaber: Max Mustermann"; court = L"Amtsgericht Musterstadt, HRB 12345";
+        phone = L"+49 123 4567890"; mail = L"kontakt@mustermann.example"; web = L"www.mustermann.example";
+        bank = L"Musterbank eG"; iban = L"DE02 1203 0000 0000 2020 51"; bic = L"BYLADEM1001";
+        rcp = L"Beispiel GmbH"; rcpAddr = L"Hauptstraße 1 | 10115 Berlin"; number = L"BEISPIEL"; vat = L"19";
+        items = {{L"Webdesign: Gestaltung und Umsetzung der Firmenwebsite", L"1", L"1.200,00"},
+                 {L"Hosting und Wartung (Monate)", L"12", L"9,90"},
+                 {L"Support (Stunden)", L"2", L"45,00"}};
+        note = invoice::DefaultNote();
+    }
+    d.fields.push_back(MakeField(0, L"Gläubiger (Absender)", L"Name / Firma", issuer, 60));
+    d.fields.push_back(MakeField(1, L"Absender-Adresse", L"Straße | PLZ Ort", addr, 140));
+    d.fields.push_back(MakeField(2, L"Empfänger", L"Name / Firma", rcp, 60));
+    d.fields.push_back(MakeField(3, L"Empfänger-Adresse", L"Straße | PLZ Ort", rcpAddr, 140));
+    d.fields.push_back(MakeField(4, L"Rechnungsnummer", (L"leer = " + nextNo).c_str(), number, 30));
     d.fields.push_back(MakeField(5, L"Rechnungsdatum", L"TT.MM.JJJJ", docs::FormatDate(today), 12));
     d.fields.back().dateMask = true;
     d.fields.push_back(MakeField(6, L"Fällig am", L"TT.MM.JJJJ", docs::FormatDate(docs::AddDaysIso(today, 14)), 12));
     d.fields.back().dateMask = true;
-    d.fields.push_back(MakeField(7, d.smallBiz ? L"USt-Satz (entfällt)" : L"USt-Satz (%)", L"19", std::to_wstring(m_settings.vat), 3));
+    d.fields.push_back(MakeField(7, d.smallBiz ? L"USt-Satz (entfällt)" : L"USt-Satz (%)", L"19", vat, 3));
+    d.itemRows = std::max<int>(3, (int)items.size());
     for (int i = 0; i < d.itemRows; ++i) {
-        d.fields.push_back(MakeField(100 + 3 * i, L"", L"Leistung / Artikel", L"", 120));
-        d.fields.push_back(MakeField(101 + 3 * i, L"", L"1", i == 0 ? L"1" : L"", 8));
-        d.fields.push_back(MakeField(102 + 3 * i, L"", L"0,00", L"", 14));
+        const bool have = i < (int)items.size();
+        d.fields.push_back(MakeField(100 + 3 * i, L"", L"Leistung / Artikel", have ? items[i].desc : L"", 120));
+        d.fields.push_back(MakeField(101 + 3 * i, L"", L"1", have ? items[i].qty : (items.empty() && i == 0 ? L"1" : L""), 8));
+        d.fields.push_back(MakeField(102 + 3 * i, L"", L"0,00", have ? items[i].unit : L"", 14));
     }
-    d.fields.push_back(MakeField(8, L"Zahlungshinweis / Bankverbindung", L"z. B. IBAN DE00 … – Vielen Dank für Ihren Auftrag!", m_settings.payNote, 240));
+    d.fields.push_back(MakeField(8, L"Schlusstext / Zahlungshinweis  ([Gesamtsumme] und [Fälligkeitsdatum] werden eingesetzt)", L"Standardtext", note, 600));
+    d.fields.push_back(MakeField(9, L"Steuernummer / USt-IdNr.", L"z. B. 12/345/67890 oder DE123456789", tax, 30));
+    d.fields.push_back(MakeField(10, L"Inhaber / gesetzlicher Vertreter", L"z. B. Inhaber: Max Mustermann", owner, 80));
+    d.fields.push_back(MakeField(11, L"Amtsgericht / Handelsregister", L"z. B. Amtsgericht Musterstadt, HRB 12345", court, 80));
+    d.fields.push_back(MakeField(12, L"Telefon", L"+49 …", phone, 40));
+    d.fields.push_back(MakeField(13, L"E-Mail", L"name@beispiel.de", mail, 80));
+    d.fields.push_back(MakeField(14, L"Webseite", L"www.beispiel.de", web, 80));
+    d.fields.push_back(MakeField(15, L"Bank", L"Bankname", bank, 60));
+    d.fields.push_back(MakeField(16, L"IBAN", L"DE00 0000 0000 0000 0000 00", iban, 40));
+    d.fields.push_back(MakeField(17, L"BIC", L"BICXXXXX", bic, 14));
+    for (auto& f : d.fields)
+        if (f.id >= 9 && f.id <= 17) f.hidden = d.page == 0;
     m_focusId = kNoFocus;
-    FocusNext(false);
+    if (mode == 0) FocusNext(false);
     Invalidate();
 }
 
@@ -1588,6 +1672,8 @@ void App::ApplyInvoice() {
     data.recipientAddress = txt(3);
     data.note = txt(8);
     data.taxNo = txt(9);
+    data.owner = txt(10); data.court = txt(11); data.phone = txt(12); data.email = txt(13); data.web = txt(14);
+    data.bank = txt(15); data.iban = txt(16); data.bic = txt(17);
     data.smallBusiness = d.smallBiz;
     if (data.issuer.empty()) { d.error = L"Bitte den Gläubiger (Absender) eintragen."; Invalidate(); return; }
     if (data.recipient.empty()) { d.error = L"Bitte den Empfänger eintragen."; Invalidate(); return; }
@@ -1622,7 +1708,7 @@ void App::ApplyInvoice() {
         data.number = docs::FormatInvoiceNo(yearNo, usedNo);
     } else {
         int y = 0, n = 0;
-        if (docs::InvoiceNoTaken(names, data.number)) { d.error = L"Die Rechnungsnummer " + data.number + L" ist schon vergeben."; Invalidate(); return; }
+        if (!d.exampleLoaded && docs::InvoiceNoTaken(names, data.number)) { d.error = L"Die Rechnungsnummer " + data.number + L" ist schon vergeben."; Invalidate(); return; }
         if (docs::ParseInvoiceNo(data.number, y, n) && y == yearNo) usedNo = n;
     }
     const std::string pdf = invoice::BuildPdf(data);
@@ -1641,18 +1727,20 @@ void App::ApplyInvoice() {
     docs::Meta m;
     m.cents = invoice::Compute(data).gross;
     m.due = data.dueIso;
-    m.status = docs::Status::Open;
-    m.tags = L"eigene Rechnung " + docs::CleanField(data.recipient);
+    m.status = d.exampleLoaded ? docs::Status::Paid : docs::Status::Open;   // Beispiele sollen die offenen Betraege nicht verfaelschen
+    m.tags = (d.exampleLoaded ? L"Beispiel " : L"") + std::wstring(L"eigene Rechnung ") + docs::CleanField(data.recipient);
     m_meta[rel] = m;
     SaveIndex();
     // Absenderdaten als Standard fuer die naechsten Rechnungen merken (nur wenn die Checkbox gesetzt ist)
-    const bool savedSender = d.saveSender;
+    const bool savedSender = d.saveSender && !d.exampleLoaded;   // Musterdaten nie als Standard-Absender merken
     if (savedSender) {
         m_settings.issuer = data.issuer;
         m_settings.issuerAddr = txt(1);
         m_settings.payNote = data.note;
         if (!d.smallBiz) m_settings.vat = data.vatPercent;
         m_settings.taxNo = data.taxNo;
+        m_settings.owner = data.owner; m_settings.court = data.court; m_settings.phone = data.phone; m_settings.email = data.email;
+        m_settings.web = data.web; m_settings.bank = data.bank; m_settings.iban = data.iban; m_settings.bic = data.bic;
         m_settings.smallBiz = d.smallBiz;
         SaveSettings(m_settings);
     }
@@ -1868,6 +1956,12 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 break;
             case D_CANCEL: CloseDialog(); break;
             case D_SAVESENDER: m_dlg.saveSender = !m_dlg.saveSender; break;
+            case D_PAGE0: case D_PAGE1:
+                m_dlg.page = id == D_PAGE1 ? 1 : 0;
+                m_focusId = kNoFocus;
+                break;
+            case D_EXAMPLE: BeginInvoiceDialog(1); break;
+            case D_CLEAR: BeginInvoiceDialog(2); break;
             case D_SMALLBIZ:
                 m_dlg.smallBiz = !m_dlg.smallBiz;
                 if (Field* v = FieldById(7)) {

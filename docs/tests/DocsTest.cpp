@@ -301,6 +301,37 @@ static void installmentRate() {
     CHECK(docs::Matches(d, L"rate 3"));
 }
 
+static void closingAndFooter() {
+    // Platzhalter im Schlusstext
+    const std::wstring t = invoice::ExpandNote(invoice::DefaultNote(), 11900, L"2026-11-04");
+    CHECK(t.find(L"119,00") != std::wstring::npos && t.find(L"04.11.2026") != std::wstring::npos);
+    CHECK(t.find(L"[") == std::wstring::npos);
+    const std::wstring noDue = invoice::ExpandNote(L"Zahlbar bis zum [Fälligkeitsdatum].", 100, L"");
+    CHECK(noDue.find(L"bis zum") == std::wstring::npos && noDue.find(L"[") == std::wstring::npos);
+    CHECK(invoice::ReplaceAll(L"aXbXc", L"X", L"--") == L"a--b--c" && invoice::ReplaceAll(L"abc", L"x", L"y") == L"abc");
+
+    invoice::Data d;
+    d.issuer = L"Mustermann Webdesign";
+    d.recipient = L"Beispiel GmbH";
+    d.number = L"BEISPIEL";
+    d.dateIso = L"2026-10-21";
+    d.dueIso = L"2026-11-04";
+    for (int i = 0; i < 3; ++i) { invoice::Item it; it.desc = L"Leistung"; it.qty = 1; it.unitCents = 10000; d.items.push_back(it); }
+    const std::string plain = invoice::BuildPdf(d);
+    d.owner = L"Inhaber: Max Mustermann"; d.court = L"Amtsgericht Musterstadt, HRB 12345"; d.taxNo = L"DE123456789";
+    d.phone = L"+49 123 456"; d.email = L"a@b.de"; d.web = L"www.b.de";
+    d.bank = L"Musterbank"; d.iban = L"DE02 1203 0000 0000 2020 51"; d.bic = L"BYLADEM1001";
+    const std::string full = invoice::BuildPdf(d);
+    CHECK(full.size() > plain.size() && full.find("IBAN") != std::string::npos && plain.find("IBAN") == std::string::npos);
+    CHECK(full.find("USt-IdNr.") != std::string::npos && full.find("E-Mail") != std::string::npos && full.find("Tel.") != std::string::npos);
+    // viele Positionen: Fusszeile steht auf jeder Seite
+    for (int i = 0; i < 30; ++i) { invoice::Item it; it.desc = L"Position"; it.qty = 1; it.unitCents = 100; d.items.push_back(it); }
+    const std::string multi = invoice::BuildPdf(d);
+    size_t ibans = 0;
+    for (size_t p = 0; (p = multi.find("(IBAN", p)) != std::string::npos; ++p) ++ibans;
+    CHECK(ibans >= 2);
+}
+
 static void smallBusiness() {
     invoice::Data d;
     d.issuer = L"Max Muster";
@@ -326,7 +357,7 @@ static void smallBusiness() {
 }
 
 int main() {
-    amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness(); installmentRate();
+    amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness(); installmentRate(); closingAndFooter();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

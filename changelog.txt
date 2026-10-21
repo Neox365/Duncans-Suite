@@ -137,6 +137,11 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.3.0 | 2026-10-21
+- Rechnung erstellen: Zwei Seiten im Dialog – „Rechnung“ und „Absender & Konto“. Dort stehen Steuernummer/USt-IdNr., Kleinunternehmer-Checkbox, Inhaber/gesetzlicher Vertreter, Amtsgericht/HRB, Telefon, E-Mail, Webseite sowie Bank, IBAN und BIC. Alles wird mit „Als Standard-Absender speichern“ gemerkt.
+- Neue dreispaltige Fußzeile auf jeder PDF-Seite: links Firma, Vertreter, Register und Steuernummer, in der Mitte der Kontakt, rechts die Bankverbindung.
+- „Schlusstext / Zahlungshinweis“ mit Standardtext („Bitte überweisen Sie den Rechnungsbetrag von [Gesamtsumme] bis zum [Fälligkeitsdatum] …“); die Platzhalter werden beim Erzeugen eingesetzt, der Text ist frei änderbar und wird mit dem Absender-Profil gespeichert. Bei Kleinunternehmern folgt automatisch der Hinweis nach § 19 UStG.
+- Neue Knöpfe „Beispiel laden“ (füllt alle Felder mit Musterdaten, Beispiel-PDFs werden nicht als Standard-Absender gemerkt, nehmen keine laufende Rechnungsnummer und gelten als „Bezahlt“) und „Felder leeren“.
 ## 0.2.1 | 2026-10-21
 - Rechnung erstellen: Ist „Kleinunternehmer nach § 19 UStG“ aktiv, wird das Feld USt-Satz ausgegraut und gesperrt, die Summenzeile zeigt keine Umsatzsteuer (0 €).
 - Rechnung hinzufügen und bearbeiten: Beim Status „Ratenzahlung“ erscheint das Feld „Rate / Fortschritt“ (z. B. „Rate 3 von 12“ oder „50 € / Monat“). Der Text steht in der Liste neben dem Status-Badge und wird bei der Suche berücksichtigt.
