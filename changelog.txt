@@ -141,6 +141,8 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.3.1 | 2026-10-23
+- Verbessert: Der Textcursor blinkt nur noch, solange das Fenster aktiv ist. Im Hintergrund verbraucht das Programm keine Rechenzeit mehr.
 ## 0.3.0 | 2026-10-21
 - Rechnung erstellen: Zwei Seiten im Dialog – „Rechnung“ und „Absender & Konto“. Dort stehen Steuernummer/USt-IdNr., Kleinunternehmer-Checkbox, Inhaber/gesetzlicher Vertreter, Amtsgericht/HRB, Telefon, E-Mail, Webseite sowie Bank, IBAN und BIC. Alles wird mit „Als Standard-Absender speichern“ gemerkt.
 - Neue dreispaltige Fußzeile auf jeder PDF-Seite: links Firma, Vertreter, Register und Steuernummer, in der Mitte der Kontakt, rechts die Bankverbindung.
@@ -190,6 +192,8 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansSuite.exe]
+## 1.1.34 | 2026-10-21
+- Neue Kachel „Duncan's Office“ (Writer & Sheets) als Coming Soon: das Programm ist noch in Entwicklung.
 ## 1.1.33 | 2026-10-21
 - Fehlerbehebung: Bei höheren Fenstern oder Bildschirmen fehlten auf den Karten die Beschreibungstexte (nur Symbol, Titel und Knöpfe waren zu sehen). Die Karten nutzen jetzt in diesem Größenbereich das kompakte Layout mit Beschreibung.
 ## 1.1.32 | 2026-10-21
