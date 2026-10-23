@@ -932,7 +932,7 @@ void App::InitTreeRoots() {
     DWORD drives = GetLogicalDrives();
     for (int i = 0; i < 26; ++i)
         if (drives & (1u << i)) {
-            std::wstring d = std::wstring(1, L'A' + i) + L":\\";
+            std::wstring d = std::wstring(1, static_cast<wchar_t>(L'A' + i)) + L":\\";
             addRoot(d, d);
         }
     Flatten();
