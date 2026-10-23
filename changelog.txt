@@ -191,7 +191,15 @@
 - Ein-Klick-Kopieren von Benutzername, Passwort und Lizenzschlüssel; die Zwischenablage wird nach 30 Sekunden geleert und taucht nicht im Windows-Zwischenablageverlauf auf.
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
+[DuncansOffice.exe]
+## 0.1.0 | 2026-10-23
+- Neues Programm: Duncan's Office mit Writer und Sheets in einem Fenster, Auswahl beim Start und Wechsel über die Reiter oben.
+- Writer: Fett, Kursiv, Unterstrichen, Schriftgröße, Ausrichtung, Wort- und Zeichenzähler; Öffnen und Speichern als .rtf und .txt, Export als PDF (nur Text) und Drucken.
+- Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
+
 [DuncansSuite.exe]
+## 1.1.35 | 2026-10-23
+- Neues Programm in der Suite: Duncan's Office (Writer und Sheets). Die Kachel „Coming Soon“ ist durch das echte Programm ersetzt.
 ## 1.1.34 | 2026-10-21
 - Neue Kachel „Duncan's Office“ (Writer & Sheets) als Coming Soon: das Programm ist noch in Entwicklung.
 ## 1.1.33 | 2026-10-21

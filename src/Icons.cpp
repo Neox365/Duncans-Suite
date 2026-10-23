@@ -236,6 +236,16 @@ namespace
             Line(0.3f, 0.78f, 0.3f, 0.88f);
             Line(0.7f, 0.78f, 0.7f, 0.88f);
             break;
+        case CategoryIcon::Office:
+            // Blatt mit Textzeilen und kleiner Tabelle
+            RRect(0.2f, 0.1f, 0.6f, 0.8f, 0.08f);
+            Line(0.32f, 0.24f, 0.68f, 0.24f);
+            Line(0.32f, 0.36f, 0.58f, 0.36f);
+            RRect(0.32f, 0.5f, 0.36f, 0.26f, 0.03f);
+            Line(0.44f, 0.5f, 0.44f, 0.76f);
+            Line(0.56f, 0.5f, 0.56f, 0.76f);
+            Line(0.32f, 0.63f, 0.68f, 0.63f);
+            break;
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);

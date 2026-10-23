@@ -3,7 +3,7 @@
 ; Komplett-Installer (alle Programme enthalten):                                    ISCC.exe /DFull=1 installer\installer.iss
 
 #define MyAppName      "Duncan's Driver Updater"
-#define MyAppVersion   "1.1.34"
+#define MyAppVersion   "1.1.35"
 #define MyAppPublisher "Duncan"
 #define MyAppExeName   "DuncansDriverUpdater.exe"
 ; Duncan's Suite: zentraler Launcher (Haupt-Startverknuepfung fuer Desktop und Startmenue)
@@ -62,6 +62,8 @@ Source: "..\release\DuncansPhotoCommander.exe"; DestDir: "{app}"; Flags: ignorev
 Source: "..\release\OggysDocsFiles.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Duncan's Vault (lokaler Passwort-Tresor)
 Source: "..\release\DuncansVault.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Duncan's Office (Writer und Sheets)
+Source: "..\release\DuncansOffice.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Duncan's Privacy Shield (Administratorrechte, Registry-Einstellungen mit Sicherung)
 Source: "..\release\DuncansPrivacy.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Hersteller-Tabelle fuer den Grafiktreiber-Abgleich (vom Nutzer editierbar)
@@ -76,6 +78,7 @@ Name: "{group}\Duncan's PDF Reader"; Filename: "{app}\DuncansPdf.exe"
 Name: "{group}\Duncan's Photo Commander"; Filename: "{app}\DuncansPhotoCommander.exe"
 Name: "{group}\Oggys Docs-Files"; Filename: "{app}\OggysDocsFiles.exe"
 Name: "{group}\Duncan's Vault"; Filename: "{app}\DuncansVault.exe"
+Name: "{group}\Duncan's Office"; Filename: "{app}\DuncansOffice.exe"
 Name: "{group}\Duncan's Privacy Shield"; Filename: "{app}\DuncansPrivacy.exe"
 #endif
 Name: "{group}\{cm:UninstallProgram,{#SuiteName}}"; Filename: "{uninstallexe}"
@@ -90,6 +93,7 @@ Type: files; Name: "{localappdata}\DuncansPrivacy\DuncansPrivacy.exe*"
 Type: files; Name: "{localappdata}\DuncansPhotoCommander\DuncansPhotoCommander.exe*"
 Type: files; Name: "{localappdata}\OggysDocsFiles\OggysDocsFiles.exe*"
 Type: files; Name: "{localappdata}\DuncansVault\DuncansVault.exe*"
+Type: files; Name: "{localappdata}\DuncansOffice\DuncansOffice.exe*"
 Type: dirifempty; Name: "{localappdata}\DuncansDriverUpdater"
 Type: dirifempty; Name: "{localappdata}\DuncansPdf"
 Type: dirifempty; Name: "{localappdata}\DuncansPrivacy"

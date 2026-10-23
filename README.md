@@ -10,6 +10,7 @@ Windows-Programmsammlung in C++ / Win32 mit einheitlichem Dark-UI, Sprache der P
 | **Duncan's Photo Commander** | Foto-Verwaltung (Ordnerbaum, asynchrones Thumbnail-Grid, EXIF-/GPS-Cleaner), Quellen in `photo/` – Grundgerüst |
 | **Oggys Docs-Files** | Rechnungs-Manager und Rechnungs-Generator (Ordner Jahr/Gläubiger, Status-Badges, PDF-Erzeugung), Quellen in `docs/` |
 | **Duncan's Vault** | Lokaler Tresor für Passwörter, Lizenzen, WLAN-Schlüssel und Notizen (AES-256-GCM), Quellen in `vault/` |
+| **Duncan's Office** | Writer (Texte, .txt/.rtf, PDF-Export, Drucken) und Sheets (Tabellen mit Formeln, .csv) in einem Programm, Quellen in `office/` |
 | **Duncan's Tidy** | System-Cleaner und Optimierer, eigenes Projekt ([Neox365/Duncans-Tidy-ToolSet](https://github.com/Neox365/Duncans-Tidy-ToolSet)); die Suite lädt es nur herunter und startet es |
 
 ## Duncan's Photo Commander
@@ -46,6 +47,15 @@ Rechnungs-Manager und Rechnungs-Generator (Win32 + Direct2D, Quellen in `docs/`,
 - **Datenschutz:** Alle Daten (Index, Einstellungen, Rechnungs-PDFs) liegen lokal auf dem Gerät; das Programm überträgt keine personenbezogenen Daten an externe Server (steht auch im Dialog „Über Oggys Docs-Files“).
 - **Daten:** Betrag, Fälligkeit, Status, Tags und Notiz stehen in `.oggys-index.tsv` im Rechnungsordner (Textdatei, wandert mit dem Ordner; Schlüssel ist der relative Pfad), Einstellungen in `%LOCALAPPDATA%\OggysDocsFiles\settings.ini`. Dateien, die von außen in den Ordner gelegt werden, erscheinen automatisch als „Offen“ ohne Betrag.
 - **Tests:** `docs/tests/DocsTest.cpp` prüft Beträge, Datum, Namen, Index, Ordner-Scan, Suche, Textfeld, PDF-Aufbau (xref) und Rechnungsberechnung.
+
+## Duncan's Office
+
+Textverarbeitung und Tabellenkalkulation in einem Programm (Win32 + GDI in `office/`, Ziel `DuncansOffice.exe`, dunkles Flat-Design). Beim Start wählt man **Writer** oder **Sheets**, oben in der Leiste wechselt man jederzeit.
+
+- **Writer:** Rich-Edit-Steuerelement mit Fett, Kursiv, Unterstrichen, Schriftgröße (A−/A+ und Liste) und Ausrichtung. Öffnen und Speichern als `.rtf` oder `.txt` (UTF-8), Export als PDF (nur Text, A4, Zeilenumbruch) und Drucken. Die Statusleiste zeigt Wörter und Zeichen live. Die Seite ist hell, damit gespeicherte RTF-Dateien auch in anderen Programmen lesbar sind.
+- **Sheets:** Raster A–Z × 1–100 mit Formelzeile. Formeln: `+ - * / ^`, Klammern, Zellbezüge, Bereiche und `SUMME`, `MITTELWERT`, `MIN`, `MAX`, `ANZAHL` (auch englisch). Argumente trennt `;`. Fehler wie `#DIV/0!`, `#WERT!`, `#NAME?`, `#BEZUG!`, `#ZIRKEL!`. Speichern und Öffnen als `.csv` (UTF-8, Trennzeichen `;`, beim Öffnen wird `;`, `,` oder Tab erkannt; Formeln bleiben als Text erhalten).
+- **Tastenkürzel:** Strg+N/O/S, Strg+Umschalt+S (speichern unter), Strg+P (drucken), Strg+B/I/U, Strg+1/2 (Writer/Sheets); im Raster Pfeile, Tab, Enter, F2, Entf, Strg+C/X/V.
+- **Tests:** `office/tests/OfficeTest.cpp` prüft Formeln, Fehler, Zirkelbezüge, CSV und Textkodierung ohne Windows-Fenster.
 
 ## Duncan's Vault
 

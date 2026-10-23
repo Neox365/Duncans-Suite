@@ -8,9 +8,9 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rel = Join-Path (Split-Path -Parent $root) 'release'
 function Ver($f) { $v = (Get-Item (Join-Path $rel $f)).VersionInfo.FileVersion; ($v -split '\.')[0..2] -join '.' }
-$lines = @("DuncansDriverUpdater.exe=$(Ver 'DuncansDriverUpdater.exe')", "DuncansPrivacy.exe=$(Ver 'DuncansPrivacy.exe')", "DuncansPhotoCommander.exe=$(Ver 'DuncansPhotoCommander.exe')", "OggysDocsFiles.exe=$(Ver 'OggysDocsFiles.exe')", "DuncansVault.exe=$(Ver 'DuncansVault.exe')")
+$lines = @("DuncansDriverUpdater.exe=$(Ver 'DuncansDriverUpdater.exe')", "DuncansPrivacy.exe=$(Ver 'DuncansPrivacy.exe')", "DuncansPhotoCommander.exe=$(Ver 'DuncansPhotoCommander.exe')", "OggysDocsFiles.exe=$(Ver 'OggysDocsFiles.exe')", "DuncansVault.exe=$(Ver 'DuncansVault.exe')", "DuncansOffice.exe=$(Ver 'DuncansOffice.exe')")
 [IO.File]::WriteAllText((Join-Path $rel 'modules.txt'), ($lines -join "`n"), (New-Object Text.UTF8Encoding $false))
 [IO.File]::WriteAllText((Join-Path $rel 'version.txt'), (Ver 'DuncansPdf.exe'), (New-Object Text.UTF8Encoding $false))
-& (Join-Path $root 'SignRelease.ps1') (Join-Path $rel 'DuncansDriverUpdater.exe') (Join-Path $rel 'DuncansPrivacy.exe') (Join-Path $rel 'DuncansPhotoCommander.exe') (Join-Path $rel 'OggysDocsFiles.exe') (Join-Path $rel 'DuncansVault.exe') (Join-Path $rel 'DuncansPdf.exe') (Join-Path $rel 'pdfium.dll')
+& (Join-Path $root 'SignRelease.ps1') (Join-Path $rel 'DuncansDriverUpdater.exe') (Join-Path $rel 'DuncansPrivacy.exe') (Join-Path $rel 'DuncansPhotoCommander.exe') (Join-Path $rel 'OggysDocsFiles.exe') (Join-Path $rel 'DuncansVault.exe') (Join-Path $rel 'DuncansOffice.exe') (Join-Path $rel 'DuncansPdf.exe') (Join-Path $rel 'pdfium.dll')
 Write-Host "modules.txt:"; Get-Content (Join-Path $rel 'modules.txt')
 Write-Host "version.txt (PDF): $(Get-Content (Join-Path $rel 'version.txt'))"
