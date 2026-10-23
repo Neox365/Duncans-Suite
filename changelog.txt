@@ -5,6 +5,10 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansTidy.exe]
+## 1.2.1 | 2026-10-24
+- Neu: Ultra-Tiefenreinigung als dritte Stellung des Umschalters (Standard | Tiefen-Reinigung | Ultra) in Übersicht und Systemdateien.
+- Zusätzlich in der Liste: App-Caches von Discord, Spotify, VS Code und Teams, Microsoft-Store-Reste und ETL-Protokolle.
+- Auf der Seite Systemdateien optional: Windows-Komponentenspeicher bereinigen (DISM), alte Schattenkopien löschen (die neueste bleibt) und Ereignisprotokolle leeren (Sicherheitsprotokoll bleibt). Jede Aktion fragt einzeln nach und braucht Administratorrechte (eine UAC-Abfrage).
 ## 1.2.0 | 2026-10-21
 - Neu: Tiefen-Reinigung mit Umschalter „Standard | Tiefen-Reinigung“ in der Kopfzeile (Übersicht, Systemdateien) und in den Einstellungen.
 - Im Tiefen-Modus zusätzlich: Shader-Caches (DirectX, NVIDIA, AMD), System-Fehlerberichte, Windows-Update- und Delivery-Optimization-Reste, Treiber-Installer-Reste (C:NVIDIA, C:AMD) und Windows-Temp.
