@@ -188,10 +188,10 @@ bool Reencode(const std::wstring& src, const std::wstring& dst, const EncodeOpts
     }
     if (extraRotateCw != 0) {
         ComPtr<IWICBitmapFlipRotator> fr;
-        WICBitmapTransformOptions o = extraRotateCw == 90    ? WICBitmapTransformRotate90
+        WICBitmapTransformOptions rot = extraRotateCw == 90    ? WICBitmapTransformRotate90
                                       : extraRotateCw == 180 ? WICBitmapTransformRotate180
                                                              : WICBitmapTransformRotate270;
-        if (FAILED(f->CreateBitmapFlipRotator(&fr)) || FAILED(fr->Initialize(cur.Get(), o))) {
+        if (FAILED(f->CreateBitmapFlipRotator(&fr)) || FAILED(fr->Initialize(cur.Get(), rot))) {
             SetErr(err, L"Drehen fehlgeschlagen");
             return false;
         }

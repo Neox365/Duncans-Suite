@@ -2036,7 +2036,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_DROPFILES: OnDropFiles(reinterpret_cast<HDROP>(wp)); return 0;
         case WM_TIMER:
-            if (wp == TIMER_CARET && m_focusId != kNoFocus) { m_caretOn = !m_caretOn; Invalidate(); }
+            if (wp == TIMER_CARET && m_focusId != kNoFocus && GetForegroundWindow() == m_hwnd && !IsIconic(m_hwnd)) { m_caretOn = !m_caretOn; Invalidate(); }   // nur blinken, wenn das Fenster aktiv ist
             return 0;
         case WM_SETCURSOR: {
             if (LOWORD(lp) != HTCLIENT) break;
