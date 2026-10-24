@@ -12,9 +12,13 @@
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <uxtheme.h>
+#include <winspool.h>
 
 #include <algorithm>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "../docs/PdfWriter.h"
@@ -48,8 +52,10 @@ enum Cmd : int {
     C_BOLD, C_ITALIC, C_UNDER, C_SMALLER, C_BIGGER, C_SIZE, C_LEFT, C_CENTER, C_RIGHT,
     C_PICK_WRITER, C_PICK_SHEETS,
     ID_RICH = 201, ID_FORMULA = 202,
-    C_SIZE_BASE = 300
+    C_SIZE_BASE = 300,
+    C_PRINTER_BASE = 400   // bis 400 + Zahl der Drucker
 };
+constexpr UINT WM_PRINTERS = WM_APP + 21;   // Druckerliste im Hintergrund fertig gesucht
 
 enum class Mode { Start, Writer, Sheets };
 
@@ -215,6 +221,9 @@ private:
     bool WriterSave(bool saveAs);
     void WriterPdf();
     void WriterPrint();
+    void StartPrinterScan();
+    void ShowPrinterMenu();
+    void PrintTo(const std::wstring& printer);
 
     // ---- Sheets ----
     void RegisterGrid();
@@ -265,6 +274,10 @@ private:
     int m_sizePt = 0;
     WORD m_align = 0;
     bool m_wasDirty = false;
+    // Drucker: die Suche (auch Netzwerkdrucker) laeuft im Hintergrund, damit das Fenster nie darauf wartet
+    struct PrinterList { std::mutex mx; std::vector<std::wstring> names; std::wstring def; bool done = false; };
+    std::shared_ptr<PrinterList> m_printers = std::make_shared<PrinterList>();
+    bool m_printerScanning = false, m_printPending = false, m_printing = false;
 
     // Sheets
     sheet::Sheet m_sheet;
@@ -477,6 +490,7 @@ void App::SwitchMode(Mode m)
         SetFocus(m_rich);
         RefreshFmt();
         UpdateCounts();
+        StartPrinterScan();
     }
     else if (m == Mode::Sheets) {
         SetFocus(m_grid);
@@ -774,6 +788,15 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
             Layout();
             return 0;
         }
+        case WM_PRINTERS:
+            m_printerScanning = false;
+            if (m_printPending)
+            {
+                m_printPending = false;
+                if (m_mode == Mode::Writer) ShowPrinterMenu();
+            }
+            if (m_mode == Mode::Writer) UpdateCounts();   // Hinweis "Drucker werden gesucht" aus der Statusleiste nehmen
+            return 0;
         case WM_ERASEBKGND: return 1;
         case WM_PAINT: {
             PAINTSTRUCT ps;
@@ -920,6 +943,7 @@ void App::InitRich()
     SendMessageW(m_rich, EM_SETBKGNDCOLOR, 0, static_cast<LPARAM>(kPaper));
     SendMessageW(m_rich, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_SELCHANGE);
     SetDefaultFormat();
+    SendMessageW(m_rich, EM_SETMODIFY, FALSE, 0);   // neues Dokument gilt als unveraendert
 }
 
 void App::SetDefaultFormat()
@@ -1208,50 +1232,129 @@ void App::WriterPdf()
     if (!WriteAtomic(path, doc.Build(base))) MessageBoxW(m_hwnd, L"Die PDF-Datei konnte nicht gespeichert werden.", L"Duncan's Office", MB_ICONWARNING);
 }
 
+void App::StartPrinterScan()
+{
+    if (m_printerScanning) return;
+    m_printerScanning = true;
+    const std::shared_ptr<PrinterList> list = m_printers;
+    const HWND wnd = m_hwnd;
+    {
+        std::lock_guard<std::mutex> lk(list->mx);
+        list->done = false;
+    }
+    std::thread([list, wnd]() {
+        std::vector<std::wstring> names;
+        DWORD need = 0, count = 0;
+        // Stufe 4 liefert nur die Namen (schnell); Netzwerkdrucker werden nicht einzeln abgefragt
+        EnumPrintersW(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, nullptr, 4, nullptr, 0, &need, &count);
+        if (need > 0) {
+            std::vector<BYTE> buf(need);
+            if (EnumPrintersW(PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS, nullptr, 4, buf.data(), need, &need, &count)) {
+                const auto* info = reinterpret_cast<const PRINTER_INFO_4W*>(buf.data());
+                for (DWORD i = 0; i < count; ++i)
+                    if (info[i].pPrinterName) names.emplace_back(info[i].pPrinterName);
+            }
+        }
+        wchar_t def[512] = L"";
+        DWORD n = 512;
+        GetDefaultPrinterW(def, &n);
+        std::sort(names.begin(), names.end());
+        {
+            std::lock_guard<std::mutex> lk(list->mx);
+            list->names = std::move(names);
+            list->def = def;
+            list->done = true;
+        }
+        if (IsWindow(wnd)) PostMessageW(wnd, WM_PRINTERS, 0, 0);
+    }).detach();
+}
+
+// Drucken: Klick zeigt die Druckerliste (im Hintergrund gesucht, ein Klick waehrend der Suche merkt sich nur den Wunsch)
 void App::WriterPrint()
 {
-    PRINTDLGW pd{};
-    pd.lStructSize = sizeof pd;
-    pd.hwndOwner = m_hwnd;
-    pd.Flags = PD_RETURNDC | PD_NOSELECTION | PD_NOPAGENUMS | PD_USEDEVMODECOPIESANDCOLLATE;
-    pd.nCopies = 1;
-    if (!PrintDlgW(&pd)) return;
-    HDC hdc = pd.hDC;
-    const std::wstring name = m_wPath.empty() ? L"Unbenannt" : FileNameOf(m_wPath);
-    DOCINFOW di{ sizeof di, name.c_str(), nullptr, nullptr, 0 };
-    bool ok = StartDocW(hdc, &di) > 0;
-    if (ok) {
-        const int lx = GetDeviceCaps(hdc, LOGPIXELSX), ly = GetDeviceCaps(hdc, LOGPIXELSY);
-        auto twx = [&](int px) { return MulDiv(px, 1440, lx); };
-        auto twy = [&](int px) { return MulDiv(px, 1440, ly); };
-        const int pageW = twx(GetDeviceCaps(hdc, HORZRES)), pageH = twy(GetDeviceCaps(hdc, VERTRES));
-        const int offX = twx(GetDeviceCaps(hdc, PHYSICALOFFSETX)), offY = twy(GetDeviceCaps(hdc, PHYSICALOFFSETY));
-        const int physW = twx(GetDeviceCaps(hdc, PHYSICALWIDTH)), physH = twy(GetDeviceCaps(hdc, PHYSICALHEIGHT));
-        constexpr int margin = 1080;   // 0,75 Zoll
-        FORMATRANGE fr{};
-        fr.hdc = fr.hdcTarget = hdc;
-        fr.rcPage = { 0, 0, pageW, pageH };
-        fr.rc = { std::max(0, margin - offX), std::max(0, margin - offY), pageW - std::max(0, margin - (physW - offX - pageW)),
-                  pageH - std::max(0, margin - (physH - offY - pageH)) };
-        GETTEXTLENGTHEX gl{ GTL_NUMCHARS, 1200 };
-        const LONG total = static_cast<LONG>(SendMessageW(m_rich, EM_GETTEXTLENGTHEX, reinterpret_cast<WPARAM>(&gl), 0));
-        LONG pos = 0;
-        while (pos < total && ok) {
-            ok = StartPage(hdc) > 0;
-            if (!ok) break;
-            fr.chrg.cpMin = pos;
-            fr.chrg.cpMax = -1;
-            const LONG next = static_cast<LONG>(SendMessageW(m_rich, EM_FORMATRANGE, TRUE, reinterpret_cast<LPARAM>(&fr)));
-            ok = EndPage(hdc) > 0;
-            if (next <= pos) break;   // kein Fortschritt: Endlosschleife vermeiden
-            pos = next;
-        }
-        SendMessageW(m_rich, EM_FORMATRANGE, FALSE, 0);
-        if (ok) EndDoc(hdc); else AbortDoc(hdc);
+    if (m_printing) return;   // ein Druckauftrag laeuft schon: weitere Klicks ignorieren
+    bool done;
+    {
+        std::lock_guard<std::mutex> lk(m_printers->mx);
+        done = m_printers->done;
     }
-    DeleteDC(hdc);
-    if (pd.hDevMode) GlobalFree(pd.hDevMode);
-    if (pd.hDevNames) GlobalFree(pd.hDevNames);
+    if (done) { ShowPrinterMenu(); return; }
+    m_printPending = true;
+    m_status = L"Drucker werden gesucht …";
+    InvalidateRect(m_hwnd, &m_statusRc, FALSE);
+    StartPrinterScan();
+}
+
+void App::ShowPrinterMenu()
+{
+    std::vector<std::wstring> names;
+    std::wstring def;
+    {
+        std::lock_guard<std::mutex> lk(m_printers->mx);
+        names = m_printers->names;
+        def = m_printers->def;
+    }
+    if (names.empty()) {
+        MessageBoxW(m_hwnd, L"Es wurde kein Drucker gefunden. Bitte in Windows einen Drucker einrichten.", L"Duncan's Office", MB_ICONINFORMATION);
+        return;
+    }
+    HMENU menu = CreatePopupMenu();
+    for (size_t i = 0; i < names.size() && i < 90; ++i)
+        AppendMenuW(menu, MF_STRING | (names[i] == def ? MF_CHECKED : 0), static_cast<UINT_PTR>(C_PRINTER_BASE) + i, names[i].c_str());
+    POINT pt{ 0, 0 };
+    for (const Btn& b : m_btns)
+        if (b.id == C_PRINT) pt = { b.rc.left, b.rc.bottom };
+    ClientToScreen(m_hwnd, &pt);
+    SetForegroundWindow(m_hwnd);
+    const int pick = TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RETURNCMD, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(menu);
+    if (pick >= C_PRINTER_BASE && pick < C_PRINTER_BASE + static_cast<int>(names.size()))
+        PrintTo(names[static_cast<size_t>(pick - C_PRINTER_BASE)]);
+}
+
+void App::PrintTo(const std::wstring& printer)
+{
+    if (m_printing) return;
+    m_printing = true;
+    SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    HDC hdc = CreateDCW(L"WINSPOOL", printer.c_str(), nullptr, nullptr);   // Standardeinstellungen des Druckers
+    bool ok = hdc != nullptr;
+    if (ok) {
+        const std::wstring name = m_wPath.empty() ? L"Unbenannt" : FileNameOf(m_wPath);
+        DOCINFOW di{ sizeof di, name.c_str(), nullptr, nullptr, 0 };
+        ok = StartDocW(hdc, &di) > 0;
+        if (ok) {
+            const int lx = GetDeviceCaps(hdc, LOGPIXELSX), ly = GetDeviceCaps(hdc, LOGPIXELSY);
+            auto twx = [&](int px) { return MulDiv(px, 1440, lx); };
+            auto twy = [&](int px) { return MulDiv(px, 1440, ly); };
+            const int pageW = twx(GetDeviceCaps(hdc, HORZRES)), pageH = twy(GetDeviceCaps(hdc, VERTRES));
+            const int offX = twx(GetDeviceCaps(hdc, PHYSICALOFFSETX)), offY = twy(GetDeviceCaps(hdc, PHYSICALOFFSETY));
+            const int physW = twx(GetDeviceCaps(hdc, PHYSICALWIDTH)), physH = twy(GetDeviceCaps(hdc, PHYSICALHEIGHT));
+            constexpr int margin = 1080;   // 0,75 Zoll
+            FORMATRANGE fr{};
+            fr.hdc = fr.hdcTarget = hdc;
+            fr.rcPage = { 0, 0, pageW, pageH };
+            fr.rc = { std::max(0, margin - offX), std::max(0, margin - offY), pageW - std::max(0, margin - (physW - offX - pageW)),
+                      pageH - std::max(0, margin - (physH - offY - pageH)) };
+            GETTEXTLENGTHEX gl{ GTL_NUMCHARS, 1200 };
+            const LONG total = static_cast<LONG>(SendMessageW(m_rich, EM_GETTEXTLENGTHEX, reinterpret_cast<WPARAM>(&gl), 0));
+            LONG pos = 0;
+            while (pos < total && ok) {
+                ok = StartPage(hdc) > 0;
+                if (!ok) break;
+                fr.chrg.cpMin = pos;
+                fr.chrg.cpMax = -1;
+                const LONG next = static_cast<LONG>(SendMessageW(m_rich, EM_FORMATRANGE, TRUE, reinterpret_cast<LPARAM>(&fr)));
+                ok = EndPage(hdc) > 0;
+                if (next <= pos) break;   // kein Fortschritt: Endlosschleife vermeiden
+                pos = next;
+            }
+            SendMessageW(m_rich, EM_FORMATRANGE, FALSE, 0);
+            if (ok) EndDoc(hdc); else AbortDoc(hdc);
+        }
+        DeleteDC(hdc);
+    }
+    m_printing = false;
     if (!ok) MessageBoxW(m_hwnd, L"Der Druckauftrag ist fehlgeschlagen.", L"Duncan's Office", MB_ICONWARNING);
 }
 
