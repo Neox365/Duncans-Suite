@@ -42,6 +42,7 @@ struct InstallResult
     bool restorePointCreated = false;
     std::wstring restorePointNote;   // Hinweis, falls kein Wiederherstellungspunkt moeglich war
     std::wstring error;              // leer bei Erfolg
+    std::vector<std::wstring> details;   // je Problemfall eine Zeile: Titel, Fehlercode, Hinweis (auch im Log)
 };
 
 class UpdateInstaller

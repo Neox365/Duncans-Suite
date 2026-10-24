@@ -78,6 +78,10 @@
 - Übersicht: Die Meldung nach dem Aufräumen zeigt nur noch die Anzahl der übersprungenen Einträge, mit mehr Abstand zwischen den Textzeilen
 
 [DuncansDriverUpdater.exe]
+## 1.1.26 | 2026-10-24
+- Fehlerbehebung: Treiber-Installationen, die immer wieder fehlschlugen, zeigen jetzt Titel, Fehlercode und einen Hinweis zur Ursache (auch in der Logdatei).
+- Jeder Treiber wird einzeln installiert, ein fehlschlagender Treiber reißt die anderen nicht mehr mit. Nicht heruntergeladene Treiber und solche, die eine Eingabe brauchen, werden erkannt und übersprungen.
+- Wartet Windows noch auf einen Neustart, startet die Installation nicht mehr, sondern sagt das klar (bis zum Neustart schlagen weitere Installationen sonst fehl).
 ## 1.1.25 | 2026-10-19
 - Sicherheit: Der gemeinsame Daten-Ordner unter ProgramData ist nur noch für Administratoren beschreibbar (Besitz-, Rechte- und Verknüpfungsprüfung).
 - Updates kommen jetzt einzeln über die Suite, ohne dass die ganze Suite neu installiert werden muss.
