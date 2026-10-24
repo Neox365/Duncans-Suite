@@ -200,6 +200,8 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansOffice.exe]
+## 0.1.1 | 2026-10-24
+- Fehlerbehebung: Drucken ließ das Programm einfrieren, weil Windows die Druckerliste (auch Netzwerkdrucker) im Hauptfenster suchte. Die Suche läuft jetzt im Hintergrund, Drucken zeigt eine Druckerliste, und weitere Klicks während eines Druckauftrags werden ignoriert.
 ## 0.1.0 | 2026-10-23
 - Neues Programm: Duncan's Office mit Writer und Sheets in einem Fenster, Auswahl beim Start und Wechsel über die Reiter oben.
 - Writer: Fett, Kursiv, Unterstrichen, Schriftgröße, Ausrichtung, Wort- und Zeichenzähler; Öffnen und Speichern als .rtf und .txt, Export als PDF (nur Text) und Drucken.
