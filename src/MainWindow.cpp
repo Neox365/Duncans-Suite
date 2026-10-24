@@ -18,7 +18,7 @@
 #include "../common/Gfx.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.1.25"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.1.26"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -430,6 +430,14 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
             text += L".";
             if (r.rebootRequired)
                 text += L"\n\nEin Neustart ist erforderlich, um die Installation abzuschließen.";
+        }
+        if (!r.details.empty())
+        {
+            text += L"\n\nDetails:";
+            for (size_t i = 0; i < r.details.size() && i < 6; ++i)
+                text += L"\n • " + r.details[i];
+            if (r.details.size() > 6)
+                text += L"\n … und " + std::to_wstring(r.details.size() - 6) + L" weitere (siehe Logdatei)";
         }
         text += r.restorePointCreated ? L"\n\nVorher wurde ein Wiederherstellungspunkt erstellt."
                                       : L"\n\n" + r.restorePointNote + L".";

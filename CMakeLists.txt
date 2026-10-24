@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(DuncansDriverUpdater VERSION 1.1.25 LANGUAGES CXX RC)
+project(DuncansDriverUpdater VERSION 1.1.26 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
 set(SUITE_VER "1.1.35")
 set(PDF_VER "1.1.24")
