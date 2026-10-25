@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansTidy.exe]
+## 1.2.2 | 2026-10-25
+- Verbessert: Während die Windows-Aktionen der Ultra-Tiefenreinigung laufen (DISM kann bis zu einer halben Stunde brauchen), zeigt Tidy eine Laufzeit statt „100 %“ und weist darauf hin, es geöffnet zu lassen.
+- Die Administrator-Abfrage erscheint jetzt vor dem Tidy-Fenster.
 ## 1.2.1 | 2026-10-24
 - Neu: Ultra-Tiefenreinigung als dritte Stellung des Umschalters (Standard | Tiefen-Reinigung | Ultra) in Übersicht und Systemdateien.
 - Zusätzlich in der Liste: App-Caches von Discord, Spotify, VS Code und Teams, Microsoft-Store-Reste und ETL-Protokolle.
