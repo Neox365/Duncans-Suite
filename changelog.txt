@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansTidy.exe]
+## 1.2.3 | 2026-10-25
+- Vereinfacht: Es gibt nur noch Standard und Ultra. Ultra enthält alles auf einmal: Shader-Caches, Update- und Treiber-Reste, Fehlerberichte, Windows-Temp, App-Caches, Store-Reste und ETL-Protokolle.
+- Auf der Seite Systemdateien kommen in Ultra weiterhin DISM, Schattenkopien und Ereignisprotokolle dazu, jede mit eigener Rückfrage. Die frühere Tiefen-Reinigung ist in Ultra aufgegangen.
 ## 1.2.2 | 2026-10-25
 - Verbessert: Während die Windows-Aktionen der Ultra-Tiefenreinigung laufen (DISM kann bis zu einer halben Stunde brauchen), zeigt Tidy eine Laufzeit statt „100 %“ und weist darauf hin, es geöffnet zu lassen.
 - Die Administrator-Abfrage erscheint jetzt vor dem Tidy-Fenster.
