@@ -125,11 +125,26 @@ namespace {
         return a.type == ValType::Dword ? a.dword == b.dword : _wcsicmp(a.str.c_str(), b.str.c_str()) == 0;
     }
 
+    // Beendet einen Dienst; laufende abhaengige Dienste werden zuerst beendet (sonst lehnt Windows das Beenden ab)
     void StopService(const wchar_t* name) {
         SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
         if (!scm) return;
-        if (SC_HANDLE svc = OpenServiceW(scm, name, SERVICE_STOP | SERVICE_QUERY_STATUS)) {
+        if (SC_HANDLE svc = OpenServiceW(scm, name, SERVICE_STOP | SERVICE_QUERY_STATUS | SERVICE_ENUMERATE_DEPENDENTS)) {
             SERVICE_STATUS st{};
+            for (int round = 0; round < 20; ++round) {
+                DWORD need = 0, count = 0;
+                EnumDependentServicesW(svc, SERVICE_ACTIVE, nullptr, 0, &need, &count);
+                if (!need) break;   // keine laufenden abhaengigen Dienste (mehr)
+                std::vector<BYTE> buf(need);
+                auto* list = reinterpret_cast<ENUM_SERVICE_STATUSW*>(buf.data());
+                if (!EnumDependentServicesW(svc, SERVICE_ACTIVE, list, need, &need, &count) || count == 0) break;
+                for (DWORD i = 0; i < count; ++i)
+                    if (SC_HANDLE dep = OpenServiceW(scm, list[i].lpServiceName, SERVICE_STOP)) {
+                        ControlService(dep, SERVICE_CONTROL_STOP, &st);
+                        CloseServiceHandle(dep);
+                    }
+                Sleep(150);
+            }
             ControlService(svc, SERVICE_CONTROL_STOP, &st);   // Fehler ignorieren: Dienst laeuft evtl. nicht / ist nicht stoppbar
             CloseServiceHandle(svc);
         }
