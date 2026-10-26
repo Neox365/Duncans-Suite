@@ -161,6 +161,8 @@ int UpdateChecker::Apply(std::vector<DriverInfo>& drivers, const std::vector<Ava
                 continue;
             if (d.driverDateKey != 0 && u.dateKey <= d.driverDateKey)
                 continue;   // installierter Treiber ist gleich neu oder neuer
+            if (u.dateKey == 0)
+                continue;   // Update ohne lesbares Datum: nicht als neuer behandeln
             if (!best || u.dateKey > best->dateKey)
                 best = &u;
         }

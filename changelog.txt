@@ -84,6 +84,9 @@
 - Übersicht: Die Meldung nach dem Aufräumen zeigt nur noch die Anzahl der übersprungenen Einträge, mit mehr Abstand zwischen den Textzeilen
 
 [DuncansDriverUpdater.exe]
+## 1.1.27 | 2026-10-26
+- Fehlerbehebung: Updates werden nur noch Geräten zugeordnet, deren echte Hardware-ID passt. Generische kompatible IDs (zum Beispiel USB-Klassen) führten dazu, dass ein Update bei fremden Geräten erschien und nach der Installation in der Liste blieb.
+- Updates ohne lesbares Datum werden nicht mehr als neuer behandelt.
 ## 1.1.26 | 2026-10-24
 - Fehlerbehebung: Treiber-Installationen, die immer wieder fehlschlugen, zeigen jetzt Titel, Fehlercode und einen Hinweis zur Ursache (auch in der Logdatei).
 - Jeder Treiber wird einzeln installiert, ein fehlschlagender Treiber reißt die anderen nicht mehr mit. Nicht heruntergeladene Treiber und solche, die eine Eingabe brauchen, werden erkannt und übersprungen.
