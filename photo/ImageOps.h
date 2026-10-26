@@ -115,4 +115,15 @@ bool EditImage(const std::wstring& src, const std::wstring& dst, const EditParam
 // Dreht um 90 Grad (verlustbehaftet bei JPEG, Metadaten bleiben erhalten).
 bool RotateImage(const std::wstring& path, bool clockwise, std::wstring* err = nullptr);
 
+// ---- Schnellkonvertierung ----
+enum class OutFormat { Jpeg, Png, Webp, Bmp };
+const wchar_t* OutExt(OutFormat f);                          // "jpg", "png", "webp", "bmp"
+bool HasFormat(const std::wstring& path, OutFormat f);       // Datei hat dieses Format schon (nach der Endung)
+bool CanWrite(OutFormat f);                                   // gibt es einen WIC-Encoder dafuer (bei WebP nicht immer installiert)
+
+// Liest das erste Bild von src (EXIF-Drehung wird eingebrannt) und schreibt es im gewaehlten Format nach dst (JPEG Qualitaet 92,
+// WebP 90; JPEG und BMP bekommen einen weissen Hintergrund statt Transparenz). Metadaten werden nicht uebernommen. dst darf nicht src sein.
+// WebP braucht einen WIC-Encoder; fehlt er, gibt es false mit erklaerendem Fehlertext.
+bool ConvertImage(const std::wstring& src, const std::wstring& dst, OutFormat fmt, std::wstring* err = nullptr);
+
 }  // namespace imgops

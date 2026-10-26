@@ -135,6 +135,11 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.3.0 | 2026-10-26
+- Neue Leiste über dem Bildraster: Suchfeld (Strg+F, filtert beim Tippen nach dem Dateinamen), Sortierung als Auswahlfeld (Name, Änderungsdatum, Dateigröße, Aufnahmedatum) mit Richtung und ein stufenloser Zoom-Regler für die Thumbnail-Größe.
+- Strg+Mausrad über dem Raster ändert die Thumbnail-Größe stufenlos.
+- Schnellkonvertierung nach JPG, PNG, WebP und BMP: Knopf „Konvertieren“ bei den Schnellaktionen oder Rechtsklick auf ein Bild, auch für mehrere markierte Bilder. Die Originale bleiben erhalten, die neuen Dateien liegen im selben Ordner. WebP funktioniert nur, wenn Windows einen WebP-Encoder installiert hat.
+- Neues Kontextmenü auf den Bildern (Öffnen, Konvertieren, Drehen, EXIF entfernen, Im Explorer anzeigen).
 ## 0.2.5 | 2026-10-20
 - Die Ähnlichkeitssuche vergleicht zusätzlich Farben: gleich aufgebaute, aber anders gefärbte Bilder werden nicht mehr gruppiert.
 - Schnelleres Arbeiten mit großen JPEGs: Verkleinerung schon beim Dekodieren, auch bei Duplikatsuche und Bearbeiten-Vorschau.

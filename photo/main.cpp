@@ -13,6 +13,7 @@
 #include <shellapi.h>
 #include <shlobj.h>
 #include <shlwapi.h>
+#include <commctrl.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -48,12 +49,15 @@ constexpr UINT WM_APP_DUP = WM_APP + 7;        // Duplikatsuche: Fortschritt ode
 constexpr UINT_PTR TIMER_SCROLL = 1;
 constexpr UINT_PTR TIMER_SLIDE = 2;             // Diashow: naechstes Bild
 constexpr UINT_PTR TIMER_FADE = 3;              // Diashow: Steuerleiste ausblenden
+constexpr UINT_PTR TIMER_SEARCH = 4;            // Suchfeld: kurz warten, dann filtern
+constexpr UINT_PTR TIMER_ZOOM = 5;              // Strg+Mausrad: nach dem Zoomen Thumbnails in der neuen Groesse laden
+constexpr int ID_SEARCH = 900;
 constexpr int kMaxThumbSize = 320, kMinThumbSize = 96;
 constexpr UINT kShareEdge = 2048;               // Stapel "Verkleinern": laengste Kante in Pixeln
 
 enum ButtonId {
     BTN_OPEN = 1, BTN_FULLSCREEN, BTN_BATCH, BTN_SETTINGS,
-    BTN_ROT_L, BTN_ROT_R, BTN_CROP, BTN_STRIP, BTN_EDIT,
+    BTN_ROT_L, BTN_ROT_R, BTN_CROP, BTN_STRIP, BTN_EDIT, BTN_CONVERT,
     VB_PREV = 20, VB_NEXT, VB_FIT, VB_ACTUAL, VB_CLOSE, VB_DELETE, VB_CROP_OK, VB_CROP_CANCEL,
     VB_EDIT_SAVE, VB_EDIT_SAVEAS, VB_EDIT_RESET, VB_EDIT_CANCEL,
     VB_SLIDE_PREV, VB_SLIDE_PLAY, VB_SLIDE_NEXT, VB_SLIDE_CLOSE
@@ -64,10 +68,17 @@ enum MenuId {
     MENU_B_STRIP_COPY = 140, MENU_B_STRIP_OVERWRITE, MENU_B_RESIZE, MENU_B_ROT_CW, MENU_B_ROT_CCW,
     MENU_B_DUPES, MENU_B_DUPES_END,
     MENU_FILTER_GPS = 150,
-    MENU_SLIDE_2 = 160, MENU_SLIDE_4, MENU_SLIDE_6, MENU_SLIDE_10
+    MENU_SLIDE_2 = 160, MENU_SLIDE_4, MENU_SLIDE_6, MENU_SLIDE_10,
+    MENU_CONV_JPG = 170, MENU_CONV_PNG, MENU_CONV_WEBP, MENU_CONV_BMP,
+    MENU_C_OPEN = 180, MENU_C_ROT_L, MENU_C_ROT_R, MENU_C_STRIP, MENU_C_EXPLORER
 };
 
-enum class BatchKind { StripCopy, StripOverwrite, Resize, RotateCw, RotateCcw };
+enum class BatchKind { StripCopy, StripOverwrite, Resize, RotateCw, RotateCcw, ConvertJpg, ConvertPng, ConvertWebp, ConvertBmp };
+inline bool IsConvert(BatchKind k) { return k >= BatchKind::ConvertJpg; }
+inline imgops::OutFormat ConvertFormat(BatchKind k) {
+    return k == BatchKind::ConvertJpg ? imgops::OutFormat::Jpeg : k == BatchKind::ConvertPng ? imgops::OutFormat::Png
+         : k == BatchKind::ConvertWebp ? imgops::OutFormat::Webp : imgops::OutFormat::Bmp;
+}
 
 struct Settings {
     int thumbSize = 170;              // DIP, laengste Kante
@@ -229,6 +240,32 @@ void SaveSettings(const Settings& st) {
     put(L"LetzterOrdner", st.lastFolder);
 }
 
+// Zielname fuer eine Konvertierung: gleicher Ordner und Name mit neuer Endung; gibt es sie schon, wird " (2)", " (3)" ... angehaengt
+std::wstring UniqueTarget(const std::wstring& src, const wchar_t* ext) {
+    const size_t slash = src.find_last_of(L"\\/");
+    const std::wstring dir = slash == std::wstring::npos ? L"" : src.substr(0, slash + 1);
+    std::wstring base = slash == std::wstring::npos ? src : src.substr(slash + 1);
+    const size_t dot = base.find_last_of(L'.');
+    if (dot != std::wstring::npos) base.resize(dot);
+    std::wstring cand = dir + base + L"." + ext;
+    for (int n = 2; GetFileAttributesW(cand.c_str()) != INVALID_FILE_ATTRIBUTES && n < 1000; ++n)
+        cand = dir + base + L" (" + std::to_wstring(n) + L")." + ext;
+    return cand;
+}
+
+// Suchtext: alle durch Leerzeichen getrennten Woerter muessen im Dateinamen vorkommen (ohne Beachtung der Gross-/Kleinschreibung)
+bool NameMatches(const std::wstring& name, const std::wstring& query) {
+    size_t i = 0;
+    while (i < query.size()) {
+        while (i < query.size() && query[i] == L' ') ++i;
+        size_t e = i;
+        while (e < query.size() && query[e] != L' ') ++e;
+        if (e > i && !StrStrIW(name.c_str(), query.substr(i, e - i).c_str())) return false;
+        i = e;
+    }
+    return true;
+}
+
 std::wstring FileNameOf(const std::wstring& path) {
     const size_t cut = path.find_last_of(L'\\');
     return cut == std::wstring::npos ? path : path.substr(cut + 1);
@@ -296,6 +333,7 @@ private:
     void DrawDetails();
     void DrawStatus();
     void DrawViewer();
+    void DrawGridBar();
 
     // --- Ordnerbaum
     void InitTreeRoots();
@@ -339,6 +377,21 @@ private:
     void ToggleFullscreen();
     void ShowSettings();
     void StripSelected();
+    // --- Leiste ueber dem Grid: Suche, Sortierung, Zoom
+    int BarHit(float x, float y) const;           // 1 Suche, 2 Suche leeren, 3 Sortierung, 4 Richtung, 5 Zoom
+    void ShowSortMenu();
+    void ApplySort(int by, bool toggleDesc);
+    void SetThumbSize(int size);                  // sofort (vorhandene Vorschaubilder werden skaliert), Neuladen folgt mit ReloadThumbSizes
+    void ReloadThumbSizes();
+    void SetZoomFromX(float x);
+    void OnSearchChanged();
+    void ClearSearch();
+    void UpdateEditFont();
+    static LRESULT CALLBACK SearchProc(HWND, UINT, WPARAM, LPARAM, UINT_PTR, DWORD_PTR);
+    // --- Schnellkonvertierung
+    void ShowConvertMenu();
+    void StartConvert(imgops::OutFormat fmt);
+    void ShowGridContext(POINT screenPt);
     std::wstring ChooseOutput(const std::wstring& src, const wchar_t* suffix, const wchar_t* question, const wchar_t* title);
     void FinishWrite(const std::wstring& src, const std::wstring& dst, const std::wstring& doneInPlace,
                      const std::wstring& doneCopy);
@@ -406,6 +459,15 @@ private:
     D2D1_RECT_F rcTop{}, rcTree{}, rcGrid{}, rcDetail{}, rcStatus{};
     D2D1_RECT_F rcViewer{}, rcViewBar{};
     D2D1_RECT_F rcPreview{}, rcActionsHead{};
+    D2D1_RECT_F rcGridBar{}, rcSearch{}, rcClear{}, rcSort{}, rcDir{}, rcZoom{};
+    HWND m_searchEdit = nullptr;
+    HFONT m_editFont = nullptr;
+    HBRUSH m_editBrush = nullptr;
+    float m_editFontK = 0;
+    std::wstring m_search;
+    bool m_ignoreSearch = false, m_zoomDrag = false;
+    int m_hoverBar = 0;
+    int m_thumbLoadSize = 170;                   // Groesse, in der die geladenen Vorschaubilder vorliegen
     float m_infoTop = 0;
     std::vector<Btn> m_btns, m_vbtns;
     int m_hoverBtn = 0;
@@ -509,7 +571,7 @@ bool App::Create(HINSTANCE hi, int show, const std::wstring& startArg) {
     if (!wc.hIcon) wc.hIcon = LoadIcon(nullptr, IDI_APPLICATION);
     RegisterClassExW(&wc);
 
-    m_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Duncan's Photo Commander", WS_OVERLAPPEDWINDOW,
+    m_hwnd = CreateWindowExW(0, wc.lpszClassName, L"Duncan's Photo Commander", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                              CW_USEDEFAULT, CW_USEDEFAULT, 1500, 900, nullptr, nullptr, hi, this);
     if (!m_hwnd) return false;
 
@@ -519,6 +581,11 @@ bool App::Create(HINSTANCE hi, int show, const std::wstring& startArg) {
     k = GetDpiForWindow(m_hwnd) / 96.f;
     if (!CreateDeviceIndependent()) return false;
     CreateFormats();
+    m_editBrush = CreateSolidBrush(theme::kCardRaised);
+    m_searchEdit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, 0, 0, 10, 10, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_SEARCH)), hi, nullptr);
+    SendMessageW(m_searchEdit, EM_SETLIMITTEXT, 100, 0);
+    SetWindowSubclass(m_searchEdit, SearchProc, 1, reinterpret_cast<DWORD_PTR>(this));
+    m_thumbLoadSize = m_settings.thumbSize;
     InitTreeRoots();
     m_loader.Start(m_hwnd, WM_APP_THUMBS);
 
@@ -528,6 +595,7 @@ bool App::Create(HINSTANCE hi, int show, const std::wstring& startArg) {
     UpdateWindow(m_hwnd);
 
     DragAcceptFiles(m_hwnd, TRUE);
+    SetFocus(m_hwnd);   // Fokus ins Raster, damit im Suchfeld der Platzhalter zu sehen ist
 
     // Startordner: Kommandozeile (Ordner oder Bilddatei), sonst zuletzt benutzter Ordner, sonst Bilder
     auto isDir = [](const std::wstring& p) {
@@ -624,7 +692,22 @@ void App::Layout() {
     rcStatus = {0, Ht - sb, Wd, Ht};
     rcTree = {0, tb, lw, Ht - sb};
     rcDetail = {Wd - rw, tb, Wd, Ht - sb};
-    rcGrid = {lw, tb, Wd - rw, Ht - sb};
+    rcGridBar = {lw, tb, Wd - rw, tb + 46 * k};
+    rcGrid = {lw, tb + 46 * k, Wd - rw, Ht - sb};
+    UpdateEditFont();
+    {
+        const float by = rcGridBar.top + 9 * k, bh2 = 28 * k, right = rcGridBar.right - 12 * k, gap = 8 * k;
+        const float avail = W(rcGridBar) - 24 * k;
+        const float zoomW = std::clamp(avail * 0.27f, 96 * k, 170 * k), dirW = 30 * k, sortW = avail > 520 * k ? 124 * k : 98 * k;
+        rcZoom = {right - zoomW, by, right, by + bh2};
+        rcDir = {rcZoom.left - gap - dirW, by, rcZoom.left - gap, by + bh2};
+        rcSort = {rcDir.left - 6 * k - sortW, by, rcDir.left - 6 * k, by + bh2};
+        rcSearch = {rcGridBar.left + 12 * k, by, std::max(rcGridBar.left + 120 * k, rcSort.left - 10 * k), by + bh2};
+        rcClear = {rcSearch.right - 26 * k, by, rcSearch.right - 4 * k, by + bh2};
+        if (m_searchEdit)
+            MoveWindow(m_searchEdit, (int)(rcSearch.left + 32 * k), (int)(rcSearch.top + 6 * k), (int)std::max(20.f, W(rcSearch) - 32 * k - 28 * k),
+                       (int)(17 * k), TRUE);
+    }
 
     m_btns.clear();
     float bh = 34 * k, by = (tb - bh) / 2, x = 300 * k;
@@ -657,15 +740,15 @@ void App::Layout() {
     float bw = (dw_ - 8 * k) / 2, ah = 34 * k;
     struct A { int id; const wchar_t* t; bool danger; } acts[] = {
         {BTN_ROT_L, L"↺  Links drehen", false}, {BTN_ROT_R, L"↻  Rechts drehen", false},
-        {BTN_CROP, L"Zuschneiden", false}, {BTN_STRIP, L"EXIF entfernen", true}, {BTN_EDIT, L"Bearbeiten …", false}};
-    for (int i = 0; i < 5; ++i) {
+        {BTN_CROP, L"Zuschneiden", false}, {BTN_STRIP, L"EXIF entfernen", true}, {BTN_EDIT, L"Bearbeiten …", false}, {BTN_CONVERT, L"Konvertieren ▾", false}};
+    for (int i = 0; i < 6; ++i) {
         Btn b;
         b.id = acts[i].id;
         b.label = acts[i].t;
         b.danger = acts[i].danger;
         b.needsSelection = true;
         float bx = dx + (i % 2) * (bw + 8 * k), byy = y + (i / 2) * (ah + 8 * k);
-        b.rc = {bx, byy, i == 4 ? dx + dw_ : bx + bw, byy + ah};
+        b.rc = {bx, byy, bx + bw, byy + ah};
         m_btns.push_back(b);
     }
     m_infoTop = y + 3 * (ah + 8 * k) + 10 * k;
@@ -681,12 +764,14 @@ void App::Paint() {
     EnsureDevice();
     if (!rt) return;
     ConsumeThumbs();
+    if (m_searchEdit && IsWindowVisible(m_searchEdit) == (m_viewer ? TRUE : FALSE)) ShowWindow(m_searchEdit, m_viewer ? SW_HIDE : SW_SHOW);   // im Betrachter ausblenden
     rt->BeginDraw();
     rt->Clear(D2D1::ColorF(Theme::Bg));
     if (m_viewer) {
         DrawViewer();
     } else {
         DrawGrid();
+        DrawGridBar();
         DrawTree();
         DrawDetails();
         DrawTopbar();
@@ -790,6 +875,7 @@ void App::DrawGrid() {
     rt->PushAxisAlignedClip(rcGrid, D2D1_ANTIALIAS_MODE_ALIASED);
     if (m_items.empty()) {
         Txt(m_folder.empty()   ? L"Ordner öffnen, um Bilder anzuzeigen"
+            : !m_search.empty() && !m_hidden.empty() ? L"Keine Bilder passend zur Suche"
             : m_gpsOnly && !m_hidden.empty() ? L"Keine Bilder mit Standortdaten in diesem Ordner (Filter aktiv)"
                                              : L"Keine Bilder in diesem Ordner",
             rcGrid, fCenter.Get(), Theme::TextDim);
@@ -891,6 +977,53 @@ void App::DrawDetails() {
         }
     }
     rt->PopAxisAlignedClip();
+}
+
+void App::DrawGridBar() {
+    Fill(rcGridBar, Theme::Bg);
+    Fill({rcGridBar.left, rcGridBar.bottom - 1, rcGridBar.right, rcGridBar.bottom}, Theme::Border);
+    // Suchfeld: Lupe, Eingabe (natives Edit-Steuerelement darueber), Platzhalter und Leeren-Kreuz
+    FillRR(rcSearch, 6 * k, Theme::Card);
+    const bool focus = m_searchEdit && GetFocus() == m_searchEdit;
+    if (focus) StrokeRR(rcSearch, 6 * k, Theme::Accent, 1.5f * k);
+    {
+        SetCol(Theme::TextDim);
+        const float cx = rcSearch.left + 16 * k, cy = (rcSearch.top + rcSearch.bottom) / 2 - 1.5f * k;
+        rt->DrawEllipse(D2D1::Ellipse(D2D1::Point2F(cx, cy), 5 * k, 5 * k), brush.Get(), 1.5f * k);
+        rt->DrawLine(D2D1::Point2F(cx + 3.6f * k, cy + 3.6f * k), D2D1::Point2F(cx + 8 * k, cy + 8 * k), brush.Get(), 1.6f * k);
+    }
+    if (m_search.empty() && !focus)
+        Txt(L"Bilder suchen …  (Strg+F)", {rcSearch.left + 32 * k, rcSearch.top, rcSearch.right - 8 * k, rcSearch.bottom}, fNormal.Get(), Theme::TextDim);
+    if (!m_search.empty()) Txt(L"✕", rcClear, fCenter.Get(), m_hoverBar == 2 ? Theme::Text : Theme::TextDim);
+    // Sortierung: Auswahlfeld und Richtung
+    static const wchar_t* const kSortNames[] = {L"Name", L"Geändert", L"Größe", L"Aufnahme"};
+    FillRR(rcSort, 6 * k, m_hoverBar == 3 ? Theme::CardHover : Theme::Card);
+    Txt(std::wstring(L"Sortieren: ") + kSortNames[std::clamp(m_settings.sortBy, 0, 3)] + L" ▾", rcSort, fCenter.Get(), Theme::Text);
+    FillRR(rcDir, 6 * k, m_hoverBar == 4 ? Theme::CardHover : Theme::Card);
+    Txt(m_settings.sortDesc ? L"↓" : L"↑", rcDir, fCenter.Get(), Theme::Text);
+    // Zoom: kleines und grosses Quadrat als Marken, dazwischen die Leiste mit Griff
+    {
+        const float cy = (rcZoom.top + rcZoom.bottom) / 2, tl = rcZoom.left + 16 * k, tr = rcZoom.right - 18 * k;
+        FillRR({rcZoom.left + 2 * k, cy - 3 * k, rcZoom.left + 8 * k, cy + 3 * k}, 1.5f * k, Theme::TextDim);
+        FillRR({rcZoom.right - 14 * k, cy - 6 * k, rcZoom.right - 2 * k, cy + 6 * k}, 2 * k, Theme::TextDim);
+        const float t = (float)(m_settings.thumbSize - kMinThumbSize) / (float)(kMaxThumbSize - kMinThumbSize);
+        const float hx = tl + (tr - tl) * std::clamp(t, 0.f, 1.f);
+        FillRR({tl, cy - 1.5f * k, tr, cy + 1.5f * k}, 1.5f * k, Theme::Border);
+        FillRR({tl, cy - 1.5f * k, hx, cy + 1.5f * k}, 1.5f * k, Theme::Accent);
+        const float r = (m_hoverBar == 5 || m_zoomDrag ? 8.f : 7.f) * k;
+        SetCol(Theme::Accent);
+        rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(hx, cy), r, r), brush.Get());
+    }
+}
+
+int App::BarHit(float x, float y) const {
+    if (!In(rcGridBar, x, y)) return 0;
+    if (!m_search.empty() && In(rcClear, x, y)) return 2;
+    if (In(rcSearch, x, y)) return 1;
+    if (In(rcSort, x, y)) return 3;
+    if (In(rcDir, x, y)) return 4;
+    if (In(rcZoom, x, y)) return 5;
+    return 0;
 }
 
 void App::DrawStatus() {
@@ -1051,6 +1184,12 @@ void App::OpenFolder(const std::wstring& path, const std::wstring& selectPath, b
         m_hidden.clear();
         if (m_dup) m_dup->pr.cancel = true;  // Duplikatsuche gilt nur fuer den alten Ordner
         m_dupRunning = m_dupMode = false;
+        if (!m_search.empty() && m_searchEdit) {   // neuer Ordner: Suche zuruecksetzen
+            m_ignoreSearch = true;
+            SetWindowTextW(m_searchEdit, L"");
+            m_ignoreSearch = false;
+            m_search.clear();
+        }
         m_loaded = 0;
         m_sel = m_hoverItem = m_anchor = -1;
         m_preview.Reset();
@@ -1182,6 +1321,7 @@ void App::OnScanDone() {
 bool App::Visible(const Item& it) const {
     if (m_gpsOnly && it.metaDone && !it.hasGps) return false;
     if (m_dupMode && it.dupGroup == 0) return false;
+    if (!m_search.empty() && !NameMatches(it.name, m_search)) return false;
     return true;
 }
 
@@ -1189,6 +1329,7 @@ std::wstring App::FolderStatus() const {
     std::wstring s = m_folder + L"  ·  " + std::to_wstring(m_items.size()) + L" Bilder";
     if (m_dupMode) s += L"  ·  Duplikatansicht (Esc beendet)";
     else if (m_gpsOnly) s += L"  ·  nur mit Standortdaten (" + std::to_wstring(m_hidden.size()) + L" ausgeblendet)";
+    if (!m_search.empty() && !m_dupMode) s += L"  ·  Suche „" + m_search + L"“ (" + std::to_wstring(m_hidden.size()) + L" ausgeblendet)";
     return s;
 }
 
@@ -1672,6 +1813,7 @@ void App::Command(int id) {
             else BeginCrop();
             break;
         case BTN_STRIP: StripSelected(); break;
+        case BTN_CONVERT: ShowConvertMenu(); break;
         case BTN_EDIT:
             if (!m_viewer) EnterViewer(false);
             BeginEdit();
@@ -1713,6 +1855,184 @@ void App::ToggleFullscreen() {
     m_full = !m_full;
 }
 
+// ---- Leiste ueber dem Grid ----
+
+void App::UpdateEditFont() {
+    if (!m_searchEdit || std::fabs(m_editFontK - k) < 0.001f) return;
+    m_editFontK = k;
+    HFONT f = CreateFontW(-(int)std::lround(13.5f * k), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS,
+                          CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    SendMessageW(m_searchEdit, WM_SETFONT, reinterpret_cast<WPARAM>(f), TRUE);
+    if (m_editFont) DeleteObject(m_editFont);
+    m_editFont = f;
+}
+
+LRESULT CALLBACK App::SearchProc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR ref) {
+    App* app = reinterpret_cast<App*>(ref);
+    if (m == WM_KEYDOWN && (w == VK_ESCAPE || w == VK_RETURN || w == VK_DOWN)) {
+        if (w == VK_ESCAPE) app->ClearSearch();
+        SetFocus(app->m_hwnd);   // zurueck ins Grid
+        InvalidateRect(app->m_hwnd, nullptr, FALSE);
+        return 0;
+    }
+    if (m == WM_CHAR && (w == VK_ESCAPE || w == VK_RETURN)) return 0;   // kein Signalton
+    const LRESULT r = DefSubclassProc(h, m, w, l);
+    if (m == WM_SETFOCUS || m == WM_KILLFOCUS) InvalidateRect(app->m_hwnd, nullptr, FALSE);
+    return r;
+}
+
+void App::OnSearchChanged() {
+    if (m_ignoreSearch || !m_searchEdit) return;
+    wchar_t buf[128]{};
+    GetWindowTextW(m_searchEdit, buf, 128);
+    if (m_search == buf) return;
+    m_search = buf;
+    SetTimer(m_hwnd, TIMER_SEARCH, 160, nullptr);   // beim Tippen nicht bei jedem Buchstaben neu filtern
+    Invalidate();
+}
+
+void App::ClearSearch() {
+    if (m_searchEdit) {
+        m_ignoreSearch = true;
+        SetWindowTextW(m_searchEdit, L"");
+        m_ignoreSearch = false;
+    }
+    if (m_search.empty()) return;
+    m_search.clear();
+    KillTimer(m_hwnd, TIMER_SEARCH);
+    if (m_viewer) { m_resortPending = true; return; }
+    ApplyFilter();
+    if (m_sel >= 0) EnsureVisible(m_sel);
+    SetStatus(FolderStatus());
+}
+
+void App::ApplySort(int by, bool toggleDesc) {
+    if (toggleDesc) m_settings.sortDesc = !m_settings.sortDesc;
+    else m_settings.sortBy = std::clamp(by, 0, 3);
+    SortItems();
+    m_lastReqRow = -1;
+    RequestVisible();
+    if (m_sel >= 0) EnsureVisible(m_sel);
+    SaveSettingsNow();
+    Invalidate();
+}
+
+void App::ShowSortMenu() {
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING | (m_settings.sortBy == 0 ? MF_CHECKED : 0), MENU_SORT_NAME, L"Name");
+    AppendMenuW(m, MF_STRING | (m_settings.sortBy == 1 ? MF_CHECKED : 0), MENU_SORT_DATE, L"Änderungsdatum");
+    AppendMenuW(m, MF_STRING | (m_settings.sortBy == 2 ? MF_CHECKED : 0), MENU_SORT_SIZE, L"Dateigröße");
+    AppendMenuW(m, MF_STRING | (m_settings.sortBy == 3 ? MF_CHECKED : 0), MENU_SORT_TAKEN, L"Aufnahmedatum (EXIF)");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (!m_settings.sortDesc ? MF_CHECKED : 0), MENU_SORT_DESC + 1, L"Aufsteigend");
+    AppendMenuW(m, MF_STRING | (m_settings.sortDesc ? MF_CHECKED : 0), MENU_SORT_DESC, L"Absteigend");
+    POINT pt{(LONG)rcSort.left, (LONG)rcSort.bottom};
+    ClientToScreen(m_hwnd, &pt);
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(m);
+    if (cmd >= MENU_SORT_NAME && cmd <= MENU_SORT_TAKEN) ApplySort(cmd - MENU_SORT_NAME, false);
+    else if (cmd == MENU_SORT_DESC) { if (!m_settings.sortDesc) ApplySort(0, true); }
+    else if (cmd == MENU_SORT_DESC + 1) { if (m_settings.sortDesc) ApplySort(0, true); }
+}
+
+// Stufenlose Thumbnail-Groesse: die sichtbare obere Zeile bleibt oben, vorhandene Vorschaubilder werden einfach skaliert
+void App::SetThumbSize(int size) {
+    size = std::clamp(size, kMinThumbSize, kMaxThumbSize);
+    if (size == m_settings.thumbSize) return;
+    const GridM g0 = Metrics();
+    const int topIdx = g0.cellH > 0 ? (int)(m_gridScroll / g0.cellH) * g0.cols : 0;
+    m_settings.thumbSize = size;
+    const GridM g1 = Metrics();
+    SetGridScroll(g1.cols > 0 ? (float)(topIdx / g1.cols) * g1.cellH : 0.f, true);
+    Invalidate();
+}
+
+// Nach dem Zoomen: Vorschaubilder nur neu laden, wenn die vorhandenen deutlich zu klein (unscharf) oder zu gross waeren
+void App::ReloadThumbSizes() {
+    SaveSettingsNow();
+    if (m_settings.thumbSize > m_thumbLoadSize || m_settings.thumbSize < m_thumbLoadSize * 7 / 10) {
+        m_thumbLoadSize = m_settings.thumbSize;
+        for (auto& it : m_items) { it.thumb.Reset(); it.failed = false; }
+        m_loaded = 0;
+        m_loader.NewGeneration();
+        m_lastReqRow = -1;
+    }
+    RequestVisible();
+    Invalidate();
+}
+
+void App::SetZoomFromX(float x) {
+    const float tl = rcZoom.left + 16 * k, tr = rcZoom.right - 18 * k;
+    const float t = std::clamp((x - tl) / std::max(1.f, tr - tl), 0.f, 1.f);
+    SetThumbSize(kMinThumbSize + (int)std::lround(t * (kMaxThumbSize - kMinThumbSize)));
+}
+
+// ---- Schnellkonvertierung ----
+
+void App::ShowConvertMenu() {
+    if (m_batchRunning) return;
+    const std::vector<int> sel = SelectedIdx();
+    if (sel.empty()) { SetStatus(L"Kein Bild gewählt."); return; }
+    const std::wstring scope = sel.size() > 1 ? std::to_wstring(sel.size()) + L" Bilder" : m_items[sel[0]].name;
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING | MF_GRAYED, 0, (L"Konvertieren: " + scope).c_str());
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, MENU_CONV_JPG, L"In JPG umwandeln");
+    AppendMenuW(m, MF_STRING, MENU_CONV_PNG, L"In PNG umwandeln");
+    AppendMenuW(m, MF_STRING | (imgops::CanWrite(imgops::OutFormat::Webp) ? 0 : MF_GRAYED), MENU_CONV_WEBP,
+                imgops::CanWrite(imgops::OutFormat::Webp) ? L"In WebP umwandeln" : L"In WebP umwandeln (auf diesem PC nicht verfügbar)");
+    AppendMenuW(m, MF_STRING, MENU_CONV_BMP, L"In BMP umwandeln");
+    POINT pt{0, 0};
+    for (auto& b : m_btns)
+        if (b.id == BTN_CONVERT) pt = {(LONG)b.rc.left, (LONG)b.rc.bottom};
+    ClientToScreen(m_hwnd, &pt);
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(m);
+    if (cmd == MENU_CONV_JPG) StartConvert(imgops::OutFormat::Jpeg);
+    else if (cmd == MENU_CONV_PNG) StartConvert(imgops::OutFormat::Png);
+    else if (cmd == MENU_CONV_WEBP) StartConvert(imgops::OutFormat::Webp);
+    else if (cmd == MENU_CONV_BMP) StartConvert(imgops::OutFormat::Bmp);
+}
+
+void App::StartConvert(imgops::OutFormat fmt) {
+    StartBatch(fmt == imgops::OutFormat::Jpeg ? BatchKind::ConvertJpg : fmt == imgops::OutFormat::Png ? BatchKind::ConvertPng
+               : fmt == imgops::OutFormat::Webp ? BatchKind::ConvertWebp : BatchKind::ConvertBmp);
+}
+
+// Rechtsklick auf ein Bild
+void App::ShowGridContext(POINT pt) {
+    HMENU conv = CreatePopupMenu();
+    AppendMenuW(conv, MF_STRING, MENU_CONV_JPG, L"JPG");
+    AppendMenuW(conv, MF_STRING, MENU_CONV_PNG, L"PNG");
+    AppendMenuW(conv, MF_STRING | (imgops::CanWrite(imgops::OutFormat::Webp) ? 0 : MF_GRAYED), MENU_CONV_WEBP,
+                imgops::CanWrite(imgops::OutFormat::Webp) ? L"WebP" : L"WebP (nicht verfügbar)");
+    AppendMenuW(conv, MF_STRING, MENU_CONV_BMP, L"BMP");
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, MENU_C_OPEN, L"Öffnen");
+    AppendMenuW(m, MF_POPUP, reinterpret_cast<UINT_PTR>(conv), SelCount() > 1 ? L"Auswahl konvertieren in" : L"Konvertieren in");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, MENU_C_ROT_L, L"90° nach links drehen");
+    AppendMenuW(m, MF_STRING, MENU_C_ROT_R, L"90° nach rechts drehen");
+    AppendMenuW(m, MF_STRING, MENU_C_STRIP, L"EXIF/GPS entfernen");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, MENU_C_EXPLORER, L"Im Explorer anzeigen");
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(m);
+    DestroyMenu(conv);
+    if (cmd == MENU_CONV_JPG) StartConvert(imgops::OutFormat::Jpeg);
+    else if (cmd == MENU_CONV_PNG) StartConvert(imgops::OutFormat::Png);
+    else if (cmd == MENU_CONV_WEBP) StartConvert(imgops::OutFormat::Webp);
+    else if (cmd == MENU_CONV_BMP) StartConvert(imgops::OutFormat::Bmp);
+    else if (cmd == MENU_C_OPEN) { if (m_sel >= 0) EnterViewer(false); }
+    else if (cmd == MENU_C_ROT_L) RotateSelected(false);
+    else if (cmd == MENU_C_ROT_R) RotateSelected(true);
+    else if (cmd == MENU_C_STRIP) StripSelected();
+    else if (cmd == MENU_C_EXPLORER && m_sel >= 0 && m_sel < (int)m_items.size()) {
+        const std::wstring arg = L"/select,\"" + m_items[m_sel].path + L"\"";
+        ShellExecuteW(m_hwnd, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
+    }
+}
+
 void App::ShowSettings() {
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING | (m_settings.thumbSize == 120 ? MF_CHECKED : 0), MENU_SIZE_S, L"Thumbnails klein (120)");
@@ -1744,6 +2064,7 @@ void App::ShowSettings() {
             int newSize = cmd == MENU_SIZE_S ? 120 : cmd == MENU_SIZE_M ? 170 : cmd == MENU_SIZE_L ? 230 : 0;
             if (newSize && newSize != m_settings.thumbSize) {
                 m_settings.thumbSize = newSize;
+                m_thumbLoadSize = newSize;
                 for (auto& it : m_items) { it.thumb.Reset(); it.failed = false; }
                 m_loaded = 0;
                 m_loader.NewGeneration();
@@ -1922,7 +2243,10 @@ void App::ShowBatchMenu() {
 void App::StartBatch(BatchKind kind) {
     if (m_batchRunning || m_items.empty()) return;
     std::vector<std::wstring> files;
-    if (SelCount() > 1) {
+    if (IsConvert(kind)) {   // Konvertieren gilt nur fuer die Auswahl (oder das einzelne gewaehlte Bild), nie fuer den ganzen Ordner
+        for (int i : SelectedIdx()) files.push_back(m_items[i].path);
+        if (files.empty()) { SetStatus(L"Kein Bild gewählt."); return; }
+    } else if (SelCount() > 1) {
         for (auto& it : m_items)
             if (it.selected) files.push_back(it.path);
     } else {
@@ -1945,13 +2269,21 @@ void App::StartBatch(BatchKind kind) {
             question = L"Die längste Kante von " + scope + L" auf höchstens 2048 Pixel verkleinern (JPEG-Qualität 85, ohne "
                        L"Metadaten)?\n\nDie Kopien werden im Unterordner \"verkleinert\" abgelegt, die Originale bleiben unverändert.";
             break;
+        case BatchKind::ConvertJpg:
+        case BatchKind::ConvertPng:
+        case BatchKind::ConvertWebp:
+        case BatchKind::ConvertBmp:
+            question = L"Die " + std::to_wstring(files.size()) + L" Bilder in " + std::wstring(imgops::OutExt(ConvertFormat(kind))) +
+                       L" umwandeln?\n\nDie Originale bleiben unverändert, die neuen Dateien liegen im selben Ordner.";
+            break;
         case BatchKind::RotateCw:
         case BatchKind::RotateCcw:
             question = std::wstring(L"Bilder in ") + scope + (kind == BatchKind::RotateCw ? L" um 90° nach rechts drehen?"
                                                                                            : L" um 90° nach links drehen?");
             break;
     }
-    if (MessageBoxW(m_hwnd, question.c_str(), L"Stapelverarbeitung",
+    if ((!IsConvert(kind) || files.size() > 1) &&   // ein einzelnes Bild wird ohne Rueckfrage umgewandelt
+        MessageBoxW(m_hwnd, question.c_str(), L"Stapelverarbeitung",
                     MB_YESNO | (kind == BatchKind::StripOverwrite ? MB_ICONWARNING : MB_ICONQUESTION)) != IDYES)
         return;
     if (m_batch.joinable()) m_batch.join();
@@ -1996,6 +2328,15 @@ void App::StartBatch(BatchKind kind) {
                     if (!imgops::CanReencode(src)) skipped = true;
                     else ok = imgops::RotateImage(src, kind == BatchKind::RotateCw, &err);
                     break;
+                case BatchKind::ConvertJpg:
+                case BatchKind::ConvertPng:
+                case BatchKind::ConvertWebp:
+                case BatchKind::ConvertBmp: {
+                    const imgops::OutFormat of = ConvertFormat(kind);
+                    if (imgops::HasFormat(src, of)) { skipped = true; break; }   // schon im Zielformat
+                    ok = imgops::ConvertImage(src, UniqueTarget(src, imgops::OutExt(of)), of, &err);
+                    break;
+                }
             }
             if (skipped) {
                 ++m_bSkip;
@@ -2019,10 +2360,11 @@ void App::FinishBatch() {
     if (m_batch.joinable()) m_batch.join();
     m_batchRunning = false;
     const bool strip = m_batchKind == BatchKind::StripCopy || m_batchKind == BatchKind::StripOverwrite;
-    const wchar_t* verb = strip ? L" bereinigt" : (m_batchKind == BatchKind::Resize ? L" verkleinert" : L" gedreht");
+    const bool conv = IsConvert(m_batchKind);
+    const wchar_t* verb = strip ? L" bereinigt" : (m_batchKind == BatchKind::Resize ? L" verkleinert" : conv ? L" konvertiert" : L" gedreht");
     std::wstring msg = std::to_wstring((unsigned long long)m_bOk.load()) + verb;
     if (strip && m_bGps > 0) msg += L" (" + std::to_wstring((unsigned long long)m_bGps.load()) + L" davon mit Standortdaten)";
-    if (m_bSkip > 0) msg += L", " + std::to_wstring((unsigned long long)m_bSkip.load()) + L" übersprungen (Format nicht unterstützt)";
+    if (m_bSkip > 0) msg += L", " + std::to_wstring((unsigned long long)m_bSkip.load()) + (conv ? L" übersprungen (schon in diesem Format)" : L" übersprungen (Format nicht unterstützt)");
     if (m_bFail > 0) {
         std::lock_guard<std::mutex> lk(m_bErrMutex);
         msg += L", " + std::to_wstring((unsigned long long)m_bFail.load()) + L" fehlgeschlagen (" + m_bErr + L")";
@@ -2032,7 +2374,7 @@ void App::FinishBatch() {
     if (m_batchKind == BatchKind::StripCopy) msg += L" – Ordner \"bereinigt\"";
     if (m_batchKind == BatchKind::Resize) msg += L" – Ordner \"verkleinert\"";
     const bool inPlace = m_batchKind == BatchKind::StripOverwrite || m_batchKind == BatchKind::RotateCw ||
-                         m_batchKind == BatchKind::RotateCcw;
+                         m_batchKind == BatchKind::RotateCcw || conv;   // Ordner neu einlesen (auch neue Dateien beim Konvertieren)
     if (inPlace) {
         m_pendingStatus = msg;
         OpenFolder(m_folder, L"", true);  // geaenderte Dateien neu einlesen, Vorschauen neu laden
@@ -2838,6 +3180,28 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             }
             break;
         case WM_DROPFILES: OnDropFiles(reinterpret_cast<HDROP>(wp)); return 0;
+        case WM_COMMAND:
+            if (LOWORD(wp) == ID_SEARCH && HIWORD(wp) == EN_CHANGE) OnSearchChanged();
+            return 0;
+        case WM_CTLCOLOREDIT:
+            if (reinterpret_cast<HWND>(lp) == m_searchEdit) {
+                SetTextColor(reinterpret_cast<HDC>(wp), theme::kText);
+                SetBkColor(reinterpret_cast<HDC>(wp), theme::kCardRaised);
+                return reinterpret_cast<LRESULT>(m_editBrush);
+            }
+            break;
+        case WM_RBUTTONUP: {
+            if (m_viewer || m_batchRunning) return 0;
+            const float x = (float)GET_X_LPARAM(lp), y = (float)GET_Y_LPARAM(lp);
+            const int idx = HitGrid(x, y);
+            if (idx < 0) return 0;
+            if (!m_items[idx].selected) Select(idx);   // Rechtsklick auf ein nicht markiertes Bild waehlt es zuerst
+            else Focus(idx);
+            POINT pt{GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+            ClientToScreen(m_hwnd, &pt);
+            ShowGridContext(pt);
+            return 0;
+        }
         case WM_APP_THUMBS: Invalidate(); return 0;
         case WM_APP_SCAN: OnScanDone(); return 0;
         case WM_APP_TREE: OnTreeLoaded(); return 0;
@@ -2861,6 +3225,15 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 int row = (int)(m_gridScroll / g.cellH);
                 if (row != m_lastReqRow) { m_lastReqRow = row; RequestVisible(); }
                 Invalidate();
+            } else if (wp == TIMER_SEARCH) {
+                KillTimer(m_hwnd, TIMER_SEARCH);
+                if (m_viewer) { m_resortPending = true; return 0; }
+                ApplyFilter();
+                if (m_sel >= 0) EnsureVisible(m_sel);
+                SetStatus(FolderStatus());
+            } else if (wp == TIMER_ZOOM) {
+                KillTimer(m_hwnd, TIMER_ZOOM);
+                ReloadThumbSizes();
             } else if (wp == TIMER_SLIDE) {
                 if (m_slide && !m_slidePaused) SlideAdvance(1);
             } else if (wp == TIMER_FADE) {
@@ -2912,6 +3285,12 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 Invalidate();
                 return 0;
             }
+            if (m_zoomDrag) {
+                SetZoomFromX(x);
+                return 0;
+            }
+            const int hbar = m_viewer ? 0 : BarHit(x, y);
+            if (hbar != m_hoverBar) { m_hoverBar = hbar; Invalidate(); }
             int hb = 0;
             for (auto& b : ActiveBtns())
                 if (In(b.rc, x, y) && BtnEnabled(b)) hb = b.id;
@@ -2924,7 +3303,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             LPCWSTR cur = IDC_ARROW;
-            if (hb || hi >= 0 || hr >= 0) cur = IDC_HAND;
+            if (hb || hi >= 0 || hr >= 0 || hbar >= 2) cur = IDC_HAND;
             else if (m_viewer && EditSliderAt(x, y) >= 0) cur = IDC_HAND;
             else if (m_viewer && m_cropping && In(ViewerImageRect(), x, y)) cur = IDC_CROSS;
             else if (m_viewer && !m_editing && m_vZoom > 1.001f && In(rcViewer, x, y)) cur = IDC_SIZEALL;
@@ -2937,7 +3316,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_MOUSELEAVE:
             m_tracking = false;
-            m_hoverBtn = 0; m_hoverItem = m_hoverRow = -1;
+            m_hoverBtn = 0; m_hoverItem = m_hoverRow = -1; m_hoverBar = 0;
             Invalidate();
             return 0;
         case WM_LBUTTONDOWN: {
@@ -2945,6 +3324,19 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             SetFocus(m_hwnd);
             for (auto& b : ActiveBtns())
                 if (In(b.rc, x, y) && BtnEnabled(b)) { Command(b.id); return 0; }
+            if (!m_viewer) {   // Leiste ueber dem Grid
+                const int hit = BarHit(x, y);
+                if (hit == 1 && m_searchEdit) { SetFocus(m_searchEdit); return 0; }
+                if (hit == 2) { ClearSearch(); Invalidate(); return 0; }
+                if (hit == 3) { ShowSortMenu(); return 0; }
+                if (hit == 4) { ApplySort(0, true); return 0; }
+                if (hit == 5) {
+                    m_zoomDrag = true;
+                    SetCapture(m_hwnd);
+                    SetZoomFromX(x);
+                    return 0;
+                }
+            }
             if (m_viewer) {
                 const int sl = EditSliderAt(x, y);
                 if (sl >= 0) {
@@ -3004,6 +3396,12 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         }
         case WM_LBUTTONUP:
+            if (m_zoomDrag) {
+                m_zoomDrag = false;
+                if (GetCapture() == m_hwnd) ReleaseCapture();
+                ReloadThumbSizes();
+                return 0;
+            }
             if (m_cropDragging || m_panning || m_dragSlider >= 0) {
                 m_cropDragging = m_panning = false;
                 m_dragSlider = -1;
@@ -3042,6 +3440,11 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 if (!m_editing && !m_slide && In(rcViewer, (float)pt.x, (float)pt.y)) ViewerZoomAt(std::pow(1.2f, notches), (float)pt.x, (float)pt.y);
                 return 0;
             }
+            if ((LOWORD(wp) & MK_CONTROL) && In(rcGrid, (float)pt.x, (float)pt.y)) {   // Strg+Mausrad: Thumbnail-Groesse
+                SetThumbSize(m_settings.thumbSize + (int)std::lround(notches * 16));
+                SetTimer(m_hwnd, TIMER_ZOOM, 280, nullptr);
+                return 0;
+            }
             float delta = -notches;
             if (In(rcTree, (float)pt.x, (float)pt.y)) {
                 float maxS = std::max(0.f, m_rows.size() * kRowH * k - (H(rcTree) - 30 * k));
@@ -3060,7 +3463,13 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 if (m_batchRunning) { m_batchCancel = true; SetStatus(L"Stapelverarbeitung wird abgebrochen …"); }
                 else if (m_dupRunning && m_dup) { m_dup->pr.cancel = true; SetStatus(L"Duplikatsuche wird abgebrochen …"); }
                 else if (m_dupMode) EndDupMode();
+                else if (!m_search.empty()) ClearSearch();
                 else if (m_full) ToggleFullscreen();
+                return 0;
+            }
+            if (ctrl && wp == 'F' && m_searchEdit) {   // Strg+F: Suchfeld
+                SetFocus(m_searchEdit);
+                SendMessageW(m_searchEdit, EM_SETSEL, 0, -1);
                 return 0;
             }
             if (wp == VK_F5 || (wp == 'F' && !ctrl)) { StartSlideshow(); return 0; }
@@ -3090,6 +3499,8 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_DESTROY:
             KillTimer(m_hwnd, TIMER_SCROLL);
+            if (m_editFont) DeleteObject(m_editFont);
+            if (m_editBrush) DeleteObject(m_editBrush);
             SaveSettingsNow();
             m_batchCancel = true;
             if (m_meta) m_meta->cancel = true;

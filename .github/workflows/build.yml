@@ -48,6 +48,12 @@ jobs:
           cl /nologo /std:c++17 /EHsc /W4 /utf-8 vault\tests\VaultTest.cpp /Fe:build\VaultTest.exe /Fo:build\
           build\VaultTest.exe
 
+      - name: Test der Schnellkonvertierung im Photo Commander
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /EHsc /W4 /DUNICODE /D_UNICODE /DNOMINMAX photo\tests\ConvertTest.cpp photo\ImageOps.cpp /Fe:build\ConvertTest.exe /Fo:build\ /link windowscodecs.lib ole32.lib oleaut32.lib uuid.lib propsys.lib
+          build\ConvertTest.exe
+
       - name: Test von Duncan's Office (Tabellen-Formeln, CSV, Textkodierung)
         shell: cmd
         run: |
