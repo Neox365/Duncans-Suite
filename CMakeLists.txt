@@ -3,7 +3,7 @@ project(DuncansDriverUpdater VERSION 1.1.26 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
 set(SUITE_VER "1.1.35")
 set(PDF_VER "1.1.24")
-set(PHOTO_VER "0.2.5")
+set(PHOTO_VER "0.3.0")
 set(DOCS_VER "0.3.1")
 set(VAULT_VER "0.3.1")
 set(OFFICE_VER "0.3.0")
@@ -144,7 +144,7 @@ else()
     target_compile_options(DuncansPhotoCommander PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type -Os -ffunction-sections -fdata-sections)
     target_link_options(DuncansPhotoCommander PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
-target_link_libraries(DuncansPhotoCommander PRIVATE d2d1 dwrite windowscodecs ole32 oleaut32 shell32 shlwapi uuid dwmapi user32 gdi32 propsys)
+target_link_libraries(DuncansPhotoCommander PRIVATE d2d1 dwrite windowscodecs ole32 oleaut32 shell32 shlwapi uuid dwmapi user32 gdi32 propsys comctl32)
 
 # ---- Oggys Docs-Files: Rechnungs-Manager und Rechnungs-Generator (Direct2D/DirectWrite) ----
 add_executable(OggysDocsFiles WIN32

@@ -861,4 +861,185 @@ bool ResizeImage(const std::wstring& src, const std::wstring& dst, UINT maxEdge,
     return Reencode(src, dst, o, err);
 }
 
+// ---- Schnellkonvertierung ----
+
+const wchar_t* OutExt(OutFormat f) {
+    switch (f) {
+        case OutFormat::Jpeg: return L"jpg";
+        case OutFormat::Png: return L"png";
+        case OutFormat::Webp: return L"webp";
+        default: return L"bmp";
+    }
+}
+
+bool HasFormat(const std::wstring& path, OutFormat f) {
+    const std::wstring e = LowerExt(path);
+    switch (f) {
+        case OutFormat::Jpeg: return IsJpegExt(e);
+        case OutFormat::Png: return e == L"png";
+        case OutFormat::Webp: return e == L"webp";
+        default: return e == L"bmp";
+    }
+}
+
+namespace {
+const GUID kContainerWebp = {0xe094b0e2, 0x67f2, 0x45b3, {0xb0, 0xea, 0x11, 0x53, 0x37, 0xca, 0x7c, 0xf3}};
+GUID ContainerOf(OutFormat fmt) {
+    return fmt == OutFormat::Jpeg ? GUID_ContainerFormatJpeg
+         : fmt == OutFormat::Png  ? GUID_ContainerFormatPng
+         : fmt == OutFormat::Webp ? kContainerWebp
+                                  : GUID_ContainerFormatBmp;
+}
+}  // namespace
+
+bool CanWrite(OutFormat f) {
+    auto fac = MakeFactory();
+    ComPtr<IWICBitmapEncoder> enc;
+    return fac && SUCCEEDED(fac->CreateEncoder(ContainerOf(f), nullptr, &enc));
+}
+
+bool ConvertImage(const std::wstring& src, const std::wstring& dst, OutFormat fmt, std::wstring* err) {
+    if (_wcsicmp(src.c_str(), dst.c_str()) == 0) {
+        SetErr(err, L"Quelle und Ziel sind dieselbe Datei");
+        return false;
+    }
+    auto f = MakeFactory();
+    if (!f) { SetErr(err, L"WIC nicht verfuegbar"); return false; }
+    ComPtr<IWICBitmapDecoder> dec;
+    if (FAILED(f->CreateDecoderFromFilename(src.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnDemand, &dec))) {
+        SetErr(err, L"Datei konnte nicht gelesen werden");
+        return false;
+    }
+    ComPtr<IWICBitmapFrameDecode> frame;
+    if (FAILED(dec->GetFrame(0, &frame))) { SetErr(err, L"Kein Bild-Frame"); return false; }
+
+    ComPtr<IWICBitmapSource> cur = frame;
+    const WICBitmapTransformOptions t = OrientationToTransform(ReadOrientation(frame.Get()));
+    if (t != WICBitmapTransformRotate0) {
+        ComPtr<IWICBitmapFlipRotator> fr;
+        if (SUCCEEDED(f->CreateBitmapFlipRotator(&fr)) && SUCCEEDED(fr->Initialize(cur.Get(), t))) cur = fr;
+    }
+    UINT w = 0, h = 0;
+    cur->GetSize(&w, &h);
+    if (!w || !h) { SetErr(err, L"Leeres Bild"); return false; }
+    double dx = 96, dy = 96;
+    cur->GetResolution(&dx, &dy);
+
+    // Pixel als BGRA lesen
+    std::vector<BYTE> px;
+    try {
+        px.resize((size_t)w * h * 4);
+    } catch (const std::bad_alloc&) {
+        SetErr(err, L"Zu wenig Arbeitsspeicher fuer dieses Bild");
+        return false;
+    }
+    {
+        ComPtr<IWICFormatConverter> cv;
+        if (FAILED(f->CreateFormatConverter(&cv)) ||
+            FAILED(cv->Initialize(cur.Get(), GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom)) ||
+            FAILED(cv->CopyPixels(nullptr, w * 4, (UINT)px.size(), px.data()))) {
+            SetErr(err, L"Pixel konnten nicht gelesen werden");
+            return false;
+        }
+    }
+
+    // JPEG und BMP kennen keine Transparenz: auf Weiss rechnen und als 24 Bit schreiben
+    const bool opaque = fmt == OutFormat::Jpeg || fmt == OutFormat::Bmp;
+    std::vector<BYTE> out;
+    UINT stride = w * 4;
+    WICPixelFormatGUID want = GUID_WICPixelFormat32bppBGRA;
+    if (opaque) {
+        stride = ((w * 3 + 3) & ~3u);
+        try {
+            out.resize((size_t)stride * h);
+        } catch (const std::bad_alloc&) {
+            SetErr(err, L"Zu wenig Arbeitsspeicher fuer dieses Bild");
+            return false;
+        }
+        for (UINT y = 0; y < h; ++y) {
+            const BYTE* s = &px[(size_t)y * w * 4];
+            BYTE* d = &out[(size_t)y * stride];
+            for (UINT x = 0; x < w; ++x, s += 4, d += 3) {
+                const unsigned a = s[3];
+                d[0] = (BYTE)((s[0] * a + 255 * (255 - a) + 127) / 255);
+                d[1] = (BYTE)((s[1] * a + 255 * (255 - a) + 127) / 255);
+                d[2] = (BYTE)((s[2] * a + 255 * (255 - a) + 127) / 255);
+            }
+        }
+        want = GUID_WICPixelFormat24bppBGR;
+    }
+    const std::vector<BYTE>& data = opaque ? out : px;
+
+    ComPtr<IWICBitmap> bmp;
+    if (FAILED(f->CreateBitmapFromMemory(w, h, want, stride, (UINT)data.size(), const_cast<BYTE*>(data.data()), &bmp))) {
+        SetErr(err, L"Ergebnis konnte nicht aufgebaut werden");
+        return false;
+    }
+
+    const GUID container = ContainerOf(fmt);
+    ComPtr<IWICBitmapEncoder> enc;
+    if (FAILED(f->CreateEncoder(container, nullptr, &enc))) {
+        SetErr(err, fmt == OutFormat::Webp ? L"WebP kann auf diesem Rechner nicht geschrieben werden (kein WIC-Encoder installiert)"
+                                           : L"Dateiformat kann nicht geschrieben werden");
+        return false;
+    }
+    const std::wstring tmp = dst + L".pctmp";
+    ComPtr<IWICStream> stream;
+    if (FAILED(f->CreateStream(&stream)) || FAILED(stream->InitializeFromFilename(tmp.c_str(), GENERIC_WRITE)) ||
+        FAILED(enc->Initialize(stream.Get(), WICBitmapEncoderNoCache))) {
+        SetErr(err, L"Zieldatei kann nicht angelegt werden");
+        return false;
+    }
+    ComPtr<IWICBitmapFrameEncode> frameOut;
+    ComPtr<IPropertyBag2> props;
+    if (FAILED(enc->CreateNewFrame(&frameOut, &props))) {
+        DeleteFileW(tmp.c_str());
+        SetErr(err, L"Encoder-Fehler");
+        return false;
+    }
+    if ((fmt == OutFormat::Jpeg || fmt == OutFormat::Webp) && props) {
+        PROPBAG2 opt{};
+        opt.pstrName = const_cast<LPOLESTR>(L"ImageQuality");
+        VARIANT v;
+        VariantInit(&v);
+        v.vt = VT_R4;
+        v.fltVal = fmt == OutFormat::Jpeg ? 0.92f : 0.90f;
+        props->Write(1, &opt, &v);   // Fehler egal: dann gilt die Standardqualitaet des Encoders
+    }
+    frameOut->Initialize(props.Get());
+    frameOut->SetSize(w, h);
+    frameOut->SetResolution(dx, dy);
+    WICPixelFormatGUID pf = want;
+    frameOut->SetPixelFormat(&pf);
+    ComPtr<IWICBitmapSource> source = bmp;
+    if (!IsEqualGUID(pf, want)) {   // Encoder wuenscht ein anderes Pixelformat
+        ComPtr<IWICFormatConverter> cv;
+        if (FAILED(f->CreateFormatConverter(&cv)) ||
+            FAILED(cv->Initialize(bmp.Get(), pf, WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) {
+            DeleteFileW(tmp.c_str());
+            SetErr(err, L"Pixelformat wird vom Encoder nicht unterstuetzt");
+            return false;
+        }
+        source = cv;
+    }
+    HRESULT hr = frameOut->WriteSource(source.Get(), nullptr);
+    if (SUCCEEDED(hr)) hr = frameOut->Commit();
+    if (SUCCEEDED(hr)) hr = enc->Commit();
+    frameOut.Reset();
+    props.Reset();
+    enc.Reset();
+    stream.Reset();
+    if (FAILED(hr)) {
+        DeleteFileW(tmp.c_str());
+        SetErr(err, L"Schreiben fehlgeschlagen");
+        return false;
+    }
+    if (!MoveFileExW(tmp.c_str(), dst.c_str(), MOVEFILE_REPLACE_EXISTING)) {
+        DeleteFileW(tmp.c_str());
+        SetErr(err, L"Zieldatei kann nicht ersetzt werden");
+        return false;
+    }
+    return true;
+}
+
 }  // namespace imgops
