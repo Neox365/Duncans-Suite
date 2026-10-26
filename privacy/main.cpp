@@ -142,6 +142,10 @@ const Meta kMeta[] = {
     { 10, L"Empfohlen", nullptr },
     { 11, L"Empfohlen", nullptr },
     { 12, L"Empfohlen", nullptr },
+    { 14, L"Empfohlen", L"Setzt Richtlinien für Microsoft Edge: Edge zeigt dann den Hinweis „Von deiner Organisation verwaltet“ an, funktioniert aber normal. Die Startbeschleunigung fehlt, Edge öffnet dadurch etwas langsamer. Der Schalter macht alles rückgängig." },
+    { 15, L"Empfohlen", L"Updates und Store-Apps laden nur noch direkt von Microsoft; bei sehr langsamer Internetverbindung im Heimnetz mit mehreren PCs kann das Laden etwas länger dauern. Der Schalter macht alles rückgängig." },
+    { 16, L"Empfohlen", L"Wirkt auf Rechnern mit Recall (Windows 11 24H2 auf Copilot+-PCs); auf anderen Rechnern ist die Richtlinie harmlos und ohne Wirkung. Der Schalter macht alles rückgängig." },
+    { 17, L"Empfohlen", L"Diktat und Sprachassistenten, die Microsoft-Server nutzen, funktionieren danach nur noch mit der Offline-Erkennung (Sprachpakete nötig). Der Schalter macht alles rückgängig." },
     { 13, L"Empfohlen", L"Windows installiert Treiber dann nicht mehr automatisch; Treiber-Updates müssen manuell oder über Hersteller-Tools kommen. Kann die Treibersuche über Windows Update im Duncan's Driver Updater beeinflussen (nicht geprüft). Schalter macht alles rückgängig." },
 };
 

@@ -172,7 +172,7 @@ git add resources/vendor_releases.json resources/vendor_releases.json.sig; git c
 
 ## Duncan's Privacy Shield
 
-Datenschutz- & Telemetrie-Manager (`DuncansPrivacy.exe`, vierte Karte der Suite, eigene Programmversion 0.6.0). Läuft mit Administratorrechten (UAC), weil Richtlinien unter `HKLM` geschrieben werden.
+Datenschutz- & Telemetrie-Manager (`DuncansPrivacy.exe`, vierte Karte der Suite, eigene Programmversion 0.7.0). Läuft mit Administratorrechten (UAC), weil Richtlinien unter `HKLM` geschrieben werden.
 Jede Einstellung ist ein Schalter und besteht aus klar benannten Registry-Werten (siehe `privacy/PrivacyRules.cpp`, `AllSettings()`):
 
 | Gruppe | Einstellung | Registry (Auszug) |
@@ -185,6 +185,10 @@ Jede Einstellung ist ein Schalter und besteht aus klar benannten Registry-Werten
 | System-Tracking | Werbe-ID aus | `AdvertisingInfo\Enabled = 0`, Richtlinie `DisabledByGroupPolicy` |
 | | Standortdienste aus | `LocationAndSensors\DisableLocation = 1`, `ConsentStore\location = Deny` |
 | | Eingabe-/Handschriftdaten nicht übermitteln | `Input\TIPC\Enabled = 0`, `InputPersonalization\*` |
+| Hintergrund & Netzwerk | Edge nicht im Hintergrund starten | `HKCU\...\Policies\Microsoft\Edge`: `AllowPrelaunch`, `StartupBoostEnabled`, `BackgroundModeEnabled = 0` |
+| | Update-Weitergabe aus | `Policies\...\DeliveryOptimization\DODownloadMode = 0` |
+| KI & Sprache | Recall / Bildschirm-Analyse aus | `Policies\...\WindowsAI\DisableAIDataAnalysis = 1` |
+| | Online-Spracherkennung aus | `Speech_OneCore\Settings\OnlineSpeechPrivacy\HasAccepted = 0` |
 
 **Sicherheit:** Vor der ersten Änderung wird ein Windows-Wiederherstellungspunkt erstellt (im Hintergrund; ist der Systemschutz aus, fragt das Programm nach, ob es trotzdem weitermachen soll).
 Zusätzlich sichert das Programm vor dem Schreiben den Originalzustand jedes Wertes (vorhanden + Wert oder „nicht vorhanden“) in `%ProgramData%\DuncansSuite\Backups\privacy_backup.ini` (eine ältere Sicherung unter `%LOCALAPPDATA%\DuncansPrivacyShield` wird beim ersten Start übernommen).
