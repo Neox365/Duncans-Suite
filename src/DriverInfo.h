@@ -34,6 +34,7 @@ struct DriverInfo
     std::wstring updateTitle;     // Titel des verfuegbaren Updates (Windows Update)
     std::wstring updateId;        // WUA-Update-ID zum spaeteren Installieren
     std::wstring updateUrl;       // Download-Seite des Herstellers (nur bei Hersteller-Abgleich)
+    std::wstring instanceId;      // Geraete-Instanz-ID (USB\VID_...\...) fuer die Reparatur
     std::wstring infName;         // veroeffentlichter INF-Name, z. B. "oem12.inf" (fuer Treiber-Sicherung)
     std::wstring updateDate;      // Datum des verfuegbaren Treibers (TT.MM.JJJJ)
     unsigned long problemCode = 0; // CM_PROB_* (0 = kein Problem)

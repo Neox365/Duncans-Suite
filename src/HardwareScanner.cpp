@@ -232,6 +232,11 @@ std::vector<DriverInfo> HardwareScanner::ScanBlocking(HWND notifyWindow, const s
             if (info.deviceName.empty())
                 info.deviceName = L"Unbekanntes Gerät";
 
+            {
+                wchar_t inst[MAX_DEVICE_ID_LEN] = {};
+                if (SetupDiGetDeviceInstanceIdW(set, &dev, inst, MAX_DEVICE_ID_LEN, nullptr))
+                    info.instanceId = inst;
+            }
             info.category     = CategoryFor(dev.ClassGuid, info.icon);
             info.manufacturer = GetRegistryString(set, dev, SPDRP_MFG);
             info.hardwareId   = GetRegistryString(set, dev, SPDRP_HARDWAREID);

@@ -12,13 +12,15 @@
 #include <memory>
 #include <thread>
 
+#include "DeviceRepair.h"
 #include "Icons.h"
+#include "SuiteSafety.h"
 #include "Utils.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.1.27"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.2.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -446,6 +448,21 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
                   [this](int) { StartScan(); });   // Versionen neu einlesen
         return 0;
     }
+    case WM_REPAIR_DONE:
+    {
+        std::unique_ptr<devrepair::Result> r(reinterpret_cast<devrepair::Result*>(lp));
+        m_repairing = false;
+        std::wstring text = r->summary;
+        if (!r->steps.empty())
+        {
+            text += L"\n\nVersucht:";
+            for (const std::wstring& step : r->steps)
+                text += L"\n • " + step;
+        }
+        ShowModal(r->fixed ? L"Reparatur erfolgreich" : L"Reparatur ohne Erfolg", text, {}, { L"OK" }, r->fixed ? 0 : 1,
+                  [this](int) { StartScan(); });   // Status neu einlesen
+        return 0;
+    }
     case WM_BACKUP_DONE:
     {
         std::unique_ptr<std::wstring> folder(reinterpret_cast<std::wstring*>(lp));
@@ -807,6 +824,11 @@ void MainWindow::ShowDetails(const DriverInfo& d)
     if (d.problemCode != 0)
         status += L" (Problemcode " + std::to_wstring(d.problemCode) + L")";
     add(L"Status", status, true, badge.color);
+    if (d.status == DriverStatus::Problem && d.problemCode != 0)
+    {
+        add(L"Bedeutung", devrepair::ProblemTitle(d.problemCode));
+        add(L"Hinweis", devrepair::ProblemAdvice(d.problemCode));
+    }
     if (d.status == DriverStatus::UpdateAvailable)
     {
         add(L"Update", d.updateTitle + L" (" + d.updateDate + L")", true, kOrange);
@@ -825,16 +847,26 @@ void MainWindow::ShowDetails(const DriverInfo& d)
     const std::wstring id = d.hardwareId;
     const std::wstring url = d.status == DriverStatus::UpdateAvailable ? d.updateUrl : std::wstring();
     std::vector<std::wstring> buttons{ L"Hardware-ID kopieren" };
+    int openIndex = -1, repairIndex = -1;
     if (!url.empty())
+    {
+        openIndex = static_cast<int>(buttons.size());
         buttons.push_back(L"Download-Seite öffnen");
+    }
+    if (d.status == DriverStatus::Problem)
+    {
+        repairIndex = static_cast<int>(buttons.size());
+        buttons.push_back(L"Reparatur versuchen");
+    }
     buttons.push_back(L"Schließen");
-    const int openIndex = url.empty() ? -1 : 1;
-    ShowModal(d.deviceName, L"", std::move(rows), std::move(buttons), 0, [this, id, url, openIndex](int button)
+    ShowModal(d.deviceName, L"", std::move(rows), std::move(buttons), 0, [this, id, url, openIndex, repairIndex, d](int button)
     {
         if (button == 0 && !id.empty())
             CopyToClipboard(id);
         else if (button == openIndex && button >= 0)
             OpenUrl(url);
+        else if (button == repairIndex && button >= 0)
+            ConfirmRepair(d);
     });
 }
 
@@ -851,6 +883,8 @@ void MainWindow::ShowCardMenu(const DriverInfo& d, const RECT& anchor)
     AppendMenuW(menu, MF_STRING | (d.hardwareId.empty() ? MF_GRAYED : 0), 3, L"Hardware-ID kopieren");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 4, L"Treiber sichern …");
+    if (d.status == DriverStatus::Problem)
+        AppendMenuW(menu, MF_STRING, 6, L"Reparatur versuchen …");
 
     POINT pt{ anchor.right, anchor.bottom + S(4) };
     ClientToScreen(m_hwnd, &pt);
@@ -873,6 +907,9 @@ void MainWindow::ShowCardMenu(const DriverInfo& d, const RECT& anchor)
         break;
     case 5:
         UpdateDriver(d);
+        break;
+    case 6:
+        ConfirmRepair(d);
         break;
     default:
         break;
@@ -933,6 +970,53 @@ void MainWindow::BackupDriver(const DriverInfo& d)
         auto* payload = new std::wstring(target);
         if (!IsWindow(hwnd) || !PostMessageW(hwnd, WM_BACKUP_DONE, static_cast<WPARAM>(code), reinterpret_cast<LPARAM>(payload)))
             delete payload;
+    }).detach();
+}
+
+void MainWindow::ConfirmRepair(const DriverInfo& d)
+{
+    if (!m_isAdmin)
+    {
+        ShowModal(L"Reparatur versuchen", L"Für die Reparatur werden Administratorrechte benötigt. Bitte das Programm als Administrator starten.", {}, { L"OK" }, 1, nullptr);
+        return;
+    }
+    if (m_repairing || m_installing || m_scanning)
+    {
+        ShowToast(L"Es läuft bereits ein Vorgang", 1);
+        return;
+    }
+    std::wstring text = devrepair::ProblemTitle(d.problemCode) + L".\n\n";
+    if (!devrepair::CanTryRepair(d.problemCode))
+    {
+        ShowModal(L"Reparatur versuchen", text + devrepair::ProblemAdvice(d.problemCode) + L"\n\nPer Software lässt sich das nicht beheben.", {}, { L"OK" }, 0, nullptr);
+        return;
+    }
+    text += L"Das Programm versucht nacheinander: Gerät neu starten, Anschluss neu einlesen";
+    text += devrepair::MayReinstall(d) ? L" und das Gerät von Windows neu erkennen lassen (Treiber wird neu geladen)."
+                                       : L". Das Gerät wird bei diesem Typ nicht entfernt.";
+    text += L"\n\nVorher wird ein Wiederherstellungspunkt erstellt. Das Gerät ist dabei kurz nicht verfügbar; angeschlossene Laufwerke bitte währenddessen nicht benutzen.";
+    ShowModal(L"Reparatur versuchen", text, {}, { L"Abbrechen", L"Reparieren" }, 3, [this, d](int button)
+    {
+        if (button == 1)
+            StartRepair(d);
+    });
+}
+
+void MainWindow::StartRepair(const DriverInfo& d)
+{
+    if (m_repairing)
+        return;
+    m_repairing = true;
+    ShowToast(L"Reparatur läuft … das dauert bis zu einer halben Minute", 0);
+    const HWND hwnd = m_hwnd;
+    std::thread([hwnd, d]()
+    {
+        auto* result = new devrepair::Result(devrepair::Repair(d));
+        for (const std::wstring& step : result->steps)
+            suite_safety::Log(L"DriverUpdater", d.deviceName + L": " + step);
+        suite_safety::Log(L"DriverUpdater", d.deviceName + L": " + result->summary);
+        if (!IsWindow(hwnd) || !PostMessageW(hwnd, WM_REPAIR_DONE, 0, reinterpret_cast<LPARAM>(result)))
+            delete result;
     }).detach();
 }
 
