@@ -29,7 +29,7 @@ struct DriverInfo
     std::wstring driverDate;      // Format TT.MM.JJJJ
     std::wstring provider;        // Treiber-Anbieter
     std::wstring hardwareId;      // Erste Hardware-ID (PnP-ID), z. B. PCI\VEN_10DE&DEV_2684...
-    std::vector<std::wstring> hardwareIds; // Alle Hardware- + Compatible-IDs (GROSSBUCHSTABEN) fuer den Update-Abgleich
+    std::vector<std::wstring> hardwareIds; // Nur echte Hardware-IDs (GROSSBUCHSTABEN) fuer den Update-Abgleich, keine generischen Compatible-IDs
     int driverDateKey = 0;        // JJJJMMTT, 0 = unbekannt
     std::wstring updateTitle;     // Titel des verfuegbaren Updates (Windows Update)
     std::wstring updateId;        // WUA-Update-ID zum spaeteren Installieren

@@ -236,7 +236,6 @@ std::vector<DriverInfo> HardwareScanner::ScanBlocking(HWND notifyWindow, const s
             info.manufacturer = GetRegistryString(set, dev, SPDRP_MFG);
             info.hardwareId   = GetRegistryString(set, dev, SPDRP_HARDWAREID);
             AppendMultiString(set, dev, SPDRP_HARDWAREID, info.hardwareIds);
-            AppendMultiString(set, dev, SPDRP_COMPATIBLEIDS, info.hardwareIds);
             info.driverDate   = GetPropertyDate(set, dev, DEVPKEY_Device_DriverDate, &info.driverDateKey);
 
             ULONG cmStatus = 0, cmProblem = 0;
