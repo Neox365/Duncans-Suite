@@ -302,6 +302,20 @@ const std::vector<Setting>& AllSettings() {
         { 12, L"System-Tracking", L"Aktivitätsverlauf (Timeline) deaktivieren",
           L"Windows speichert nicht mehr, welche Apps und Dateien du nutzt, und synchronisiert keinen Aktivitätsverlauf.",
           { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\System", L"EnableActivityFeed", ValType::Dword, 0, nullptr } }, {} },
+        { 14, L"Hintergrund & Netzwerk", L"Edge nicht im Hintergrund starten",
+          L"Microsoft Edge startet nicht mehr vorab beim Anmelden und läuft nach dem Schließen nicht im Hintergrund weiter (Startbeschleunigung und Hintergrundmodus aus).",
+          { { Hive::User, L"SOFTWARE\\Policies\\Microsoft\\Edge", L"AllowPrelaunch", ValType::Dword, 0, nullptr },
+            { Hive::User, L"SOFTWARE\\Policies\\Microsoft\\Edge", L"StartupBoostEnabled", ValType::Dword, 0, nullptr },
+            { Hive::User, L"SOFTWARE\\Policies\\Microsoft\\Edge", L"BackgroundModeEnabled", ValType::Dword, 0, nullptr } }, {} },
+        { 15, L"Hintergrund & Netzwerk", L"Update-Weitergabe an andere PCs aus (Delivery Optimization)",
+          L"Windows lädt Updates nur noch direkt von Microsoft und stellt heruntergeladene Teile nicht mehr anderen PCs im Netzwerk oder im Internet zur Verfügung (Modus „nur HTTP“).",
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\DeliveryOptimization", L"DODownloadMode", ValType::Dword, 0, nullptr } }, {} },
+        { 16, L"KI & Sprache", L"Windows Recall / Bildschirm-Analyse aus",
+          L"Windows speichert keine Schnappschüsse deiner Bildschirmaktivität und wertet sie nicht mit KI aus (Richtlinie DisableAIDataAnalysis). Betrifft vor allem Windows 11 auf Copilot+-PCs.",
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\WindowsAI", L"DisableAIDataAnalysis", ValType::Dword, 1, nullptr } }, {} },
+        { 17, L"KI & Sprache", L"Online-Spracherkennung aus",
+          L"Sprachfunktionen senden keine Aufnahmen mehr an Microsoft-Server zur Auswertung; die Online-Spracherkennung wird nicht mehr akzeptiert.",
+          { { Hive::User, L"Software\\Microsoft\\Speech_OneCore\\Settings\\OnlineSpeechPrivacy", L"HasAccepted", ValType::Dword, 0, nullptr } }, {} },
     };
     return all;
 }

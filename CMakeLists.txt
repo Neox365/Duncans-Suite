@@ -116,7 +116,7 @@ add_executable(DuncansPrivacyShield WIN32
 )
 set_target_properties(DuncansPrivacyShield PROPERTIES OUTPUT_NAME DuncansPrivacy)
 target_compile_definitions(DuncansPrivacyShield PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
-                           APP_VERSION=L\"0.6.3\")
+                           APP_VERSION=L\"0.7.0\")
 if(MSVC)
     target_compile_options(DuncansPrivacyShield PRIVATE /utf-8 /W4 /permissive-)
     set_property(TARGET DuncansPrivacyShield PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
