@@ -172,7 +172,7 @@ git add resources/vendor_releases.json resources/vendor_releases.json.sig; git c
 
 ## Duncan's Privacy Shield
 
-Datenschutz- & Telemetrie-Manager (`DuncansPrivacy.exe`, vierte Karte der Suite, eigene Programmversion 0.7.0). Läuft mit Administratorrechten (UAC), weil Richtlinien unter `HKLM` geschrieben werden.
+Datenschutz- & Telemetrie-Manager (`DuncansPrivacy.exe`, vierte Karte der Suite, eigene Programmversion 0.8.0). Läuft mit Administratorrechten (UAC), weil Richtlinien unter `HKLM` geschrieben werden.
 Jede Einstellung ist ein Schalter und besteht aus klar benannten Registry-Werten (siehe `privacy/PrivacyRules.cpp`, `AllSettings()`):
 
 | Gruppe | Einstellung | Registry (Auszug) |
@@ -187,6 +187,10 @@ Jede Einstellung ist ein Schalter und besteht aus klar benannten Registry-Werten
 | | Eingabe-/Handschriftdaten nicht übermitteln | `Input\TIPC\Enabled = 0`, `InputPersonalization\*` |
 | Hintergrund & Netzwerk | Edge nicht im Hintergrund starten | `HKCU\...\Policies\Microsoft\Edge`: `AllowPrelaunch`, `StartupBoostEnabled`, `BackgroundModeEnabled = 0` |
 | | Update-Weitergabe aus | `Policies\...\DeliveryOptimization\DODownloadMode = 0` |
+| Oberfläche & Hintergrund-Apps | Widgets & News-Feed aus | `Policies\Microsoft\Dsh\AllowNewsAndInterests = 0`, `TaskbarDa = 0` (optional) |
+| | Game DVR aus | `Policies\...\GameDVR\AllowGameDVR = 0`, `GameConfigStore\GameDVR_Enabled = 0` |
+| | Hintergrund-Apps verbieten | `BackgroundAccessApplications\GlobalUserDisabled = 1` (nur einzeln, nicht bei „Alle schützen“) |
+| Windows-Dienste | Spooler, SysMain (nur SSD), RemoteRegistry, WerSvc | Starttyp „Deaktiviert“ per `ChangeServiceConfig`, Originalstarttyp gesichert (nur einzeln) |
 | KI & Sprache | Recall / Bildschirm-Analyse aus | `Policies\...\WindowsAI\DisableAIDataAnalysis = 1` |
 | | Online-Spracherkennung aus | `Speech_OneCore\Settings\OnlineSpeechPrivacy\HasAccepted = 0` |
 

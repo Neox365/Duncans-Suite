@@ -23,6 +23,13 @@ struct RegOp {
     ValType type;
     DWORD dword;               // Zielwert (Dword)
     const wchar_t* str;        // Zielwert (String)
+    bool optional = false;     // Schreibfehler bricht die Einstellung nicht ab und zaehlt nicht fuer den Schalterstand (z. B. von Windows geschuetzte Werte)
+};
+
+// Dienst, dessen Starttyp ueber die Dienstverwaltung (ChangeServiceConfig) geaendert wird; der Originalstarttyp wird gesichert
+struct ServiceOp {
+    const wchar_t* name;
+    DWORD startType;           // SERVICE_DISABLED, SERVICE_DEMAND_START ...
 };
 
 struct Setting {
@@ -32,6 +39,9 @@ struct Setting {
     const wchar_t* description;
     std::vector<RegOp> ops;
     std::vector<const wchar_t*> stopServices;   // Dienste, die nach dem Anwenden beendet werden (Start-Typ steht in ops)
+    std::vector<ServiceOp> services;            // Starttyp per Dienstverwaltung; Dienste mit Zieltyp "deaktiviert" werden auch beendet
+    bool manualOnly = false;                    // wird von "Alle schuetzen" nicht mit angewendet (Nebenwirkungen: nur bewusst einschalten)
+    bool requiresSsd = false;                   // wird abgelehnt, wenn das Systemlaufwerk eine Festplatte ist
 };
 
 const std::vector<Setting>& AllSettings();
@@ -44,6 +54,9 @@ bool Apply(const Setting& s, std::wstring& error);          // sichert die Origi
 bool Revert(const Setting& s, std::wstring& error);         // stellt die gesicherten Originalwerte wieder her
 bool RevertAll(int& restored, std::wstring& error);         // alles, was in der Sicherung steht
 bool HasBackup();
+
+// Ist das Systemlaufwerk eine SSD (keine Suchzeit-Strafe)? known = false, wenn Windows es nicht verraet (dann ist die Rueckgabe false).
+bool SystemDriveIsSsd(bool& known);
 
 // Wiederherstellungspunkt (Systemschutz). Kann Sekunden dauern, daher nicht im UI-Thread aufrufen.
 // Rueckgabe false: error enthaelt den Grund (z. B. Systemschutz deaktiviert).

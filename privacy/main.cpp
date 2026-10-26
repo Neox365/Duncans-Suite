@@ -142,6 +142,13 @@ const Meta kMeta[] = {
     { 10, L"Empfohlen", nullptr },
     { 11, L"Empfohlen", nullptr },
     { 12, L"Empfohlen", nullptr },
+    { 18, L"Empfohlen", L"Setzt die Richtlinie „Widgets zulassen = Aus“ und zusätzlich TaskbarDa = 0 für den Benutzer (Windows schützt diesen Wert in manchen Versionen; dann wirkt die Richtlinie allein). Eventuell ist ein Neustart von Explorer oder Windows nötig. Der Schalter macht alles rückgängig." },
+    { 19, L"Empfohlen", L"Die Game Bar kann dann nicht mehr im Hintergrund aufzeichnen; Screenshots und Aufnahmen mit anderen Programmen (z. B. NVIDIA, OBS) sind nicht betroffen. Der Schalter macht alles rückgängig." },
+    { 20, L"Erweitert", L"Mail, Kalender, Messenger und andere Store-Apps aktualisieren sich dann nur noch bei geöffneter App und melden Neuigkeiten verspätet. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
+    { 21, L"Erweitert", L"Nur ohne Drucker sinnvoll: Danach lässt sich weder drucken noch in PDF drucken, auch „Microsoft Print to PDF“ braucht den Dienst. Wird von „Alle schützen“ nicht mitgeschaltet. „Standard wiederherstellen“ stellt Starttyp und Betrieb des Dienstes wieder her." },
+    { 22, L"Erweitert", L"Nur bei SSD als Systemlaufwerk: Auf Festplatten wird das Einschalten abgelehnt. Programme starten nach dem Abschalten eventuell minimal später. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
+    { 23, L"Erweitert", L"Auf Heim-PCs ist der Dienst ohnehin meist schon aus. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
+    { 24, L"Erweitert", L"Windows erstellt dann keine Absturzberichte mehr und kann nicht mehr nach Lösungen für Programmfehler suchen. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
     { 14, L"Empfohlen", L"Setzt Richtlinien für Microsoft Edge: Edge zeigt dann den Hinweis „Von deiner Organisation verwaltet“ an, funktioniert aber normal. Die Startbeschleunigung fehlt, Edge öffnet dadurch etwas langsamer. Der Schalter macht alles rückgängig." },
     { 15, L"Empfohlen", L"Updates und Store-Apps laden nur noch direkt von Microsoft; bei sehr langsamer Internetverbindung im Heimnetz mit mehreren PCs kann das Laden etwas länger dauern. Der Schalter macht alles rückgängig." },
     { 16, L"Empfohlen", L"Wirkt auf Rechnern mit Recall (Windows 11 24H2 auf Copilot+-PCs); auf anderen Rechnern ist die Richtlinie harmlos und ohne Wirkung. Der Schalter macht alles rückgängig." },
@@ -355,9 +362,10 @@ void OnRestorePointDone(bool ok, const std::wstring& err) {
 
 // Handler von "Alle schützen"
 void ProtectAll() {
-    std::vector<int> todo;
-    for (size_t i = 0; i < g.applied.size(); ++i) if (!g.applied[i]) todo.push_back(static_cast<int>(i));
-    if (todo.empty()) { SetStatus(L"Alle Einstellungen sind bereits aktiv.", kGreen); return; }
+    const auto& all = privacy::AllSettings();
+    std::vector<int> todo;   // Einstellungen mit Nebenwirkungen (Drucken, Hintergrund-Apps ...) schaltet man nur einzeln ein
+    for (size_t i = 0; i < g.applied.size(); ++i) if (!g.applied[i] && !all[i].manualOnly) todo.push_back(static_cast<int>(i));
+    if (todo.empty()) { SetStatus(L"Alle Einstellungen außer den „Erweiterten“ mit Nebenwirkungen sind bereits aktiv.", kGreen); return; }
     ApplyList(todo, true);
 }
 
