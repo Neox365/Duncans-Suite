@@ -84,6 +84,10 @@
 - Übersicht: Die Meldung nach dem Aufräumen zeigt nur noch die Anzahl der übersprungenen Einträge, mit mehr Abstand zwischen den Textzeilen
 
 [DuncansDriverUpdater.exe]
+## 1.2.0 | 2026-10-26
+- Neu: Geräte mit Problemcode (zum Beispiel USB-Massenspeicher) lassen sich per „Reparatur versuchen“ im Detail-Dialog oder im Kartenmenü reparieren: aktivieren, Gerät neu starten, Anschluss neu einlesen und bei unkritischen Geräten von Windows neu erkennen lassen.
+- Der Detail-Dialog erklärt den Problemcode jetzt im Klartext, mit Hinweis zur Ursache. Codes, die Software nicht beheben kann, werden ehrlich als solche gemeldet.
+- Vor der Reparatur wird ein Wiederherstellungspunkt erstellt; Grafik, Speicher-Controller und Prozessor werden nie entfernt.
 ## 1.1.27 | 2026-10-26
 - Fehlerbehebung: Updates werden nur noch Geräten zugeordnet, deren echte Hardware-ID passt. Generische kompatible IDs (zum Beispiel USB-Klassen) führten dazu, dass ein Update bei fremden Geräten erschien und nach der Installation in der Liste blieb.
 - Updates ohne lesbares Datum werden nicht mehr als neuer behandelt.

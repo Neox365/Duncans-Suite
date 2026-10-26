@@ -84,6 +84,8 @@ private:
     void ShowDetails(const DriverInfo& d);
     void ShowCardMenu(const DriverInfo& d, const RECT& anchor);
     void BackupDriver(const DriverInfo& d);
+    void ConfirmRepair(const DriverInfo& d);
+    void StartRepair(const DriverInfo& d);
 
     // Eigene Dialoge / Toasts (statt MessageBox)
     struct ModalRow
@@ -149,6 +151,7 @@ private:
     UpdateChecker m_updater;
     UpdateInstaller m_installer;
     bool m_installing = false;
+    bool m_repairing = false;
     bool m_autoInstall = false;
     int  m_installStage = 0;
     bool m_installHover = false;
