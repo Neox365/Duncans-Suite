@@ -206,6 +206,10 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansOffice.exe]
+## 0.2.0 | 2026-10-26
+- Writer: Schriftart-Auswahl, Textfarbe (Farbfelder und freie Auswahl), Aufzählungspunkte und Durchgestrichen in der Werkzeugleiste.
+- Neu: Suchen und Ersetzen (Strg+F oder Strg+H, F3 sucht weiter) mit Groß-/Kleinschreibung, ganzen Wörtern und „Alle ersetzen“.
+- Der Fenstertitel zeigt ungespeicherte Änderungen jetzt mit einem Sternchen am Dateinamen („Unbenannt* – Writer – Duncan's Office“).
 ## 0.1.1 | 2026-10-24
 - Fehlerbehebung: Drucken ließ das Programm einfrieren, weil Windows die Druckerliste (auch Netzwerkdrucker) im Hauptfenster suchte. Die Suche läuft jetzt im Hintergrund, Drucken zeigt eine Druckerliste, und weitere Klicks während eines Druckauftrags werden ignoriert.
 ## 0.1.0 | 2026-10-23
