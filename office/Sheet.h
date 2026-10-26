@@ -1,11 +1,14 @@
 #pragma once
 // Tabellen-Engine fuer Duncan's Office (Sheets): 26 Spalten (A-Z) x 100 Zeilen, Formeln und CSV.
 // Formeln: + - * / ^, Klammern, Zellbezuege (A1), Bereiche (A1:B5) und die Funktionen
-// SUMME, MITTELWERT, MIN, MAX, ANZAHL (englisch: SUM, AVERAGE, MIN, MAX, COUNT).
+// SUMME, MITTELWERT, MIN, MAX, ANZAHL (englisch: SUM, AVERAGE, MIN, MAX, COUNT), ZAEHLENWENN (COUNTIF) und WENN (IF) mit
+// Vergleichen (= <> < > <= >=) und Text in Anfuehrungszeichen.
 // Argumente trennt ";" (oder ","; steht "," zwischen zwei Ziffern, ist es ein Dezimalkomma).
 // Reine Logik ohne Win32, damit sie getrennt testbar bleibt.
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
+#include <cwchar>
 #include <cstdlib>
 #include <cstring>
 #include <cwctype>
@@ -79,17 +82,60 @@ inline std::wstring FormatNumber(double d)
     return buf;
 }
 
+// Waehrung "1.234,50 €" und Prozent "12,5 %" (deutsche Schreibweise)
+inline std::wstring FormatCurrency(double d)
+{
+    if (!std::isfinite(d)) return L"#ZAHL!";
+    const bool neg = d < 0 && std::fabs(d) >= 0.005;
+    wchar_t buf[64];
+    std::swprintf(buf, 64, L"%.2f", std::fabs(d));
+    std::wstring t = buf;
+    const size_t dot = t.find(L'.');
+    std::wstring ip = t.substr(0, dot), frac = t.substr(dot + 1), out;
+    for (size_t k = 0; k < ip.size(); ++k) {
+        if (k && (ip.size() - k) % 3 == 0) out.push_back(L'.');
+        out.push_back(ip[k]);
+    }
+    return (neg ? L"-" : L"") + out + L"," + frac + L" \u20AC";
+}
+
+inline std::wstring FormatPercent(double d)
+{
+    if (!std::isfinite(d)) return L"#ZAHL!";
+    wchar_t buf[64];
+    std::swprintf(buf, 64, L"%.2f", d * 100.0);
+    std::wstring t = buf;
+    while (!t.empty() && t.back() == L'0') t.pop_back();
+    if (!t.empty() && t.back() == L'.') t.pop_back();
+    if (t == L"-0" || t.empty()) t = L"0";
+    for (auto& ch : t)
+        if (ch == L'.') ch = L',';
+    return t + L" %";
+}
+
+enum Format : unsigned char { FmtGeneral = 0, FmtCurrency = 1, FmtPercent = 2 };
+constexpr std::uint32_t kNoFill = 0xFFFFFFFFu;   // keine Hintergrundfarbe
+
 class Sheet {
 public:
     std::wstring raw[kRows][kCols];   // Eingabe wie getippt (Formeln beginnen mit "=")
+    unsigned char fmt[kRows][kCols] = {};   // Zahlenformat je Zelle (Format)
+    std::uint32_t fill[kRows][kCols];       // Hintergrundfarbe (COLORREF) oder kNoFill
 
-    Sheet() { Invalidate(); }
+    Sheet() { ResetStyles(); Invalidate(); }
+    void ResetStyles()
+    {
+        std::memset(fmt, 0, sizeof fmt);
+        for (auto& row : fill)
+            for (auto& f : row) f = kNoFill;
+    }
 
     void Set(int r, int c, const std::wstring& s) { raw[r][c] = s; Invalidate(); }
     void Clear()
     {
         for (auto& row : raw)
             for (auto& cell : row) cell.clear();
+        ResetStyles();
         Invalidate();
     }
     // Berechnete Werte verwerfen (nach jeder Aenderung der Eingaben noetig)
@@ -119,7 +165,8 @@ public:
     {
         const Value& v = Get(r, c);
         switch (v.kind) {
-            case Value::Number: return FormatNumber(v.num);
+            case Value::Number:
+                return fmt[r][c] == FmtCurrency ? FormatCurrency(v.num) : fmt[r][c] == FmtPercent ? FormatPercent(v.num) : FormatNumber(v.num);
             case Value::Text:
             case Value::Error: return v.text;
             default: return std::wstring();
@@ -146,6 +193,47 @@ private:
 namespace detail {
 
 struct Fail { std::wstring code; };
+
+// Zwischenergebnis, das auch Text sein kann (fuer Vergleiche, WENN und Kriterien)
+struct Operand {
+    bool text = false, empty = false;
+    double n = 0;
+    std::wstring s;
+};
+
+inline bool IsUmlaut(wchar_t c) { return c == 0xC4 || c == 0xD6 || c == 0xDC || c == 0xE4 || c == 0xF6 || c == 0xFC || c == 0xDF; }
+inline wchar_t UpperName(wchar_t c)
+{
+    if (c == 0xE4) return 0xC4;
+    if (c == 0xF6) return 0xD6;
+    if (c == 0xFC) return 0xDC;
+    return c < 128 ? static_cast<wchar_t>(std::towupper(c)) : c;
+}
+inline int CompareText(const std::wstring& a, const std::wstring& b)   // ohne Beachtung der Gross-/Kleinschreibung
+{
+    const size_t n = a.size() < b.size() ? a.size() : b.size();
+    for (size_t k = 0; k < n; ++k) {
+        const wchar_t x = UpperName(a[k]), y = UpperName(b[k]);
+        if (x != y) return x < y ? -1 : 1;
+    }
+    return a.size() == b.size() ? 0 : (a.size() < b.size() ? -1 : 1);
+}
+// Platzhalter * (beliebig viele Zeichen) und ? (ein Zeichen), ohne Beachtung der Gross-/Kleinschreibung
+inline bool WildMatch(const std::wstring& p, size_t pi, const std::wstring& t, size_t ti)
+{
+    while (pi < p.size()) {
+        if (p[pi] == L'*') {
+            for (size_t k = ti; k <= t.size(); ++k)
+                if (WildMatch(p, pi + 1, t, k)) return true;
+            return false;
+        }
+        if (ti >= t.size()) return false;
+        if (p[pi] != L'?' && UpperName(p[pi]) != UpperName(t[ti])) return false;
+        ++pi;
+        ++ti;
+    }
+    return ti == t.size();
+}
 
 struct Parser {
     const Sheet& sh;
@@ -260,7 +348,7 @@ struct Parser {
     double Name()
     {
         const size_t st = i;
-        while (i < s.size() && IsLetter(s[i])) ++i;
+        while (i < s.size() && (IsLetter(s[i]) || IsUmlaut(s[i]))) ++i;
         const size_t letterEnd = i;
         while (i < s.size() && IsDigit(s[i])) ++i;
         const std::wstring tok = s.substr(st, i - st);
@@ -268,6 +356,12 @@ struct Parser {
         while (j < s.size() && s[j] == L' ') ++j;
         if (letterEnd == i) {
             if (j < s.size() && s[j] == L'(') {
+                if (IsIfName(tok)) {   // WENN auch mitten in einer Rechnung, aber nur mit Zahlen als Ergebnis
+                    i = st;
+                    const Operand o = WennOp();
+                    if (o.text) Throw(L"#WERT!");
+                    return o.n;
+                }
                 i = j;
                 return Func(tok);
             }
@@ -291,8 +385,8 @@ struct Parser {
             }
     }
 
-    // Eine Zelle oder einen Bereich als Zellmenge lesen; sonst false (dann ist ein normaler Ausdruck dran)
-    bool RefOrRange(std::vector<double>& vals)
+    // Steht hier ein Bereich "A1:B5" oder eine einzelne Zelle (gefolgt von ; , oder ) ), kommen die Koordinaten zurueck und i steht dahinter
+    bool RangeCoords(int& r1, int& c1, int& r2, int& c2)
     {
         Ws();
         size_t p = i;
@@ -300,7 +394,6 @@ struct Parser {
         const size_t letterEnd = p;
         while (p < s.size() && IsDigit(s[p])) ++p;
         if (letterEnd == i || p == letterEnd) return false;
-        int r1 = 0, c1 = 0;
         const int k1 = ParseRef(s.substr(i, p - i), r1, c1);
         if (k1 == 0) return false;
         size_t q = p;
@@ -311,35 +404,282 @@ struct Parser {
             size_t e = q;
             while (e < s.size() && IsLetter(s[e])) ++e;
             while (e < s.size() && IsDigit(s[e])) ++e;
-            int r2 = 0, c2 = 0;
             const int k2 = ParseRef(s.substr(q, e - q), r2, c2);
             if (k2 == 0) Throw(L"#SYNTAX!");
             if (k1 == 2 || k2 == 2) Throw(L"#BEZUG!");
             i = e;
-            AddCells(vals, r1, c1, r2, c2);
             return true;
         }
         if (q < s.size() && (s[q] == L';' || s[q] == L',' || s[q] == L')')) {
             if (k1 == 2) Throw(L"#BEZUG!");
             i = q;
-            AddCells(vals, r1, c1, r1, c1);
+            r2 = r1;
+            c2 = c1;
             return true;
         }
         return false;
     }
 
+    // Eine Zelle oder einen Bereich als Zellmenge lesen; sonst false (dann ist ein normaler Ausdruck dran)
+    bool RefOrRange(std::vector<double>& vals)
+    {
+        int r1 = 0, c1 = 0, r2 = 0, c2 = 0;
+        if (!RangeCoords(r1, c1, r2, c2)) return false;
+        AddCells(vals, r1, c1, r2, c2);
+        return true;
+    }
+
+    // ---- Text, Vergleiche, WENN, ZAEHLENWENN ----
+    static bool IsIfName(const std::wstring& tok)
+    {
+        std::wstring n;
+        for (wchar_t ch : tok) n.push_back(UpperName(ch));
+        return n == L"WENN" || n == L"IF";
+    }
+    static bool IsCountIfName(const std::wstring& n)
+    {
+        return n == L"Z\u00C4HLENWENN" || n == L"ZAEHLENWENN" || n == L"COUNTIF";
+    }
+
+    std::wstring StringLit()
+    {
+        std::wstring out;
+        ++i;   // Anfuehrungszeichen
+        while (i < s.size()) {
+            if (s[i] == L'"') {
+                if (i + 1 < s.size() && s[i + 1] == L'"') { out.push_back(L'"'); i += 2; continue; }
+                ++i;
+                return out;
+            }
+            out.push_back(s[i++]);
+        }
+        Throw(L"#SYNTAX!");
+    }
+
+    // Steht hier "WENN(" (mit Leerzeichen vor der Klammer erlaubt)?
+    bool PeekIf() const
+    {
+        size_t p = i;
+        std::wstring tok;
+        while (p < s.size() && (IsLetter(s[p]) || IsUmlaut(s[p]))) tok.push_back(s[p++]);
+        if (!IsIfName(tok)) return false;
+        while (p < s.size() && s[p] == L' ') ++p;
+        return p < s.size() && s[p] == L'(';
+    }
+
+    Operand Opnd()
+    {
+        Ws();
+        Operand o;
+        if (i < s.size() && s[i] == L'"') {
+            o.text = true;
+            o.s = StringLit();
+            return o;
+        }
+        if (PeekIf()) {   // WENN liefert Zahl oder Text; folgt danach noch eine Rechenoperation, gilt das Ergebnis als Zahl innerhalb des Ausdrucks
+            const size_t save = i;
+            o = WennOp();
+            Ws();
+            if (i < s.size() && (s[i] == L'+' || s[i] == L'-' || s[i] == L'*' || s[i] == L'/' || s[i] == L'^')) {
+                if (o.text) Throw(L"#WERT!");
+                i = save;
+                o = Operand();
+                o.n = Expr();
+            }
+            return o;
+        }
+        size_t p = i;
+        while (p < s.size() && IsLetter(s[p])) ++p;
+        const size_t letterEnd = p;
+        while (p < s.size() && IsDigit(s[p])) ++p;
+        if (letterEnd > i && p > letterEnd && !(p < s.size() && (s[p] == L'(' || s[p] == L':'))) {
+            int r = 0, c = 0;
+            if (ParseRef(s.substr(i, p - i), r, c) == 1) {
+                const Value& v = sh.Get(r, c);
+                if (v.kind == Value::Text || v.kind == Value::Empty) {
+                    const size_t save = i;
+                    i = p;
+                    Ws();
+                    if (i < s.size() && (s[i] == L'+' || s[i] == L'-' || s[i] == L'*' || s[i] == L'/' || s[i] == L'^')) {   // Teil einer Rechnung: als Zahl auswerten
+                        i = save;
+                        o.n = Expr();
+                        return o;
+                    }
+                    i = p;
+                    if (v.kind == Value::Text) { o.text = true; o.s = v.text; }
+                    else o.empty = true;
+                    return o;
+                }
+            }
+        }
+        o.n = Expr();
+        return o;
+    }
+
+    // Vergleich oder einzelner Wert; Ergebnis eines Vergleichs ist 1 (wahr) oder 0 (falsch)
+    Operand CondOp()
+    {
+        Operand l = Opnd();
+        Ws();
+        int op = 0;   // 1 =, 2 <>, 3 <, 4 >, 5 <=, 6 >=
+        if (i < s.size()) {
+            const wchar_t ch = s[i];
+            if (ch == L'=') { op = 1; ++i; }
+            else if (ch == L'<') {
+                ++i;
+                if (i < s.size() && s[i] == L'>') { op = 2; ++i; }
+                else if (i < s.size() && s[i] == L'=') { op = 5; ++i; }
+                else op = 3;
+            }
+            else if (ch == L'>') {
+                ++i;
+                if (i < s.size() && s[i] == L'=') { op = 6; ++i; }
+                else op = 4;
+            }
+        }
+        if (!op) return l;
+        Operand r = Opnd();
+        if (l.empty && r.text) l.text = true;     // leere Zelle gegen Text: wie ""
+        else if (r.empty && l.text) r.text = true;
+        if (l.text != r.text) {
+            if (op == 1) return Operand{ false, false, 0, L"" };
+            if (op == 2) return Operand{ false, false, 1, L"" };
+            Throw(L"#WERT!");
+        }
+        int cmp = 0;
+        if (l.text) cmp = CompareText(l.s, r.s);
+        else cmp = l.n < r.n ? -1 : (l.n > r.n ? 1 : 0);
+        bool res = false;
+        switch (op) {
+            case 1: res = cmp == 0; break;
+            case 2: res = cmp != 0; break;
+            case 3: res = cmp < 0; break;
+            case 4: res = cmp > 0; break;
+            case 5: res = cmp <= 0; break;
+            default: res = cmp >= 0; break;
+        }
+        Operand o;
+        o.n = res ? 1 : 0;
+        return o;
+    }
+
+    double Cond()
+    {
+        const Operand o = CondOp();
+        if (o.text) Throw(L"#WERT!");
+        return o.n;
+    }
+
+    // Ende des Arguments (Position von ; , oder ) auf gleicher Klammerebene), ausgehend von start
+    size_t SkipArg(size_t start) const
+    {
+        int depth = 0;
+        bool quote = false;
+        for (size_t j = start; j < s.size(); ++j) {
+            const wchar_t ch = s[j];
+            if (ch == L'"') { quote = !quote; continue; }
+            if (quote) continue;
+            if (ch == L'(') ++depth;
+            else if (ch == L')') { if (depth == 0) return j; --depth; }
+            else if ((ch == L';' || ch == L',') && depth == 0) return j;
+        }
+        return s.size();
+    }
+
+    // WENN(Bedingung; dann; sonst): nur der gewaehlte Zweig muss fehlerfrei sein
+    Operand WennOp()
+    {
+        while (i < s.size() && (IsLetter(s[i]) || IsUmlaut(s[i]))) ++i;   // Name
+        if (!Eat(L'(')) Throw(L"#SYNTAX!");
+        const double cond = Cond();
+        if (!(Eat(L';') || Eat(L','))) Throw(L"#SYNTAX!");
+        Operand a, b;
+        Fail fa, fb;
+        bool failA = false, failB = false, hasB = false;
+        auto branch = [&](Operand& out, Fail& err, bool& failed) {
+            Ws();
+            const size_t start = i;
+            try { out = CondOp(); }
+            catch (const Fail& f) {
+                if (f.code == L"#SYNTAX!") throw;
+                failed = true;
+                err = f;
+                i = SkipArg(start);
+            }
+        };
+        branch(a, fa, failA);
+        if (Eat(L';') || Eat(L',')) { hasB = true; branch(b, fb, failB); }
+        if (!Eat(L')')) Throw(L"#SYNTAX!");
+        if (cond != 0) {
+            if (failA) throw fa;
+            return a;
+        }
+        if (!hasB) return Operand();
+        if (failB) throw fb;
+        return b;
+    }
+
+    static bool CriterionMatches(const Value& v, const Operand& crit)
+    {
+        if (v.kind == Value::Error) return false;
+        if (!crit.text) return crit.empty ? v.kind == Value::Empty : (v.kind == Value::Number && v.num == crit.n);
+        std::wstring c = crit.s;
+        int op = 1;
+        auto starts = [&](const wchar_t* pre) { return c.compare(0, std::wcslen(pre), pre) == 0; };
+        if (starts(L"<>")) { op = 2; c.erase(0, 2); }
+        else if (starts(L"<=")) { op = 5; c.erase(0, 2); }
+        else if (starts(L">=")) { op = 6; c.erase(0, 2); }
+        else if (starts(L"<")) { op = 3; c.erase(0, 1); }
+        else if (starts(L">")) { op = 4; c.erase(0, 1); }
+        else if (starts(L"=")) { op = 1; c.erase(0, 1); }
+        double num = 0;
+        if (ParseNumber(c, num)) {
+            if (v.kind != Value::Number) return op == 2;
+            switch (op) {
+                case 1: return v.num == num;
+                case 2: return v.num != num;
+                case 3: return v.num < num;
+                case 4: return v.num > num;
+                case 5: return v.num <= num;
+                default: return v.num >= num;
+            }
+        }
+        const std::wstring t = v.kind == Value::Text ? v.text : std::wstring();
+        if (v.kind == Value::Number) return op == 2;
+        if (v.kind == Value::Empty && !c.empty()) return op == 2;
+        if (op == 1) return WildMatch(c, 0, t, 0);
+        if (op == 2) return !WildMatch(c, 0, t, 0);
+        if (v.kind != Value::Text) return false;
+        const int cmp = CompareText(t, c);
+        return op == 3 ? cmp < 0 : op == 4 ? cmp > 0 : op == 5 ? cmp <= 0 : cmp >= 0;
+    }
+
     double Func(const std::wstring& nameIn)
     {
         std::wstring name;
-        for (wchar_t ch : nameIn) name.push_back(static_cast<wchar_t>(std::towupper(ch)));
-        enum { Sum, Avg, Min, Max, Count } fn;
+        for (wchar_t ch : nameIn) name.push_back(UpperName(ch));
+        enum { Sum, Avg, Min, Max, Count, CountIf } fn;
         if (name == L"SUMME" || name == L"SUM") fn = Sum;
         else if (name == L"MITTELWERT" || name == L"AVERAGE") fn = Avg;
         else if (name == L"MIN") fn = Min;
         else if (name == L"MAX") fn = Max;
         else if (name == L"ANZAHL" || name == L"COUNT") fn = Count;
+        else if (IsCountIfName(name)) fn = CountIf;
         else Throw(L"#NAME?");
         if (!Eat(L'(')) Throw(L"#SYNTAX!");
+        if (fn == CountIf) {   // ZAEHLENWENN(Bereich; Kriterium)
+            int r1 = 0, c1 = 0, r2 = 0, c2 = 0;
+            Ws();
+            if (!RangeCoords(r1, c1, r2, c2)) Throw(L"#SYNTAX!");
+            if (!(Eat(L';') || Eat(L','))) Throw(L"#SYNTAX!");
+            const Operand crit = CondOp();
+            if (!Eat(L')')) Throw(L"#SYNTAX!");
+            double cnt = 0;
+            for (int r = r1 < r2 ? r1 : r2; r <= (r1 < r2 ? r2 : r1); ++r)
+                for (int c = c1 < c2 ? c1 : c2; c <= (c1 < c2 ? c2 : c1); ++c)
+                    if (CriterionMatches(sh.Get(r, c), crit)) ++cnt;
+            return cnt;
+        }
         std::vector<double> vals;
         if (!Eat(L')')) {
             for (;;) {
@@ -368,6 +708,8 @@ struct Parser {
             case Count:
                 r = static_cast<double>(vals.size());
                 break;
+            case CountIf:
+                break;   // oben behandelt
         }
         return Check(r);
     }
@@ -384,11 +726,17 @@ inline Value Sheet::Compute(int r, int c) const
     if (t[a] == L'=') {
         try {
             detail::Parser p(*this, t, a + 1);
-            const double d = p.Expr();
+            const detail::Operand o = p.CondOp();
             p.Ws();
             if (p.i != t.size()) throw detail::Fail{ L"#SYNTAX!" };
-            v.kind = Value::Number;
-            v.num = d;
+            if (o.text) {
+                v.kind = Value::Text;
+                v.text = o.s;
+            }
+            else {
+                v.kind = Value::Number;
+                v.num = o.n;
+            }
         }
         catch (const detail::Fail& f) {
             v.kind = Value::Error;
@@ -499,6 +847,71 @@ inline int FromCsv(Sheet& sh, std::wstring text)
     if (pending || !field.empty()) endRow();
     sh.Invalidate();
     return dropped;
+}
+
+// ---- Auswahl: Statistik und Zwischenablage-Text ----
+
+struct RangeStats {
+    double sum = 0;
+    int count = 0;   // Zahl der Zellen mit Zahlenwert
+    double Average() const { return count ? sum / count : 0; }
+};
+
+inline RangeStats Stats(const Sheet& sh, int r1, int c1, int r2, int c2)
+{
+    RangeStats st;
+    for (int r = r1; r <= r2; ++r)
+        for (int c = c1; c <= c2; ++c) {
+            const Value& v = sh.Get(r, c);
+            if (v.kind == Value::Number) { st.sum += v.num; ++st.count; }
+        }
+    return st;
+}
+
+// Bereich als Text mit Tabulatoren (Zeilen mit CRLF); raw = eingegebener Text (Formeln), sonst angezeigte Werte
+inline std::wstring RangeToTsv(const Sheet& sh, int r1, int c1, int r2, int c2, bool raw)
+{
+    std::wstring out;
+    for (int r = r1; r <= r2; ++r) {
+        for (int c = c1; c <= c2; ++c) {
+            if (c > c1) out.push_back(L'\t');
+            out += CsvQuote(raw ? sh.raw[r][c] : sh.Display(r, c), L'\t');
+        }
+        out += L"\r\n";
+    }
+    return out;
+}
+
+// Zerlegt Text mit Trennzeichen (Tab beim Einfuegen aus Excel) in Zeilen und Felder; Felder in Anfuehrungszeichen duerfen Tab und Zeilenumbruch enthalten
+inline std::vector<std::vector<std::wstring>> ParseDelimited(const std::wstring& text, wchar_t delim)
+{
+    std::vector<std::vector<std::wstring>> rows;
+    std::vector<std::wstring> row;
+    std::wstring field;
+    bool inQuotes = false, quoted = false, pending = false;
+    auto endField = [&]() { row.push_back(field); field.clear(); quoted = false; };
+    auto endRow = [&]() { endField(); rows.push_back(row); row.clear(); pending = false; };
+    for (size_t i = 0; i < text.size(); ++i) {
+        const wchar_t ch = text[i];
+        if (inQuotes) {
+            if (ch == L'"') {
+                if (i + 1 < text.size() && text[i + 1] == L'"') { field.push_back(L'"'); ++i; }
+                else inQuotes = false;
+            }
+            else field.push_back(ch);
+            continue;
+        }
+        if (ch == L'"' && field.empty() && !quoted) { inQuotes = true; quoted = true; pending = true; }
+        else if (ch == delim) { endField(); pending = true; }
+        else if (ch == L'\r') {
+            if (i + 1 < text.size() && text[i + 1] == L'\n') continue;
+            endRow();
+        }
+        else if (ch == L'\n') endRow();
+        else { field.push_back(ch); pending = true; }
+    }
+    if (pending || !field.empty()) endRow();
+    return rows;
 }
 
 }  // namespace sheet

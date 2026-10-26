@@ -206,6 +206,12 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansOffice.exe]
+## 0.3.0 | 2026-10-26
+- Sheets: neue Funktionen WENN (mit Vergleichen und Text), ZÄHLENWENN (auch mit Platzhaltern wie "n*") und Vergleiche wie =A1>5.
+- Bereiche markieren: mit der Maus ziehen, Shift+Pfeiltasten, Klick auf Spalten- oder Zeilenkopf, Strg+A. Die Statusleiste zeigt dabei Summe, Mittelwert und Anzahl.
+- Zahlenformate Währung (€) und Prozent (%) sowie Hintergrundfarben für Zellen in der Werkzeugleiste. Formate und Farben gelten nur in der geöffneten Tabelle, CSV speichert sie nicht.
+- Spaltenbreite per Maus an der Spaltengrenze ändern (Doppelklick = Standardbreite).
+- Strg+C, Strg+X und Strg+V für ganze Bereiche: als Text mit Tabulatoren (auch mit Excel austauschbar), Formeln bleiben beim Kopieren zwischen Duncan's-Sheets-Fenstern erhalten; ein einzelner Wert füllt eine ganze Auswahl.
 ## 0.2.0 | 2026-10-26
 - Writer: Schriftart-Auswahl, Textfarbe (Farbfelder und freie Auswahl), Aufzählungspunkte und Durchgestrichen in der Werkzeugleiste.
 - Neu: Suchen und Ersetzen (Strg+F oder Strg+H, F3 sucht weiter) mit Groß-/Kleinschreibung, ganzen Wörtern und „Alle ersetzen“.
