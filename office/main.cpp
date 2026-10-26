@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <set>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -51,11 +52,33 @@ enum Cmd : int {
     C_WRITER = 101, C_SHEETS, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_PDF, C_PRINT,
     C_BOLD, C_ITALIC, C_UNDER, C_SMALLER, C_BIGGER, C_SIZE, C_LEFT, C_CENTER, C_RIGHT,
     C_PICK_WRITER, C_PICK_SHEETS,
+    C_STRIKE, C_FONT, C_COLOR, C_BULLET, C_FIND, C_FINDNEXT,
     ID_RICH = 201, ID_FORMULA = 202,
     C_SIZE_BASE = 300,
-    C_PRINTER_BASE = 400   // bis 400 + Zahl der Drucker
+    C_PRINTER_BASE = 400,   // bis 400 + Zahl der Drucker
+    C_FONT_BASE = 600,      // bis 600 + Zahl der Schriftarten
+    C_COLOR_BASE = 700,     // bis 700 + Zahl der Farben
+    C_COLOR_MORE = 730,
+    // Dialog "Suchen und Ersetzen"
+    ID_F_FIND = 501, ID_F_REPL, ID_F_CASE, ID_F_WORD, ID_F_NEXT, ID_F_REPLACE, ID_F_ALL, ID_F_CLOSE, ID_F_STATUS
 };
+constexpr wchar_t kFindClass[] = L"DuncansOfficeFind";
+struct ColorPreset { const wchar_t* name; COLORREF c; };
+const ColorPreset kColors[] = {
+    { L"Standard", kPaperText },          { L"Schwarz", RGB(0, 0, 0) },          { L"Grau", RGB(0x66, 0x66, 0x66) },
+    { L"Rot", RGB(0xC6, 0x28, 0x28) },    { L"Orange", RGB(0xEF, 0x6C, 0x00) },  { L"Grün", RGB(0x2E, 0x7D, 0x32) },
+    { L"Blau", RGB(0x15, 0x65, 0xC0) },   { L"Violett", RGB(0x6A, 0x1B, 0x9A) }, { L"Rosa", RGB(0xAD, 0x14, 0x57) },
+    { L"Braun", RGB(0x5D, 0x40, 0x37) } };
+constexpr int kColorCount = static_cast<int>(sizeof kColors / sizeof kColors[0]);
+const wchar_t* const kFontCandidates[] = { L"Segoe UI", L"Arial", L"Calibri", L"Cambria", L"Candara", L"Consolas", L"Courier New", L"Georgia",
+                                           L"Palatino Linotype", L"Tahoma", L"Times New Roman", L"Trebuchet MS", L"Verdana", L"Comic Sans MS" };
+int CALLBACK CollectFont(const LOGFONTW* lf, const TEXTMETRICW*, DWORD, LPARAM p)
+{
+    reinterpret_cast<std::set<std::wstring>*>(p)->insert(lf->lfFaceName);
+    return 1;
+}
 constexpr UINT WM_PRINTERS = WM_APP + 21;   // Druckerliste im Hintergrund fertig gesucht
+constexpr UINT WM_TITLE_REFRESH = WM_APP + 22;   // Fenstertitel neu setzen, nachdem das Rich-Edit sein "geaendert"-Kennzeichen gesetzt hat
 
 enum class Mode { Start, Writer, Sheets };
 
@@ -184,6 +207,7 @@ public:
     LRESULT Handle(UINT msg, WPARAM wp, LPARAM lp);
     LRESULT GridHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
     LRESULT FormulaKey(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp, UINT_PTR id, DWORD_PTR ref);
+    LRESULT FindHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
 private:
     // ---- Fenster und Darstellung ----
@@ -212,6 +236,18 @@ private:
     void StepSize(int dir);
     void SetAlign(WORD a);
     void ShowSizeMenu();
+    void ShowFontMenu();
+    void ShowColorMenu();
+    void SetFontName(const std::wstring& name);
+    void SetTextColorRef(COLORREF c);
+    void ToggleBullet();
+    void ShowFindDialog();
+    void ReadFindFields(HWND dlg);
+    void SetFindStatus(const std::wstring& t);
+    bool FindNext();
+    void ReplaceOne();
+    void ReplaceAll();
+    bool SelectionMatches();
     void UpdateCounts();
     std::wstring RichText() const;
     bool WriterDirty() const { return SendMessageW(m_rich, EM_GETMODIFY, 0, 0) != 0; }
@@ -270,7 +306,15 @@ private:
 
     // Writer
     std::wstring m_wPath;
-    bool m_bold = false, m_italic = false, m_under = false;
+    bool m_bold = false, m_italic = false, m_under = false, m_strike = false, m_bullet = false;
+    std::wstring m_fontName;
+    std::vector<std::wstring> m_fontList;
+    COLORREF m_color = kPaperText;
+    std::wstring m_findText, m_replText;
+    bool m_findCase = false, m_findWord = false;
+    HWND m_findDlg = nullptr;
+    HBRUSH m_brPanel = nullptr;
+    HFONT m_fS = nullptr;   // durchgestrichenes "S" fuer den Knopf
     int m_sizePt = 0;
     WORD m_align = 0;
     bool m_wasDirty = false;
@@ -331,6 +375,8 @@ bool App::Create(HINSTANCE inst, int show, const std::wstring& openPath)
         { FVIRTKEY | FCONTROL, '2', C_SHEETS },
         { FVIRTKEY | FCONTROL, 'B', C_BOLD },            { FVIRTKEY | FCONTROL, 'I', C_ITALIC },
         { FVIRTKEY | FCONTROL, 'U', C_UNDER },
+        { FVIRTKEY | FCONTROL, 'F', C_FIND },            { FVIRTKEY | FCONTROL, 'H', C_FIND },
+        { FVIRTKEY, VK_F3, C_FINDNEXT },
     };
     m_accel = CreateAcceleratorTableW(keys, static_cast<int>(sizeof keys / sizeof keys[0]));
 
@@ -367,10 +413,10 @@ int App::Run()
 
 void App::MakeFonts()
 {
-    for (HFONT* f : { &m_fUi, &m_fBold, &m_fTitle, &m_fHero, &m_fSmall, &m_fB, &m_fI, &m_fU })
+    for (HFONT* f : { &m_fUi, &m_fBold, &m_fTitle, &m_fHero, &m_fSmall, &m_fB, &m_fI, &m_fU, &m_fS })
         if (*f) { DeleteObject(*f); *f = nullptr; }
-    auto mk = [&](int pt, int weight, bool italic, bool underline) {
-        return CreateFontW(-MulDiv(pt, static_cast<int>(m_dpi), 72), 0, 0, 0, weight, italic, underline, FALSE, DEFAULT_CHARSET,
+    auto mk = [&](int pt, int weight, bool italic, bool underline, bool strike = false) {
+        return CreateFontW(-MulDiv(pt, static_cast<int>(m_dpi), 72), 0, 0, 0, weight, italic, underline, strike, DEFAULT_CHARSET,
                            OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     };
     m_fUi = mk(10, FW_NORMAL, false, false);
@@ -381,6 +427,7 @@ void App::MakeFonts()
     m_fB = mk(11, FW_BOLD, false, false);
     m_fI = mk(11, FW_NORMAL, true, false);
     m_fU = mk(11, FW_NORMAL, false, true);
+    m_fS = mk(11, FW_NORMAL, false, false, true);
     if (m_formula) SendMessageW(m_formula, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
 }
 
@@ -418,6 +465,7 @@ void App::Layout()
     if (!start) {
         std::vector<std::pair<int, std::wstring>> files = { { C_NEW, L"Neu" }, { C_OPEN, L"Öffnen" }, { C_SAVE, L"Speichern" }, { C_SAVEAS, L"Speichern unter" } };
         if (m_mode == Mode::Writer) {
+            files.push_back({ C_FIND, L"Suchen" });
             files.push_back({ C_PDF, L"PDF" });
             files.push_back({ C_PRINT, L"Drucken" });
         }
@@ -433,14 +481,20 @@ void App::Layout()
     const int by = m_barRc.top + (barH - S(32)) / 2, bh = S(32);
     if (m_mode == Mode::Writer) {
         int bx = S(16);
-        for (int id : { C_BOLD, C_ITALIC, C_UNDER }) { add(id, { bx, by, bx + S(36), by + bh }, L""); bx += S(38); }
+        for (int id : { C_BOLD, C_ITALIC, C_UNDER, C_STRIKE }) { add(id, { bx, by, bx + S(36), by + bh }, L""); bx += S(38); }
         bx += S(14);
+        add(C_FONT, { bx, by, bx + S(170), by + bh }, L"");
+        bx += S(176);
         add(C_SMALLER, { bx, by, bx + S(36), by + bh }, L"A−");
         bx += S(38);
         add(C_SIZE, { bx, by, bx + S(66), by + bh }, L"");
         bx += S(68);
         add(C_BIGGER, { bx, by, bx + S(36), by + bh }, L"A+");
         bx += S(38) + S(14);
+        add(C_COLOR, { bx, by, bx + S(48), by + bh }, L"");
+        bx += S(50);
+        add(C_BULLET, { bx, by, bx + S(40), by + bh }, L"");
+        bx += S(42) + S(14);
         for (int id : { C_LEFT, C_CENTER, C_RIGHT }) { add(id, { bx, by, bx + S(40), by + bh }, L""); bx += S(42); }
     }
     else if (m_mode == Mode::Sheets) {
@@ -504,9 +558,9 @@ void App::UpdateTitle()
 {
     std::wstring t;
     if (m_mode == Mode::Writer)
-        t = (m_wPath.empty() ? L"Unbenannt" : FileNameOf(m_wPath)) + (WriterDirty() ? L" •" : L"") + L" – Writer – Duncan's Office";
+        t = (m_wPath.empty() ? L"Unbenannt" : FileNameOf(m_wPath)) + (WriterDirty() ? L"*" : L"") + L" – Writer – Duncan's Office";
     else if (m_mode == Mode::Sheets)
-        t = (m_sPath.empty() ? L"Unbenannt" : FileNameOf(m_sPath)) + (m_sDirty ? L" •" : L"") + L" – Sheets – Duncan's Office";
+        t = (m_sPath.empty() ? L"Unbenannt" : FileNameOf(m_sPath)) + (m_sDirty ? L"*" : L"") + L" – Sheets – Duncan's Office";
     else
         t = L"Duncan's Office";
     SetWindowTextW(m_hwnd, t.c_str());
@@ -543,6 +597,8 @@ bool App::IsActive(int id) const
         case C_BOLD: return m_bold;
         case C_ITALIC: return m_italic;
         case C_UNDER: return m_under;
+        case C_STRIKE: return m_strike;
+        case C_BULLET: return m_bullet;
         case C_LEFT: return m_align == PFA_LEFT;
         case C_CENTER: return m_align == PFA_CENTER;
         case C_RIGHT: return m_align == PFA_RIGHT;
@@ -577,6 +633,35 @@ void App::DrawBtn(HDC dc, int index)
         case C_BOLD: Text(dc, m_fB, kText, b.rc, L"B", center); break;
         case C_ITALIC: Text(dc, m_fI, kText, b.rc, L"I", center); break;
         case C_UNDER: Text(dc, m_fU, kText, b.rc, L"U", center); break;
+        case C_STRIKE: Text(dc, m_fS, kText, b.rc, L"S", center); break;
+        case C_FONT: {
+            RECT tr{ b.rc.left + S(10), b.rc.top, b.rc.right - S(24), b.rc.bottom };
+            Text(dc, m_fUi, kText, tr, m_fontName.empty() ? std::wstring(L"–") : m_fontName, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS);
+            RECT ar{ b.rc.right - S(24), b.rc.top, b.rc.right - S(6), b.rc.bottom };
+            Text(dc, m_fUi, kDim, ar, L"▾", center);
+            break;
+        }
+        case C_COLOR: {   // "A" mit einem Streifen in der aktuellen Textfarbe
+            RECT ar{ b.rc.left, b.rc.top + S(3), b.rc.right, b.rc.bottom - S(9) };
+            Text(dc, m_fB, kText, ar, L"A", center);
+            RECT bar{ b.rc.left + S(12), b.rc.bottom - S(10), b.rc.right - S(12), b.rc.bottom - S(6) };
+            HBRUSH cb = CreateSolidBrush(m_color);
+            FillRect(dc, &bar, cb);
+            DeleteObject(cb);
+            break;
+        }
+        case C_BULLET: {   // drei Zeilen mit Aufzaehlungspunkt
+            const int x0 = b.rc.left + S(9), y0 = b.rc.top + (b.rc.bottom - b.rc.top - S(16)) / 2;
+            HBRUSH br = CreateSolidBrush(kText);
+            for (int i = 0; i < 3; ++i) {
+                RECT dot{ x0, y0 + i * S(7), x0 + S(3), y0 + i * S(7) + S(3) };
+                RECT line{ x0 + S(7), y0 + i * S(7) + S(1), b.rc.right - S(9), y0 + i * S(7) + S(3) };
+                FillRect(dc, &dot, br);
+                FillRect(dc, &line, br);
+            }
+            DeleteObject(br);
+            break;
+        }
         case C_SIZE: {
             const std::wstring t = (m_sizePt > 0 ? std::to_wstring(m_sizePt) : std::wstring(L"–")) + L"  ▾";
             Text(dc, m_fUi, kText, b.rc, t, center);
@@ -719,6 +804,24 @@ void App::Command(int id)
         SetSizePt(kSizes[id - C_SIZE_BASE]);
         return;
     }
+    if (id >= C_FONT_BASE && id < C_FONT_BASE + static_cast<int>(m_fontList.size())) {
+        SetFontName(m_fontList[static_cast<size_t>(id - C_FONT_BASE)]);
+        return;
+    }
+    if (id >= C_COLOR_BASE && id < C_COLOR_BASE + kColorCount) {
+        SetTextColorRef(kColors[id - C_COLOR_BASE].c);
+        return;
+    }
+    if (id == C_COLOR_MORE) {
+        static COLORREF custom[16];
+        CHOOSECOLORW cc{ sizeof cc };
+        cc.hwndOwner = m_hwnd;
+        cc.rgbResult = m_color;
+        cc.lpCustColors = custom;
+        cc.Flags = CC_FULLOPEN | CC_RGBINIT;
+        if (ChooseColorW(&cc)) SetTextColorRef(cc.rgbResult);
+        return;
+    }
     const bool writer = m_mode == Mode::Writer, sheets = m_mode == Mode::Sheets;
     switch (id) {
         case C_PICK_WRITER:
@@ -737,6 +840,12 @@ void App::Command(int id)
         case C_BOLD: if (writer) ToggleFmt(CFM_BOLD, CFE_BOLD); break;
         case C_ITALIC: if (writer) ToggleFmt(CFM_ITALIC, CFE_ITALIC); break;
         case C_UNDER: if (writer) ToggleFmt(CFM_UNDERLINE, CFE_UNDERLINE); break;
+        case C_STRIKE: if (writer) ToggleFmt(CFM_STRIKEOUT, CFE_STRIKEOUT); break;
+        case C_FONT: if (writer) ShowFontMenu(); break;
+        case C_COLOR: if (writer) ShowColorMenu(); break;
+        case C_BULLET: if (writer) ToggleBullet(); break;
+        case C_FIND: if (writer) ShowFindDialog(); break;
+        case C_FINDNEXT: if (writer) { if (m_findText.empty()) ShowFindDialog(); else FindNext(); } break;
         case C_SMALLER: if (writer) StepSize(-1); break;
         case C_BIGGER: if (writer) StepSize(1); break;
         case C_SIZE: if (writer) ShowSizeMenu(); break;
@@ -753,6 +862,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
         case WM_CREATE: {
             m_dpi = GetDpiForWindow(m_hwnd);
             m_brEdit = CreateSolidBrush(kBg);
+            m_brPanel = CreateSolidBrush(kPanel);
             m_rich = CreateWindowExW(0, L"RICHEDIT50W", L"", WS_CHILD | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_NOHIDESEL | ES_WANTRETURN,
                                      0, 0, 10, 10, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RICH)), m_inst, nullptr);
             m_grid = CreateWindowExW(0, kGridClass, L"", WS_CHILD | WS_HSCROLL | WS_VSCROLL | WS_TABSTOP, 0, 0, 10, 10, m_hwnd, nullptr, m_inst, nullptr);
@@ -788,6 +898,9 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
             Layout();
             return 0;
         }
+        case WM_TITLE_REFRESH:
+            if (WriterDirty() != m_wasDirty) { m_wasDirty = WriterDirty(); UpdateTitle(); }
+            return 0;
         case WM_PRINTERS:
             m_printerScanning = false;
             if (m_printPending)
@@ -851,7 +964,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
                 if (code == EN_CHANGE) {
                     UpdateCounts();
                     RefreshFmt();
-                    if (WriterDirty() != m_wasDirty) { m_wasDirty = WriterDirty(); UpdateTitle(); }
+                    PostMessageW(m_hwnd, WM_TITLE_REFRESH, 0, 0);   // EN_CHANGE kommt, bevor das Kennzeichen gesetzt ist: Titel erst danach pruefen
                 }
                 return 0;
             }
@@ -868,6 +981,30 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
             const NMHDR* nh = reinterpret_cast<const NMHDR*>(lp);
             if (nh->idFrom == ID_RICH && nh->code == EN_SELCHANGE) RefreshFmt();
             return 0;
+        }
+        case WM_MEASUREITEM: {
+            auto* mi = reinterpret_cast<MEASUREITEMSTRUCT*>(lp);
+            if (mi->CtlType == ODT_MENU) {
+                mi->itemWidth = static_cast<UINT>(S(180));
+                mi->itemHeight = static_cast<UINT>(S(26));
+                return TRUE;
+            }
+            break;
+        }
+        case WM_DRAWITEM: {
+            const auto* di = reinterpret_cast<const DRAWITEMSTRUCT*>(lp);
+            if (di->CtlType == ODT_MENU && di->itemData < static_cast<ULONG_PTR>(kColorCount)) {
+                const ColorPreset& cp = kColors[di->itemData];
+                HBRUSH bg = CreateSolidBrush((di->itemState & ODS_SELECTED) ? kHover : kPanel);
+                FillRect(di->hDC, &di->rcItem, bg);
+                DeleteObject(bg);
+                RECT sw{ di->rcItem.left + S(10), di->rcItem.top + S(5), di->rcItem.left + S(26), di->rcItem.top + S(21) };
+                RoundBox(di->hDC, sw, S(3), cp.c, kLine);
+                RECT tr{ di->rcItem.left + S(36), di->rcItem.top, di->rcItem.right - S(8), di->rcItem.bottom };
+                Text(di->hDC, m_fUi, kText, tr, cp.name);
+                return TRUE;
+            }
+            break;
         }
         case WM_CTLCOLOREDIT:
             if (reinterpret_cast<HWND>(lp) == m_formula) {
@@ -895,9 +1032,10 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         case WM_DESTROY:
-            for (HFONT f : { m_fUi, m_fBold, m_fTitle, m_fHero, m_fSmall, m_fB, m_fI, m_fU })
+            for (HFONT f : { m_fUi, m_fBold, m_fTitle, m_fHero, m_fSmall, m_fB, m_fI, m_fU, m_fS })
                 if (f) DeleteObject(f);
             if (m_brEdit) DeleteObject(m_brEdit);
+            if (m_brPanel) DeleteObject(m_brPanel);
             if (m_accel) DestroyAcceleratorTable(m_accel);
             PostQuitMessage(0);
             return 0;
@@ -972,10 +1110,14 @@ void App::RefreshFmt()
     m_italic = (cf.dwMask & CFM_ITALIC) && (cf.dwEffects & CFE_ITALIC);
     m_under = (cf.dwMask & CFM_UNDERLINE) && (cf.dwEffects & CFE_UNDERLINE);
     m_sizePt = (cf.dwMask & CFM_SIZE) ? static_cast<int>((cf.yHeight + 10) / 20) : 0;
+    m_strike = (cf.dwMask & CFM_STRIKEOUT) && (cf.dwEffects & CFE_STRIKEOUT);
+    m_fontName = (cf.dwMask & CFM_FACE) ? std::wstring(cf.szFaceName) : std::wstring();
+    if (cf.dwMask & CFM_COLOR) m_color = (cf.dwEffects & CFE_AUTOCOLOR) ? kPaperText : cf.crTextColor;
     PARAFORMAT2 pf{};
     pf.cbSize = sizeof pf;
     SendMessageW(m_rich, EM_GETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&pf));
     m_align = (pf.dwMask & PFM_ALIGNMENT) ? pf.wAlignment : 0;
+    m_bullet = (pf.dwMask & PFM_NUMBERING) && pf.wNumbering == PFN_BULLET;
     if (m_mode == Mode::Writer) InvalidateRect(m_hwnd, &m_barRc, FALSE);
 }
 
@@ -1788,6 +1930,320 @@ bool App::SheetsSave(bool saveAs)
     m_sDirty = false;
     UpdateTitle();
     return true;
+}
+
+// ======================= Writer: Schriftart, Farbe, Aufzaehlung =======================
+
+void App::ShowFontMenu()
+{
+    if (m_fontList.empty()) {   // nur Schriften aus der Auswahlliste, die auf diesem Rechner wirklich installiert sind
+        std::set<std::wstring> installed;
+        LOGFONTW lf{};
+        lf.lfCharSet = DEFAULT_CHARSET;
+        HDC dc = GetDC(m_hwnd);
+        EnumFontFamiliesExW(dc, &lf, reinterpret_cast<FONTENUMPROCW>(CollectFont), reinterpret_cast<LPARAM>(&installed), 0);
+        ReleaseDC(m_hwnd, dc);
+        for (const wchar_t* f : kFontCandidates)
+            if (installed.count(f)) m_fontList.emplace_back(f);
+        if (m_fontList.empty()) m_fontList.emplace_back(L"Segoe UI");
+    }
+    HMENU menu = CreatePopupMenu();
+    for (size_t i = 0; i < m_fontList.size(); ++i)
+        AppendMenuW(menu, MF_STRING | (m_fontList[i] == m_fontName ? MF_CHECKED : 0), static_cast<UINT_PTR>(C_FONT_BASE) + i, m_fontList[i].c_str());
+    for (const Btn& b : m_btns)
+        if (b.id == C_FONT) {
+            POINT pt{ b.rc.left, b.rc.bottom };
+            ClientToScreen(m_hwnd, &pt);
+            TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+        }
+    DestroyMenu(menu);
+}
+
+void App::ShowColorMenu()
+{
+    HMENU menu = CreatePopupMenu();
+    for (int i = 0; i < kColorCount; ++i)
+        AppendMenuW(menu, MF_OWNERDRAW, static_cast<UINT_PTR>(C_COLOR_BASE + i), reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(i)));   // itemData = Index, gezeichnet in WM_DRAWITEM
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, C_COLOR_MORE, L"Weitere Farben …");
+    for (const Btn& b : m_btns)
+        if (b.id == C_COLOR) {
+            POINT pt{ b.rc.left, b.rc.bottom };
+            ClientToScreen(m_hwnd, &pt);
+            TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+        }
+    DestroyMenu(menu);
+}
+
+void App::SetFontName(const std::wstring& name)
+{
+    CHARFORMAT2W cf{};
+    cf.cbSize = sizeof cf;
+    cf.dwMask = CFM_FACE | CFM_CHARSET;
+    cf.bCharSet = DEFAULT_CHARSET;
+    wcsncpy_s(cf.szFaceName, name.c_str(), _TRUNCATE);
+    SendMessageW(m_rich, EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&cf));
+    RefreshFmt();
+    SetFocus(m_rich);
+}
+
+void App::SetTextColorRef(COLORREF c)
+{
+    CHARFORMAT2W cf{};
+    cf.cbSize = sizeof cf;
+    cf.dwMask = CFM_COLOR;
+    cf.crTextColor = c;
+    cf.dwEffects = 0;   // nicht "automatisch", sonst bliebe die Farbe schwarz
+    SendMessageW(m_rich, EM_SETCHARFORMAT, SCF_SELECTION, reinterpret_cast<LPARAM>(&cf));
+    RefreshFmt();
+    SetFocus(m_rich);
+}
+
+void App::ToggleBullet()
+{
+    PARAFORMAT2 pf{};
+    pf.cbSize = sizeof pf;
+    pf.dwMask = PFM_NUMBERING | PFM_OFFSET;
+    pf.wNumbering = m_bullet ? 0 : PFN_BULLET;
+    pf.dxOffset = m_bullet ? 0 : 360;   // haengender Einzug von 0,25 Zoll
+    SendMessageW(m_rich, EM_SETPARAFORMAT, 0, reinterpret_cast<LPARAM>(&pf));
+    RefreshFmt();
+    SetFocus(m_rich);
+}
+
+// ======================= Writer: Suchen und Ersetzen =======================
+
+void App::SetFindStatus(const std::wstring& t)
+{
+    if (m_findDlg && IsWindow(m_findDlg)) SetDlgItemTextW(m_findDlg, ID_F_STATUS, t.c_str());
+}
+
+void App::ReadFindFields(HWND dlg)
+{
+    wchar_t buf[512];
+    GetDlgItemTextW(dlg, ID_F_FIND, buf, 512);
+    m_findText = buf;
+    GetDlgItemTextW(dlg, ID_F_REPL, buf, 512);
+    m_replText = buf;
+    m_findCase = IsDlgButtonChecked(dlg, ID_F_CASE) == BST_CHECKED;
+    m_findWord = IsDlgButtonChecked(dlg, ID_F_WORD) == BST_CHECKED;
+}
+
+// Sucht ab dem Ende der Auswahl; am Dokumentende geht es von vorn weiter
+bool App::FindNext()
+{
+    if (m_findText.empty()) return false;
+    CHARRANGE sel{};
+    SendMessageW(m_rich, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&sel));
+    FINDTEXTEXW ft{};
+    ft.lpstrText = m_findText.c_str();
+    const WPARAM flags = FR_DOWN | (m_findCase ? FR_MATCHCASE : 0) | (m_findWord ? FR_WHOLEWORD : 0);
+    ft.chrg = { sel.cpMax, -1 };
+    LRESULT r = SendMessageW(m_rich, EM_FINDTEXTEXW, flags, reinterpret_cast<LPARAM>(&ft));
+    bool wrapped = false;
+    if (r < 0) {
+        ft.chrg = { 0, -1 };
+        r = SendMessageW(m_rich, EM_FINDTEXTEXW, flags, reinterpret_cast<LPARAM>(&ft));
+        wrapped = true;
+    }
+    if (r < 0) {
+        SetFindStatus(L"Nicht gefunden.");
+        return false;
+    }
+    SendMessageW(m_rich, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&ft.chrgText));
+    SendMessageW(m_rich, EM_SCROLLCARET, 0, 0);
+    SetFindStatus(wrapped ? L"Am Ende angekommen, von vorn weitergesucht." : L"");
+    return true;
+}
+
+bool App::SelectionMatches()
+{
+    CHARRANGE sel{};
+    SendMessageW(m_rich, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&sel));
+    if (sel.cpMax - sel.cpMin != static_cast<LONG>(m_findText.size()) || m_findText.empty()) return false;
+    std::wstring cur(m_findText.size() + 1, L'\0');
+    SendMessageW(m_rich, EM_GETSELTEXT, 0, reinterpret_cast<LPARAM>(cur.data()));
+    cur.resize(m_findText.size());
+    return m_findCase ? cur == m_findText : _wcsicmp(cur.c_str(), m_findText.c_str()) == 0;
+}
+
+void App::ReplaceOne()
+{
+    if (m_findText.empty()) return;
+    if (!SelectionMatches() && !FindNext()) return;   // erst die passende Stelle markieren
+    if (!SelectionMatches()) return;
+    SendMessageW(m_rich, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(m_replText.c_str()));
+    FindNext();
+}
+
+void App::ReplaceAll()
+{
+    if (m_findText.empty()) return;
+    const WPARAM flags = FR_DOWN | (m_findCase ? FR_MATCHCASE : 0) | (m_findWord ? FR_WHOLEWORD : 0);
+    LONG pos = 0;
+    int count = 0;
+    SendMessageW(m_rich, WM_SETREDRAW, FALSE, 0);
+    while (count < 100000) {
+        FINDTEXTEXW ft{};
+        ft.lpstrText = m_findText.c_str();
+        ft.chrg = { pos, -1 };
+        if (SendMessageW(m_rich, EM_FINDTEXTEXW, flags, reinterpret_cast<LPARAM>(&ft)) < 0) break;
+        SendMessageW(m_rich, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&ft.chrgText));
+        SendMessageW(m_rich, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(m_replText.c_str()));
+        pos = ft.chrgText.cpMin + static_cast<LONG>(m_replText.size());   // hinter dem Ersetzten weiter, auch wenn es den Suchtext enthaelt
+        ++count;
+    }
+    SendMessageW(m_rich, WM_SETREDRAW, TRUE, 0);
+    InvalidateRect(m_rich, nullptr, TRUE);
+    SetFindStatus(count == 0 ? std::wstring(L"Nicht gefunden.") : std::to_wstring(count) + (count == 1 ? L" Stelle ersetzt." : L" Stellen ersetzt."));
+}
+
+void App::ShowFindDialog()
+{
+    if (m_mode != Mode::Writer || (m_findDlg && IsWindow(m_findDlg))) return;
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{ sizeof wc };
+        wc.hInstance = m_inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = m_brPanel;
+        wc.lpszClassName = kFindClass;
+        wc.lpfnWndProc = [](HWND h, UINT m, WPARAM w, LPARAM l) -> LRESULT { return g_app->FindHandle(h, m, w, l); };
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    {   // markierter Text (eine Zeile) wird zum Suchtext
+        CHARRANGE sel{};
+        SendMessageW(m_rich, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&sel));
+        if (sel.cpMax > sel.cpMin && sel.cpMax - sel.cpMin < 200) {
+            wchar_t buf[256]{};
+            SendMessageW(m_rich, EM_GETSELTEXT, 0, reinterpret_cast<LPARAM>(buf));
+            if (!wcschr(buf, L'\r') && !wcschr(buf, L'\n') && !wcschr(buf, L'\v')) m_findText = buf;
+        }
+    }
+    RECT client{ 0, 0, S(460), S(272) };
+    AdjustWindowRectEx(&client, WS_POPUP | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    RECT own{};
+    GetWindowRect(m_hwnd, &own);
+    const int w = client.right - client.left, h = client.bottom - client.top;
+    m_findDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kFindClass, L"Suchen und Ersetzen", WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
+                                own.left + (own.right - own.left - w) / 2, own.top + S(120), w, h, m_hwnd, nullptr, m_inst, nullptr);
+    if (!m_findDlg) return;
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(m_findDlg, 20, &dark, sizeof dark);
+    SendMessageW(m_findDlg, DM_SETDEFID, ID_F_NEXT, 0);
+    ShowWindow(m_findDlg, SW_SHOW);
+    HWND edit = GetDlgItem(m_findDlg, ID_F_FIND);
+    SetFocus(edit);
+    SendMessageW(edit, EM_SETSEL, 0, -1);
+
+    EnableWindow(m_hwnd, FALSE);   // modal: das Hauptfenster ruht, bis der Dialog zu ist
+    MSG msg;
+    while (IsWindow(m_findDlg)) {
+        const BOOL got = GetMessageW(&msg, nullptr, 0, 0);
+        if (got <= 0) {
+            if (got == 0) PostQuitMessage(static_cast<int>(msg.wParam));   // Programmende waehrend der Dialog offen ist
+            break;
+        }
+        if (!IsDialogMessageW(m_findDlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(m_hwnd, TRUE);
+    if (IsWindow(m_findDlg)) DestroyWindow(m_findDlg);
+    m_findDlg = nullptr;
+    SetActiveWindow(m_hwnd);
+    SetFocus(m_rich);
+}
+
+LRESULT App::FindHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg) {
+        case WM_CREATE: {
+            auto label = [&](const wchar_t* t, int x, int y, int w, int h, int id) {
+                HWND c = CreateWindowExW(0, L"STATIC", t, WS_CHILD | WS_VISIBLE, S(x), S(y), S(w), S(h), hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
+                SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
+                return c;
+            };
+            auto edit = [&](int y, int id, const std::wstring& text) {
+                HWND c = CreateWindowExW(0, L"EDIT", text.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, S(20), S(y), S(420), S(26), hwnd,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
+                SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
+                return c;
+            };
+            auto check = [&](const wchar_t* t, int y, int id, bool on) {
+                HWND c = CreateWindowExW(0, L"BUTTON", t, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, S(20), S(y), S(420), S(22), hwnd,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
+                SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
+                SetWindowTheme(c, L"", L"");   // ohne Windows-Design folgt die Schriftfarbe WM_CTLCOLORSTATIC (dunkles Design)
+                CheckDlgButton(hwnd, id, on ? BST_CHECKED : BST_UNCHECKED);
+                return c;
+            };
+            auto button = [&](const wchar_t* t, int x, int w, int id, bool def) {
+                HWND c = CreateWindowExW(0, L"BUTTON", t, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | (def ? BS_DEFPUSHBUTTON : 0), S(x), S(226), S(w), S(34), hwnd,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
+                SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
+                return c;
+            };
+            label(L"Suchen nach:", 20, 14, 420, 20, 0);
+            edit(36, ID_F_FIND, m_findText);
+            label(L"Ersetzen durch:", 20, 72, 420, 20, 0);
+            edit(94, ID_F_REPL, m_replText);
+            check(L"Groß-/Kleinschreibung beachten", 134, ID_F_CASE, m_findCase);
+            check(L"Nur ganze Wörter", 158, ID_F_WORD, m_findWord);
+            label(L"", 20, 190, 420, 22, ID_F_STATUS);
+            button(L"Weitersuchen", 20, 122, ID_F_NEXT, true);
+            button(L"Ersetzen", 150, 96, ID_F_REPLACE, false);
+            button(L"Alle ersetzen", 254, 112, ID_F_ALL, false);
+            button(L"Schließen", 374, 66, ID_F_CLOSE, false);
+            return 0;
+        }
+        case WM_COMMAND:
+            switch (LOWORD(wp)) {
+                case IDOK:   // Enter (IsDialogMessage meldet IDOK, da das Fenster keine eigene Dialogklasse ist)
+                case ID_F_NEXT: ReadFindFields(hwnd); FindNext(); return 0;
+                case ID_F_REPLACE: ReadFindFields(hwnd); ReplaceOne(); return 0;
+                case ID_F_ALL: ReadFindFields(hwnd); ReplaceAll(); return 0;
+                case ID_F_CLOSE:
+                case IDCANCEL: ReadFindFields(hwnd); DestroyWindow(hwnd); return 0;
+                default: break;
+            }
+            break;
+        case WM_CLOSE:
+            ReadFindFields(hwnd);
+            DestroyWindow(hwnd);
+            return 0;
+        case WM_DESTROY:
+            PostMessageW(m_hwnd, WM_NULL, 0, 0);   // weckt die Nachrichtenschleife des modalen Dialogs
+            return 0;
+        case WM_CTLCOLOREDIT:
+            SetTextColor(reinterpret_cast<HDC>(wp), kText);
+            SetBkColor(reinterpret_cast<HDC>(wp), kBg);
+            return reinterpret_cast<LRESULT>(m_brEdit);
+        case WM_CTLCOLORSTATIC:
+        case WM_CTLCOLORBTN:
+            SetTextColor(reinterpret_cast<HDC>(wp), GetDlgCtrlID(reinterpret_cast<HWND>(lp)) == ID_F_STATUS ? kAccent : kText);
+            SetBkColor(reinterpret_cast<HDC>(wp), kPanel);
+            return reinterpret_cast<LRESULT>(m_brPanel);
+        case WM_DRAWITEM: {
+            const auto* di = reinterpret_cast<const DRAWITEMSTRUCT*>(lp);
+            if (di->CtlType != ODT_BUTTON) break;
+            HBRUSH back = CreateSolidBrush(kPanel);
+            FillRect(di->hDC, &di->rcItem, back);
+            DeleteObject(back);
+            const bool down = (di->itemState & ODS_SELECTED) != 0, def = di->CtlID == ID_F_NEXT, focus = (di->itemState & ODS_FOCUS) != 0;
+            COLORREF fill = def ? kAccent : kHover;
+            if (down) fill = Mix(fill, kBg, 30);
+            RoundBox(di->hDC, di->rcItem, S(7), fill, focus ? kText : fill);
+            wchar_t t[64];
+            GetWindowTextW(di->hwndItem, t, 64);
+            Text(di->hDC, m_fUi, def ? RGB(0x1E, 0x1E, 0x2E) : kText, di->rcItem, t, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
+            return TRUE;
+        }
+        default: break;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
 }
 
 }  // namespace
