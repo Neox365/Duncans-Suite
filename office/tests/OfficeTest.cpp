@@ -189,6 +189,80 @@ int main()
     CHECK(codec::DecodeAuto(std::string("\xFF\xFE" "a\0b\0", 6)) == L"ab");
     CHECK(codec::DecodeAuto(codec::EncodeUtf8Bom(L"über")) == L"über");
 
+    // WENN, Vergleiche, ZAEHLENWENN
+    s.Clear();
+    for (int i = 0; i < 5; ++i) s.Set(i, 0, std::to_wstring(i + 1));   // A1..A5 = 1..5
+    s.Set(0, 2, L"ja");
+    s.Set(1, 2, L"nein");
+    s.Set(2, 2, L"Ja");
+    CHECK(Show(s, L"B1", L"=WENN(A5>3;\"hoch\";\"niedrig\")") == L"hoch");
+    CHECK(Show(s, L"B2", L"=WENN(A1>3;\"hoch\";\"niedrig\")") == L"niedrig");
+    CHECK(Show(s, L"B3", L"=WENN(A5>3;10;20)*2") == L"20");
+    CHECK(Show(s, L"B4", L"=WENN(A1>3;10;20)+1") == L"21");
+    CHECK(Show(s, L"B5", L"=WENN(C4=0;0;A5/C4)") == L"0");               // leere Zelle = 0, der andere Zweig (Division durch 0) wird nicht ausgewertet
+    CHECK(Show(s, L"B6", L"=WENN(A1=0;1;1/0)") == L"#DIV/0!");           // der gewaehlte Zweig darf nicht fehlerhaft sein
+    CHECK(Show(s, L"B7", L"=WENN(C1=\"ja\";1;0)") == L"1");
+    CHECK(Show(s, L"B8", L"=WENN(C3=\"ja\";1;0)") == L"1");               // ohne Beachtung der Gross-/Kleinschreibung
+    CHECK(Show(s, L"B9", L"=WENN(C2<>\"ja\";\"anders\";\"gleich\")") == L"anders");
+    CHECK(Show(s, L"B10", L"=WENN(C9=\"\";\"leer\";\"voll\")") == L"leer");
+    CHECK(Show(s, L"B11", L"=WENN(A1>0;WENN(A5>9;\"a\";\"b\");\"c\")") == L"b");   // verschachtelt, Text als Ergebnis
+    CHECK(Show(s, L"B12", L"=IF(A5>=5;1;2)") == L"1");
+    CHECK(Show(s, L"B13", L"=WENN(A1>0;\"x\")") == L"x");
+    CHECK(Show(s, L"B14", L"=WENN(A1>9;\"x\")") == L"0");                 // ohne Sonst-Zweig: 0
+    CHECK(Show(s, L"B15", L"=A5>3") == L"1");
+    CHECK(Show(s, L"B16", L"=A5<=3") == L"0");
+    CHECK(Show(s, L"B17", L"=C1") == L"ja");                              // Textzelle direkt als Ergebnis
+    CHECK(Show(s, L"B18", L"=WENN(A1;1;2)") == L"1");
+    CHECK(Show(s, L"B19", L"=WENN(A1>0;\"x\";\"y\")+1") == L"#WERT!");    // Text in Rechnung
+    CHECK(Show(s, L"B20", L"=WENN(A1>0;1") == L"#SYNTAX!");
+    CHECK(Show(s, L"D1", L"=ZÄHLENWENN(A1:A5;\">2\")") == L"3");
+    CHECK(Show(s, L"D2", L"=ZAEHLENWENN(A1:A5;3)") == L"1");
+    CHECK(Show(s, L"D3", L"=COUNTIF(A1:A5;\"<>3\")") == L"4");
+    CHECK(Show(s, L"D4", L"=zählenwenn(C1:C5;\"ja\")") == L"2");           // Text, ohne Beachtung der Gross-/Kleinschreibung
+    CHECK(Show(s, L"D5", L"=ZÄHLENWENN(C1:C5;\"n*\")") == L"1");          // Platzhalter
+    CHECK(Show(s, L"D6", L"=ZÄHLENWENN(A1:A5;\">=\"&1)") == L"#SYNTAX!");  // & wird nicht unterstuetzt
+    CHECK(Show(s, L"D7", L"=ZÄHLENWENN(A1:A5;A2)") == L"1");              // Kriterium aus einer Zelle
+    CHECK(Show(s, L"D8", L"=ZÄHLENWENN(A1:A5;\"<=2\")+ANZAHL(A1:A5)") == L"7");
+
+    // Zahlenformate und Hintergrundfarbe
+    CHECK(FormatCurrency(1234.5) == L"1.234,50 \u20AC");
+    CHECK(FormatCurrency(-0.5) == L"-0,50 \u20AC");
+    CHECK(FormatCurrency(1234567.891) == L"1.234.567,89 \u20AC");
+    CHECK(FormatCurrency(0) == L"0,00 \u20AC");
+    CHECK(FormatPercent(0.125) == L"12,5 %");
+    CHECK(FormatPercent(1) == L"100 %");
+    CHECK(FormatPercent(0) == L"0 %");
+    s.Clear();
+    s.Set(0, 0, L"0,25");
+    s.fmt[0][0] = FmtPercent;
+    s.Set(1, 0, L"=A1*4000");
+    s.fmt[1][0] = FmtCurrency;
+    CHECK(s.Display(0, 0) == L"25 %");
+    CHECK(s.Display(1, 0) == L"1.000,00 \u20AC");
+    CHECK(s.fill[3][3] == kNoFill);
+    s.fill[3][3] = 0x123456;
+    s.Clear();
+    CHECK(s.fill[3][3] == kNoFill && s.fmt[0][0] == FmtGeneral);        // Clear setzt auch Formate und Farben zurueck
+
+    // Auswahl: Statistik und Zwischenablage-Text
+    s.Clear();
+    s.Set(0, 0, L"10");
+    s.Set(0, 1, L"20,5");
+    s.Set(1, 0, L"Text");
+    s.Set(1, 1, L"=A1+B1");
+    const RangeStats st = Stats(s, 0, 0, 1, 1);
+    CHECK(st.count == 3 && st.sum == 61 && std::fabs(st.Average() - 61.0 / 3.0) < 1e-9);
+    CHECK(RangeToTsv(s, 0, 0, 1, 1, false) == L"10\t20,5\r\nText\t30,5\r\n");
+    CHECK(RangeToTsv(s, 0, 0, 1, 1, true) == L"10\t20,5\r\nText\t=A1+B1\r\n");
+    s.Set(2, 0, L"a\tb");
+    s.Set(2, 1, L"x\"y");
+    const auto rows = ParseDelimited(RangeToTsv(s, 2, 0, 2, 1, true), L'\t');
+    CHECK(rows.size() == 1 && rows[0].size() == 2 && rows[0][0] == L"a\tb" && rows[0][1] == L"x\"y");
+    const auto excel = ParseDelimited(L"1\t2\t3\r\n4\t5\t6\r\n", L'\t');
+    CHECK(excel.size() == 2 && excel[1].size() == 3 && excel[1][2] == L"6");
+    CHECK(ParseDelimited(L"", L'\t').empty());
+    CHECK(ParseDelimited(L"nur Text", L'\t').size() == 1);
+
     std::printf("%d Pruefungen, %d Fehler\n", g_count, g_fail);
     return g_fail ? 1 : 0;
 }

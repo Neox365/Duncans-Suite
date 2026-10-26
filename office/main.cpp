@@ -53,12 +53,14 @@ enum Cmd : int {
     C_BOLD, C_ITALIC, C_UNDER, C_SMALLER, C_BIGGER, C_SIZE, C_LEFT, C_CENTER, C_RIGHT,
     C_PICK_WRITER, C_PICK_SHEETS,
     C_STRIKE, C_FONT, C_COLOR, C_BULLET, C_FIND, C_FINDNEXT,
+    C_FMT_EUR, C_FMT_PCT, C_FILL,
     ID_RICH = 201, ID_FORMULA = 202,
     C_SIZE_BASE = 300,
     C_PRINTER_BASE = 400,   // bis 400 + Zahl der Drucker
     C_FONT_BASE = 600,      // bis 600 + Zahl der Schriftarten
     C_COLOR_BASE = 700,     // bis 700 + Zahl der Farben
     C_COLOR_MORE = 730,
+    C_FILL_BASE = 740,      // bis 740 + Zahl der Fuellfarben
     // Dialog "Suchen und Ersetzen"
     ID_F_FIND = 501, ID_F_REPL, ID_F_CASE, ID_F_WORD, ID_F_NEXT, ID_F_REPLACE, ID_F_ALL, ID_F_CLOSE, ID_F_STATUS
 };
@@ -70,6 +72,13 @@ const ColorPreset kColors[] = {
     { L"Blau", RGB(0x15, 0x65, 0xC0) },   { L"Violett", RGB(0x6A, 0x1B, 0x9A) }, { L"Rosa", RGB(0xAD, 0x14, 0x57) },
     { L"Braun", RGB(0x5D, 0x40, 0x37) } };
 constexpr int kColorCount = static_cast<int>(sizeof kColors / sizeof kColors[0]);
+// Zellhintergruende: gedaempfte Toene, damit die helle Schrift lesbar bleibt (Eintrag 0 = keine Fuellung)
+const ColorPreset kFills[] = {
+    { L"Keine Füllung", 0 },           { L"Gelb", RGB(0x7A, 0x6A, 0x1A) },    { L"Grün", RGB(0x2A, 0x5E, 0x35) },
+    { L"Blau", RGB(0x27, 0x45, 0x7A) }, { L"Rot", RGB(0x7A, 0x28, 0x28) },     { L"Orange", RGB(0x7A, 0x45, 0x1C) },
+    { L"Violett", RGB(0x50, 0x2A, 0x7A) }, { L"Grau", RGB(0x44, 0x44, 0x58) } };
+constexpr int kFillCount = static_cast<int>(sizeof kFills / sizeof kFills[0]);
+constexpr ULONG_PTR kFillItemBase = 100;   // itemData der Fuellfarben-Menueeintraege (die Textfarben nutzen 0..9)
 const wchar_t* const kFontCandidates[] = { L"Segoe UI", L"Arial", L"Calibri", L"Cambria", L"Candara", L"Consolas", L"Courier New", L"Georgia",
                                            L"Palatino Linotype", L"Tahoma", L"Times New Roman", L"Trebuchet MS", L"Verdana", L"Comic Sans MS" };
 int CALLBACK CollectFont(const LOGFONTW* lf, const TEXTMETRICW*, DWORD, LPARAM p)
@@ -201,6 +210,7 @@ App* g_app = nullptr;
 
 class App {
 public:
+    App() { for (int& w : m_colW) w = 104; }
     bool Create(HINSTANCE inst, int show, const std::wstring& openPath);
     int Run();
 
@@ -265,7 +275,21 @@ private:
     void RegisterGrid();
     int HdrW() const { return S(48); }
     int HdrH() const { return S(26); }
-    int ColW() const { return S(104); }
+    int ColPx(int c) const { return S(m_colW[c]); }
+    int ColLeft(int c) const   // Abstand der Spalte c vom linken Rand des Rasters (ohne Zeilenkoepfe, ohne Scrollversatz)
+    {
+        int x = 0;
+        for (int k = 0; k < c; ++k) x += ColPx(k);
+        return x;
+    }
+    int TotalColW() const { return ColLeft(sheet::kCols); }
+    int ColAtX(int x) const   // Spalte an der Rasterposition x
+    {
+        for (int c = 0; c < sheet::kCols; ++c)
+            if (x < ColLeft(c + 1)) return c;
+        return sheet::kCols - 1;
+    }
+    void CellAt(int x, int y, int& r, int& c) const;
     int RowH() const { return S(26); }
     RECT CellRect(int r, int c) const;
     void PaintGrid(HDC dc, const RECT& rc);
@@ -273,8 +297,13 @@ private:
     void ScrollTo(int x, int y);
     void OnScroll(int bar, WPARAM wp);
     void EnsureVisible(int r, int c);
-    void Select(int r, int c);
-    void Move(int dr, int dc);
+    void Select(int r, int c, bool extend = false);
+    void SelectBlock(int r1, int c1, int r2, int c2);
+    void Move(int dr, int dc, bool extend = false);
+    void SelRange(int& r1, int& c1, int& r2, int& c2) const;
+    void ToggleFormat(unsigned char f);
+    void ShowFillMenu();
+    void SetFill(int index);
     void LoadFormula();
     void CommitFormula();
     void BeginEdit(int firstChar);
@@ -330,6 +359,12 @@ private:
     int m_selR = 0, m_selC = 0;
     int m_scrollX = 0, m_scrollY = 0;
     bool m_editDirty = false, m_ignoreChange = false;
+    int m_anchR = 0, m_anchC = 0;           // Ankerzelle der Auswahl (die aktive Zelle ist m_selR/m_selC)
+    int m_colW[sheet::kCols];               // Spaltenbreiten in dp, per Maus an den Spaltenkoepfen aenderbar
+    bool m_selecting = false, m_resizing = false, m_resizeHot = false;
+    int m_resizeCol = 0, m_resizeX0 = 0, m_resizeW0 = 0;
+    UINT m_fmtRaw = 0;                      // eigenes Zwischenablageformat: Rohtext der Zellen mit Formeln
+    std::uint32_t m_lastFill = sheet::kNoFill;
 };
 
 // ======================= Fenster, Schriften, Layout =======================
@@ -500,7 +535,11 @@ void App::Layout()
     else if (m_mode == Mode::Sheets) {
         m_addrRc = { S(16), by, S(16) + S(76), by + bh };
         m_fxRc = { m_addrRc.right + S(10), by, m_addrRc.right + S(40), by + bh };
-        m_formulaBox = { m_fxRc.right + S(4), by, W - S(16), by + bh };
+        m_formulaBox = { m_fxRc.right + S(4), by, W - S(16) - S(138), by + bh };
+        const int bx0 = W - S(16) - S(130);
+        add(C_FMT_EUR, { bx0, by, bx0 + S(38), by + bh }, L"");
+        add(C_FMT_PCT, { bx0 + S(42), by, bx0 + S(80), by + bh }, L"");
+        add(C_FILL, { bx0 + S(84), by, bx0 + S(130), by + bh }, L"");
     }
     else {
         const int cw = S(300), chh = S(210), gap = S(28);
@@ -598,6 +637,8 @@ bool App::IsActive(int id) const
         case C_ITALIC: return m_italic;
         case C_UNDER: return m_under;
         case C_STRIKE: return m_strike;
+        case C_FMT_EUR: return m_mode == Mode::Sheets && m_sheet.fmt[m_selR][m_selC] == sheet::FmtCurrency;
+        case C_FMT_PCT: return m_mode == Mode::Sheets && m_sheet.fmt[m_selR][m_selC] == sheet::FmtPercent;
         case C_BULLET: return m_bullet;
         case C_LEFT: return m_align == PFA_LEFT;
         case C_CENTER: return m_align == PFA_CENTER;
@@ -634,6 +675,15 @@ void App::DrawBtn(HDC dc, int index)
         case C_ITALIC: Text(dc, m_fI, kText, b.rc, L"I", center); break;
         case C_UNDER: Text(dc, m_fU, kText, b.rc, L"U", center); break;
         case C_STRIKE: Text(dc, m_fS, kText, b.rc, L"S", center); break;
+        case C_FMT_EUR: Text(dc, m_fB, kText, b.rc, L"\u20AC", center); break;
+        case C_FMT_PCT: Text(dc, m_fB, kText, b.rc, L"%", center); break;
+        case C_FILL: {   // Farbfeld in der zuletzt gewaehlten Fuellung (leer = keine) mit Pfeil
+            RECT sw{ b.rc.left + S(9), b.rc.top + (b.rc.bottom - b.rc.top - S(16)) / 2, b.rc.left + S(25), b.rc.top + (b.rc.bottom - b.rc.top + S(16)) / 2 };
+            RoundBox(dc, sw, S(3), m_lastFill == sheet::kNoFill ? kPanel : static_cast<COLORREF>(m_lastFill), kText);
+            RECT ar{ b.rc.right - S(20), b.rc.top, b.rc.right - S(4), b.rc.bottom };
+            Text(dc, m_fUi, kDim, ar, L"▾", center);
+            break;
+        }
         case C_FONT: {
             RECT tr{ b.rc.left + S(10), b.rc.top, b.rc.right - S(24), b.rc.bottom };
             Text(dc, m_fUi, kText, tr, m_fontName.empty() ? std::wstring(L"–") : m_fontName, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_NOPREFIX | DT_END_ELLIPSIS);
@@ -812,6 +862,10 @@ void App::Command(int id)
         SetTextColorRef(kColors[id - C_COLOR_BASE].c);
         return;
     }
+    if (id >= C_FILL_BASE && id < C_FILL_BASE + kFillCount) {
+        SetFill(id - C_FILL_BASE);
+        return;
+    }
     if (id == C_COLOR_MORE) {
         static COLORREF custom[16];
         CHOOSECOLORW cc{ sizeof cc };
@@ -846,6 +900,9 @@ void App::Command(int id)
         case C_BULLET: if (writer) ToggleBullet(); break;
         case C_FIND: if (writer) ShowFindDialog(); break;
         case C_FINDNEXT: if (writer) { if (m_findText.empty()) ShowFindDialog(); else FindNext(); } break;
+        case C_FMT_EUR: if (sheets) ToggleFormat(sheet::FmtCurrency); break;
+        case C_FMT_PCT: if (sheets) ToggleFormat(sheet::FmtPercent); break;
+        case C_FILL: if (sheets) ShowFillMenu(); break;
         case C_SMALLER: if (writer) StepSize(-1); break;
         case C_BIGGER: if (writer) StepSize(1); break;
         case C_SIZE: if (writer) ShowSizeMenu(); break;
@@ -863,6 +920,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
             m_dpi = GetDpiForWindow(m_hwnd);
             m_brEdit = CreateSolidBrush(kBg);
             m_brPanel = CreateSolidBrush(kPanel);
+            m_fmtRaw = RegisterClipboardFormatW(L"DuncansOffice.SheetsRaw");
             m_rich = CreateWindowExW(0, L"RICHEDIT50W", L"", WS_CHILD | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_NOHIDESEL | ES_WANTRETURN,
                                      0, 0, 10, 10, m_hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_RICH)), m_inst, nullptr);
             m_grid = CreateWindowExW(0, kGridClass, L"", WS_CHILD | WS_HSCROLL | WS_VSCROLL | WS_TABSTOP, 0, 0, 10, 10, m_hwnd, nullptr, m_inst, nullptr);
@@ -993,13 +1051,14 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
         }
         case WM_DRAWITEM: {
             const auto* di = reinterpret_cast<const DRAWITEMSTRUCT*>(lp);
-            if (di->CtlType == ODT_MENU && di->itemData < static_cast<ULONG_PTR>(kColorCount)) {
-                const ColorPreset& cp = kColors[di->itemData];
+            if (di->CtlType == ODT_MENU && (di->itemData < static_cast<ULONG_PTR>(kColorCount) || (di->itemData >= kFillItemBase && di->itemData < kFillItemBase + kFillCount))) {
+                const bool fillItem = di->itemData >= kFillItemBase;
+                const ColorPreset& cp = fillItem ? kFills[di->itemData - kFillItemBase] : kColors[di->itemData];
                 HBRUSH bg = CreateSolidBrush((di->itemState & ODS_SELECTED) ? kHover : kPanel);
                 FillRect(di->hDC, &di->rcItem, bg);
                 DeleteObject(bg);
                 RECT sw{ di->rcItem.left + S(10), di->rcItem.top + S(5), di->rcItem.left + S(26), di->rcItem.top + S(21) };
-                RoundBox(di->hDC, sw, S(3), cp.c, kLine);
+                RoundBox(di->hDC, sw, S(3), fillItem && di->itemData == kFillItemBase ? kPanel : cp.c, kLine);
                 RECT tr{ di->rcItem.left + S(36), di->rcItem.top, di->rcItem.right - S(8), di->rcItem.bottom };
                 Text(di->hDC, m_fUi, kText, tr, cp.name);
                 return TRUE;
@@ -1515,8 +1574,24 @@ void App::RegisterGrid()
 
 RECT App::CellRect(int r, int c) const
 {
-    const int x = HdrW() + c * ColW() - m_scrollX, y = HdrH() + r * RowH() - m_scrollY;
-    return { x, y, x + ColW(), y + RowH() };
+    const int x = HdrW() + ColLeft(c) - m_scrollX, y = HdrH() + r * RowH() - m_scrollY;
+    return { x, y, x + ColPx(c), y + RowH() };
+}
+
+// Zelle unter einem Punkt im Raster (ausserhalb wird auf den Rand begrenzt, wichtig beim Ziehen mit der Maus)
+void App::CellAt(int x, int y, int& r, int& c) const
+{
+    const int gx = std::max(0, x - HdrW()) + m_scrollX, gy = std::max(0, y - HdrH()) + m_scrollY;
+    c = ColAtX(gx);
+    r = std::clamp(gy / RowH(), 0, sheet::kRows - 1);
+}
+
+void App::SelRange(int& r1, int& c1, int& r2, int& c2) const
+{
+    r1 = std::min(m_anchR, m_selR);
+    r2 = std::max(m_anchR, m_selR);
+    c1 = std::min(m_anchC, m_selC);
+    c2 = std::max(m_anchC, m_selC);
 }
 
 void App::UpdateScroll()
@@ -1525,10 +1600,11 @@ void App::UpdateScroll()
     RECT rc{};
     GetClientRect(m_grid, &rc);
     const int viewW = std::max(1, static_cast<int>(rc.right) - HdrW()), viewH = std::max(1, static_cast<int>(rc.bottom) - HdrH());
-    const int maxX = std::max(0, sheet::kCols * ColW() - viewW), maxY = std::max(0, sheet::kRows * RowH() - viewH);
+    const int totalW = TotalColW();
+    const int maxX = std::max(0, totalW - viewW), maxY = std::max(0, sheet::kRows * RowH() - viewH);
     m_scrollX = std::clamp(m_scrollX, 0, maxX);
     m_scrollY = std::clamp(m_scrollY, 0, maxY);
-    SCROLLINFO si{ sizeof si, SIF_RANGE | SIF_PAGE | SIF_POS, 0, sheet::kCols * ColW() - 1, static_cast<UINT>(viewW), m_scrollX, 0 };
+    SCROLLINFO si{ sizeof si, SIF_RANGE | SIF_PAGE | SIF_POS, 0, totalW - 1, static_cast<UINT>(viewW), m_scrollX, 0 };
     SetScrollInfo(m_grid, SB_HORZ, &si, TRUE);
     si = { sizeof si, SIF_RANGE | SIF_PAGE | SIF_POS, 0, sheet::kRows * RowH() - 1, static_cast<UINT>(viewH), m_scrollY, 0 };
     SetScrollInfo(m_grid, SB_VERT, &si, TRUE);
@@ -1546,7 +1622,7 @@ void App::OnScroll(int bar, WPARAM wp)
 {
     SCROLLINFO si{ sizeof si, SIF_ALL, 0, 0, 0, 0, 0 };
     GetScrollInfo(m_grid, bar, &si);
-    const int line = bar == SB_HORZ ? ColW() / 2 : RowH();
+    const int line = bar == SB_HORZ ? S(52) : RowH();
     int pos = si.nPos;
     switch (LOWORD(wp)) {
         case SB_LINEUP: pos -= line; break;
@@ -1568,7 +1644,7 @@ void App::EnsureVisible(int r, int c)
     GetClientRect(m_grid, &rc);
     const int viewW = rc.right - HdrW(), viewH = rc.bottom - HdrH();
     int x = m_scrollX, y = m_scrollY;
-    const int x0 = c * ColW(), x1 = x0 + ColW(), y0 = r * RowH(), y1 = y0 + RowH();
+    const int x0 = ColLeft(c), x1 = x0 + ColPx(c), y0 = r * RowH(), y1 = y0 + RowH();
     if (x0 < x) x = x0; else if (x1 > x + viewW) x = x1 - viewW;
     if (y0 < y) y = y0; else if (y1 > y + viewH) y = y1 - viewH;
     if (x != m_scrollX || y != m_scrollY) ScrollTo(x, y);
@@ -1580,9 +1656,15 @@ void App::PaintGrid(HDC dc, const RECT& rc)
     FillRect(dc, &rc, bg);
     DeleteObject(bg);
     SetBkMode(dc, TRANSPARENT);
-    const int hw = HdrW(), hh = HdrH(), cw = ColW(), rh = RowH();
-    const int firstC = m_scrollX / cw, lastC = std::min<int>(sheet::kCols - 1, (m_scrollX + rc.right) / cw);
+    const int hw = HdrW(), hh = HdrH(), rh = RowH();
+    int firstC = 0;
+    while (firstC < sheet::kCols - 1 && ColLeft(firstC + 1) <= m_scrollX) ++firstC;
+    int lastC = firstC;
+    while (lastC < sheet::kCols - 1 && ColLeft(lastC + 1) < m_scrollX + rc.right) ++lastC;
     const int firstR = m_scrollY / rh, lastR = std::min<int>(sheet::kRows - 1, (m_scrollY + rc.bottom) / rh);
+    int sr1, sc1, sr2, sc2;
+    SelRange(sr1, sc1, sr2, sc2);
+    const bool multi = sr1 != sr2 || sc1 != sc2;
 
     SaveDC(dc);
     IntersectClipRect(dc, hw, hh, rc.right, rc.bottom);
@@ -1592,6 +1674,15 @@ void App::PaintGrid(HDC dc, const RECT& rc)
     for (int r = firstR; r <= lastR; ++r) {
         for (int c = firstC; c <= lastC; ++c) {
             const RECT cell = CellRect(r, c);
+            const std::uint32_t fill = m_sheet.fill[r][c];
+            const bool inSel = multi && r >= sr1 && r <= sr2 && c >= sc1 && c <= sc2 && !(r == m_selR && c == m_selC);   // aktive Zelle bleibt unmarkiert wie in Tabellenprogrammen ueblich
+            if (fill != sheet::kNoFill || inSel) {
+                const COLORREF base = fill != sheet::kNoFill ? static_cast<COLORREF>(fill) : kBg;
+                HBRUSH fb = CreateSolidBrush(inSel ? Mix(base, kAccent, 30) : base);
+                RECT fr{ cell.left, cell.top, cell.right - 1, cell.bottom - 1 };
+                FillRect(dc, &fr, fb);
+                DeleteObject(fb);
+            }
             MoveToEx(dc, cell.right - 1, cell.top, nullptr);
             LineTo(dc, cell.right - 1, cell.bottom - 1);
             LineTo(dc, cell.left - 1, cell.bottom - 1);
@@ -1604,30 +1695,39 @@ void App::PaintGrid(HDC dc, const RECT& rc)
                       DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS | (v.kind == sheet::Value::Number ? DT_RIGHT : DT_LEFT));
         }
     }
-    // Auswahlrahmen
+    // Rahmen um die Auswahl; bei mehreren Zellen zusaetzlich um die aktive Zelle
     {
-        const RECT s = CellRect(m_selR, m_selC);
+        const RECT a = CellRect(sr1, sc1), b = CellRect(sr2, sc2);
         HPEN sel = CreatePen(PS_INSIDEFRAME, std::max(2, S(2)), kAccent);
         HGDIOBJ op = SelectObject(dc, sel), ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
-        Rectangle(dc, s.left - 1, s.top - 1, s.right, s.bottom);
+        Rectangle(dc, a.left - 1, a.top - 1, b.right, b.bottom);
         SelectObject(dc, op);
-        SelectObject(dc, ob);
         DeleteObject(sel);
+        if (multi) {
+            HPEN act = CreatePen(PS_INSIDEFRAME, 1, kText);
+            op = SelectObject(dc, act);
+            const RECT s = CellRect(m_selR, m_selC);
+            Rectangle(dc, s.left - 1, s.top - 1, s.right, s.bottom);
+            SelectObject(dc, op);
+            DeleteObject(act);
+        }
+        SelectObject(dc, ob);
     }
     RestoreDC(dc, -1);
 
-    // Kopfzeile (A..Z) und Zeilennummern, die aktive Spalte/Zeile hervorgehoben
+    // Kopfzeile (A..Z) und Zeilennummern; Spalten und Zeilen der Auswahl sind hervorgehoben
     SelectObject(dc, m_fUi);
     SaveDC(dc);
     IntersectClipRect(dc, hw, 0, rc.right, hh);
     for (int c = firstC; c <= lastC; ++c) {
-        RECT h{ hw + c * cw - m_scrollX, 0, hw + (c + 1) * cw - m_scrollX, hh };
-        HBRUSH b = CreateSolidBrush(c == m_selC ? kHover : kPanel);
+        const bool on = c >= sc1 && c <= sc2;
+        RECT h{ hw + ColLeft(c) - m_scrollX, 0, hw + ColLeft(c + 1) - m_scrollX, hh };
+        HBRUSH b = CreateSolidBrush(on ? kHover : kPanel);
         FillRect(dc, &h, b);
         DeleteObject(b);
         MoveToEx(dc, h.right - 1, 0, nullptr);
         LineTo(dc, h.right - 1, hh);
-        SetTextColor(dc, c == m_selC ? kAccent : kDim);
+        SetTextColor(dc, on ? kAccent : kDim);
         const std::wstring t = sheet::ColName(c);
         DrawTextW(dc, t.c_str(), static_cast<int>(t.size()), &h, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
     }
@@ -1635,13 +1735,14 @@ void App::PaintGrid(HDC dc, const RECT& rc)
     SaveDC(dc);
     IntersectClipRect(dc, 0, hh, hw, rc.bottom);
     for (int r = firstR; r <= lastR; ++r) {
+        const bool on = r >= sr1 && r <= sr2;
         RECT h{ 0, hh + r * rh - m_scrollY, hw, hh + (r + 1) * rh - m_scrollY };
-        HBRUSH b = CreateSolidBrush(r == m_selR ? kHover : kPanel);
+        HBRUSH b = CreateSolidBrush(on ? kHover : kPanel);
         FillRect(dc, &h, b);
         DeleteObject(b);
         MoveToEx(dc, 0, h.bottom - 1, nullptr);
         LineTo(dc, hw, h.bottom - 1);
-        SetTextColor(dc, r == m_selR ? kAccent : kDim);
+        SetTextColor(dc, on ? kAccent : kDim);
         const std::wstring t = std::to_wstring(r + 1);
         DrawTextW(dc, t.c_str(), static_cast<int>(t.size()), &h, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
     }
@@ -1659,11 +1760,16 @@ void App::PaintGrid(HDC dc, const RECT& rc)
     DeleteObject(grid);
 }
 
-void App::Select(int r, int c)
+// Aktive Zelle setzen; mit extend bleibt der Anker stehen und die Auswahl waechst (Shift+Pfeil, Ziehen mit der Maus)
+void App::Select(int r, int c, bool extend)
 {
     CommitFormula();
     m_selR = std::clamp(r, 0, sheet::kRows - 1);
     m_selC = std::clamp(c, 0, sheet::kCols - 1);
+    if (!extend) {
+        m_anchR = m_selR;
+        m_anchC = m_selC;
+    }
     EnsureVisible(m_selR, m_selC);
     LoadFormula();
     UpdateSheetStatus();
@@ -1671,7 +1777,22 @@ void App::Select(int r, int c)
     InvalidateRect(m_hwnd, &m_barRc, FALSE);
 }
 
-void App::Move(int dr, int dc) { Select(m_selR + dr, m_selC + dc); }
+// Ganzen Block markieren; aktive Zelle ist die obere linke
+void App::SelectBlock(int r1, int c1, int r2, int c2)
+{
+    CommitFormula();
+    m_anchR = std::clamp(r2, 0, sheet::kRows - 1);
+    m_anchC = std::clamp(c2, 0, sheet::kCols - 1);
+    m_selR = std::clamp(r1, 0, sheet::kRows - 1);
+    m_selC = std::clamp(c1, 0, sheet::kCols - 1);
+    EnsureVisible(m_selR, m_selC);
+    LoadFormula();
+    UpdateSheetStatus();
+    InvalidateRect(m_grid, nullptr, FALSE);
+    InvalidateRect(m_hwnd, &m_barRc, FALSE);
+}
+
+void App::Move(int dr, int dc, bool extend) { Select(m_selR + dr, m_selC + dc, extend); }
 
 void App::LoadFormula()
 {
@@ -1709,47 +1830,15 @@ void App::BeginEdit(int firstChar)
     SendMessageW(m_formula, EM_SETSEL, 0x7FFFFFFF, 0x7FFFFFFF);
 }
 
+// Entf: Inhalt aller markierten Zellen loeschen (Formate und Farben bleiben)
 void App::ClearCell()
 {
-    if (m_sheet.raw[m_selR][m_selC].empty()) return;
-    m_sheet.Set(m_selR, m_selC, L"");
-    m_sDirty = true;
-    LoadFormula();
-    UpdateSheetStatus();
-    UpdateTitle();
-    InvalidateRect(m_grid, nullptr, FALSE);
-}
-
-void App::CopyCell(bool cut)
-{
-    PutClipboard(m_hwnd, m_sheet.raw[m_selR][m_selC]);
-    if (cut) ClearCell();
-}
-
-void App::PasteCells()
-{
-    const std::wstring t = GetClipboard(m_hwnd);
-    if (t.empty()) return;
-    int r = m_selR, c0 = m_selC, c = c0;
-    std::wstring field;
+    int r1, c1, r2, c2;
+    SelRange(r1, c1, r2, c2);
     bool changed = false;
-    auto put = [&]() {
-        if (r < sheet::kRows && c < sheet::kCols) { m_sheet.raw[r][c] = field; changed = true; }
-        field.clear();
-    };
-    for (size_t i = 0; i < t.size(); ++i) {
-        const wchar_t ch = t[i];
-        if (ch == L'\t') { put(); ++c; }
-        else if (ch == L'\r') continue;
-        else if (ch == L'\n') {
-            put();
-            ++r;
-            c = c0;
-            if (i + 1 == t.size()) { field.clear(); r = sheet::kRows; }   // abschliessender Zeilenumbruch erzeugt keine leere Zeile
-        }
-        else field.push_back(ch);
-    }
-    if (!field.empty() || (!t.empty() && t.back() != L'\n')) put();
+    for (int r = r1; r <= r2; ++r)
+        for (int c = c1; c <= c2; ++c)
+            if (!m_sheet.raw[r][c].empty()) { m_sheet.raw[r][c].clear(); changed = true; }
     if (!changed) return;
     m_sheet.Invalidate();
     m_sDirty = true;
@@ -1759,12 +1848,132 @@ void App::PasteCells()
     InvalidateRect(m_grid, nullptr, FALSE);
 }
 
+// Zahlenformat fuer alle markierten Zellen; ist es schon gesetzt, wird es wieder entfernt. (CSV speichert keine Formate.)
+void App::ToggleFormat(unsigned char f)
+{
+    int r1, c1, r2, c2;
+    SelRange(r1, c1, r2, c2);
+    const unsigned char now = m_sheet.fmt[m_selR][m_selC] == f ? sheet::FmtGeneral : f;
+    for (int r = r1; r <= r2; ++r)
+        for (int c = c1; c <= c2; ++c) m_sheet.fmt[r][c] = now;
+    InvalidateRect(m_grid, nullptr, FALSE);
+    InvalidateRect(m_hwnd, &m_barRc, FALSE);
+    UpdateSheetStatus();
+}
+
+void App::ShowFillMenu()
+{
+    HMENU menu = CreatePopupMenu();
+    for (int i = 0; i < kFillCount; ++i)
+        AppendMenuW(menu, MF_OWNERDRAW, static_cast<UINT_PTR>(C_FILL_BASE + i), reinterpret_cast<LPCWSTR>(kFillItemBase + static_cast<ULONG_PTR>(i)));
+    for (const Btn& b : m_btns)
+        if (b.id == C_FILL) {
+            POINT pt{ b.rc.left, b.rc.bottom };
+            ClientToScreen(m_hwnd, &pt);
+            TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+        }
+    DestroyMenu(menu);
+}
+
+void App::SetFill(int index)
+{
+    if (index < 0 || index >= kFillCount) return;
+    int r1, c1, r2, c2;
+    SelRange(r1, c1, r2, c2);
+    const std::uint32_t color = index == 0 ? sheet::kNoFill : static_cast<std::uint32_t>(kFills[index].c);
+    for (int r = r1; r <= r2; ++r)
+        for (int c = c1; c <= c2; ++c) m_sheet.fill[r][c] = color;
+    m_lastFill = color;
+    InvalidateRect(m_grid, nullptr, FALSE);
+    InvalidateRect(m_hwnd, &m_barRc, FALSE);
+}
+
+// Strg+C / Strg+X: der markierte Bereich als Text mit Tabulatoren (angezeigte Werte, fuer Excel, Word ...) und zusaetzlich als Rohtext mit Formeln fuer das Einfuegen in Duncan's Sheets
+void App::CopyCell(bool cut)
+{
+    int r1, c1, r2, c2;
+    SelRange(r1, c1, r2, c2);
+    const std::wstring shown = sheet::RangeToTsv(m_sheet, r1, c1, r2, c2, false), raw = sheet::RangeToTsv(m_sheet, r1, c1, r2, c2, true);
+    if (!OpenClipboard(m_hwnd)) return;
+    EmptyClipboard();
+    auto put = [](UINT format, const std::wstring& t) {
+        HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, (t.size() + 1) * sizeof(wchar_t));
+        if (!mem) return;
+        if (void* p = GlobalLock(mem)) {
+            std::memcpy(p, t.c_str(), (t.size() + 1) * sizeof(wchar_t));
+            GlobalUnlock(mem);
+            if (!SetClipboardData(format, mem)) GlobalFree(mem);
+        }
+        else GlobalFree(mem);
+    };
+    put(CF_UNICODETEXT, shown);
+    if (m_fmtRaw) put(m_fmtRaw, raw);
+    CloseClipboard();
+    if (cut) ClearCell();
+}
+
+// Strg+V: Block ab der oberen linken Ecke der Auswahl einfuegen (Tab-getrennt, auch aus Excel); ein einzelner Wert fuellt eine ganze Auswahl
+void App::PasteCells()
+{
+    std::wstring text;
+    if (OpenClipboard(m_hwnd)) {
+        HANDLE h = nullptr;
+        if (m_fmtRaw && IsClipboardFormatAvailable(m_fmtRaw)) h = GetClipboardData(m_fmtRaw);
+        if (!h) h = GetClipboardData(CF_UNICODETEXT);
+        if (h) {
+            if (const wchar_t* p = static_cast<const wchar_t*>(GlobalLock(h))) {
+                text = p;
+                GlobalUnlock(h);
+            }
+        }
+        CloseClipboard();
+    }
+    if (text.empty()) return;
+    const auto rows = sheet::ParseDelimited(text, L'\t');
+    if (rows.empty()) return;
+    int r1, c1, r2, c2;
+    SelRange(r1, c1, r2, c2);
+    bool changed = false;
+    int endR = r1, endC = c1;
+    if (rows.size() == 1 && rows[0].size() == 1 && (r1 != r2 || c1 != c2)) {   // ein Wert fuer die ganze Auswahl
+        for (int r = r1; r <= r2; ++r)
+            for (int c = c1; c <= c2; ++c) { m_sheet.raw[r][c] = rows[0][0]; changed = true; }
+        endR = r2;
+        endC = c2;
+    }
+    else {
+        for (size_t i = 0; i < rows.size(); ++i)
+            for (size_t j = 0; j < rows[i].size(); ++j) {
+                const int r = r1 + static_cast<int>(i), c = c1 + static_cast<int>(j);
+                if (r >= sheet::kRows || c >= sheet::kCols) continue;
+                m_sheet.raw[r][c] = rows[i][j];
+                changed = true;
+                endR = std::max(endR, r);
+                endC = std::max(endC, c);
+            }
+    }
+    if (!changed) return;
+    m_sheet.Invalidate();
+    m_sDirty = true;
+    SelectBlock(r1, c1, endR, endC);
+    UpdateTitle();
+}
+
 void App::UpdateSheetStatus()
 {
-    const sheet::Value& v = m_sheet.Get(m_selR, m_selC);
-    m_status = L"Zelle " + sheet::CellName(m_selR, m_selC);
-    if (v.kind != sheet::Value::Empty) m_status += L"     Wert: " + m_sheet.Display(m_selR, m_selC);
-    else m_status += L"     Tipp: Formeln beginnen mit =, zum Beispiel =SUMME(A1:A5) oder =MITTELWERT(B1:B9)";
+    int r1, c1, r2, c2;
+    SelRange(r1, c1, r2, c2);
+    if (r1 != r2 || c1 != c2) {   // mehrere Zellen: Summe, Mittelwert und Anzahl der Zahlen
+        const sheet::RangeStats st = sheet::Stats(m_sheet, r1, c1, r2, c2);
+        m_status = sheet::CellName(r1, c1) + L":" + sheet::CellName(r2, c2) + L"     Summe: " + sheet::FormatNumber(st.sum) + L"  |  Mittelwert: " +
+                   (st.count ? sheet::FormatNumber(st.Average()) : std::wstring(L"–")) + L"  |  Anzahl: " + std::to_wstring(st.count);
+    }
+    else {
+        const sheet::Value& v = m_sheet.Get(m_selR, m_selC);
+        m_status = L"Zelle " + sheet::CellName(m_selR, m_selC);
+        if (v.kind != sheet::Value::Empty) m_status += L"     Wert: " + m_sheet.Display(m_selR, m_selC);
+        else m_status += L"     Tipp: Formeln beginnen mit =, zum Beispiel =SUMME(A1:A5), =WENN(A1>5;\"ja\";\"nein\") oder =ZÄHLENWENN(A1:A9;\">3\")";
+    }
     if (m_mode == Mode::Sheets) InvalidateRect(m_hwnd, &m_statusRc, FALSE);
 }
 
@@ -1793,43 +2002,118 @@ LRESULT App::GridHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
         case WM_VSCROLL: OnScroll(SB_VERT, wp); return 0;
         case WM_MOUSEWHEEL: {
             const int steps = GET_WHEEL_DELTA_WPARAM(wp) / WHEEL_DELTA;
-            if (LOWORD(wp) & MK_SHIFT) ScrollTo(m_scrollX - steps * ColW(), m_scrollY);
+            if (LOWORD(wp) & MK_SHIFT) ScrollTo(m_scrollX - steps * ColPx(0), m_scrollY);
             else ScrollTo(m_scrollX, m_scrollY - steps * 3 * RowH());
             return 0;
         }
         case WM_GETDLGCODE: return DLGC_WANTARROWS | DLGC_WANTCHARS | DLGC_WANTALLKEYS;
         case WM_SETFOCUS:
         case WM_KILLFOCUS: InvalidateRect(hwnd, nullptr, FALSE); return 0;
+        case WM_SETCURSOR:
+            if (LOWORD(lp) == HTCLIENT && (m_resizeHot || m_resizing)) {
+                SetCursor(LoadCursorW(nullptr, IDC_SIZEWE));
+                return TRUE;
+            }
+            break;
         case WM_LBUTTONDOWN:
         case WM_LBUTTONDBLCLK: {
             SetFocus(hwnd);
             const int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
-            if (x >= HdrW() && y >= HdrH()) {
-                Select((y - HdrH() + m_scrollY) / RowH(), (x - HdrW() + m_scrollX) / ColW());
-                if (msg == WM_LBUTTONDBLCLK) BeginEdit(0);
+            const bool dbl = msg == WM_LBUTTONDBLCLK, shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            if (y < HdrH() && x >= HdrW() && m_resizeHot) {   // Spaltengrenze: Breite aendern (Doppelklick = Standardbreite)
+                if (dbl) {
+                    m_colW[m_resizeCol] = 104;
+                    UpdateScroll();
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                else {
+                    m_resizing = true;
+                    m_resizeX0 = x;
+                    m_resizeW0 = m_colW[m_resizeCol];
+                    SetCapture(hwnd);
+                }
+                return 0;
             }
+            if (x >= HdrW() && y >= HdrH()) {   // Zelle: markieren, Ziehen erweitert die Auswahl
+                int r, c;
+                CellAt(x, y, r, c);
+                Select(r, c, shift);
+                if (dbl) BeginEdit(0);
+                else {
+                    m_selecting = true;
+                    SetCapture(hwnd);
+                }
+            }
+            else if (x >= HdrW()) {   // Spaltenkopf: ganze Spalte
+                int r, c;
+                CellAt(x, y, r, c);
+                SelectBlock(0, c, sheet::kRows - 1, c);
+            }
+            else if (y >= HdrH()) {   // Zeilenkopf: ganze Zeile
+                int r, c;
+                CellAt(x, y, r, c);
+                SelectBlock(r, 0, r, sheet::kCols - 1);
+            }
+            else SelectBlock(0, 0, sheet::kRows - 1, sheet::kCols - 1);   // Ecke: alles
             return 0;
         }
+        case WM_MOUSEMOVE: {
+            const int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
+            if (m_resizing) {
+                const int w = std::clamp(m_resizeW0 + (x - m_resizeX0) * 96 / static_cast<int>(m_dpi), 30, 600);
+                if (w != m_colW[m_resizeCol]) {
+                    m_colW[m_resizeCol] = w;
+                    UpdateScroll();
+                    InvalidateRect(hwnd, nullptr, FALSE);
+                }
+                return 0;
+            }
+            if (m_selecting && (wp & MK_LBUTTON)) {
+                int r, c;
+                CellAt(x, y, r, c);
+                if (r != m_selR || c != m_selC) Select(r, c, true);
+                return 0;
+            }
+            bool hot = false;
+            if (y >= 0 && y < HdrH() && x >= HdrW()) {
+                for (int c = 0; c < sheet::kCols; ++c) {
+                    const int edge = HdrW() + ColLeft(c + 1) - m_scrollX;
+                    if (std::abs(x - edge) <= S(4)) { hot = true; m_resizeCol = c; break; }
+                }
+            }
+            m_resizeHot = hot;
+            return 0;
+        }
+        case WM_LBUTTONUP:
+            if (m_resizing || m_selecting) {
+                m_resizing = m_selecting = false;
+                ReleaseCapture();
+            }
+            return 0;
+        case WM_CAPTURECHANGED:
+            m_resizing = m_selecting = false;
+            return 0;
         case WM_KEYDOWN: {
             const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0, shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
             switch (wp) {
-                case VK_LEFT: Move(0, -1); return 0;
-                case VK_RIGHT: Move(0, 1); return 0;
-                case VK_UP: Move(-1, 0); return 0;
-                case VK_DOWN: Move(1, 0); return 0;
+                case VK_LEFT: Move(0, -1, shift); return 0;
+                case VK_RIGHT: Move(0, 1, shift); return 0;
+                case VK_UP: Move(-1, 0, shift); return 0;
+                case VK_DOWN: Move(1, 0, shift); return 0;
                 case VK_TAB: Move(0, shift ? -1 : 1); return 0;
                 case VK_RETURN: Move(shift ? -1 : 1, 0); return 0;
-                case VK_PRIOR: Move(-10, 0); return 0;
-                case VK_NEXT: Move(10, 0); return 0;
-                case VK_HOME: if (ctrl) Select(0, 0); else Select(m_selR, 0); return 0;
+                case VK_PRIOR: Move(-10, 0, shift); return 0;
+                case VK_NEXT: Move(10, 0, shift); return 0;
+                case VK_HOME: if (ctrl) Select(0, 0, shift); else Select(m_selR, 0, shift); return 0;
                 case VK_END: {
                     int rows = 0, cols = 0;
-                    if (m_sheet.Used(rows, cols)) { if (ctrl) Select(rows - 1, cols - 1); else Select(m_selR, cols - 1); }
+                    if (m_sheet.Used(rows, cols)) { if (ctrl) Select(rows - 1, cols - 1, shift); else Select(m_selR, cols - 1, shift); }
                     return 0;
                 }
                 case VK_DELETE:
                 case VK_BACK: ClearCell(); return 0;
                 case VK_F2: BeginEdit(0); return 0;
+                case 'A': if (ctrl) { SelectBlock(0, 0, sheet::kRows - 1, sheet::kCols - 1); return 0; } break;
                 case 'C': if (ctrl) { CopyCell(false); return 0; } break;
                 case 'X': if (ctrl) { CopyCell(true); return 0; } break;
                 case 'V': if (ctrl) { PasteCells(); return 0; } break;
@@ -1882,6 +2166,7 @@ bool App::SheetsNew()
     m_sPath.clear();
     m_sDirty = false;
     m_scrollX = m_scrollY = 0;
+    for (int& w : m_colW) w = 104;
     Select(0, 0);
     UpdateScroll();
     UpdateTitle();
