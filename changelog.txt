@@ -122,6 +122,10 @@
 - Der PDF Reader kommt als Programm in die Suite.
 
 [DuncansPrivacy.exe]
+## 0.8.0 | 2026-10-26
+- Neue Schalter für Leistung und Hintergrund: Widgets & News-Feed aus, Xbox-Bildschirmaufzeichnung (Game DVR) aus und Hintergrund-Apps verbieten.
+- Neue Dienst-Schalter über die Windows-Dienstverwaltung: Druckwarteschlange (Print Spooler), SysMain (nur bei SSD erlaubt), Remoteregistrierung und Windows-Fehlerberichterstattung deaktivieren. Der ursprüngliche Starttyp wird gesichert, „Standard wiederherstellen“ stellt ihn wieder her und startet den Dienst bei Bedarf.
+- Schalter mit Nebenwirkungen („Erweitert“) werden von „Alle schützen“ nicht mehr mitgeschaltet.
 ## 0.7.0 | 2026-10-26
 - Vier neue Schalter: Edge nicht im Hintergrund starten (Startbeschleunigung und Hintergrundmodus aus), Update-Weitergabe an andere PCs aus (Delivery Optimization), Windows Recall / Bildschirm-Analyse aus und Online-Spracherkennung aus.
 - Wie alle Schalter werden sie vorher gesichert und lassen sich zurücknehmen; „Alle schützen“ und „Standard wiederherstellen“ schließen sie mit ein.

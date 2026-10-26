@@ -1,6 +1,7 @@
 #include "PrivacyRules.h"
 
 #include <shlobj.h>
+#include <winioctl.h>
 
 #include "../src/SuiteSafety.h"
 
@@ -145,6 +146,71 @@ namespace {
         CloseServiceHandle(scm);
     }
 
+    // ---- Dienste ueber die Dienstverwaltung (Service Control Manager) ----
+    struct SvcState {
+        bool exists = false;
+        DWORD start = 0;       // SERVICE_AUTO_START, SERVICE_DEMAND_START, SERVICE_DISABLED ...
+        bool delayed = false;  // verzoegerter Autostart
+    };
+
+    SvcState ReadService(const wchar_t* name) {
+        SvcState st;
+        SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+        if (!scm) return st;
+        if (SC_HANDLE svc = OpenServiceW(scm, name, SERVICE_QUERY_CONFIG)) {
+            DWORD need = 0;
+            QueryServiceConfigW(svc, nullptr, 0, &need);
+            if (need) {
+                std::vector<BYTE> buf(need);
+                auto* cfg = reinterpret_cast<QUERY_SERVICE_CONFIGW*>(buf.data());
+                if (QueryServiceConfigW(svc, cfg, need, &need)) { st.exists = true; st.start = cfg->dwStartType; }
+            }
+            if (st.exists && st.start == SERVICE_AUTO_START) {
+                DWORD n2 = 0;
+                QueryServiceConfig2W(svc, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, nullptr, 0, &n2);
+                if (n2) {
+                    std::vector<BYTE> b2(n2);
+                    if (QueryServiceConfig2W(svc, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, b2.data(), n2, &n2))
+                        st.delayed = reinterpret_cast<SERVICE_DELAYED_AUTO_START_INFO*>(b2.data())->fDelayedAutostart != 0;
+                }
+            }
+            CloseServiceHandle(svc);
+        }
+        CloseServiceHandle(scm);
+        return st;
+    }
+
+    bool WriteService(const wchar_t* name, DWORD start, bool delayed, std::wstring& error) {
+        SC_HANDLE scm = OpenSCManagerW(nullptr, nullptr, SC_MANAGER_CONNECT);
+        if (!scm) { error = std::wstring(L"Dienstverwaltung nicht erreichbar (Fehler ") + std::to_wstring(GetLastError()) + L")"; return false; }
+        bool ok = false;
+        if (SC_HANDLE svc = OpenServiceW(scm, name, SERVICE_CHANGE_CONFIG)) {
+            ok = ChangeServiceConfigW(svc, SERVICE_NO_CHANGE, start, SERVICE_NO_CHANGE, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr) != 0;
+            if (!ok) error = std::wstring(L"Starttyp von ") + name + L" nicht änderbar (Fehler " + std::to_wstring(GetLastError()) + L")";
+            else if (start == SERVICE_AUTO_START) {   // verzoegerten Autostart so wiederherstellen, wie er war
+                SERVICE_DELAYED_AUTO_START_INFO info{ delayed ? TRUE : FALSE };
+                ChangeServiceConfig2W(svc, SERVICE_CONFIG_DELAYED_AUTO_START_INFO, &info);
+            }
+            CloseServiceHandle(svc);
+        }
+        else error = std::wstring(L"Dienst ") + name + L" nicht zugänglich (Fehler " + std::to_wstring(GetLastError()) + L")";
+        CloseServiceHandle(scm);
+        return ok;
+    }
+
+    std::wstring SvcId(const ServiceOp& op) { return std::wstring(L"SVC\\") + op.name; }
+    std::wstring EncodeSvc(const SvcState& st) { return st.exists ? L"svc:" + std::to_wstring(st.start) + L":" + (st.delayed ? L"1" : L"0") : L"absent"; }
+    bool DecodeSvc(const std::wstring& s, SvcState& st) {
+        st = SvcState{};
+        if (s == L"absent") return true;
+        if (s.rfind(L"svc:", 0) != 0) return false;
+        st.exists = true;
+        st.start = static_cast<DWORD>(wcstoul(s.c_str() + 4, nullptr, 10));
+        const size_t colon = s.find(L':', 4);
+        st.delayed = colon != std::wstring::npos && s.compare(colon + 1, 1, L"1") == 0;
+        return true;
+    }
+
     std::wstring ServiceNameFromKey(const wchar_t* key) {
         const wchar_t* p = wcsstr(key, L"\\Services\\");
         return p ? std::wstring(p + 10) : L"";
@@ -184,13 +250,46 @@ bool HasBackup() {
     return buf[0] != 0;
 }
 
+bool SystemDriveIsSsd(bool& known) {
+    known = false;
+    wchar_t win[MAX_PATH] = {};
+    GetWindowsDirectoryW(win, MAX_PATH);
+    wchar_t path[] = L"\\\\.\\X:";
+    path[4] = win[0];
+    HANDLE h = CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    STORAGE_PROPERTY_QUERY q{};
+    q.PropertyId = StorageDeviceSeekPenaltyProperty;
+    q.QueryType = PropertyStandardQuery;
+    DEVICE_SEEK_PENALTY_DESCRIPTOR d{};
+    DWORD ret = 0;
+    const BOOL ok = DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, &q, sizeof q, &d, sizeof d, &ret, nullptr);
+    CloseHandle(h);
+    if (!ok || ret < sizeof d) return false;
+    known = true;
+    return d.IncursSeekPenalty == FALSE;
+}
+
 bool IsApplied(const Setting& s) {
     for (const RegOp& op : s.ops)
-        if (!Equal(ReadValue(op), Target(op))) return false;
+        if (!op.optional && !Equal(ReadValue(op), Target(op))) return false;
+    for (const ServiceOp& so : s.services) {
+        const SvcState st = ReadService(so.name);
+        if (st.exists && st.start != so.startType) return false;   // fehlt der Dienst, gibt es nichts abzuschalten
+    }
     return true;
 }
 
 bool Apply(const Setting& s, std::wstring& error) {
+    if (s.requiresSsd) {   // z. B. SysMain: auf einer Festplatte wuerde das Abschalten das Arbeiten spuerbar verlangsamen
+        bool known = false;
+        const bool ssd = SystemDriveIsSsd(known);
+        if (known && !ssd) {
+            error = L"Das Systemlaufwerk ist eine Festplatte (keine SSD). Der Dienst beschleunigt dort das Laden von Programmen und bleibt deshalb an.";
+            suite_safety::Log(L"PrivacyShield", L"Abgelehnt (keine SSD): " + std::wstring(s.title));
+            return false;
+        }
+    }
     // 1) alle Originalwerte sichern (nur, wenn noch keine Sicherung existiert - sonst wuerde der Originalzustand ueberschrieben)
     for (const RegOp& op : s.ops) {
         std::wstring ignore;
@@ -199,17 +298,38 @@ bool Apply(const Setting& s, std::wstring& error) {
         if (!WriteBackup(OpId(op), before)) { error = L"Die Sicherungsdatei kann nicht geschrieben werden oder der Ordner ist nicht vertrauenswürdig (%ProgramData%\\DuncansSuite\\Backups muss Administratoren gehören)."; suite_safety::Log(L"PrivacyShield", L"FEHLER Sicherung: " + OpId(op) + L" -> " + BackupPath()); return false; }
         suite_safety::Log(L"PrivacyShield", L"Sicherung " + OpId(op) + L" = " + before);
     }
+    for (const ServiceOp& so : s.services) {   // auch den Starttyp der Dienste sichern
+        std::wstring ignore;
+        if (ReadBackup(SvcId(so), ignore)) continue;
+        const std::wstring before = EncodeSvc(ReadService(so.name));
+        if (!WriteBackup(SvcId(so), before)) { error = L"Die Sicherungsdatei kann nicht geschrieben werden oder der Ordner ist nicht vertrauenswürdig (%ProgramData%\\DuncansSuite\\Backups muss Administratoren gehören)."; return false; }
+        suite_safety::Log(L"PrivacyShield", L"Sicherung " + SvcId(so) + L" = " + before);
+    }
     // 2) Zielwerte schreiben; bei einem Fehler mittendrin alles wieder zuruecknehmen (keine halb angewendete Einstellung)
     for (const RegOp& op : s.ops)
         if (WriteValue(op, Target(op), error)) suite_safety::Log(L"PrivacyShield", L"Gesetzt " + OpId(op) + L" = " + Encode(Target(op)) + L" (ok)");
+        else if (op.optional) { suite_safety::Log(L"PrivacyShield", L"Hinweis: optionaler Wert nicht gesetzt " + OpId(op) + L": " + error); error.clear(); }
         else {
             suite_safety::Log(L"PrivacyShield", L"FEHLER beim Setzen " + OpId(op) + L": " + error + L" – Einstellung wird zurückgenommen");
             std::wstring ignore;
             Revert(s, ignore);
             return false;
         }
+    for (const ServiceOp& so : s.services) {      // Starttyp per Dienstverwaltung setzen
+        const SvcState st = ReadService(so.name);
+        if (!st.exists) { suite_safety::Log(L"PrivacyShield", std::wstring(L"Dienst nicht vorhanden: ") + so.name); continue; }
+        if (WriteService(so.name, so.startType, false, error)) suite_safety::Log(L"PrivacyShield", L"Dienst " + std::wstring(so.name) + L": Starttyp " + std::to_wstring(st.start) + L" -> " + std::to_wstring(so.startType) + L" (ok)");
+        else {
+            suite_safety::Log(L"PrivacyShield", L"FEHLER beim Ändern des Dienstes " + std::wstring(so.name) + L": " + error + L" – Einstellung wird zurückgenommen");
+            std::wstring ignore;
+            Revert(s, ignore);
+            return false;
+        }
+    }
     // 3) Dienste beenden
     for (const wchar_t* svc : s.stopServices) StopService(svc);
+    for (const ServiceOp& so : s.services)
+        if (so.startType == SERVICE_DISABLED) StopService(so.name);
     return true;
 }
 
@@ -229,6 +349,19 @@ bool Revert(const Setting& s, std::wstring& error) {
             if (!svc.empty() && _wcsicmp(op.name, L"Start") == 0) StartServiceIfAuto(svc.c_str());
         }
     }
+    for (const ServiceOp& so : s.services) {
+        std::wstring enc;
+        SvcState old;
+        if (!ReadBackup(SvcId(so), enc) || !DecodeSvc(enc, old)) continue;   // nie angewendet
+        const SvcState now = ReadService(so.name);
+        if (!old.exists || !now.exists || (now.start == old.start && now.delayed == old.delayed)) { DropBackup(SvcId(so)); continue; }
+        std::wstring e2;
+        const bool done = WriteService(so.name, old.start, old.delayed, e2);
+        suite_safety::Log(L"PrivacyShield", L"Wiederhergestellt " + SvcId(so) + L" = " + enc + (done ? L" (ok)" : L" FEHLER: " + e2));
+        if (!done) { ok = false; error = e2; continue; }
+        DropBackup(SvcId(so));
+        if (old.start == SERVICE_AUTO_START) StartServiceIfAuto(so.name);   // war automatisch gestartet: wieder starten
+    }
     return ok;
 }
 
@@ -238,6 +371,7 @@ bool RevertAll(int& restored, std::wstring& error) {
     for (const Setting& s : AllSettings()) {
         bool had = false;
         for (const RegOp& op : s.ops) { std::wstring e; if (ReadBackup(OpId(op), e)) had = true; }
+        for (const ServiceOp& so : s.services) { std::wstring e; if (ReadBackup(SvcId(so), e)) had = true; }
         if (!had) continue;
         if (Revert(s, error)) ++restored; else ok = false;
     }
@@ -316,6 +450,31 @@ const std::vector<Setting>& AllSettings() {
         { 17, L"KI & Sprache", L"Online-Spracherkennung aus",
           L"Sprachfunktionen senden keine Aufnahmen mehr an Microsoft-Server zur Auswertung; die Online-Spracherkennung wird nicht mehr akzeptiert.",
           { { Hive::User, L"Software\\Microsoft\\Speech_OneCore\\Settings\\OnlineSpeechPrivacy", L"HasAccepted", ValType::Dword, 0, nullptr } }, {} },
+        { 18, L"Oberfläche & Hintergrund-Apps", L"Widgets & News-Feed in der Taskleiste aus",
+          L"Blendet die Windows-Widgets (Wetter, Nachrichten) in der Taskleiste aus und beendet ihre Hintergrundaktivität.",
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Dsh", L"AllowNewsAndInterests", ValType::Dword, 0, nullptr },
+            { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\Advanced", L"TaskbarDa", ValType::Dword, 0, nullptr, true } }, {} },
+        { 19, L"Oberfläche & Hintergrund-Apps", L"Xbox-Bildschirmaufzeichnung (Game DVR) aus",
+          L"Schaltet die Hintergrundaufzeichnung der Xbox Game Bar aus, die im Spiel Leistung kostet.",
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\GameDVR", L"AllowGameDVR", ValType::Dword, 0, nullptr },
+            { Hive::User, L"System\\GameConfigStore", L"GameDVR_Enabled", ValType::Dword, 0, nullptr },
+            { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\GameDVR", L"AppCaptureEnabled", ValType::Dword, 0, nullptr } }, {} },
+        { 20, L"Oberfläche & Hintergrund-Apps", L"Hintergrund-Apps verbieten",
+          L"Microsoft-Store-Apps (UWP) dürfen nicht mehr im Hintergrund laufen (globaler Zugriff „Aus“). Spart Strom und Arbeitsspeicher.",
+          { { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\BackgroundAccessApplications", L"GlobalUserDisabled", ValType::Dword, 1, nullptr },
+            { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search", L"BackgroundAppGlobalToggle", ValType::Dword, 0, nullptr } }, {}, {}, true },
+        { 21, L"Windows-Dienste (Leistung)", L"Druckerwarteschlange (Print Spooler) deaktivieren",
+          L"Deaktiviert und beendet den Dienst „Druckwarteschlange“. Nur für PCs ohne Drucker: Danach geht auch das Drucken in PDF nicht mehr.",
+          {}, {}, { { L"Spooler", SERVICE_DISABLED } }, true },
+        { 22, L"Windows-Dienste (Leistung)", L"SysMain (Superfetch) deaktivieren",
+          L"Deaktiviert und beendet SysMain, das Programme vorab in den Speicher lädt. Nur bei SSD-Systemlaufwerken erlaubt, dort bringt der Dienst kaum etwas.",
+          {}, {}, { { L"SysMain", SERVICE_DISABLED } }, true, true },
+        { 23, L"Windows-Dienste (Leistung)", L"Remoteregistrierung deaktivieren",
+          L"Deaktiviert und beendet den Dienst „Remoteregistrierung“, der Registry-Zugriffe von anderen PCs im Netzwerk erlaubt. Auf Heim-PCs nie nötig.",
+          {}, {}, { { L"RemoteRegistry", SERVICE_DISABLED } }, true },
+        { 24, L"Windows-Dienste (Leistung)", L"Windows-Fehlerberichterstattung (WerSvc) deaktivieren",
+          L"Deaktiviert und beendet den Dienst, der Absturzberichte an Microsoft sendet. Absturzdiagnosen von Windows entfallen.",
+          {}, {}, { { L"WerSvc", SERVICE_DISABLED } }, true },
     };
     return all;
 }
