@@ -15,6 +15,7 @@
 #include <commdlg.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include <dbt.h>
 #include <wrl/client.h>
 
 #include <algorithm>
@@ -29,7 +30,7 @@
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.1"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.5.0"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -46,7 +47,7 @@ enum Id {
     B_NEW = 1, B_GEAR, B_LOCK,
     C_CAT0 = 10,                    // 10..14: Alle, dann die vier Kategorien
     DT_COPYUSER = 20, DT_COPYSECRET, DT_SHOW, DT_OPENURL, DT_EDIT, DT_DELETE, DT_LOGIN = 26,   // DT_LOGIN: "Einloggen / Daten kopieren"
-    L_UNLOCK = 30, L_REVEAL, S_CREATE, S_REVEAL, S_SKIP,
+    L_UNLOCK = 30, L_REVEAL, S_CREATE, S_REVEAL, S_SKIP, L_RECOVERY,
     D_OK = 40, D_CANCEL, D_CAT0 = 42,   // 42..45: Kategorie im Eintragsdialog
     D_REVEAL = 46, D_GENTOGGLE, D_GENRUN, D_LENMINUS, D_LENPLUS, D_GU, D_GL, D_GD, D_GS
 };
@@ -107,11 +108,25 @@ std::wstring KnownFolder(REFKNOWNFOLDERID id) {
     CoTaskMemFree(p);
     return s;
 }
+bool g_portable = false;   // Portabler Modus: die Datei DuncansVault.portable liegt neben der EXE, alle Daten liegen im Ordner Data daneben (z. B. auf dem USB-Stick)
 fs::path DataDir() {
     wchar_t over[MAX_PATH]{};   // Umgebungsvariable DUNCANSVAULT_DIR (fuer Tests) ersetzt den Standardordner
     if (GetEnvironmentVariableW(L"DUNCANSVAULT_DIR", over, MAX_PATH) > 0) return over;
-    const std::wstring base = KnownFolder(FOLDERID_LocalAppData);
-    return fs::path(base.empty() ? L"." : base) / L"DuncansVault";
+    static fs::path cached;
+    if (cached.empty()) {
+        wchar_t exe[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        const fs::path dir = fs::path(exe).parent_path();
+        std::error_code ec;
+        if (fs::exists(dir / L"DuncansVault.portable", ec)) {
+            g_portable = true;
+            cached = dir / L"Data";
+        } else {
+            const std::wstring base = KnownFolder(FOLDERID_LocalAppData);
+            cached = fs::path(base.empty() ? L"." : base) / L"DuncansVault";
+        }
+    }
+    return cached;
 }
 fs::path VaultPath() { return DataDir() / L"vault.dat"; }
 std::wstring SettingsPath() {
@@ -284,7 +299,15 @@ private:
     void CreateVaultNoPw();
     void CreateVault();
     bool Persist();
-    void Lock(bool automatic);
+    void Lock(bool automatic, const wchar_t* why = nullptr);
+    bool LockHasField() const { return m_lockUsb ? (m_lockRecovery || (m_usbFlags & vault::kUsbNeedsPw)) : !m_lockNoPw; }
+    void RefreshStick(bool autoUnlock);
+    void CheckStick(bool full);
+    int PickStick(const std::vector<vault::Stick>& sticks);
+    void BeginUsbSetup();
+    void ApplyUsbSetup();
+    void ApplyUsbRemove();
+    void MakePortableCopy();
     void Rebuild();
     const vault::Entry* Sel() const;
     vault::Entry* FindEntry(const std::wstring& id);
@@ -351,6 +374,17 @@ private:
     Field m_search, m_lockPw, m_setPw, m_setPw2;
     std::wstring m_lockErr, m_setErr;
     bool m_lockNoPw = false;             // Tresor ohne Master-Passwort: die Sperrmaske hat nur einen Entsperren-Knopf
+    // USB-Vault-Key
+    bool m_lockUsb = false;              // der Tresor gehoert zu einem USB-Stick (Dateiversion 3)
+    bool m_lockRecovery = false;         // Sperrmaske: Wiederherstellungscode statt Stick
+    unsigned char m_usbFlags = 0;        // aus dem Dateikopf: kUsbNeedsPw
+    vault::Bytes m_usbId;                // Id des Sticks, die zum Tresor gehoert
+    std::wstring m_stickRoot;            // Sperrmaske: Laufwerk des erkannten Sticks (leer = keiner)
+    std::wstring m_usbRoot, m_usbKeyPath;   // entsperrt per Stick: Laufwerk und Schluesseldatei, werden ueberwacht
+    std::wstring m_usbSetupRoot;
+    bool m_usbSetupHadKey = false;
+    DWORD m_driveMask = 0;
+    int m_scanTries = 0;
     int m_fails = 0;
     ULONGLONG m_nextTry = 0, m_lastInput = 0, m_clipUntil = 0;
     std::wstring m_autoId;                // Auto-Type: Eintrag, der nach der Wartezeit getippt wird (nur die Id, keine Geheimnisse)
@@ -409,7 +443,11 @@ bool App::Create(HINSTANCE hi, int show) {
     const vault::FileMode fm = vault::ReadMode(VaultPath());
     m_screen = fm == vault::FileMode::Missing ? Screen::Setup : Screen::Lock;
     m_lockNoPw = fm == vault::FileMode::Dpapi;
-    m_focusId = m_screen == Screen::Setup ? F_SETPW : (m_lockNoPw ? kNoFocus : F_LOCKPW);
+    if (fm == vault::FileMode::Usb) {
+        m_lockUsb = vault::ReadUsbHeader(VaultPath(), m_usbFlags, m_usbId);
+        m_lockPw.hint = L"Master-Passwort";
+    }
+    m_focusId = m_screen == Screen::Setup ? F_SETPW : (LockHasField() ? F_LOCKPW : kNoFocus);
     Touch();
     RECT work{};   // Startgroesse nie groesser als der Arbeitsbereich (sonst verschwindet die Statusleiste unter der Taskleiste)
     SystemParametersInfoW(SPI_GETWORKAREA, 0, &work, 0);
@@ -420,6 +458,7 @@ bool App::Create(HINSTANCE hi, int show) {
     SetTimer(m_hwnd, TIMER_CARET, 530, nullptr);
     SetTimer(m_hwnd, TIMER_SEC, 1000, nullptr);
     if (m_lockNoPw) TryUnlock();   // Tresor ohne Master-Passwort: sofort oeffnen
+    if (m_lockUsb) RefreshStick(true);   // USB-Tresor: steckt der Stick schon, oeffnet er sich (mit Master-Passwort-Pflicht erst nach Eingabe)
     return true;
 }
 
@@ -660,7 +699,7 @@ void App::DrawSetup() {
 void App::DrawLock() {
     RECT cr;
     GetClientRect(m_hwnd, &cr);
-    const float cw = std::min(480 * k, cr.right - 40 * k), ch = 400 * k;
+    const float cw = std::min(480 * k, cr.right - 40 * k), ch = (m_lockUsb ? 470 : 400) * k;
     const D2D1_RECT_F card = CenterCard(cr, cw, ch);
     FillRR(card, 16 * k, Theme::Panel);
     StrokeRR(card, 16 * k, Theme::Border);
@@ -676,7 +715,24 @@ void App::DrawLock() {
     y += 68 * k;
     Txt(L"Duncan's Vault", {card.left, y, card.right, y + 34 * k}, fBig.Get(), Theme::Text);
     y += 40 * k;
-    if (m_lockNoPw) {
+    if (m_lockUsb) {
+        Txt(m_lockRecovery ? L"Notfall: gib den Wiederherstellungscode ein, den du beim Einrichten des USB-Sticks bekommen hast."
+                           : L"Dieser Tresor öffnet nur mit seinem USB-Stick (Vault Key). Zieht man den Stick ab, sperrt er sofort.",
+            {x0, y, x0 + fw, y + 44 * k}, fWrap.Get(), Theme::TextDim);
+        y += 50 * k;
+        if (!m_lockRecovery) {
+            const bool found = !m_stickRoot.empty();
+            Txt(found ? L"●  USB-Stick erkannt: " + m_stickRoot : L"○  Kein passender USB-Stick gefunden – bitte einstecken", {x0, y, x0 + fw, y + 24 * k}, fNormal.Get(), found ? Theme::Paid : Theme::Warn);
+            y += 34 * k;
+        }
+        if (LockHasField()) {
+            m_lockPw.hint = m_lockRecovery ? L"Wiederherstellungscode (XXXX-XXXX-…)" : L"Master-Passwort (zusätzlich zum Stick)";
+            const float revW = 92 * k;
+            m_lockPw.rc = {x0, y, x0 + fw - revW - 8 * k, y + 40 * k};
+            Button(L_REVEAL, {x0 + fw - revW, y, x0 + fw, y + 40 * k}, m_lockPw.mask ? L"Anzeigen" : L"Verbergen", false);
+            y += 52 * k;
+        }
+    } else if (m_lockNoPw) {
         Txt(L"Dieser Tresor hat kein Master-Passwort und ist an dein Windows-Konto gebunden.", {x0, y, x0 + fw, y + 44 * k}, fWrap.Get(), Theme::TextDim);
         y += 52 * k;
     } else {
@@ -688,9 +744,11 @@ void App::DrawLock() {
         y += 52 * k;
     }
     if (!m_lockErr.empty()) Txt(m_lockErr, {x0, y, x0 + fw, y + 40 * k}, fWrap.Get(), Theme::Danger);
+    if (m_lockUsb)
+        Button(L_RECOVERY, {x0, card.bottom - 24 * k - 42 * k - 8 * k - 34 * k, x0 + fw, card.bottom - 24 * k - 42 * k - 8 * k}, m_lockRecovery ? L"Zurück zum USB-Stick" : L"Wiederherstellungscode verwenden", false);
     Button(L_UNLOCK, {x0, card.bottom - 24 * k - 42 * k, x0 + fw, card.bottom - 24 * k}, L"Entsperren", true);
     Txt(L"100 % lokal – keine Cloud, kein Sync, keine Telemetrie", {card.left, card.bottom + 10 * k, card.right, card.bottom + 32 * k}, fSmall.Get(), Theme::TextDim);
-    if (!m_lockNoPw) DrawField(m_lockPw, m_focusId == F_LOCKPW);
+    if (LockHasField()) DrawField(m_lockPw, m_focusId == F_LOCKPW);
 }
 
 // ============================================================================
@@ -870,7 +928,11 @@ void App::DrawDetail() {
 void App::DrawStatusBar() {
     Fill(rcStatus, Theme::Topbar);
     Fill({0, rcStatus.top, rcStatus.right, rcStatus.top + 1}, Theme::Border);
-    const std::wstring left = !m_note.empty() ? m_note : (m_session.dpapi ? L"Tresor entsperrt (ohne Master-Passwort, an das Windows-Konto gebunden)  ·  " : L"Tresor entsperrt  ·  ") + std::to_wstring(m_entries.size()) + L" Einträge  ·  AES-256-GCM, nur lokal gespeichert";
+    std::wstring mode = L"Tresor entsperrt";
+    if (m_session.usb) mode += m_usbRoot.empty() ? L" (per Wiederherstellungscode, ohne Stick)" : L" (USB-Vault-Key " + m_usbRoot + L" – Stick abziehen sperrt sofort)";
+    else if (m_session.dpapi) mode += L" (ohne Master-Passwort, an das Windows-Konto gebunden)";
+    if (g_portable) mode += L" · portabel";
+    const std::wstring left = !m_note.empty() ? m_note : mode + L"  ·  " + std::to_wstring(m_entries.size()) + L" Einträge  ·  AES-256-GCM, nur lokal gespeichert";
     Txt(left, {12 * k, rcStatus.top, rcStatus.right * 0.62f, rcStatus.bottom}, fSmall.Get(), Theme::TextDim);
     std::wstring right;
     const ULONGLONG now = GetTickCount64();
@@ -998,7 +1060,7 @@ void App::DrawSimpleDialog() {
     GetClientRect(m_hwnd, &cr);
     const float pad = 24 * k, fh = 36 * k, bw = std::min(540 * k, cr.right - 40 * k);
     const bool confirm = d.kind == DlgKind::Confirm, imp = d.kind == DlgKind::Import;
-    const bool strength = d.kind == DlgKind::ChangePw && d.mode != 2;
+    const bool strength = d.kind == DlgKind::ChangePw && d.mode != 2 && d.mode != 3;
     const float msgH = confirm ? 70 : imp ? 96 : d.msgH;
     const float height = pad + 36 * k + msgH * k + (float)d.fields.size() * (24 * k + fh) + (strength ? 30 * k : 0) + 30 * k + 38 * k + pad;
     d.box = {(cr.right - bw) / 2, (cr.bottom - height) / 2, (cr.right + bw) / 2, (cr.bottom + height) / 2};
@@ -1019,7 +1081,7 @@ void App::DrawSimpleDialog() {
     if (strength) DrawStrength(x0, y - 2 * k, fw, FieldById(F_NEW) ? FieldById(F_NEW)->ed.text : L"");
     const float bh = 38 * k, by = d.box.bottom - pad - bh;
     if (!d.error.empty()) Txt(d.error, {x0, by - 26 * k, x0 + fw, by - 4 * k}, fNormal.Get(), Theme::Danger);
-    const wchar_t* okLabel = confirm ? L"Löschen" : imp ? L"Importieren" : d.mode == 1 ? L"Festlegen" : d.mode == 2 ? L"Entfernen" : L"Ändern";
+    const wchar_t* okLabel = confirm ? L"Löschen" : imp ? L"Importieren" : d.mode == 1 || d.mode == 4 ? L"Festlegen" : d.mode == 2 ? L"Entfernen" : d.mode == 3 ? L"Einrichten" : L"Ändern";
     Button(D_OK, {d.box.right - pad - 150 * k, by, d.box.right - pad, by + bh}, okLabel, !confirm, confirm || d.mode == 2);
     Button(D_CANCEL, {d.box.right - pad - 160 * k - 130 * k, by, d.box.right - pad - 160 * k, by + bh}, L"Abbrechen", false);
     for (auto& f : d.fields) DrawField(f, m_focusId == f.id);
@@ -1036,18 +1098,43 @@ void App::TryUnlock() {
         Invalidate();
         return;
     }
-    if (!m_lockNoPw && m_lockPw.ed.text.empty()) { m_lockErr = L"Bitte das Master-Passwort eingeben."; Invalidate(); return; }
+    if (LockHasField() && m_lockPw.ed.text.empty()) {
+        m_lockErr = m_lockUsb && m_lockRecovery ? L"Bitte den Wiederherstellungscode eingeben." : L"Bitte das Master-Passwort eingeben.";
+        Invalidate();
+        return;
+    }
     std::wstring pw = m_lockPw.ed.text;
     std::string plain;
     vault::Session s;
-    const vault::Result r = vault::OpenFile(VaultPath(), pw, s, plain);
+    vault::StickKey stick;
+    std::wstring stickRoot;
+    vault::UsbUnlock uu;
+    if (m_lockUsb) {
+        uu.recovery = m_lockRecovery;
+        if (!m_lockRecovery) {
+            if (!vault::FindStick(m_usbId, stick, &stickRoot)) {
+                m_stickRoot.clear();
+                m_lockErr = L"Der passende USB-Stick ist nicht angeschlossen.";
+                vault::Wipe(pw);
+                Invalidate();
+                return;
+            }
+            uu.stick = &stick;
+        }
+    }
+    const vault::Result r = vault::OpenFile(VaultPath(), pw, s, plain, m_lockUsb ? &uu : nullptr);
     vault::Wipe(pw);
+    stick.Close();
     if (r == vault::Result::Ok) {
         std::vector<vault::Entry> entries;
         if (vault::Parse(plain, entries)) {
             vault::Wipe(plain);
             m_entries = std::move(entries);
             m_session = s;
+            m_usbRoot = m_lockUsb && !m_lockRecovery ? stickRoot : std::wstring();   // nur ein per Stick entsperrter Tresor wird auf das Abziehen ueberwacht
+            m_usbKeyPath = m_usbRoot.empty() ? std::wstring() : vault::KeyFilePath(m_usbRoot);
+            const bool viaCode = m_lockUsb && m_lockRecovery;
+            m_lockRecovery = false;
             WipeField(m_lockPw);
             m_lockPw.mask = true;
             m_lockErr.clear();
@@ -1062,10 +1149,20 @@ void App::TryUnlock() {
             m_focusId = kNoFocus;
             Rebuild();
             Touch();
+            if (viaCode) SetNote(L"Mit Wiederherstellungscode entsperrt (ohne Stick). Richte im Zahnrad-Menü einen neuen USB-Stick ein, falls der alte verloren ist.", true);
         } else {
             vault::Wipe(plain);
             m_lockErr = L"Der Tresor-Inhalt konnte nicht gelesen werden.";
         }
+    } else if (r == vault::Result::WrongStick) {
+        m_stickRoot.clear();
+        m_lockErr = L"Dieser Stick gehört nicht zu diesem Tresor.";
+    } else if (r == vault::Result::WrongPassword && m_lockUsb) {
+        ++m_fails;
+        m_nextTry = GetTickCount64() + std::min(m_fails, 6) * 1000ull;
+        m_lockErr = m_lockRecovery ? L"Falscher Wiederherstellungscode."
+                                   : (m_usbFlags & vault::kUsbNeedsPw) ? L"Falsches Master-Passwort (oder der Stick passt nicht)." : L"Die Schlüsseldatei auf dem Stick passt nicht zum Tresor.";
+        WipeField(m_lockPw);
     } else if (r == vault::Result::WrongPassword && m_lockNoPw) {
         m_lockErr = L"Dieser Tresor ist an ein anderes Windows-Konto gebunden und lässt sich hier nicht öffnen.";
     } else if (r == vault::Result::WrongPassword) {
@@ -1131,7 +1228,7 @@ bool App::Persist() {
     return r == vault::Result::Ok;
 }
 
-void App::Lock(bool automatic) {
+void App::Lock(bool automatic, const wchar_t* why) {
     if (m_screen != Screen::Main) return;
     ClearClipboardIfOurs();
     for (auto& f : m_dlg.fields) vault::Wipe(f.ed.text);
@@ -1143,12 +1240,202 @@ void App::Lock(bool automatic) {
     m_search.ed.SetText(L"");
     m_note.clear();
     m_lockNoPw = m_session.dpapi;
+    if (m_session.usb && m_session.blob.size() == vault::kUsbBlobLen) {
+        m_lockUsb = true;
+        m_usbFlags = m_session.usbFlags;
+        m_usbId.assign(m_session.blob.begin() + 2 * vault::kSlotLen, m_session.blob.end());
+    } else {
+        m_lockUsb = false;
+    }
+    m_lockRecovery = false;
+    m_usbRoot.clear();
+    m_usbKeyPath.clear();
+    m_stickRoot.clear();
     m_session.Close();
     m_screen = Screen::Lock;
     WipeField(m_lockPw);
     m_lockPw.mask = true;
-    m_lockErr = automatic ? L"Der Tresor wurde nach 5 Minuten Inaktivität automatisch gesperrt." : L"";
-    m_focusId = m_lockNoPw ? kNoFocus : F_LOCKPW;
+    m_lockErr = why ? why : automatic ? L"Der Tresor wurde nach 5 Minuten Inaktivität automatisch gesperrt." : L"";
+    m_focusId = LockHasField() ? F_LOCKPW : kNoFocus;
+    if (m_lockUsb) RefreshStick(false);   // zeigt in der Sperrmaske, ob der Stick (noch) steckt; ein Auto-Entsperren gibt es erst beim erneuten Einstecken
+    Invalidate();
+}
+
+// ---- USB-Vault-Key: Stick suchen, ueberwachen, einrichten ----
+
+// Sperrmaske: sucht den Stick zum Tresor. autoUnlock: ohne Master-Passwort-Pflicht sofort entsperren (Stick wurde eingesteckt).
+void App::RefreshStick(bool autoUnlock) {
+    const DWORD mask = GetLogicalDrives();
+    const bool changed = mask != m_driveMask;
+    m_driveMask = mask;
+    vault::StickKey probe;
+    std::wstring root;
+    const bool found = vault::FindStick(m_usbId, probe, &root);
+    probe.Close();
+    m_stickRoot = found ? root : std::wstring();
+    if (found) m_scanTries = 0;
+    else if (changed) m_scanTries = 4;          // frisch eingesteckte Sticks werden erst nach und nach lesbar: ein paar Sekunden weiter suchen
+    else if (m_scanTries > 0) --m_scanTries;
+    Invalidate();
+    if (found && autoUnlock && m_screen == Screen::Lock && m_lockUsb && !m_lockRecovery && !(m_usbFlags & vault::kUsbNeedsPw)) TryUnlock();
+}
+
+// Entsperrter USB-Tresor: ist die Schluesseldatei weg (Stick abgezogen), wird sofort gesperrt. full: Datei zusaetzlich lesen und die Id pruefen.
+void App::CheckStick(bool full) {
+    if (m_screen != Screen::Main || !m_session.usb || m_usbRoot.empty()) return;
+    bool present = GetFileAttributesW(m_usbKeyPath.c_str()) != INVALID_FILE_ATTRIBUTES;
+    if (present && full && m_session.blob.size() == vault::kUsbBlobLen) {
+        vault::StickKey probe;
+        const vault::Bytes id(m_session.blob.begin() + 2 * vault::kSlotLen, m_session.blob.end());
+        present = vault::ReadKeyFile(m_usbRoot, probe) && probe.id == id;
+        probe.Close();
+    }
+    if (!present) Lock(true, L"USB-Stick entfernt – der Tresor wurde sofort gesperrt.");
+}
+
+static std::wstring StickName(const vault::Stick& s) {
+    std::wstring t = s.root + L"   " + (s.label.empty() ? std::wstring(L"Wechseldatenträger") : s.label);
+    if (s.bytes) { wchar_t b[32]; swprintf_s(b, L"   (%.1f GB)", s.bytes / 1073741824.0); t += b; }
+    if (s.hasKey) t += L"   – hat schon einen Vault-Key";
+    return t;
+}
+
+// Auswahlmenue der Sticks unter dem Zahnrad; Index oder -1
+int App::PickStick(const std::vector<vault::Stick>& sticks) {
+    HMENU m = CreatePopupMenu();
+    for (size_t i = 0; i < sticks.size(); ++i) AppendMenuW(m, MF_STRING, static_cast<UINT_PTR>(i + 1), StickName(sticks[i]).c_str());
+    POINT pt{(LONG)rcTop.right - (LONG)(16 * k), (LONG)rcTop.bottom};
+    ClientToScreen(m_hwnd, &pt);
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(m);
+    return cmd > 0 ? cmd - 1 : -1;
+}
+
+void App::BeginUsbSetup() {
+    if (m_screen != Screen::Main) return;
+    const std::vector<vault::Stick> sticks = vault::ListSticks();
+    if (sticks.empty()) {
+        MessageBoxW(m_hwnd, L"Es wurde kein USB-Stick gefunden.\n\nStecke einen USB-Stick ein und versuche es erneut. Erkannt werden Laufwerke vom Typ „Wechseldatenträger“ (die meisten USB-Sticks und Speicherkarten).",
+                    L"USB-Vault-Key", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    const int i = PickStick(sticks);
+    if (i < 0) return;
+    if (sticks[i].hasKey &&
+        MessageBoxW(m_hwnd, L"Auf diesem Stick liegt schon ein Vault-Key (vielleicht von einem anderen Tresor).\n\nWenn du fortfährst, wird er ersetzt. Ein anderer Tresor, der diesen Stick nutzt, ist dann nur noch mit seinem Wiederherstellungscode erreichbar.\n\nFortfahren?",
+                    L"USB-Vault-Key", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+    m_usbSetupRoot = sticks[i].root;
+    m_usbSetupHadKey = sticks[i].hasKey;
+    BeginChangePw(3);
+}
+
+void App::ApplyUsbSetup() {
+    Dialog& d = m_dlg;
+    auto txt = [&](int id) { const Field* f = FieldById(id); return f ? f->ed.text : std::wstring(); };
+    std::wstring p1 = txt(F_NEW), p2 = txt(F_NEW2);
+    if (!p1.empty() || !p2.empty()) {
+        if (p1.size() < 8) { d.error = L"Das Master-Passwort braucht mindestens 8 Zeichen (oder beide Felder leer lassen)."; vault::Wipe(p1); vault::Wipe(p2); Invalidate(); return; }
+        if (p1 != p2) { d.error = L"Die beiden Passwörter stimmen nicht überein."; vault::Wipe(p1); vault::Wipe(p2); Invalidate(); return; }
+    }
+    const std::wstring root = m_usbSetupRoot;
+    vault::StickKey key;
+    if (!vault::NewStickKey(key) || !vault::WriteKeyFile(root, key, true)) {
+        key.Close();
+        vault::Wipe(p1); vault::Wipe(p2);
+        d.error = L"Die Schlüsseldatei konnte nicht auf den Stick geschrieben werden (schreibgeschützt oder abgezogen?).";
+        Invalidate();
+        return;
+    }
+    vault::Session s;
+    std::wstring code;
+    const bool made = vault::NewUsbSession(key, p1, vault::kDefaultIterations, s, code);
+    vault::Wipe(p1);
+    vault::Wipe(p2);
+    key.Close();
+    const vault::Session old = m_session;
+    if (made) m_session = s;
+    if (!made || !Persist()) {
+        m_session = old;
+        if (!m_usbSetupHadKey) vault::DeleteKeyFile(root);
+        vault::Wipe(code);
+        d.error = L"Der Tresor konnte nicht mit dem Stick verschlüsselt werden.";
+        Invalidate();
+        return;
+    }
+    std::error_code ec;
+    fs::remove(VaultPath().wstring() + L".bak", ec);   // die vorherige Fassung waere noch mit dem alten Schutz (Passwort/Windows-Konto) lesbar
+    m_usbRoot = root;
+    m_usbKeyPath = vault::KeyFilePath(root);
+    CloseDialog();
+    SetNote(L"USB-Vault-Key eingerichtet. Ohne den Stick öffnet sich der Tresor nicht mehr – Wiederherstellungscode sicher aufbewahren!", true);
+    Invalidate();
+    UpdateWindow(m_hwnd);
+    const std::wstring text = L"Dein Wiederherstellungscode:\n\n" + code +
+        L"\n\nNotiere ihn und bewahre ihn getrennt vom Stick auf (nicht in diesem Tresor). Er öffnet den Tresor auch ohne Stick, z. B. wenn der Stick verloren oder kaputt ist. "
+        L"Er wird nur jetzt angezeigt.\n\nTipp: Strg+C kopiert diesen Text.";
+    MessageBoxW(m_hwnd, text.c_str(), L"Wiederherstellungscode", MB_OK | MB_ICONWARNING);
+    vault::Wipe(code);
+    ClearClipboardIfOurs();
+}
+
+void App::ApplyUsbRemove() {
+    Dialog& d = m_dlg;
+    auto txt = [&](int id) { const Field* f = FieldById(id); return f ? f->ed.text : std::wstring(); };
+    std::wstring np = txt(F_NEW), np2 = txt(F_NEW2);
+    const bool tooShort = np.size() < 8, differ = np != np2;
+    vault::Session s;
+    const bool derived = !tooShort && !differ && vault::NewSession(np, vault::kDefaultIterations, s);
+    vault::Wipe(np);
+    vault::Wipe(np2);
+    if (tooShort) { d.error = L"Das neue Master-Passwort braucht mindestens 8 Zeichen."; Invalidate(); return; }
+    if (differ) { d.error = L"Die neuen Passwörter stimmen nicht überein."; Invalidate(); return; }
+    if (!derived) { d.error = L"Die Verschlüsselung konnte nicht vorbereitet werden."; Invalidate(); return; }
+    const vault::Session old = m_session;
+    m_session = s;
+    if (!Persist()) { m_session = old; d.error = L"Der Tresor konnte nicht gespeichert werden."; Invalidate(); return; }
+    const std::wstring root = m_usbRoot;
+    m_usbRoot.clear();
+    m_usbKeyPath.clear();
+    CloseDialog();
+    SetNote(L"USB-Schutz entfernt. Der Tresor öffnet jetzt mit dem neuen Master-Passwort.", true);
+    Invalidate();
+    UpdateWindow(m_hwnd);
+    if (!root.empty() && MessageBoxW(m_hwnd, L"Soll die Schlüsseldatei auf dem Stick gelöscht werden?\n\nSie wird für diesen Tresor nicht mehr gebraucht.", L"USB-Vault-Key", MB_YESNO | MB_ICONQUESTION) == IDYES)
+        vault::DeleteKeyFile(root);
+}
+
+// Legt auf dem Stick einen Ordner DuncansVault mit der Programmdatei, einer Kopie des Tresors und der Datei DuncansVault.portable an.
+void App::MakePortableCopy() {
+    if (m_screen != Screen::Main || !m_session.usb || m_session.blob.size() != vault::kUsbBlobLen) return;
+    if (!Persist()) return;
+    const vault::Bytes id(m_session.blob.begin() + 2 * vault::kSlotLen, m_session.blob.end());
+    std::vector<vault::Stick> mine;
+    for (const vault::Stick& st : vault::ListSticks()) {
+        if (!st.hasKey) continue;
+        vault::StickKey probe;
+        if (vault::ReadKeyFile(st.root, probe) && probe.id == id) mine.push_back(st);
+        probe.Close();
+    }
+    if (mine.empty()) { MessageBoxW(m_hwnd, L"Der zu diesem Tresor gehörende USB-Stick ist nicht angeschlossen.", L"Portable Kopie", MB_OK | MB_ICONINFORMATION); return; }
+    const int i = mine.size() == 1 ? 0 : PickStick(mine);
+    if (i < 0) return;
+    const fs::path dir = fs::path(mine[i].root) / L"DuncansVault", data = dir / L"Data";
+    std::error_code ec;
+    if (fs::exists(data / L"vault.dat", ec) &&
+        MessageBoxW(m_hwnd, L"Auf dem Stick liegt schon eine portable Kopie.\n\nDer Tresor dort wird durch den aktuellen Stand ersetzt. Fortfahren?", L"Portable Kopie", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+    fs::create_directories(data, ec);
+    wchar_t exe[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    bool ok = !ec;
+    if (ok && !fs::equivalent(exe, dir / L"DuncansVault.exe", ec)) { ec.clear(); ok = fs::copy_file(exe, dir / L"DuncansVault.exe", fs::copy_options::overwrite_existing, ec) && !ec; }
+    ec.clear();
+    if (ok) ok = fs::copy_file(VaultPath(), data / L"vault.dat", fs::copy_options::overwrite_existing, ec) && !ec;
+    if (ok) {
+        HANDLE f = CreateFileW((dir / L"DuncansVault.portable").c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f != INVALID_HANDLE_VALUE) CloseHandle(f); else ok = false;
+    }
+    if (!ok) { SetNote(L"Die portable Kopie konnte nicht angelegt werden (Stick voll oder schreibgeschützt?).", true); Invalidate(); return; }
+    SetNote(L"Portable Kopie angelegt: " + (dir / L"DuncansVault.exe").wstring() + L" – dort ein eigener Tresor-Stand (Abgleich per Backup exportieren/importieren)", true);
     Invalidate();
 }
 
@@ -1274,8 +1561,15 @@ void App::BeginChangePw(int mode) {
     Dialog& d = m_dlg;
     d.kind = DlgKind::ChangePw;
     d.mode = mode;
-    d.title = mode == 1 ? L"Master-Passwort festlegen" : mode == 2 ? L"Master-Passwort entfernen" : L"Master-Passwort ändern";
-    if (mode == 1) {
+    d.title = mode == 1 ? L"Master-Passwort festlegen" : mode == 2 ? L"Master-Passwort entfernen" : mode == 3 ? L"USB-Vault-Key einrichten" : mode == 4 ? L"USB-Schutz entfernen" : L"Master-Passwort ändern";
+    if (mode == 3) {
+        d.message = L"Stick " + m_usbSetupRoot + L" – darauf wird eine versteckte Schlüsseldatei angelegt. Danach öffnet sich der Tresor nur noch mit diesem Stick, und beim Abziehen sperrt er sofort.\n"
+                    L"Empfohlen: zusätzlich ein Master-Passwort (Stick + Passwort); ohne öffnet jeder, der den Stick hat, den Tresor. Beide Felder leer lassen = nur Stick.";
+        d.msgH = 128;
+    } else if (mode == 4) {
+        d.message = L"Der Tresor öffnet danach mit einem Master-Passwort statt mit dem Stick. Es lässt sich nicht wiederherstellen; wer es vergisst, verliert den Zugriff.";
+        d.msgH = 70;
+    } else if (mode == 1) {
         d.message = L"Danach fragt der Tresor beim Start dieses Passwort ab. Es lässt sich nicht wiederherstellen; wer es vergisst, verliert den Zugriff auf alle Einträge.";
         d.msgH = 70;
     } else if (mode == 2) {
@@ -1290,10 +1584,10 @@ void App::BeginChangePw(int mode) {
         f.ed.maxLen = 128;
         d.fields.push_back(std::move(f));
     };
-    if (mode != 1) mk(F_OLD, L"Aktuelles Master-Passwort");
+    if (mode == 0 || mode == 2) mk(F_OLD, L"Aktuelles Master-Passwort");
     if (mode != 2) {
-        mk(F_NEW, L"Neues Master-Passwort (mindestens 8 Zeichen)");
-        mk(F_NEW2, L"Neues Master-Passwort wiederholen");
+        mk(F_NEW, mode == 3 ? L"Master-Passwort zusätzlich zum Stick (optional, mindestens 8 Zeichen)" : L"Neues Master-Passwort (mindestens 8 Zeichen)");
+        mk(F_NEW2, mode == 3 ? L"Master-Passwort wiederholen" : L"Neues Master-Passwort wiederholen");
     }
     m_focusId = d.fields.front().id;
     Invalidate();
@@ -1301,6 +1595,8 @@ void App::BeginChangePw(int mode) {
 
 void App::ApplyChangePw() {
     Dialog& d = m_dlg;
+    if (d.mode == 3) { ApplyUsbSetup(); return; }
+    if (d.mode == 4) { ApplyUsbRemove(); return; }
     auto txt = [&](int id) { const Field* f = FieldById(id); return f ? f->ed.text : std::wstring(); };
     if (d.mode != 1) {   // altes Passwort pruefen, indem die Datei damit geoeffnet wird
         vault::Session check;
@@ -1352,7 +1648,8 @@ void App::ExportBackup() {
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     if (!GetSaveFileNameW(&ofn)) return;
     if (CopyFileW(VaultPath().c_str(), name, FALSE)) SetNote(L"Backup gespeichert: " + fs::path(name).filename().wstring() +
-                                                  (m_session.dpapi ? L" (an dieses Windows-Konto gebunden – auf einem anderen PC nur nach Festlegen eines Master-Passworts importierbar)"
+                                                  (m_session.usb ? L" (an den USB-Stick gebunden – öffnet nur mit dem Stick)"
+                                                  : m_session.dpapi ? L" (an dieses Windows-Konto gebunden – auf einem anderen PC nur nach Festlegen eines Master-Passworts importierbar)"
                                                                    : L" (verschlüsselt mit dem aktuellen Master-Passwort)"));
     else SetNote(L"Das Backup konnte nicht gespeichert werden.", true);
     Invalidate();
@@ -1369,12 +1666,23 @@ void App::BeginImport() {
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
     if (!GetOpenFileNameW(&ofn)) return;
     const vault::FileMode bm = vault::ReadMode(name);
-    if (bm != vault::FileMode::Password && bm != vault::FileMode::Dpapi) { SetNote(L"Das ist keine gültige Vault-Backup-Datei.", true); Invalidate(); return; }
+    if (bm != vault::FileMode::Password && bm != vault::FileMode::Dpapi && bm != vault::FileMode::Usb) { SetNote(L"Das ist keine gültige Vault-Backup-Datei.", true); Invalidate(); return; }
     m_dlg = Dialog{};
     Dialog& d = m_dlg;
     d.kind = DlgKind::Import;
     d.title = L"Backup importieren";
     d.editId = name;   // Pfad der Backup-Datei
+    if (bm == vault::FileMode::Usb) {   // Backup mit USB-Vault-Key: der Stick muss stecken; Master-Passwort nur, wenn der Tresor es verlangt
+        unsigned char fl = 0;
+        vault::Bytes bid;
+        if (!vault::ReadUsbHeader(name, fl, bid)) { CloseDialog(); SetNote(L"Das ist keine gültige Vault-Backup-Datei.", true); return; }
+        d.mode = 1;
+        if (!(fl & vault::kUsbNeedsPw)) {
+            d.noPw = true;
+            ApplyImport();
+            return;
+        }
+    }
     if (bm == vault::FileMode::Dpapi) {   // Backup ohne Master-Passwort: kein Passwort noetig, es zaehlt das Windows-Konto
         d.noPw = true;
         ApplyImport();
@@ -1397,11 +1705,27 @@ void App::ApplyImport() {
     if (!d.noPw && (!f || f->ed.text.empty())) { d.error = L"Bitte das Master-Passwort des Backups eingeben."; Invalidate(); return; }
     vault::Session s;
     std::string plain;
-    const vault::Result r = vault::OpenFile(fs::path(d.editId), d.noPw ? std::wstring() : f->ed.text, s, plain);
+    vault::StickKey sk;
+    vault::UsbUnlock uu;
+    const vault::UsbUnlock* up = nullptr;
+    if (d.mode == 1) {   // Backup mit USB-Vault-Key
+        unsigned char fl = 0;
+        vault::Bytes bid;
+        if (!vault::ReadUsbHeader(fs::path(d.editId), fl, bid) || !vault::FindStick(bid, sk, nullptr)) {
+            CloseDialog();
+            SetNote(L"Der USB-Stick zu diesem Backup ist nicht angeschlossen.", true);
+            Invalidate();
+            return;
+        }
+        uu.stick = &sk;
+        up = &uu;
+    }
+    const vault::Result r = vault::OpenFile(fs::path(d.editId), d.noPw ? std::wstring() : f->ed.text, s, plain, up);
     s.Close();
+    sk.Close();
     if (d.noPw && r != vault::Result::Ok) {
         CloseDialog();
-        SetNote(L"Dieses Backup ist an ein anderes Windows-Konto gebunden und lässt sich hier nicht öffnen.", true);
+        SetNote(d.mode == 1 ? L"Dieses Backup lässt sich mit dem angeschlossenen Stick nicht öffnen." : L"Dieses Backup ist an ein anderes Windows-Konto gebunden und lässt sich hier nicht öffnen.", true);
         Invalidate();
         return;
     }
@@ -1563,10 +1887,17 @@ void App::RunAutoType() {
 
 void App::ShowGearMenu() {
     HMENU m = CreatePopupMenu();
-    if (m_session.dpapi) AppendMenuW(m, MF_STRING, 1, L"Master-Passwort festlegen …");
-    else {
-        AppendMenuW(m, MF_STRING, 1, L"Master-Passwort ändern …");
-        AppendMenuW(m, MF_STRING, 7, L"Master-Passwort entfernen …");
+    if (m_session.usb) {
+        AppendMenuW(m, MF_STRING, 21, L"Portable Kopie auf den USB-Stick anlegen …");
+        AppendMenuW(m, MF_STRING, 20, L"Anderen USB-Stick einrichten (neuer Schlüssel und Code) …");
+        AppendMenuW(m, MF_STRING, 22, L"USB-Vault-Key entfernen (Master-Passwort festlegen) …");
+    } else {
+        if (m_session.dpapi) AppendMenuW(m, MF_STRING, 1, L"Master-Passwort festlegen …");
+        else {
+            AppendMenuW(m, MF_STRING, 1, L"Master-Passwort ändern …");
+            AppendMenuW(m, MF_STRING, 7, L"Master-Passwort entfernen …");
+        }
+        AppendMenuW(m, MF_STRING, 20, L"USB-Stick als Vault Key einrichten …");
     }
     AppendMenuW(m, MF_STRING | (m_settings.autoLock ? MF_CHECKED : 0), 2, L"Nach 5 Minuten Inaktivität automatisch sperren");
     AppendMenuW(m, MF_STRING | (m_settings.autoType ? MF_CHECKED : 0), 8, L"Auto-Type (Eintippen per Tastatursimulation) anbieten");
@@ -1583,6 +1914,9 @@ void App::ShowGearMenu() {
     switch (cmd) {
         case 1: BeginChangePw(m_session.dpapi ? 1 : 0); break;
         case 7: BeginChangePw(2); break;
+        case 20: BeginUsbSetup(); break;
+        case 21: MakePortableCopy(); break;
+        case 22: BeginChangePw(4); break;
         case 2: m_settings.autoLock = !m_settings.autoLock; SaveSettings(m_settings); Touch(); break;
         case 8: m_settings.autoType = !m_settings.autoType; SaveSettings(m_settings); break;
         case 5: ExportBackup(); break;
@@ -1591,7 +1925,7 @@ void App::ShowGearMenu() {
         case 4: {
             const std::wstring text = L"Duncan's Vault\nTeil von Duncan's Suite\n\nVersion " APP_VERSION
                                       L"\n\nLokaler Tresor für Passwörter, Software-Lizenzen, WLAN-Schlüssel und Notizen.\n"
-                                      L"Verschlüsselung: AES-256-GCM, Schlüssel per PBKDF2-HMAC-SHA256 (600.000 Runden) aus dem Master-Passwort.\n\n"
+                                      L"Verschlüsselung: AES-256-GCM, Schlüssel per PBKDF2-HMAC-SHA256 (600.000 Runden) aus dem Master-Passwort und/oder der Schlüsseldatei eines USB-Sticks.\n\n"
                                       L"Datenschutz: Alle Daten bleiben zu 100 % auf diesem Gerät. Es gibt keine Cloud-Verbindung, keinen Sync und keine Telemetrie.\n\n"
                                       L"Tresor-Datei: %LOCALAPPDATA%\\DuncansVault\\vault.dat (eine Sicherung der vorherigen Fassung liegt als vault.dat.bak daneben).";
             MessageBoxW(m_hwnd, text.c_str(), L"Über", MB_OK | MB_ICONINFORMATION);
@@ -1607,7 +1941,7 @@ void App::ShowGearMenu() {
 
 std::vector<Field*> App::ActiveFields() {
     std::vector<Field*> v;
-    if (m_screen == Screen::Lock) { if (!m_lockNoPw) v.push_back(&m_lockPw); }
+    if (m_screen == Screen::Lock) { if (LockHasField()) v.push_back(&m_lockPw); }
     else if (m_screen == Screen::Setup) { v.push_back(&m_setPw); v.push_back(&m_setPw2); }
     else if (m_dlg.kind != DlgKind::None) for (auto& f : m_dlg.fields) v.push_back(&f);
     else v.push_back(&m_search);
@@ -1814,6 +2148,13 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case DT_DELETE: BeginConfirmDelete(); break;
             case L_UNLOCK: TryUnlock(); break;
             case L_REVEAL: m_lockPw.mask = !m_lockPw.mask; break;
+            case L_RECOVERY:
+                m_lockRecovery = !m_lockRecovery;
+                WipeField(m_lockPw);
+                m_lockPw.mask = true;
+                m_lockErr.clear();
+                m_focusId = LockHasField() ? F_LOCKPW : kNoFocus;
+                break;
             case S_CREATE: CreateVault(); break;
             case S_SKIP: CreateVaultNoPw(); break;
             case D_CANCEL: CloseDialog(); break;
@@ -1880,10 +2221,18 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 if (m_clipUntil && now >= m_clipUntil) ClearClipboardIfOurs();
                 if (m_autoAt && now >= m_autoAt) RunAutoType();
                 if (m_noteUntil && now >= m_noteUntil) { m_note.clear(); m_noteUntil = 0; }
+                if (m_screen == Screen::Main && m_session.usb) CheckStick(false);   // Stick abgezogen: sofort sperren
+                if (m_screen == Screen::Lock && m_lockUsb && !m_lockRecovery && (GetLogicalDrives() != m_driveMask || (m_stickRoot.empty() && m_scanTries > 0))) RefreshStick(true);
                 if (m_screen == Screen::Main && m_settings.autoLock && now - m_lastInput >= kAutoLockMs) Lock(true);
                 if (m_screen == Screen::Main) Invalidate();
             }
             return 0;
+        case WM_DEVICECHANGE:   // Laufwerk eingesteckt/abgezogen: Stick erkennen bzw. sofort sperren (zusaetzlich zur Sekundenpruefung)
+            if (wp == DBT_DEVICEARRIVAL || wp == DBT_DEVICEREMOVECOMPLETE) {
+                if (m_screen == Screen::Main && m_session.usb) CheckStick(true);
+                else if (m_screen == Screen::Lock && m_lockUsb && !m_lockRecovery) RefreshStick(true);
+            }
+            return TRUE;
         case WM_SETCURSOR: {
             if (LOWORD(lp) != HTCLIENT) break;
             POINT pt;

@@ -108,19 +108,27 @@ inline std::wstring FromUtf8(const std::string& s)
     return out;
 }
 
-// 32-Byte-Schluessel aus Passwort und Salz
-inline bool DeriveKey(const std::wstring& password, const Bytes& salt, unsigned iterations, SecBytes& key)
+// 32-Byte-Schluessel aus beliebigen Eingabebytes (Passwort, Stick-Geheimnis) und Salz
+inline bool DeriveKeyBytes(const unsigned char* pw, size_t pwLen, const Bytes& salt, unsigned iterations, SecBytes& key)
 {
     BCRYPT_ALG_HANDLE alg = nullptr;
     if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, nullptr, BCRYPT_ALG_HANDLE_HMAC_FLAG) != 0) return false;
-    std::string pw = ToUtf8(password);
     key.assign(32, 0);
-    const NTSTATUS st = BCryptDeriveKeyPBKDF2(alg, reinterpret_cast<PUCHAR>(&pw[0]), static_cast<ULONG>(pw.size()), const_cast<PUCHAR>(salt.data()),
+    const NTSTATUS st = BCryptDeriveKeyPBKDF2(alg, const_cast<PUCHAR>(pw), static_cast<ULONG>(pwLen), const_cast<PUCHAR>(salt.data()),
                                               static_cast<ULONG>(salt.size()), iterations, key.data(), 32, 0);
-    Wipe(pw);
     BCryptCloseAlgorithmProvider(alg, 0);
     if (st != 0) { Wipe(key); return false; }
     return true;
+}
+
+// 32-Byte-Schluessel aus Passwort und Salz
+inline bool DeriveKey(const std::wstring& password, const Bytes& salt, unsigned iterations, SecBytes& key)
+{
+    std::string pw = ToUtf8(password);
+    pw.push_back('\0');                  // Puffer nie leer (auch bei leerem Passwort ein gueltiger Zeiger); die Laenge zaehlt ohne dieses Byte
+    const bool ok = DeriveKeyBytes(reinterpret_cast<const unsigned char*>(pw.data()), pw.size() - 1, salt, iterations, key);
+    Wipe(pw);
+    return ok;
 }
 
 // AES-256-GCM. Verschluesseln: out = Chiffretext, tag (16 Byte) wird geschrieben. Entschluesseln: tag wird geprueft;
