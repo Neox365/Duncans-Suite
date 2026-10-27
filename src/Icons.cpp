@@ -246,6 +246,15 @@ namespace
             Line(0.56f, 0.5f, 0.56f, 0.76f);
             Line(0.32f, 0.63f, 0.68f, 0.63f);
             break;
+        case CategoryIcon::Convert:
+            // zwei gegenlaeufige Pfeile (Format A <-> Format B)
+            Line(0.16f, 0.34f, 0.8f, 0.34f);
+            Line(0.8f, 0.34f, 0.64f, 0.18f);
+            Line(0.8f, 0.34f, 0.64f, 0.5f);
+            Line(0.84f, 0.68f, 0.2f, 0.68f);
+            Line(0.2f, 0.68f, 0.36f, 0.52f);
+            Line(0.2f, 0.68f, 0.36f, 0.84f);
+            break;
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);

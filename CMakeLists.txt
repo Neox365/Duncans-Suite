@@ -1,12 +1,13 @@
 cmake_minimum_required(VERSION 3.20)
 project(DuncansDriverUpdater VERSION 1.2.0 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
-set(SUITE_VER "1.1.35")
+set(SUITE_VER "1.1.36")
 set(PDF_VER "1.1.24")
 set(PHOTO_VER "0.3.0")
 set(DOCS_VER "0.3.1")
 set(VAULT_VER "0.3.1")
 set(OFFICE_VER "0.3.0")
+set(QUICKCONVERT_VER "0.1.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -197,3 +198,21 @@ else()
     target_link_options(DuncansOffice PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
 target_link_libraries(DuncansOffice PRIVATE user32 gdi32 comdlg32 comctl32 shell32 dwmapi uxtheme winspool)
+
+# ---- Duncan's QuickConvert: lokaler Medien- und Dateikonverter (Win32 + GDI, WIC fuer Bilder, Media Foundation fuer Audio/Video) ----
+add_executable(DuncansQuickConvert WIN32
+    quickconvert/main.cpp
+    quickconvert/Convert.cpp
+    resources/quickconvert.rc
+)
+target_compile_definitions(DuncansQuickConvert PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"${QUICKCONVERT_VER}\")
+if(MSVC)
+    target_compile_options(DuncansQuickConvert PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET DuncansQuickConvert PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(DuncansQuickConvert PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(DuncansQuickConvert PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type -Os -ffunction-sections -fdata-sections)
+    target_link_options(DuncansQuickConvert PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
+endif()
+target_link_libraries(DuncansQuickConvert PRIVATE windowscodecs mfplat mfreadwrite mfuuid ole32 oleaut32 shell32 uuid dwmapi user32 gdi32 propsys)

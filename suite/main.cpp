@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.35"
+#define SUITE_VERSION L"1.1.36"
 #endif
 
 namespace
@@ -849,9 +849,9 @@ namespace
     // aktuelle Fassung aus dem Release "modules". Der Text wird nur angezeigt, nie ausgefuehrt; changelog::Parse begrenzt ihn.
     constexpr const wchar_t* kChangelogUrl = L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/changelog.txt";
     constexpr int kChangelogResource = 101;
-    constexpr int kToolCount = 8;   // Karten: Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Oggys Docs-Files, Duncan's Vault, Duncan's Office
+    constexpr int kToolCount = 9;   // Karten: Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Oggys Docs-Files, Duncan's Vault, Duncan's Office, Duncan's QuickConvert
     // Kennung einer Karte fuer Hover/Klick (0 und 1 historisch direkt, 5/17/22 aus alten Versionen, ab Karte 5 einheitlich 40 + Index;
-    // die Ids 24..31 sind die Info-Reiter, 32 der Schliessen-Knopf des Info-Dialogs)
+    // die Ids 24..33 sind die Info-Reiter, 34 der Schliessen-Knopf des Info-Dialogs)
     inline int CardHid(int index) { return index < 2 ? index : (index == 2 ? 5 : (index == 3 ? 17 : (index == 4 ? 22 : 40 + index))); }
     inline int CardFromHid(int hid)
     {
@@ -1078,6 +1078,11 @@ private:
           CategoryIcon::Office, RGB(129, 140, 248), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansOffice.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
+        { L"DuncansQuickConvert.exe", L"Duncan's QuickConvert",
+          L"Lokaler Medien- & Dateikonverter. Wandelt Bilder, Audio- und Videodateien blitzschnell und offline in moderne Formate um.",
+          CategoryIcon::Convert, RGB(245, 194, 231), {}, {}, {},
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansQuickConvert.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
     };
 
     RECT m_banner{}, m_footer{};
@@ -1123,7 +1128,7 @@ private:
     RECT m_btnBackup{}, m_btnLog{}, m_btnCheck{};   // Ids: 18 Wiederherstellungspunkt-Haken, 19 Backup-Ordner, 20 Logdatei, 21 Update-Suche
     bool m_manualCheck = false;                      // Update-Suche per Knopf: Ergebnis als Hinweis melden
 
-    // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..30 Reiter, 32 Schliessen (31 = Karte Oggys Docs-Files)
+    // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..33 Reiter, 34 Schliessen
     bool m_infoOpen = false, m_changesFetched = false, m_changesOnline = false;
     int m_infoTab = 0, m_infoScroll = 0, m_infoMaxScroll = 0;
     RECT m_infoRect{}, m_infoTabs[kInfoTabs]{}, m_infoClose{}, m_infoView{};
@@ -1290,7 +1295,7 @@ void SuiteWindow::Layout()
 
     const int top = m_banner.bottom + S(22), bottom = m_footer.top - S(16), gap = S(20);
     const int width = rc.right - 2 * m;
-    // 3 x 3 Raster: Tidy | Driver Updater | PDF Reader / Privacy Shield | Photo Commander | Oggys Docs-Files / Duncan's Vault | Duncan's Office
+    // 3 x 3 Raster: Tidy | Driver Updater | PDF Reader / Privacy Shield | Photo Commander | Oggys Docs-Files / Duncan's Vault | Duncan's Office | Duncan's QuickConvert
     const int h = (bottom - top - 2 * gap) / 3;
     const int w = (width - 2 * gap) / 3;
     for (int i = 0; i < kToolCount; ++i)
@@ -1518,22 +1523,9 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
                   { m_updateRect.left, m_updateRect.top + S(9), m_updateRect.right, m_updateRect.bottom }, label, DT_CENTER);
     }
 
-    if (RectVisible(dc, &m_tools[0].rect))
-        DrawCard(dc, 0);
-    if (RectVisible(dc, &m_tools[1].rect))
-        DrawCard(dc, 1);
-    if (RectVisible(dc, &m_tools[2].rect))
-        DrawCard(dc, 2);
-    if (RectVisible(dc, &m_tools[3].rect))
-        DrawCard(dc, 3);
-    if (RectVisible(dc, &m_tools[4].rect))
-        DrawCard(dc, 4);
-    if (RectVisible(dc, &m_tools[5].rect))
-        DrawCard(dc, 5);
-    if (RectVisible(dc, &m_tools[6].rect))
-        DrawCard(dc, 6);
-    if (RectVisible(dc, &m_tools[7].rect))
-        DrawCard(dc, 7);
+    for (int i = 0; i < kToolCount; ++i)
+        if (RectVisible(dc, &m_tools[i].rect))
+            DrawCard(dc, i);
 
     // Footer: Version links, Hinweis in der Mitte
     DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(176), m_footer.bottom },
@@ -1799,7 +1791,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
 {
     FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
 
-    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo Commander", L"Docs-Files", L"Vault", L"Office", L"Suite" };
+    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo Commander", L"Docs-Files", L"Vault", L"Office", L"QuickConvert", L"Suite" };
     const int pad = S(22), btnH = S(38);
     const int boxW = std::min(S(940), w - S(40)), boxH = std::min(S(700), h - S(50));
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
@@ -1924,7 +1916,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
               m_changesOnline ? L"Quelle: GitHub (aktuell)" : L"Quelle: in der Suite eingebaut");
     const int bw = S(120);
     m_infoClose = { box.right - pad - bw, box.bottom - pad - btnH, box.right - pad, box.bottom - pad };
-    DrawButton(dc, m_infoClose, true, m_hover == 33, m_press == 33 && m_hover == 33, L"Schließen");
+    DrawButton(dc, m_infoClose, true, m_hover == 34, m_press == 34 && m_hover == 34, L"Schließen");
 }
 
 void SuiteWindow::AddTrayIcon()
@@ -2428,7 +2420,7 @@ void SuiteWindow::OnMouseMove(int x, int y)
             if (PtInRect(&m_infoTabs[i], pt))
                 hover = 24 + i;
         if (PtInRect(&m_infoClose, pt))
-            hover = 33;
+            hover = 34;
     }
     else if (PtInRect(&m_gearRect, pt))
         hover = 6;
@@ -2480,7 +2472,7 @@ void SuiteWindow::OnClick(int, int)
         m_infoTab = pressed - 24;
         m_infoScroll = 0;
     }
-    else if (pressed == 33)
+    else if (pressed == 34)
         CloseInfo();
     else if (pressed == 7)
         m_draft.autoCheck = !m_draft.autoCheck;
