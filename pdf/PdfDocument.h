@@ -60,7 +60,22 @@ public:
     bool SaveCompressed(const std::wstring& path, int maxDpi, int jpegQuality, CompressStats& stats);
 
     // Speichert eine Kopie (inkl. Drehungen und angehaengter Seiten).
+    // Nach dem Schwaerzen wird dabei ein bereinigtes Dokument geschrieben (nur erreichbare Seiteninhalte), damit keine Reste bleiben.
     bool SaveCopy(const std::wstring& path);
+    // Speichert die Seiten 'indices' als eigene PDF (Auszug/Split). Das offene Dokument bleibt unveraendert.
+    bool SavePages(const std::wstring& path, const std::vector<int>& indices);
+
+    // Stempel / Unterschrift: Bild mit Alphakanal auf eine Seite setzen (nicht vormultipliziertes BGRA, Zeilen von oben nach unten).
+    struct Image { int w = 0, h = 0; std::vector<unsigned char> bgra; };
+    static bool EditSupported();                           // false: pdfium.dll kann keine Seitenobjekte bearbeiten
+    bool PlaceImage(int index, int pw, int ph, const RECT& px, const Image& img);   // px = Zielrechteck in Pixeln der gerenderten Seite (pw x ph)
+
+    // Schwaerzen: Text, der unter den Rechtecken (Pixel der gerenderten Seite) liegt, wird aus der Seite entfernt und durch einen schwarzen
+    // Balken ersetzt. Laesst sich der Text nicht sauber trennen (Bilder, Formularobjekte, Textlaeufe die ueber den Bereich hinausgehen),
+    // wird die Seite als Bild neu aufgebaut (200+ dpi, ohne Text, Notizen und Markierungen).
+    struct RedactResult { int textRemoved = 0, annotsRemoved = 0; bool flattened = false; };
+    bool Redact(int index, int pw, int ph, const std::vector<RECT>& rects, RedactResult& out);
+    bool Redacted() const { return m_sanitize; }
     bool Modified() const { return m_modified; }
 
     // Zuschneiden: setzt den sichtbaren Bereich (CropBox) der Seiten auf einen Ausschnitt der angezeigten Seite.
@@ -101,4 +116,5 @@ private:
     std::wstring m_path;
     std::vector<int> m_rot;
     bool m_modified = false;
+    bool m_sanitize = false;      // es wurde geschwaerzt: SaveCopy schreibt ein bereinigtes Dokument
 };

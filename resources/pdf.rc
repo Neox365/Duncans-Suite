@@ -7,8 +7,8 @@
 1 ICON "suite.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,1,24,0
-PRODUCTVERSION 1,1,24,0
+FILEVERSION 1,2,0,0
+PRODUCTVERSION 1,2,0,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -18,11 +18,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Duncan"
             VALUE "FileDescription", "Duncan's PDF"
-            VALUE "FileVersion", "1.1.24"
+            VALUE "FileVersion", "1.2.0"
             VALUE "InternalName", "DuncansPdf"
             VALUE "OriginalFilename", "DuncansPdf.exe"
             VALUE "ProductName", "Duncan's PDF"
-            VALUE "ProductVersion", "1.1.24"
+            VALUE "ProductVersion", "1.2.0"
         END
     END
     BLOCK "VarFileInfo"

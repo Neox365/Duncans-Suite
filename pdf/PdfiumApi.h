@@ -155,4 +155,20 @@ struct PdfiumApi {
     unsigned long (*FormGetSelectedText)(void* form, FPDF_PAGE, void* buffer, unsigned long len) = nullptr;
     void (*FormReplaceSelection)(void* form, FPDF_PAGE, const unsigned short* text) = nullptr;
     FPDF_BOOL (*FormSelectAllText)(void* form, FPDF_PAGE) = nullptr;
+    // Seitenobjekte bearbeiten (Stempel, Unterschrift, Schwaerzen); optional: fehlt eine Funktion, sind nur diese Werkzeuge gesperrt
+    bool hasEdit = false;
+    FPDF_PAGE (*PageNew)(FPDF_DOCUMENT, int index, double width, double height) = nullptr;
+    void* (*NewImageObj)(FPDF_DOCUMENT) = nullptr;
+    FPDF_BOOL (*ImageObjSetBitmap)(FPDF_PAGE* pages, int count, void* image, FPDF_BITMAP) = nullptr;
+    FPDF_BOOL (*PageObjSetMatrix)(void* obj, const FS_MATRIX*) = nullptr;
+    void (*PageInsertObject)(FPDF_PAGE, void* obj) = nullptr;
+    FPDF_BOOL (*PageRemoveObject)(FPDF_PAGE, void* obj) = nullptr;
+    void (*PageObjDestroy)(void* obj) = nullptr;
+    FPDF_BOOL (*PageObjGetBounds)(void* obj, float* left, float* bottom, float* right, float* top) = nullptr;
+    void* (*NewRectObj)(float x, float y, float w, float h) = nullptr;
+    FPDF_BOOL (*PageObjSetFillColor)(void* obj, unsigned R, unsigned G, unsigned B, unsigned A) = nullptr;
+    FPDF_BOOL (*PathSetDrawMode)(void* path, int fillMode, FPDF_BOOL stroke) = nullptr;
+    int (*TextGetBoundedText)(void* textPage, double left, double top, double right, double bottom, unsigned short* buffer, int count) = nullptr;
 };
+
+enum { FPDF_PAGEOBJ_TEXT = 1, FPDF_PAGEOBJ_PATH = 2, FPDF_PAGEOBJ_FORM = 5 };
