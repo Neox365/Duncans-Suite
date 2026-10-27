@@ -1,0 +1,32 @@
+#include <windows.h>
+
+// Manifest (DPI-Awareness, OS-Kompatibilitaet)
+1 RT_MANIFEST "quickconvert.manifest"
+
+// Anwendungs-Icon (vorlaeufig das Suite-Icon)
+1 ICON "suite.ico"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION 0,1,0,0
+PRODUCTVERSION 0,1,0,0
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040704B0"
+        BEGIN
+            VALUE "CompanyName", "Duncan"
+            VALUE "FileDescription", "Duncan's QuickConvert"
+            VALUE "FileVersion", "0.1.0"
+            VALUE "InternalName", "DuncansQuickConvert"
+            VALUE "OriginalFilename", "DuncansQuickConvert.exe"
+            VALUE "ProductName", "Duncan's QuickConvert"
+            VALUE "ProductVersion", "0.1.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x0407, 1200
+    END
+END

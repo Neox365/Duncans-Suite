@@ -10,6 +10,7 @@ Windows-Programmsammlung in C++ / Win32 mit einheitlichem Dark-UI, Sprache der P
 | **Duncan's Photo Commander** | Foto-Verwaltung (Ordnerbaum, asynchrones Thumbnail-Grid, EXIF-/GPS-Cleaner), Quellen in `photo/` – Grundgerüst |
 | **Oggys Docs-Files** | Rechnungs-Manager und Rechnungs-Generator (Ordner Jahr/Gläubiger, Status-Badges, PDF-Erzeugung), Quellen in `docs/` |
 | **Duncan's Vault** | Lokaler Tresor für Passwörter, Lizenzen, WLAN-Schlüssel und Notizen (AES-256-GCM), Quellen in `vault/` |
+| **Duncan's QuickConvert** | Lokaler Konverter: Bilder (PNG, JPG, WebP, BMP, HEIC) über WIC, Audio/Video (MP3, M4A, WAV) über Media Foundation, Drag-and-Drop, paralleler Stapel, Quellen in `quickconvert/` |
 | **Duncan's Office** | Writer (Texte, .txt/.rtf, PDF-Export, Drucken) und Sheets (Tabellen mit Formeln, .csv) in einem Programm, Quellen in `office/` |
 | **Duncan's Tidy** | System-Cleaner und Optimierer, eigenes Projekt ([Neox365/Duncans-Tidy-ToolSet](https://github.com/Neox365/Duncans-Tidy-ToolSet)); die Suite lädt es nur herunter und startet es |
 

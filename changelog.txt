@@ -224,6 +224,13 @@
 - Ein-Klick-Kopieren von Benutzername, Passwort und Lizenzschlüssel; die Zwischenablage wird nach 30 Sekunden geleert und taucht nicht im Windows-Zwischenablageverlauf auf.
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
+[DuncansQuickConvert.exe]
+## 0.1.0 | 2026-10-27
+- Neues Programm: Duncan's QuickConvert. Dateien per Drag-and-Drop oder „Hinzufügen“ sammeln und lokal umwandeln, nichts wird hochgeladen.
+- Bilder (PNG, JPG, WEBP, BMP, HEIC) über die Windows-Bildkomponenten, Audio und Video (MP3, M4A, WAV; Ton aus Videos extrahieren) über Windows Media Foundation. WebP und HEIC zum Schreiben brauchen die entsprechenden Windows-Erweiterungen.
+- Qualitäts-Regler 0–100 % für Bildkomprimierung und Bitrate (MP3 128–320 kbit/s, M4A 96–192 kbit/s).
+- Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
+
 [DuncansOffice.exe]
 ## 0.3.0 | 2026-10-26
 - Sheets: neue Funktionen WENN (mit Vergleichen und Text), ZÄHLENWENN (auch mit Platzhaltern wie "n*") und Vergleiche wie =A1>5.
@@ -243,6 +250,8 @@
 - Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
 
 [DuncansSuite.exe]
+## 1.1.36 | 2026-10-27
+- Neues Programm in der Suite: Duncan's QuickConvert (lokaler Medien- und Dateikonverter). Die Karten füllen das 3×3-Raster.
 ## 1.1.35 | 2026-10-23
 - Neues Programm in der Suite: Duncan's Office (Writer und Sheets). Die Kachel „Coming Soon“ ist durch das echte Programm ersetzt.
 ## 1.1.34 | 2026-10-21
