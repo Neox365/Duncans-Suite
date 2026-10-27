@@ -257,9 +257,116 @@ static void memoryProtection() {
     fs::remove_all(dir, ec);
 }
 
+static void usbKey() {
+    // Ein Ordner dient als "Stick": die Funktionen arbeiten auf einem Laufwerkswurzel-Pfad
+    const fs::path dir = fs::temp_directory_path() / L"duncans_vault_test_usb";
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    const std::wstring root = dir.wstring() + L"\\";
+
+    // Schluesseldatei: Roundtrip, versteckt, Pruefsumme, nicht ueberschreiben ohne Erlaubnis
+    vault::StickKey a, b, c;
+    CHECK(vault::NewStickKey(a) && a.Valid() && vault::NewStickKey(b) && a.id != b.id && a.secret != b.secret);
+    CHECK(vault::WriteKeyFile(root, a, false));
+    const DWORD attr = GetFileAttributesW(vault::KeyFilePath(root).c_str());
+    CHECK(attr != INVALID_FILE_ATTRIBUTES && (attr & FILE_ATTRIBUTE_HIDDEN) && (attr & FILE_ATTRIBUTE_SYSTEM));
+    CHECK(!vault::WriteKeyFile(root, b, false));
+    CHECK(vault::ReadKeyFile(root, c) && c.id == a.id && c.secret == a.secret);
+    CHECK(vault::WriteKeyFile(root, b, true) && vault::ReadKeyFile(root, c) && c.id == b.id);   // bewusstes Ueberschreiben (versteckte Systemdatei)
+    CHECK(vault::WriteKeyFile(root, a, true));
+    {   // beschaedigte Datei (ein Bit gekippt) wird abgelehnt
+        std::fstream f(vault::KeyFilePath(root), std::ios::in | std::ios::out | std::ios::binary);
+        CHECK(f.is_open());
+        f.seekp(30);
+        f.put('X');
+    }
+    CHECK(!vault::ReadKeyFile(root, c));
+    CHECK(vault::WriteKeyFile(root, a, true) && vault::ReadKeyFile(root, c));
+    CHECK(!vault::ReadKeyFile(root + L"gibt-es-nicht\\", c));
+
+    // Wiederherstellungscode: 32 Zeichen Base32 in Vierergruppen, Normalisierung
+    const std::wstring code = vault::NewRecoveryCode();
+    CHECK(code.size() == 39 && code[4] == L'-' && vault::NormalizeCode(code).size() == 32);
+    CHECK(vault::NormalizeCode(L"ab-c d 0189!") == L"ABCD");
+    CHECK(vault::NewRecoveryCode() != code);
+
+    // Tresor mit Stick, ohne Master-Passwort
+    const std::string plain = vault::Serialize(sample());
+    const fs::path vf = dir / L"v.dat";
+    vault::Session s, back;
+    std::wstring rec;
+    CHECK(vault::NewUsbSession(a, L"", 2000, s, rec) && s.usb && s.usbFlags == 0 && s.Open() && s.blob.size() == vault::kUsbBlobLen && rec.size() == 39);
+    CHECK(vault::SaveFile(vf, s, plain) == vault::Result::Ok);
+    CHECK(vault::ReadMode(vf) == vault::FileMode::Usb);
+    unsigned char flags = 9;
+    vault::Bytes id;
+    CHECK(vault::ReadUsbHeader(vf, flags, id) && flags == 0 && id == a.id);
+    std::string got;
+    CHECK(vault::OpenFile(vf, L"", back, got) == vault::Result::NeedUsb && !back.Open());                // ohne Stick-Angabe: kein Zugriff
+    vault::UsbUnlock withStick;
+    withStick.stick = &a;
+    CHECK(vault::OpenFile(vf, L"", back, got, &withStick) == vault::Result::Ok && got == plain && back.usb && back.key == s.key);
+    CHECK(vault::SaveFile(vf, back, plain) == vault::Result::Ok);                                          // weiter speichern: gleiche Faecher
+    vault::UsbUnlock wrong;
+    wrong.stick = &b;                                                                                       // fremder Stick
+    CHECK(vault::OpenFile(vf, L"", back, got, &wrong) == vault::Result::WrongStick && !back.Open());
+    vault::StickKey forged = a;                                                                             // gleiche Id, anderes Geheimnis
+    forged.secret[0] ^= 1;
+    vault::UsbUnlock forgedUnlock;
+    forgedUnlock.stick = &forged;
+    CHECK(vault::OpenFile(vf, L"", back, got, &forgedUnlock) == vault::Result::WrongPassword && !back.Open());
+    vault::UsbUnlock viaCode;
+    viaCode.recovery = true;                                                                                // Wiederherstellung ohne Stick (auch klein geschrieben, ohne Striche)
+    std::wstring lower = rec;
+    for (auto& ch : lower) ch = static_cast<wchar_t>(towlower(ch));
+    CHECK(vault::OpenFile(vf, lower, back, got, &viaCode) == vault::Result::Ok && got == plain && back.usb);
+    CHECK(vault::OpenFile(vf, L"AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA", back, got, &viaCode) == vault::Result::WrongPassword);
+    CHECK(vault::OpenFile(vf, L"zu kurz", back, got, &viaCode) == vault::Result::WrongPassword);
+    CHECK(got.empty() || got == plain);
+
+    // Manipulierte Flags im Kopf (Master-Passwort-Pflicht abschalten) fallen auf
+    {
+        std::fstream f(vf, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekp(5);
+        f.put(static_cast<char>(vault::kUsbNeedsPw));
+    }
+    CHECK(vault::OpenFile(vf, L"", back, got, &withStick) == vault::Result::WrongPassword);
+    {
+        std::fstream f(vf, std::ios::in | std::ios::out | std::ios::binary);
+        f.seekp(5);
+        f.put(0);
+    }
+    CHECK(vault::OpenFile(vf, L"", back, got, &withStick) == vault::Result::Ok);
+
+    // Stick plus Master-Passwort
+    vault::Session sp;
+    std::wstring rec2;
+    CHECK(vault::NewUsbSession(a, L"geheim-123", 2000, sp, rec2) && sp.usbFlags == vault::kUsbNeedsPw);
+    CHECK(vault::SaveFile(dir / L"p.dat", sp, plain) == vault::Result::Ok);
+    CHECK(vault::ReadUsbHeader(dir / L"p.dat", flags, id) && flags == vault::kUsbNeedsPw);
+    CHECK(vault::OpenFile(dir / L"p.dat", L"", back, got, &withStick) == vault::Result::WrongPassword);
+    CHECK(vault::OpenFile(dir / L"p.dat", L"falsch-123", back, got, &withStick) == vault::Result::WrongPassword);
+    CHECK(vault::OpenFile(dir / L"p.dat", L"geheim-123", back, got, &withStick) == vault::Result::Ok && got == plain);
+    CHECK(vault::OpenFile(dir / L"p.dat", rec2, back, got, &viaCode) == vault::Result::Ok && got == plain);      // Code umgeht das Passwort (Notfall)
+    CHECK(vault::OpenFile(dir / L"p.dat", rec, back, got, &viaCode) == vault::Result::WrongPassword);          // Code eines anderen Tresors passt nicht
+
+    // Datei enthaelt weder Klartext noch Schluesselmaterial des Sticks
+    {
+        std::ifstream in(dir / L"p.dat", std::ios::binary);
+        std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        CHECK(bytes.find("GitHub") == std::string::npos);
+        const std::string sec(reinterpret_cast<const char*>(a.secret.data()), 32);
+        CHECK(bytes.find(sec) == std::string::npos);
+    }
+    SetFileAttributesW(vault::KeyFilePath(root).c_str(), FILE_ATTRIBUTE_NORMAL);
+    fs::remove_all(dir, ec);
+    CHECK(!vault::DeleteKeyFile(root));
+}
+
 int main() {
     vault::MinIterations() = 1000;   // die Tests arbeiten mit wenigen Runden, damit sie schnell laufen
-    serialization(); merge(); search(); generator(); strength(); kdf(); file(); noPassword(); memoryProtection();
+    serialization(); merge(); search(); generator(); strength(); kdf(); file(); noPassword(); memoryProtection(); usbKey();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

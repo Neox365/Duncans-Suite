@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "Crypto.h"
+#include "UsbKey.h"
 
 namespace vault {
 
@@ -273,13 +274,16 @@ struct Session {
     Bytes salt;
     unsigned iterations = 0;
     bool dpapi = false;   // Tresor ohne Master-Passwort (Schluessel per Windows-Konto geschuetzt)
-    Bytes blob;           // dpapi: geschuetzter Schluessel, wie er in der Datei steht
+    bool usb = false;     // Tresor mit USB-Vault-Key (Dateiversion 3)
+    unsigned char usbFlags = 0;   // usb: kUsbNeedsPw = zusaetzlich zum Stick ist ein Master-Passwort noetig
+    Bytes blob;           // dpapi: geschuetzter Schluessel; usb: die beiden Schluesselfaecher (Stick, Wiederherstellung) samt Stick-Id, wie in der Datei
     bool Open() const { return key.size() == 32; }
-    void Close() { Wipe(key); salt.clear(); blob.clear(); iterations = 0; dpapi = false; }
+    void Close() { Wipe(key); salt.clear(); blob.clear(); iterations = 0; dpapi = false; usb = false; usbFlags = 0; }
 };
 
-enum class Result { Ok, NotFound, BadFormat, WrongPassword, IoError, CryptoError };
-enum class FileMode { Missing, Password, Dpapi, Invalid };
+// NeedUsb: der Tresor braucht einen USB-Vault-Key (OpenFile ohne Stick-Angabe); WrongStick: angeschlossener Stick gehoert nicht zu diesem Tresor
+enum class Result { Ok, NotFound, BadFormat, WrongPassword, IoError, CryptoError, NeedUsb, WrongStick };
+enum class FileMode { Missing, Password, Dpapi, Invalid, Usb };
 
 inline bool NewSession(const std::wstring& password, unsigned iterations, Session& s)
 {
@@ -308,7 +312,7 @@ inline FileMode ReadMode(const std::filesystem::path& path)
     std::ifstream in(path, std::ios::binary);
     unsigned char h[5]{};
     if (!in || !in.read(reinterpret_cast<char*>(h), 5) || h[0] != 'D' || h[1] != 'V' || h[2] != 'L' || h[3] != 'T') return FileMode::Invalid;
-    return h[4] == 1 ? FileMode::Password : h[4] == 2 ? FileMode::Dpapi : FileMode::Invalid;
+    return h[4] == 1 ? FileMode::Password : h[4] == 2 ? FileMode::Dpapi : h[4] == 3 ? FileMode::Usb : FileMode::Invalid;
 }
 
 inline void PutU32(Bytes& b, unsigned v)
@@ -322,14 +326,135 @@ inline unsigned GetU32(const Bytes& b, size_t at)
     return v;
 }
 
+// ---- USB-Vault-Key (Dateiversion 3) ----
+// "DVLT" | 3 | Flags (1) | Iterationen (4, LE) | Faecher (168) | Nonce (12) | Chiffretext | GCM-Tag (16).
+// Die Daten sind mit einem zufaelligen Hauptschluessel (MK) verschluesselt. Der MK steht nie im Klartext in der Datei, sondern zweimal
+// verpackt (AES-GCM) in je einem Fach:
+//   Fach 1 (Stick):             Salz (16) | Nonce (12) | verpackter MK (32) | Tag (16); Schluessel = PBKDF2(Stick-Geheimnis [+ Master-Passwort])
+//   Fach 2 (Wiederherstellung): gleicher Aufbau; Schluessel = PBKDF2(Wiederherstellungscode)
+//   danach die Stick-Id (16): sie ordnet den Stick dem Tresor zu und verraet nichts Geheimes.
+// Alles vor dem Chiffretext (inkl. Flags und Faecher) wird als zusaetzliche authentifizierte Daten geprueft; die Faecher binden Flags,
+// Iterationen und Stick-Id zusaetzlich als eigene authentifizierte Daten.
+constexpr unsigned char kUsbNeedsPw = 1;
+constexpr size_t kSlotLen = 16 + 12 + 32 + 16;                 // Salz + Nonce + MK + Tag
+constexpr size_t kUsbBlobLen = 2 * kSlotLen + 16;              // zwei Faecher + Stick-Id
+constexpr size_t kUsbHeadLen = 5 + 1 + 4 + kUsbBlobLen + 12;
+
+inline Bytes SlotAad(unsigned char flags, unsigned iterations, const Bytes& stickId, unsigned char slot)
+{
+    Bytes a = {'D', 'V', 'L', 'T', 3, flags};
+    PutU32(a, iterations);
+    a.insert(a.end(), stickId.begin(), stickId.end());
+    a.push_back(slot);
+    return a;
+}
+
+// MK mit kek verpacken: dst bekommt Nonce (12) | Chiffretext (32) | Tag (16)
+inline bool WrapInto(const SecBytes& kek, const Bytes& aad, const SecBytes& mk, unsigned char* dst)
+{
+    Bytes nonce(12, 0), cipher;
+    unsigned char tag[16]{};
+    if (mk.size() != 32 || !RandomBytes(nonce.data(), 12) || !GcmCrypt(true, kek, nonce, aad, mk.data(), 32, cipher, tag)) return false;
+    memcpy(dst, nonce.data(), 12);
+    memcpy(dst + 12, cipher.data(), 32);
+    memcpy(dst + 44, tag, 16);
+    return true;
+}
+
+inline bool UnwrapFrom(const SecBytes& kek, const Bytes& aad, const unsigned char* src, SecBytes& mk)
+{
+    const Bytes nonce(src, src + 12);
+    Bytes out;
+    unsigned char tag[16];
+    memcpy(tag, src + 44, 16);
+    if (!GcmCrypt(false, kek, nonce, aad, src + 12, 32, out, tag)) return false;
+    mk.assign(out.begin(), out.end());
+    Wipe(out);
+    return mk.size() == 32;
+}
+
+// Stick-Geheimnis (+ optional Master-Passwort) -> Schluessel fuer Fach 1
+inline bool DeriveUsbKek(const SecBytes& secret, const std::wstring& password, const Bytes& salt, unsigned iterations, SecBytes& kek)
+{
+    SecBytes in(secret.begin(), secret.end());
+    std::string pw = ToUtf8(password);
+    in.insert(in.end(), pw.begin(), pw.end());
+    Wipe(pw);
+    const bool ok = DeriveKeyBytes(in.data(), in.size(), salt, iterations, kek);
+    Wipe(in);
+    return ok;
+}
+
+inline bool DeriveRecoveryKek(const std::wstring& code, const Bytes& salt, unsigned iterations, SecBytes& kek)
+{
+    std::string c = ToUtf8(NormalizeCode(code));
+    if (c.size() != 32) { Wipe(c); return false; }
+    const bool ok = DeriveKeyBytes(reinterpret_cast<const unsigned char*>(c.data()), c.size(), salt, iterations, kek);
+    Wipe(c);
+    return ok;
+}
+
+// Neuer Tresorschluessel (Zufall), verpackt fuer den Stick (mit optionalem Master-Passwort) und fuer einen frisch erzeugten Wiederherstellungscode
+inline bool NewUsbSession(const StickKey& stick, const std::wstring& password, unsigned iterations, Session& s, std::wstring& recoveryCode)
+{
+    s.Close();
+    recoveryCode.clear();
+    if (!stick.Valid()) return false;
+    SecBytes mk(32, 0);
+    const unsigned char flags = password.empty() ? 0 : kUsbNeedsPw;
+    Bytes blob(kUsbBlobLen, 0);
+    unsigned char* p = blob.data();
+    bool ok = RandomBytes(mk.data(), 32) && RandomBytes(p, 16) && RandomBytes(p + kSlotLen, 16);
+    if (ok) memcpy(p + 2 * kSlotLen, stick.id.data(), 16);
+    std::wstring code = NewRecoveryCode();
+    SecBytes k1, k2;
+    ok = ok && DeriveUsbKek(stick.secret, password, Bytes(p, p + 16), iterations, k1)
+            && DeriveRecoveryKek(code, Bytes(p + kSlotLen, p + kSlotLen + 16), iterations, k2)
+            && WrapInto(k1, SlotAad(flags, iterations, stick.id, 1), mk, p + 16)
+            && WrapInto(k2, SlotAad(flags, iterations, stick.id, 2), mk, p + kSlotLen + 16);
+    Wipe(k1);
+    Wipe(k2);
+    if (!ok) { Wipe(mk); Wipe(code); return false; }
+    s.key = mk;
+    Wipe(mk);
+    s.usb = true;
+    s.usbFlags = flags;
+    s.iterations = iterations;
+    s.blob = blob;
+    recoveryCode = code;
+    return true;
+}
+
+// Stick-Id und Flags am Dateikopf lesen (ohne zu entschluesseln)
+inline bool ReadUsbHeader(const std::filesystem::path& path, unsigned char& flags, Bytes& stickId)
+{
+    std::ifstream in(path, std::ios::binary);
+    Bytes h(10 + kUsbBlobLen, 0);
+    if (!in || !in.read(reinterpret_cast<char*>(h.data()), static_cast<std::streamsize>(h.size())) || h[0] != 'D' || h[1] != 'V' || h[2] != 'L' || h[3] != 'T' || h[4] != 3) return false;
+    flags = h[5];
+    stickId.assign(h.begin() + 10 + 2 * kSlotLen, h.end());
+    return true;
+}
+
+// Womit ein USB-Tresor geoeffnet wird: mit dem Stick (und ggf. Master-Passwort) oder mit dem Wiederherstellungscode (dann steht er in 'password')
+struct UsbUnlock {
+    const StickKey* stick = nullptr;
+    bool recovery = false;
+};
+
 // Speichert plain verschluesselt; die vorherige Datei bleibt als <Datei>.bak erhalten, geschrieben wird atomar ueber eine .tmp-Datei.
 inline Result SaveFile(const std::filesystem::path& path, const Session& s, const std::string& plain)
 {
     if (!s.Open() || plain.empty()) return Result::CryptoError;
     Bytes nonce(12, 0);
     if (!RandomBytes(nonce.data(), nonce.size())) return Result::CryptoError;
-    Bytes head = {'D', 'V', 'L', 'T', static_cast<unsigned char>(s.dpapi ? 2 : 1)};
-    if (s.dpapi) {
+    Bytes head = {'D', 'V', 'L', 'T', static_cast<unsigned char>(s.usb ? 3 : s.dpapi ? 2 : 1)};
+    if (s.usb) {
+        if (s.blob.size() != kUsbBlobLen) return Result::CryptoError;
+        head.push_back(s.usbFlags);
+        PutU32(head, s.iterations);
+        head.insert(head.end(), s.blob.begin(), s.blob.end());
+    } else if (s.dpapi) {
         if (s.blob.empty()) return Result::CryptoError;
         PutU32(head, static_cast<unsigned>(s.blob.size()));
         head.insert(head.end(), s.blob.begin(), s.blob.end());
@@ -364,7 +489,7 @@ inline Result SaveFile(const std::filesystem::path& path, const Session& s, cons
 
 // Entschluesselt; bei Erfolg ist s fuer weitere Speichervorgaenge (gleiches Salz/Schluessel) bereit.
 // Version 2 braucht kein Passwort (das Windows-Konto genuegt); passt das Konto nicht, kommt WrongPassword.
-inline Result OpenFile(const std::filesystem::path& path, const std::wstring& password, Session& s, std::string& plain)
+inline Result OpenFile(const std::filesystem::path& path, const std::wstring& password, Session& s, std::string& plain, const UsbUnlock* usb = nullptr)
 {
     plain.clear();
     std::error_code ec;
@@ -393,6 +518,33 @@ inline Result OpenFile(const std::filesystem::path& path, const std::wstring& pa
         headLen = 9 + bl + 12;
         s.dpapi = true;
         if (!DpapiUnprotect(s.blob, s.key) || s.key.size() != 32) { s.Close(); return Result::WrongPassword; }
+    } else if (data[4] == 3) {
+        if (data.size() < kUsbHeadLen + 16 + 1) return Result::BadFormat;
+        const unsigned char flags = data[5];
+        const unsigned iter = GetU32(data, 6);
+        if (iter < MinIterations() || iter > 20000000u) return Result::BadFormat;
+        const Bytes blob(data.begin() + 10, data.begin() + 10 + kUsbBlobLen);
+        const Bytes id(blob.begin() + 2 * kSlotLen, blob.end());
+        nonce.assign(data.begin() + 10 + kUsbBlobLen, data.begin() + kUsbHeadLen);
+        headLen = kUsbHeadLen;
+        if (!usb) return Result::NeedUsb;
+        SecBytes kek;
+        size_t slot = 0;
+        if (usb->recovery) {
+            slot = kSlotLen;
+            if (!DeriveRecoveryKek(password, Bytes(blob.begin() + slot, blob.begin() + slot + 16), iter, kek)) return Result::WrongPassword;
+        } else {
+            if (!usb->stick || !usb->stick->Valid() || usb->stick->id != id) return Result::WrongStick;
+            if ((flags & kUsbNeedsPw) && password.empty()) return Result::WrongPassword;
+            if (!DeriveUsbKek(usb->stick->secret, (flags & kUsbNeedsPw) ? password : std::wstring(), Bytes(blob.begin(), blob.begin() + 16), iter, kek)) return Result::CryptoError;
+        }
+        const bool unwrapped = UnwrapFrom(kek, SlotAad(flags, iter, id, usb->recovery ? 2 : 1), blob.data() + slot + 16, s.key);
+        Wipe(kek);
+        if (!unwrapped) { s.Close(); return Result::WrongPassword; }
+        s.usb = true;
+        s.usbFlags = flags;
+        s.iterations = iter;
+        s.blob = blob;
     } else {
         return Result::BadFormat;
     }

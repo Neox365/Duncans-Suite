@@ -214,6 +214,11 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.5.0 | 2026-10-27
+- Neu: USB-Vault-Key. Zahnrad → „USB-Stick als Vault Key einrichten“ legt auf einem Wechseldatenträger (GetDriveType = DRIVE_REMOVABLE) eine versteckte Schlüsseldatei an. Danach öffnet sich der Tresor nur noch mit diesem Stick; optional zusätzlich mit einem Master-Passwort (Stick + Passwort).
+- Neu: Steckt der Stick schon oder wird er eingesteckt, erkennt der Tresor ihn und entsperrt sich (bei Stick + Passwort nach Eingabe des Passworts). Zieht man den Stick im Betrieb ab, sperrt der Tresor sofort (Gerätemeldung plus Prüfung jede Sekunde).
+- Neu: Beim Einrichten gibt es einen Wiederherstellungscode (32 Zeichen). Er öffnet den Tresor auch ohne Stick, falls der Stick verloren geht. Neues Dateiformat (Version 3); der Tresorschlüssel steckt zweimal verpackt in der Datei, die Vorgängerfassung (.bak) mit dem alten Schutz wird beim Umstellen gelöscht.
+- Neu: Portabler Modus. „Portable Kopie auf den USB-Stick anlegen“ kopiert Programm und Tresor in den Ordner DuncansVault auf dem Stick. Von dort gestartet (Datei DuncansVault.portable), liegen alle Daten auf dem Stick, und Auto-Type und Zwischenablage funktionieren auf jedem Windows-PC. Die EXE ist so gelinkt, dass sie auch nach dem Abziehen sicher weiterläuft.
 ## 0.4.1 | 2026-10-27
 - Neu: Auto-Type kann jetzt auch „nur Benutzername“, „nur Passwort“ und „zweistufig“ (Benutzername, Enter, kurze Pause, Passwort, Enter) tippen – für Seiten wie Nexusmods, die erst nach der E-Mail das Passwortfeld zeigen oder bei denen der Cursor schon im falschen Feld steht.
 - Geändert: Der Hinweis beim Start nennt jetzt das richtige Feld (Benutzernamen- oder Passwort-Feld).
