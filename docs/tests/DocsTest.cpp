@@ -356,8 +356,52 @@ static void smallBusiness() {
     CHECK(small.find("Umsatzsteuer 19") == std::string::npos);
 }
 
+static void tagsStatsImport() {
+    using namespace docs;
+    // Tags: trennen, Dopplungen, Entfernen
+    const auto t = SplitTags(L" Steuer, büro ;Software,, steuer ,");
+    CHECK(t.size() == 3 && t[0] == L"Steuer" && t[1] == L"büro" && t[2] == L"Software");
+    CHECK(EditTags(L"Steuer, Büro", L"büro, Software", L"STEUER") == L"Büro, Software");
+    CHECK(EditTags(L"", L"a", L"") == L"a" && EditTags(L"a", L"", L"a").empty());
+    Doc a, b, c;
+    a.m.tags = L"Steuer, Büro"; b.m.tags = L"büro"; c.m.tags = L"";
+    const auto all = std::vector<Doc>{a, b, c};
+    const auto list = CollectTags(all);
+    CHECK(list.size() == 2 && list[0].first == L"Büro" && list[0].second == 2 && list[1].first == L"Steuer");
+    CHECK(MatchesTags(a, {L"büro", L"steuer"}) && !MatchesTags(b, {L"büro", L"steuer"}) && MatchesTags(c, {}));
+    Meta m; m.tags = L"Steuer";
+    CHECK(HasTag(m, L" steuer ") && !HasTag(m, L"büro"));
+
+    // Index: Einnahme/Ausgabe, alte Dateien ohne Spalte gelten als Ausgabe
+    MetaMap map;
+    Meta in; in.cents = 100; in.income = true; map[L"2026\\X\\a.pdf"] = in;
+    Meta out; out.cents = 50; map[L"2026\\X\\b.pdf"] = out;
+    const MetaMap back = ParseIndex(SerializeIndex(map));
+    CHECK(back.at(L"2026\\X\\a.pdf").income && !back.at(L"2026\\X\\b.pdf").income);
+
+    // Finanz-Uebersicht
+    std::vector<Doc> docsv(5);
+    docsv[0].year = L"2026"; docsv[0].m.cents = 100000; docsv[0].m.income = true; docsv[0].m.status = Status::Paid;
+    docsv[1].year = L"2026"; docsv[1].m.cents = 30000; docsv[1].m.status = Status::Open; docsv[1].m.due = L"2026-01-01";
+    docsv[2].year = L"2026"; docsv[2].m.cents = 20000; docsv[2].m.status = Status::Paid;
+    docsv[3].year = L"2025"; docsv[3].m.cents = 7000; docsv[3].m.status = Status::Open;      // altes Jahr: nur bei "offen"
+    docsv[4].year = L"2026";                                                                  // ohne Betrag: ignoriert
+    const Stats s = ComputeStats(docsv, L"2026", L"2026-06-01");
+    CHECK(s.income == 100000 && s.expense == 50000 && s.open == 37000 && s.openCount == 2 && s.overdue == 1);
+
+    // Import: Jahr und Glaeubiger aus dem Dateinamen
+    CHECK(GuessYear(L"Rechnung_2025-03_Vodafone.pdf", L"2026") == L"2025");
+    CHECK(GuessYear(L"scan12345.pdf", L"2026") == L"2026");        // Teil einer laengeren Zahl
+    CHECK(GuessYear(L"RE-1850.pdf", L"2026") == L"2026");          // ausserhalb des Bereichs
+    CHECK(GuessCreditor(L"Rechnung_Vodafone_Oktober.pdf", {}) == L"Vodafone");
+    CHECK(GuessCreditor(L"telekom-2026-04.pdf", {}) == L"Telekom");
+    CHECK(GuessCreditor(L"IMG_2024.jpg", {}) == L"Sonstige");
+    CHECK(GuessCreditor(L"Stromrechnung_Stadtwerke.pdf", {L"Stadtwerke", L"Strom"}) == L"Stadtwerke");   // laengster bekannter Name
+}
+
 int main() {
     amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness(); installmentRate(); closingAndFooter();
+    tagsStatsImport();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

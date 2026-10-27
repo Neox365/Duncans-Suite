@@ -276,6 +276,7 @@ struct Meta {
     Status status = Status::Open;
     std::wstring tags, note;
     std::wstring rate;            // Ratenzahlung: "Rate 3 von 12" / "50 € / Monat" (nur bei Status Ratenzahlung angezeigt)
+    bool income = false;          // Einnahme (eigene Rechnung) statt Ausgabe; zaehlt in der Finanz-Uebersicht
 };
 using MetaMap = std::map<std::wstring, Meta>;   // Schluessel: relativer Pfad, Trenner '\'
 
@@ -299,7 +300,8 @@ inline std::string SerializeIndex(const MetaMap& map)
     for (const auto& kv : map) {
         const Meta& m = kv.second;
         out += CleanField(kv.first) + L"\t" + (m.cents == kUnknown ? L"" : std::to_wstring(m.cents)) + L"\t" + m.due + L"\t" +
-               StatusName(m.status) + L"\t" + CleanField(m.tags) + L"\t" + CleanField(m.note) + L"\t" + CleanField(m.rate) + L"\n";
+               StatusName(m.status) + L"\t" + CleanField(m.tags) + L"\t" + CleanField(m.note) + L"\t" + CleanField(m.rate) + L"\t" +
+               (m.income ? L"Einnahme" : L"Ausgabe") + L"\n";
     }
     return WideToUtf8(out);
 }
@@ -337,6 +339,7 @@ inline MetaMap ParseIndex(const std::string& utf8)
         if (f.size() > 4) m.tags = f[4];
         if (f.size() > 5) m.note = f[5];
         if (f.size() > 6) m.rate = f[6];
+        if (f.size() > 7) m.income = f[7] == L"Einnahme";
         map[f[0]] = m;
     }
     return map;
@@ -415,6 +418,168 @@ inline std::vector<std::pair<std::wstring, std::wstring>> ListFolders(const std:
             if (c->is_directory(ec2) && visible(c->path())) out.push_back({year, c->path().filename().wstring()});
     }
     return out;
+}
+
+// ---- Tags ---------------------------------------------------------------------------------------------
+
+// "Steuer, Büro; Software" -> {"Steuer", "Büro", "Software"}: getrennt an Komma/Semikolon, getrimmt, ohne Dopplungen
+// (Gross-/Kleinschreibung egal, die erste Schreibweise bleibt), je Tag hoechstens 40 Zeichen.
+inline std::vector<std::wstring> SplitTags(const std::wstring& in)
+{
+    std::vector<std::wstring> out;
+    std::set<std::wstring> seen;
+    std::wstring cur;
+    auto flush = [&]() {
+        std::wstring t = Trim(cur);
+        cur.clear();
+        if (t.size() > 40) t.resize(40);
+        t = Trim(t);
+        if (!t.empty() && seen.insert(Lower(t)).second) out.push_back(t);
+    };
+    for (wchar_t c : in) {
+        if (c == L',' || c == L';' || c == L'\n' || c == L'\t') flush();
+        else cur.push_back(c);
+    }
+    flush();
+    return out;
+}
+
+inline std::wstring JoinTags(const std::vector<std::wstring>& tags)
+{
+    std::wstring out;
+    for (const auto& t : tags) out += (out.empty() ? L"" : L", ") + t;
+    return out;
+}
+
+inline bool HasTag(const Meta& m, const std::wstring& tag)
+{
+    const std::wstring lt = Lower(Trim(tag));
+    for (const auto& t : SplitTags(m.tags))
+        if (Lower(t) == lt) return true;
+    return false;
+}
+
+// Tags hinzufuegen und entfernen (Schreibweise wie angegeben, Dopplungen und Gross-/Kleinschreibung werden zusammengefasst)
+inline std::wstring EditTags(const std::wstring& existing, const std::wstring& add, const std::wstring& remove)
+{
+    std::vector<std::wstring> tags = SplitTags(existing);
+    std::set<std::wstring> have;
+    for (const auto& t : tags) have.insert(Lower(t));
+    for (const auto& t : SplitTags(add))
+        if (have.insert(Lower(t)).second) tags.push_back(t);
+    std::set<std::wstring> drop;
+    for (const auto& t : SplitTags(remove)) drop.insert(Lower(t));
+    std::vector<std::wstring> kept;
+    for (const auto& t : tags)
+        if (!drop.count(Lower(t))) kept.push_back(t);
+    return JoinTags(kept);
+}
+
+// Alle vorkommenden Tags mit Anzahl, haeufigste zuerst (bei Gleichstand alphabetisch)
+inline std::vector<std::pair<std::wstring, int>> CollectTags(const std::vector<Doc>& all)
+{
+    std::map<std::wstring, std::pair<std::wstring, int>> m;   // klein -> {Anzeige, Anzahl}
+    for (const Doc& d : all)
+        for (const auto& t : SplitTags(d.m.tags)) {
+            auto& e = m[Lower(t)];
+            if (e.second == 0) e.first = t;
+            ++e.second;
+        }
+    std::vector<std::pair<std::wstring, int>> out;
+    for (const auto& kv : m) out.push_back(kv.second);
+    std::stable_sort(out.begin(), out.end(), [](const auto& a, const auto& b) { return a.second != b.second ? a.second > b.second : Lower(a.first) < Lower(b.first); });
+    return out;
+}
+
+// Der Beleg muss alle gewaehlten Tags tragen (klein geschrieben uebergeben)
+inline bool MatchesTags(const Doc& d, const std::set<std::wstring>& lowerTags)
+{
+    if (lowerTags.empty()) return true;
+    std::set<std::wstring> mine;
+    for (const auto& t : SplitTags(d.m.tags)) mine.insert(Lower(t));
+    for (const auto& t : lowerTags)
+        if (!mine.count(t)) return false;
+    return true;
+}
+
+// ---- Finanz-Uebersicht ---------------------------------------------------------------------------------
+
+struct Stats {
+    long long income = 0, expense = 0;   // Cent, Belege des Jahres mit erfasstem Betrag (Gutschriften mindern)
+    long long open = 0;                  // Summe aller offenen Rechnungen (alle Jahre)
+    int openCount = 0, overdue = 0;
+};
+
+inline Stats ComputeStats(const std::vector<Doc>& all, const std::wstring& year, const std::wstring& todayIso)
+{
+    Stats s;
+    for (const Doc& d : all) {
+        if (d.m.cents == kUnknown) continue;
+        if (d.year == year) (d.m.income ? s.income : s.expense) += d.m.cents;
+        if (d.m.status == Status::Open) {
+            s.open += d.m.cents;
+            ++s.openCount;
+            if (!d.m.due.empty() && d.m.due < todayIso) ++s.overdue;
+        }
+    }
+    return s;
+}
+
+// ---- Automatischer Beleg-Import: Jahr und Glaeubiger aus dem Dateinamen raten ---------------------------
+
+// Erstes vierstelliges Jahr (1990..2100) im Dateinamen, das nicht Teil einer laengeren Ziffernfolge ist; sonst fallback.
+inline std::wstring GuessYear(const std::wstring& fileName, const std::wstring& fallback)
+{
+    for (size_t i = 0; i + 4 <= fileName.size(); ++i) {
+        bool digits = true;
+        for (size_t j = i; j < i + 4; ++j) digits = digits && fileName[j] >= L'0' && fileName[j] <= L'9';
+        if (!digits) continue;
+        if (i > 0 && fileName[i - 1] >= L'0' && fileName[i - 1] <= L'9') continue;
+        if (i + 4 < fileName.size() && fileName[i + 4] >= L'0' && fileName[i + 4] <= L'9') continue;
+        const int y = std::stoi(fileName.substr(i, 4));
+        if (y >= 1990 && y <= 2100) return std::to_wstring(y);
+    }
+    return fallback;
+}
+
+// Glaeubiger: ein vorhandener Ordnername, der im Dateinamen vorkommt (der laengste gewinnt); sonst das erste "sprechende"
+// Wort des Namens (ohne Zahlen, Monate und Allgemeinbegriffe wie "Rechnung"); sonst "Sonstige".
+inline std::wstring GuessCreditor(const std::wstring& fileName, const std::vector<std::wstring>& known)
+{
+    const size_t dot = fileName.find_last_of(L'.');
+    const std::wstring stem = Lower(dot == std::wstring::npos || dot == 0 ? fileName : fileName.substr(0, dot));
+    std::wstring best;
+    for (const auto& c : known) {
+        if (c.size() < 3 || c == L"Sonstige") continue;
+        if (stem.find(Lower(c)) != std::wstring::npos && c.size() > best.size()) best = c;
+    }
+    if (!best.empty()) return best;
+    static const wchar_t* skip[] = {L"rechnung", L"rechnungen", L"invoice", L"beleg", L"re", L"rg", L"scan", L"img", L"dokument", L"document",
+                                    L"kopie", L"copy", L"bill", L"quittung", L"abrechnung", L"mahnung", L"bestellung", L"order", L"final",
+                                    L"neu", L"new", L"januar", L"februar", L"maerz", L"märz", L"april", L"mai", L"juni", L"juli", L"august",
+                                    L"september", L"oktober", L"november", L"dezember", L"jan", L"feb", L"mar", L"apr", L"jun", L"jul", L"aug",
+                                    L"sep", L"okt", L"nov", L"dez", L"und", L"von", L"fuer", L"für"};
+    auto accept = [&](const std::wstring& t) {
+        if (t.size() < 3) return false;
+        for (wchar_t c : t)
+            if (std::iswdigit(c)) return false;
+        for (auto sk : skip)
+            if (t == sk) return false;
+        return true;
+    };
+    std::wstring tok;
+    for (size_t i = 0; i <= stem.size(); ++i) {
+        const wchar_t c = i < stem.size() ? stem[i] : L'_';
+        if (c == L'_' || c == L'-' || c == L' ' || c == L'.' || c == L'(' || c == L')') {
+            if (accept(tok)) {
+                std::wstring orig = fileName.substr(i - tok.size(), tok.size());   // Schreibweise des Originals, erster Buchstabe gross
+                orig[0] = static_cast<wchar_t>(std::towupper(orig[0]));
+                return orig;
+            }
+            tok.clear();
+        } else tok.push_back(c);
+    }
+    return L"Sonstige";
 }
 
 // ---- Suche -------------------------------------------------------------------------------------------
