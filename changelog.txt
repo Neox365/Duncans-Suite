@@ -108,6 +108,8 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.2.1 | 2026-10-27
+- Geändert: „Über“ ist jetzt eine Kachelansicht direkt im Programmfenster (Version, Entwickler, Quellcode, Datenschutz, Speicherorte) statt eines Windows-Fensters.
 ## 1.2.0 | 2026-10-27
 - Neu: Stempel (BEZAHLT, GENEHMIGT, ENTWURF, VERTRAULICH, mit Datum) und Unterschrift. Die Unterschrift lässt sich mit der Maus zeichnen oder als PNG laden (heller Hintergrund wird durchsichtig) und wird für das nächste Mal gemerkt. Das Bild folgt der Maus, ein Klick setzt es auf die Seite (Umschalt + Mausrad ändert die Größe), auch auf gedrehten Seiten.
 - Neu: Rechtsklick auf Seiten-Vorschauen: „Ausgewählte Seiten als neue PDF speichern“ und „PDF teilen (Split)“.
@@ -155,6 +157,8 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.3.1 | 2026-10-27
+- Geändert: „Über“ ist jetzt eine Kachelansicht direkt im Programmfenster (Version, Entwickler, Quellcode, Datenschutz, Speicherorte) statt eines Windows-Fensters.
 ## 0.3.0 | 2026-10-26
 - Neue Leiste über dem Bildraster: Suchfeld (Strg+F, filtert beim Tippen nach dem Dateinamen), Sortierung als Auswahlfeld (Name, Änderungsdatum, Dateigröße, Aufnahmedatum) mit Richtung und ein stufenloser Zoom-Regler für die Thumbnail-Größe.
 - Strg+Mausrad über dem Raster ändert die Thumbnail-Größe stufenlos.
@@ -180,6 +184,8 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.4.1 | 2026-10-27
+- Geändert: „Über“ ist jetzt eine Kachelansicht direkt im Programmfenster (Version, Entwickler, Quellcode, Datenschutz, Speicherorte) statt eines Windows-Fensters.
 ## 0.4.0 | 2026-10-27
 - Neu: Belege per Drag-and-Drop ablegen sortiert sie automatisch ein. Jahr und Gläubiger werden aus dem Dateinamen erkannt (vorhandene Ordner werden bevorzugt), schon archivierte Dateien werden übersprungen. Mit gedrückter Umschalttaste öffnet sich stattdessen der Dialog; die Automatik lässt sich im Zahnrad-Menü abschalten.
 - Neu: Finanz-Übersicht oberhalb der Liste mit Einnahmen, Ausgaben und Saldo des laufenden Jahres sowie der Summe aller offenen Rechnungen. Eigene Rechnungen zählen als Einnahme; im Kontextmenü lässt sich jeder Beleg als Einnahme oder Ausgabe markieren.
@@ -214,6 +220,8 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.5.1 | 2026-10-27
+- Geändert: „Über“ ist jetzt eine Kachelansicht direkt im Programmfenster (Version, Entwickler, Quellcode, Datenschutz, Speicherorte) statt eines Windows-Fensters.
 ## 0.5.0 | 2026-10-27
 - Neu: USB-Vault-Key. Zahnrad → „USB-Stick als Vault Key einrichten“ legt auf einem Wechseldatenträger (GetDriveType = DRIVE_REMOVABLE) eine versteckte Schlüsseldatei an. Danach öffnet sich der Tresor nur noch mit diesem Stick; optional zusätzlich mit einem Master-Passwort (Stick + Passwort).
 - Neu: Steckt der Stick schon oder wird er eingesteckt, erkennt der Tresor ihn und entsperrt sich (bei Stick + Passwort nach Eingabe des Passworts). Zieht man den Stick im Betrieb ab, sperrt der Tresor sofort (Gerätemeldung plus Prüfung jede Sekunde).

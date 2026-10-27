@@ -30,9 +30,10 @@
 #include "ImageOps.h"
 #include "Theme.h"
 #include "ThumbnailLoader.h"
+#include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.5"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.3.1"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -452,6 +453,7 @@ private:
     ComPtr<IDWriteFactory> dw;
     ComPtr<ID2D1HwndRenderTarget> rt;
     ComPtr<ID2D1SolidColorBrush> brush;
+    aboutcard::State m_about;             // "Ueber"-Kachelansicht im Fenster (statt MessageBox)
     ComPtr<IDWriteTextFormat> fNormal, fSmall, fBold, fTitle, fIcon, fCenter;
 
     ComPtr<IDWriteTextFormat> fRight, fTag;
@@ -764,7 +766,7 @@ void App::Paint() {
     EnsureDevice();
     if (!rt) return;
     ConsumeThumbs();
-    if (m_searchEdit && IsWindowVisible(m_searchEdit) == (m_viewer ? TRUE : FALSE)) ShowWindow(m_searchEdit, m_viewer ? SW_HIDE : SW_SHOW);   // im Betrachter ausblenden
+    if (m_searchEdit && IsWindowVisible(m_searchEdit) == ((m_viewer || m_about.open) ? TRUE : FALSE)) ShowWindow(m_searchEdit, (m_viewer || m_about.open) ? SW_HIDE : SW_SHOW);   // im Betrachter ausblenden
     rt->BeginDraw();
     rt->Clear(D2D1::ColorF(Theme::Bg));
     if (m_viewer) {
@@ -776,6 +778,22 @@ void App::Paint() {
         DrawDetails();
         DrawTopbar();
         DrawStatus();
+    }
+    if (m_about.open) {
+        RECT acr;
+        GetClientRect(m_hwnd, &acr);
+        aboutcard::Spec sp;
+        sp.name = L"Duncan's Photo Commander";
+        sp.version = APP_VERSION;
+        sp.letter = L'P';
+        sp.accent = Theme::Accent;
+        sp.tiles = {
+            {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
+            {L"Quellcode", L"github.com/Neox365/Duncans-Suite"}, {L"Teil von", L"Duncan's Suite"},
+            {L"Einstellungen", L"%LOCALAPPDATA%\\DuncansPhotoCommander\\settings.ini", true},
+            {L"Datenschutz", L"Deine Fotos bleiben auf diesem Gerät. Das Programm überträgt nichts ins Internet.", true},
+        };
+        aboutcard::Draw(rt.Get(), brush.Get(), dw.Get(), k, acr, sp, m_about);
     }
     HRESULT hr = rt->EndDraw();
     if (hr == static_cast<HRESULT>(D2DERR_RECREATE_TARGET)) {
@@ -2090,9 +2108,7 @@ void App::ShowSettings() {
             } else if (cmd == MENU_OVERWRITE) {
                 m_settings.overwriteOriginals = !m_settings.overwriteOriginals;
             } else if (cmd == MENU_ABOUT) {
-                std::wstring text = L"Duncan's Photo Commander\nTeil von Duncan's Suite\n\nVersion " APP_VERSION
-                                    L"\n\nEinstellungen: %LOCALAPPDATA%\\DuncansPhotoCommander\\settings.ini";
-                MessageBoxW(m_hwnd, text.c_str(), L"Über", MB_OK | MB_ICONINFORMATION);
+                aboutcard::Open(m_about, m_hwnd);
             }
             if (cmd) SaveSettingsNow();
             break;
@@ -3136,6 +3152,11 @@ LRESULT CALLBACK App::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
+    if (m_about.open) {
+        const int r = aboutcard::HandleMessage(m_hwnd, m_about, msg, wp, lp, L"https://github.com/Neox365/Duncans-Suite");
+        if (r == 2) return TRUE;
+        if (r == 1) return 0;
+    }
     switch (msg) {
         case WM_SIZE:
             if (rt) rt->Resize(D2D1::SizeU(LOWORD(lp), HIWORD(lp)));

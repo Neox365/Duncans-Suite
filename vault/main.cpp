@@ -27,10 +27,11 @@
 
 #include "../docs/TextEdit.h"
 #include "../docs/Theme.h"
+#include "../common/AboutCard.h"
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.0"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.5.1"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -354,6 +355,7 @@ private:
     ComPtr<IDWriteFactory> dw;
     ComPtr<ID2D1HwndRenderTarget> rt;
     ComPtr<ID2D1SolidColorBrush> brush;
+    aboutcard::State m_about;             // "Ueber"-Kachelansicht im Fenster (statt MessageBox)
     ComPtr<IDWriteTextFormat> fNormal, fSmall, fBold, fTitle, fBig, fLogo, fCenter, fRight, fBadge, fTop, fWrap;
 
     D2D1_RECT_F rcTop{}, rcCats{}, rcList{}, rcDetail{}, rcStatus{};
@@ -526,6 +528,23 @@ void App::Paint() {
     else {
         DrawMain();
         if (m_dlg.kind != DlgKind::None) DrawDialog();
+    }
+    if (m_about.open) {
+        RECT acr;
+        GetClientRect(m_hwnd, &acr);
+        aboutcard::Spec sp;
+        sp.name = L"Duncan's Vault";
+        sp.version = APP_VERSION;
+        sp.letter = L'V';
+        sp.accent = Theme::Accent;
+        sp.tiles = {
+            {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
+            {L"Quellcode", L"github.com/Neox365/Duncans-Suite"}, {L"Teil von", L"Duncan's Suite"},
+            {L"Verschlüsselung", L"AES-256-GCM; Schlüssel per PBKDF2-HMAC-SHA256 (600.000 Runden) aus dem Master-Passwort und/oder der Schlüsseldatei eines USB-Sticks.", true},
+            {L"Datenschutz", L"Alle Daten bleiben zu 100 % auf diesem Gerät. Es gibt keine Cloud-Verbindung, keinen Sync und keine Telemetrie.", true},
+            {L"Tresor-Datei", (DataDir() / L"vault.dat").wstring() + L"  (die vorherige Fassung liegt als vault.dat.bak daneben)", true},
+        };
+        aboutcard::Draw(rt.Get(), brush.Get(), dw.Get(), k, acr, sp, m_about);
     }
     if (rt->EndDraw() == static_cast<HRESULT>(D2DERR_RECREATE_TARGET)) {
         DiscardDevice();
@@ -1248,6 +1267,7 @@ void App::Lock(bool automatic, const wchar_t* why) {
         m_lockUsb = false;
     }
     m_lockRecovery = false;
+    m_about.open = false;
     m_usbRoot.clear();
     m_usbKeyPath.clear();
     m_stickRoot.clear();
@@ -1922,15 +1942,7 @@ void App::ShowGearMenu() {
         case 5: ExportBackup(); break;
         case 6: BeginImport(); break;
         case 3: ShellExecuteW(m_hwnd, L"open", DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
-        case 4: {
-            const std::wstring text = L"Duncan's Vault\nTeil von Duncan's Suite\n\nVersion " APP_VERSION
-                                      L"\n\nLokaler Tresor für Passwörter, Software-Lizenzen, WLAN-Schlüssel und Notizen.\n"
-                                      L"Verschlüsselung: AES-256-GCM, Schlüssel per PBKDF2-HMAC-SHA256 (600.000 Runden) aus dem Master-Passwort und/oder der Schlüsseldatei eines USB-Sticks.\n\n"
-                                      L"Datenschutz: Alle Daten bleiben zu 100 % auf diesem Gerät. Es gibt keine Cloud-Verbindung, keinen Sync und keine Telemetrie.\n\n"
-                                      L"Tresor-Datei: %LOCALAPPDATA%\\DuncansVault\\vault.dat (eine Sicherung der vorherigen Fassung liegt als vault.dat.bak daneben).";
-            MessageBoxW(m_hwnd, text.c_str(), L"Über", MB_OK | MB_ICONINFORMATION);
-            break;
-        }
+        case 4: aboutcard::Open(m_about, m_hwnd); break;
     }
     Invalidate();
 }
@@ -2126,6 +2138,11 @@ LRESULT CALLBACK App::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
+    if (m_about.open) {
+        const int r = aboutcard::HandleMessage(m_hwnd, m_about, msg, wp, lp, L"https://github.com/Neox365/Duncans-Suite");
+        if (r == 2) return TRUE;
+        if (r == 1) return 0;
+    }
     auto hit = [&](float x, float y) {
         int id = 0;
         for (const auto& b : m_hits) {
