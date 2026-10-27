@@ -208,6 +208,9 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.4.1 | 2026-10-27
+- Neu: Auto-Type kann jetzt auch „nur Benutzername“, „nur Passwort“ und „zweistufig“ (Benutzername, Enter, kurze Pause, Passwort, Enter) tippen – für Seiten wie Nexusmods, die erst nach der E-Mail das Passwortfeld zeigen oder bei denen der Cursor schon im falschen Feld steht.
+- Geändert: Der Hinweis beim Start nennt jetzt das richtige Feld (Benutzernamen- oder Passwort-Feld).
 ## 0.4.0 | 2026-10-27
 - Neu: Knopf „Einloggen / Daten kopieren“ in der Detailansicht. Das Menü kopiert Benutzername oder Passwort, öffnet die Website und kopiert dabei den Benutzernamen oder tippt beides per Auto-Type ein.
 - Neu: Auto-Type (abschaltbar im Zahnrad-Menü): Der Tresor minimiert sich, nach 5 Sekunden werden Benutzername, Tab und Passwort in das aktive Fenster getippt, optional mit Enter. Wenn kein anderes Fenster aktiv ist oder der Tresor gesperrt wurde, wird nichts getippt.

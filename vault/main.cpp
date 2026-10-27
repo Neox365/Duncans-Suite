@@ -29,7 +29,7 @@
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.0"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.4.1"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -39,7 +39,7 @@ namespace {
 
 constexpr UINT_PTR TIMER_CARET = 1, TIMER_SEC = 2;
 constexpr int kNoFocus = -1;
-constexpr ULONGLONG kAutoLockMs = 5ull * 60 * 1000, kClipClearMs = 15ull * 1000, kAutoTypeDelayMs = 5ull * 1000;   // Auto-Type: so lange hat man Zeit, das Eingabefeld im Zielfenster anzuklicken
+constexpr ULONGLONG kAutoLockMs = 5ull * 60 * 1000, kClipClearMs = 15ull * 1000, kAutoTypeDelayMs = 5ull * 1000, kAutoTypeStepMs = 2500;   // Auto-Type: so lange hat man Zeit, das Eingabefeld im Zielfenster anzuklicken
 constexpr float kTopH = 60, kStatusH = 28, kCatW = 240, kDetailW = 430, kRowH = 58, kCatH = 38;
 
 enum Id {
@@ -305,7 +305,7 @@ private:
     void ClearClipboardIfOurs();
     void OpenUrl(const std::wstring& url);
     void ShowLoginMenu();
-    void BeginAutoType(bool enter);
+    void BeginAutoType(bool enter, int mode = 0);
     void RunAutoType();
     void ShowGearMenu();
     void SetNote(const std::wstring& s, bool sticky = false) { m_note = s; m_noteUntil = sticky ? 0 : GetTickCount64() + 7000; }
@@ -355,6 +355,7 @@ private:
     ULONGLONG m_nextTry = 0, m_lastInput = 0, m_clipUntil = 0;
     std::wstring m_autoId;                // Auto-Type: Eintrag, der nach der Wartezeit getippt wird (nur die Id, keine Geheimnisse)
     bool m_autoEnter = false;
+    int m_autoMode = 0;                   // 0: Benutzername, Tab, Passwort; 1: nur Benutzername; 2: nur Passwort; 3: zweistufig (Benutzername, Enter, Pause, Passwort, Enter)
     ULONGLONG m_autoAt = 0;               // Zeitpunkt (GetTickCount64) fuer den Start, 0 = nichts geplant
     std::wstring m_clipText;              // was wir in die Zwischenablage gelegt haben (zum Vergleichen beim Leeren)
 
@@ -1487,6 +1488,9 @@ void App::ShowLoginMenu() {
     const UINT typeFlags = m_settings.autoType && (hasUser || hasSecret) ? 0 : MF_GRAYED;
     AppendMenuW(m, MF_STRING | typeFlags, 4, L"Auto-Type: Benutzername ⇥ Passwort eintippen");
     AppendMenuW(m, MF_STRING | typeFlags, 5, L"Auto-Type und mit Enter absenden");
+    AppendMenuW(m, MF_STRING | (m_settings.autoType && hasUser ? 0 : MF_GRAYED), 6, L"Auto-Type: nur Benutzername eintippen");
+    AppendMenuW(m, MF_STRING | (m_settings.autoType && hasSecret ? 0 : MF_GRAYED), 7, L"Auto-Type: nur Passwort eintippen");
+    AppendMenuW(m, MF_STRING | (m_settings.autoType && hasUser && hasSecret ? 0 : MF_GRAYED), 8, L"Auto-Type zweistufig (Benutzername ⏎, Pause, Passwort ⏎)");
     if (!m_settings.autoType) AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"(Auto-Type im Zahnrad-Menü einschalten)");
     POINT pt{};
     GetCursorPos(&pt);
@@ -1504,26 +1508,31 @@ void App::ShowLoginMenu() {
         case 3: CopyText(e->secret, true, secretWord.c_str()); break;
         case 4: BeginAutoType(false); break;
         case 5: BeginAutoType(true); break;
+        case 6: BeginAutoType(false, 1); break;
+        case 7: BeginAutoType(false, 2); break;
+        case 8: BeginAutoType(true, 3); break;
     }
 }
 
 // Auto-Type: das Fenster des Tresors verschwindet, nach kAutoTypeDelayMs wird in das dann aktive Fenster getippt.
 // In dieser Zeit klickt man das Benutzernamen-Feld an. Der Tresor selbst ist nie das Ziel.
-void App::BeginAutoType(bool enter) {
+void App::BeginAutoType(bool enter, int mode) {
     const vault::Entry* e = Sel();
     if (!e || m_screen != Screen::Main) return;
     if (!m_settings.autoType) { SetNote(L"Auto-Type ist ausgeschaltet (Zahnrad-Menü)."); return; }
     if (e->user.empty() && e->secret.empty()) { SetNote(L"Dieser Eintrag hat nichts zum Eintippen."); return; }
     m_autoId = e->id;
     m_autoEnter = enter;
+    m_autoMode = mode;
     m_autoAt = GetTickCount64() + kAutoTypeDelayMs;
-    SetNote(L"Auto-Type startet in " + std::to_wstring(kAutoTypeDelayMs / 1000) + L" s – jetzt das Benutzernamen-Feld anklicken …", true);
+    SetNote(L"Auto-Type startet in " + std::to_wstring(kAutoTypeDelayMs / 1000) + L" s – jetzt das " + std::wstring(mode == 2 ? L"Passwort-Feld" : L"Benutzernamen-Feld") + L" anklicken …", true);
     ShowWindow(m_hwnd, SW_MINIMIZE);
 }
 
 void App::RunAutoType() {
     const std::wstring id = m_autoId;
     const bool enter = m_autoEnter;
+    const int mode = m_autoMode;
     m_autoAt = 0;
     m_autoId.clear();
     const vault::Entry* e = m_screen == Screen::Main ? FindEntry(id) : nullptr;
@@ -1537,10 +1546,18 @@ void App::RunAutoType() {
     wchar_t title[160]{};
     GetWindowTextW(fg, title, 160);
     bool ok = true;
-    if (!e->user.empty()) ok = TypeText(e->user);
-    if (ok && !e->user.empty() && !e->secret.empty()) { Sleep(60); ok = TypeKey(VK_TAB); Sleep(120); }
-    if (ok && !e->secret.empty()) ok = TypeText(e->secret);
-    if (ok && enter) { Sleep(60); ok = TypeKey(VK_RETURN); }
+    const bool wantUser = mode != 2 && !e->user.empty(), wantSecret = mode != 1 && !e->secret.empty();
+    if (wantUser) ok = TypeText(e->user);
+    if (mode == 3) {
+        // Zweistufige Anmeldung: Seite 1 fragt nur nach dem Benutzernamen, danach laedt das Passwortfeld nach
+        if (ok && wantUser) { Sleep(60); ok = TypeKey(VK_RETURN); }
+        if (ok && wantUser && wantSecret) Sleep(kAutoTypeStepMs);
+        if (ok && wantSecret) ok = TypeText(e->secret);
+    } else {
+        if (ok && wantUser && wantSecret) { Sleep(60); ok = TypeKey(VK_TAB); Sleep(120); }
+        if (ok && wantSecret) ok = TypeText(e->secret);
+    }
+    if (ok && enter && (mode != 3 || wantSecret)) { Sleep(60); ok = TypeKey(VK_RETURN); }
     SetNote(ok ? L"Eingetippt in: " + std::wstring(title) : L"Auto-Type wurde von Windows blockiert (Zielfenster mit Administratorrechten?).");
 }
 
