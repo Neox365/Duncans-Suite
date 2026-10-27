@@ -31,7 +31,7 @@
 #include "Theme.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.1.3"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.4.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -46,17 +46,21 @@ constexpr int kMaxItemRows = 10;    // Positionen im Rechnungsformular
 
 enum Id {
     B_ADD = 1, B_NEW, B_GEAR,
+    T_ADD = 4, T_CLEAR = 5,         // Tag-Leiste: "+ Tags" und "Filter loeschen"
+    T_TAG0 = 6,                     // 6..29 Tag-Chips (Filter); Ids unter D_OK sind bei offenem Dialog gesperrt
     D_OK = 30, D_CANCEL, D_SKIP, D_ADDROW, D_DELROW,
     D_STATUS0 = 40,                 // 40..43 Status-Auswahl im Formular
     D_CRED0 = 50,                   // 50..57 Glaeubiger-Vorschlaege
     D_SAVESENDER = 60,              // Rechnungsdialog: "Als Standard-Absender speichern"
     D_SMALLBIZ = 61,                // Rechnungsdialog: "Kleinunternehmer nach § 19 UStG"
     D_PAGE0 = 62, D_PAGE1 = 63,     // Rechnungsdialog: Seite "Rechnung" / "Absender & Konto"
-    D_EXAMPLE = 64, D_CLEAR = 65    // Rechnungsdialog: "Beispiel laden" / "Felder leeren"
+    D_EXAMPLE = 64, D_CLEAR = 65,   // Rechnungsdialog: "Beispiel laden" / "Felder leeren"
+    D_TAGSUG0 = 70                  // 70..77 Tag-Vorschlaege im Tag-Dialog
 };
+constexpr int kMaxTagChips = 24;
 enum MenuId {
-    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105,
-    C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE
+    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT,
+    C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE, C_INCOME, C_EXPENSE, C_TAGS
 };
 
 struct Settings {
@@ -69,6 +73,7 @@ struct Settings {
     std::wstring taxNo;                 // Steuernummer / USt-IdNr. des Absenders
     bool smallBiz = false;              // Kleinunternehmer nach § 19 UStG (keine USt auf der Rechnung)
     std::wstring owner, court, phone, email, web, bank, iban, bic;   // Absender-Profil fuer die 3-spaltige PDF-Fusszeile
+    bool autoImport = true;             // Ablegen per Drag-and-Drop: Jahr/Glaeubiger automatisch bestimmen und einsortieren (Umschalt = Dialog)
     bool pdfReader = true;              // PDFs im Duncan's PDF Reader oeffnen (falls installiert), sonst Standardprogramm
 };
 
@@ -91,7 +96,7 @@ struct Node {
     int count = 0, depth = 0;
 };
 
-enum class DlgKind { None, Add, Edit, Invoice };
+enum class DlgKind { None, Add, Edit, Invoice, Tags };
 
 struct Dialog {
     DlgKind kind = DlgKind::None;
@@ -155,6 +160,7 @@ void LoadSettings(Settings& st) {
     st.payNote = IniString(ini, L"Zahlungshinweis");
     st.vat = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"MwSt", 19, ini.c_str()), 0, 30);
     st.pdfReader = GetPrivateProfileIntW(L"Allgemein", L"PdfReader", 1, ini.c_str()) != 0;
+    st.autoImport = GetPrivateProfileIntW(L"Allgemein", L"AutoImport", 1, ini.c_str()) != 0;
     st.taxNo = IniString(ini, L"Steuernummer");
     st.owner = IniString(ini, L"Inhaber");
     st.court = IniString(ini, L"Registergericht");
@@ -193,6 +199,7 @@ void SaveSettings(const Settings& st) {
     put(L"Zahlungshinweis", st.payNote);
     put(L"MwSt", std::to_wstring(st.vat));
     put(L"PdfReader", st.pdfReader ? L"1" : L"0");
+    put(L"AutoImport", st.autoImport ? L"1" : L"0");
     put(L"Steuernummer", st.taxNo);
     put(L"Inhaber", st.owner);
     put(L"Registergericht", st.court);
@@ -280,11 +287,15 @@ private:
     void DrawTop();
     void DrawTree();
     void DrawList();
+    void DrawStats();
+    void DrawTags();
     void DrawStatusBar();
     void DrawField(Field& f, bool focused);
     void DrawDialog();
     void DrawAddEdit();
     void DrawInvoice();
+    void DrawTagsDialog();
+    float HeadOff() const;   // Hoehe von Statistik-Leiste, Tag-Leiste und Spaltenkopf
 
     // --- Daten
     void InitRoot();
@@ -300,7 +311,11 @@ private:
     fs::path AbsPath(const std::wstring& rel) const { return fs::path(m_settings.root) / rel; }
 
     // --- Aktionen
-    void AddFiles(std::vector<std::wstring> files);
+    void AddFiles(std::vector<std::wstring> files, bool autoMode = false);
+    void ImportAuto(const std::vector<std::wstring>& files);   // ohne Dialog: Jahr/Glaeubiger raten, kopieren/verschieben, indexieren
+    void BeginTagsDialog();
+    void ApplyTags();
+    void SetKindOfSelected(bool income);
     void PickFilesToAdd();
     void BeginAddDialog();
     void ApplyAdd(bool skipOnly);
@@ -347,7 +362,7 @@ private:
     ComPtr<ID2D1SolidColorBrush> brush;
     ComPtr<IDWriteTextFormat> fNormal, fSmall, fBold, fTitle, fTitleR, fLogo, fCenter, fRight, fBadge;
 
-    D2D1_RECT_F rcTop{}, rcTree{}, rcList{}, rcHead{}, rcStatus{}, rcSearch{};
+    D2D1_RECT_F rcTop{}, rcTree{}, rcList{}, rcStats{}, rcTags{}, rcHead{}, rcStatus{}, rcSearch{};
     std::vector<HitBtn> m_hits;
     int m_hoverBtn = 0, m_hoverRow = -1, m_hoverNode = -1;
     bool m_tracking = false;
@@ -374,9 +389,14 @@ private:
     std::wstring m_note;
     long long m_openCents = 0;
     int m_overdue = 0;
+    docs::Stats m_stats;                                  // Finanz-Uebersicht ueber alle Belege (unabhaengig vom Filter)
+    std::vector<std::pair<std::wstring, int>> m_tags;     // alle Tags mit Anzahl
+    std::set<std::wstring> m_tagFilter;                   // aktive Tag-Filter (klein geschrieben, alle muessen passen)
 };
 
-constexpr float kTopH = 60, kStatusH = 28, kTreeW = 270, kHeadH = 38, kRowH = 46, kNodeH = 32;
+constexpr float kTopH = 60, kStatusH = 28, kTreeW = 270, kHeadH = 38, kRowH = 46, kNodeH = 32, kStatsH = 68, kTagsH = 42;
+
+float App::HeadOff() const { return (kStatsH + kTagsH + kHeadH) * k; }
 
 // ============================================================================
 // Setup
@@ -462,7 +482,9 @@ void App::Layout() {
     rcStatus = {0, Ht - kStatusH * k, Wd, Ht};
     rcTree = {0, rcTop.bottom, kTreeW * k, rcStatus.top};
     rcList = {rcTree.right, rcTop.bottom, Wd, rcStatus.top};
-    rcHead = {rcList.left, rcList.top, rcList.right, rcList.top + kHeadH * k};
+    rcStats = {rcList.left, rcList.top, rcList.right, rcList.top + kStatsH * k};
+    rcTags = {rcList.left, rcStats.bottom, rcList.right, rcStats.bottom + kTagsH * k};
+    rcHead = {rcList.left, rcTags.bottom, rcList.right, rcTags.bottom + kHeadH * k};
     ClampScroll();
 }
 
@@ -618,12 +640,21 @@ void App::BuildTree() {
 void App::RebuildView() {
     const Node& nd = m_nodes[m_node];
     m_view.clear();
+    // Tags und Finanz-Uebersicht sind live: jede Aenderung der Belege laeuft durch diese Funktion
+    m_tags = docs::CollectTags(m_all);
+    for (auto it = m_tagFilter.begin(); it != m_tagFilter.end();) {   // Filter auf Tags, die es nicht mehr gibt, entfernen
+        bool found = false;
+        for (const auto& t : m_tags) found = found || docs::Lower(t.first) == *it;
+        it = found ? std::next(it) : m_tagFilter.erase(it);
+    }
+    m_stats = docs::ComputeStats(m_all, TodayIso().substr(0, 4), TodayIso());
     for (int i = 0; i < (int)m_all.size(); ++i) {
         const docs::Doc& d = m_all[i];
         const std::wstring y = d.year.empty() ? L"?" : d.year;
         if (!nd.year.empty() && y != nd.year) continue;
         if (!nd.creditor.empty() && d.creditor != nd.creditor) continue;
         if (!docs::Matches(d, m_search.ed.text)) continue;
+        if (!docs::MatchesTags(d, m_tagFilter)) continue;
         m_view.push_back(i);
     }
     const int col = m_settings.sortCol;
@@ -741,8 +772,65 @@ void App::DrawTree() {
     rt->PopAxisAlignedClip();
 }
 
+void App::DrawStats() {
+    Fill(rcStats, Theme::Bg);
+    const std::wstring year = TodayIso().substr(0, 4);
+    const float pad = 18 * k, gap = 10 * k, cw = (W(rcStats) - 2 * pad - 3 * gap) / 4;
+    const long long saldo = m_stats.income - m_stats.expense;
+    std::wstring openLabel = L"Offene Rechnungen  ·  " + std::to_wstring(m_stats.openCount);
+    if (m_stats.overdue > 0) openLabel += L"  (" + std::to_wstring(m_stats.overdue) + L" überfällig)";
+    struct Card { std::wstring label, value; unsigned color; };
+    const Card cards[4] = {{L"Einnahmen " + year, docs::FormatAmount(m_stats.income), Theme::Paid},
+                           {L"Ausgaben " + year, docs::FormatAmount(m_stats.expense), Theme::Open},
+                           {L"Saldo " + year, docs::FormatAmount(saldo), saldo >= 0 ? Theme::Paid : Theme::Open},
+                           {openLabel, docs::FormatAmount(m_stats.open), m_stats.overdue > 0 ? Theme::Open : Theme::Warn}};
+    for (int i = 0; i < 4; ++i) {
+        const float x = rcStats.left + pad + i * (cw + gap);
+        const D2D1_RECT_F r{x, rcStats.top + 10 * k, x + cw, rcStats.bottom - 6 * k};
+        FillRR(r, 10 * k, Theme::Card);
+        FillRR({r.left, r.top + 10 * k, r.left + 3 * k, r.bottom - 10 * k}, 1.5f * k, cards[i].color);
+        Txt(cards[i].label, {r.left + 16 * k, r.top + 6 * k, r.right - 8 * k, r.top + 26 * k}, fSmall.Get(), Theme::TextDim);
+        Txt(cards[i].value, {r.left + 16 * k, r.top + 25 * k, r.right - 8 * k, r.bottom - 2 * k}, fBold.Get(), cards[i].color);
+    }
+}
+
+void App::DrawTags() {
+    Fill(rcTags, Theme::Bg);
+    const float pad = 18 * k, h = 26 * k, y = rcTags.top + (H(rcTags) - h) / 2;
+    Txt(L"TAGS", {rcList.left + pad, rcTags.top, rcList.left + pad + 48 * k, rcTags.bottom}, fSmall.Get(), Theme::TextDim);
+    float right = rcTags.right - pad;
+    const D2D1_RECT_F add{right - 92 * k, y, right, y + h};
+    Button(T_ADD, add, L"+ Tags", false);
+    right = add.left - 8 * k;
+    if (!m_tagFilter.empty()) {
+        const D2D1_RECT_F clr{right - 92 * k, y, right, y + h};
+        Button(T_CLEAR, clr, L"✕ Filter", false, true);
+        right = clr.left - 8 * k;
+    }
+    float x = rcList.left + pad + 52 * k;
+    if (m_tags.empty()) {
+        Txt(L"Noch keine Tags. Belege markieren und „+ Tags“ wählen.", {x, rcTags.top, right, rcTags.bottom}, fSmall.Get(), Theme::TextDim);
+        return;
+    }
+    for (int i = 0; i < (int)m_tags.size() && i < kMaxTagChips; ++i) {
+        const std::wstring label = m_tags[i].first + L"  " + std::to_wstring(m_tags[i].second);
+        const float w = TextW(label, fBadge.Get()) + 24 * k;
+        if (x + w > right) break;
+        const D2D1_RECT_F r{x, y, x + w, y + h};
+        const bool on = m_tagFilter.count(docs::Lower(m_tags[i].first)) > 0;
+        const bool hover = m_hoverBtn == T_TAG0 + i;
+        FillRR(r, h / 2, on ? Theme::Accent : Theme::Card, on ? 0.30f : (hover ? 1.f : 0.8f));
+        if (on) StrokeRR(r, h / 2, Theme::Accent, 1.5f);
+        Txt(label, r, fBadge.Get(), on ? Theme::Text : Theme::TextDim);
+        m_hits.push_back({T_TAG0 + i, r});
+        x += w + 8 * k;
+    }
+}
+
 void App::DrawList() {
     Fill(rcList, Theme::Bg);
+    DrawStats();
+    DrawTags();
     // Spaltenbreiten: Anteile der Breite abzueglich Rand
     const float pad = 18 * k, total = W(rcList) - 2 * pad;
     const float wName = total * 0.33f, wCred = total * 0.21f, wAmt = total * 0.13f, wDue = total * 0.15f;
@@ -779,7 +867,7 @@ void App::DrawList() {
         Txt(d.name, {xName, y, xName + wName - 8 * k, y + rh}, fNormal.Get(), Theme::Text);
         Txt(d.creditor + (d.year.empty() ? L"" : L"  ·  " + d.year), {xCred, y, xCred + wCred - 8 * k, y + rh}, fNormal.Get(), Theme::TextDim);
         Txt(docs::FormatAmount(d.m.cents), {xAmt, y, xAmt + wAmt - 10 * k, y + rh}, fRight.Get(),
-            d.m.cents == docs::kUnknown ? Theme::TextDim : Theme::Text);
+            d.m.cents == docs::kUnknown ? Theme::TextDim : (d.m.income ? Theme::Paid : Theme::Text));
         const bool overdue = d.m.status == docs::Status::Open && !d.m.due.empty() && d.m.due < today;
         std::wstring due = d.m.due.empty() ? L"–" : docs::FormatDate(d.m.due);
         if (overdue) due += L"  überfällig";
@@ -789,8 +877,8 @@ void App::DrawList() {
             Txt(d.m.rate, {xStat + bw + 8 * k, y, rcList.right - 16 * k, y + rh}, fSmall.Get(), Theme::TextDim);
     }
     if (m_view.empty()) {
-        const bool filtered = !m_search.ed.text.empty() || m_node != 0;
-        Txt(m_search.ed.text.empty() && m_node != 0 && !m_all.empty() ? L"In diesem Ordner liegen noch keine Rechnungen."
+        const bool filtered = !m_search.ed.text.empty() || m_node != 0 || !m_tagFilter.empty();
+        Txt(m_search.ed.text.empty() && m_tagFilter.empty() && m_node != 0 && !m_all.empty() ? L"In diesem Ordner liegen noch keine Rechnungen."
             : m_all.empty() ? L"Noch keine Rechnungen.\nPDFs hierher ziehen oder „+ Hinzufügen“ wählen."
                           : (filtered ? L"Keine Treffer für diesen Filter." : L""),
             body, fCenter.Get(), Theme::TextDim);
@@ -861,6 +949,7 @@ void App::DrawField(Field& f, bool focused) {
 void App::DrawDialog() {
     Fill({0, 0, rcStatus.right, rcStatus.bottom}, 0x000000, 0.6f);
     if (m_dlg.kind == DlgKind::Invoice) DrawInvoice();
+    else if (m_dlg.kind == DlgKind::Tags) DrawTagsDialog();
     else DrawAddEdit();
 }
 
@@ -1103,7 +1192,7 @@ Field* App::FieldById(int id) {
 Field* App::FocusedField() { return m_focusId != kNoFocus ? FieldById(m_focusId) : nullptr; }
 
 void App::ClampScroll() {
-    const float content = (float)m_view.size() * kRowH * k, view = std::max(0.f, H(rcList) - kHeadH * k);
+    const float content = (float)m_view.size() * kRowH * k, view = std::max(0.f, H(rcList) - HeadOff());
     m_scroll = std::clamp(m_scroll, 0.f, std::max(0.f, content - view));
     const float tcontent = (float)m_nodes.size() * kNodeH * k + 32 * k, tview = H(rcTree);
     m_treeScroll = std::clamp(m_treeScroll, 0.f, std::max(0.f, tcontent - tview));
@@ -1133,7 +1222,7 @@ int App::NodeAt(float x, float y) const {
 }
 
 void App::EnsureRowVisible(int vi) {
-    const float rh = kRowH * k, view = H(rcList) - kHeadH * k;
+    const float rh = kRowH * k, view = H(rcList) - HeadOff();
     if (vi * rh < m_scroll) m_scroll = vi * rh;
     else if ((vi + 1) * rh > m_scroll + view) m_scroll = (vi + 1) * rh - view;
     ClampScroll();
@@ -1361,10 +1450,11 @@ void App::OnDropFiles(HDROP drop) {
     }
     DragFinish(drop);
     SetForegroundWindow(m_hwnd);
-    AddFiles(files);
+    // Standard laut Einstellung; mit gedrueckter Umschalttaste wird das Gegenteil gemacht (Dialog statt automatisch)
+    AddFiles(files, m_settings.autoImport != (GetKeyState(VK_SHIFT) < 0));
 }
 
-void App::AddFiles(std::vector<std::wstring> in) {
+void App::AddFiles(std::vector<std::wstring> in, bool autoMode) {
     std::vector<std::wstring> files;
     std::error_code ec;
     for (const auto& p : in) {
@@ -1384,6 +1474,10 @@ void App::AddFiles(std::vector<std::wstring> in) {
     if (m_dlg.kind != DlgKind::None) {
         SetNote(L"Bitte erst den geöffneten Dialog abschließen.");
         Invalidate();
+        return;
+    }
+    if (autoMode) {
+        ImportAuto(files);
         return;
     }
     m_dlg = Dialog{};
@@ -1527,6 +1621,164 @@ void App::ApplyAdd(bool skipOnly) {
     lastAdded.clear();
     SetNote(added == 0 ? L"Nichts hinzugefügt." : std::to_wstring(added) + (added == 1 ? L" Rechnung" : L" Rechnungen") + L" hinzugefügt");
     Invalidate();
+}
+
+void App::ImportAuto(const std::vector<std::wstring>& files) {
+    std::set<std::wstring> knownSet;
+    for (const auto& d : m_all) knownSet.insert(d.creditor);
+    std::vector<std::wstring> known(knownSet.begin(), knownSet.end());
+    std::set<std::wstring> imported;
+    std::wstring last;
+    int dup = 0, fail = 0;
+    for (const auto& src : files) {
+        const std::wstring name = fs::path(src).filename().wstring();
+        const std::wstring year = docs::GuessYear(name, FileYear(src));
+        const std::wstring cred = docs::SanitizeName(docs::GuessCreditor(name, known), L"Sonstige");
+        std::error_code e1, e2;
+        const fs::path same = m_rootPath / docs::SanitizeName(year, L"Unbekannt") / cred / docs::SanitizeFileName(name, L"Datei");
+        if (fs::exists(same, e1) && fs::file_size(same, e1) == fs::file_size(src, e2) && !e1 && !e2) { ++dup; continue; }   // schon archiviert
+        const fs::path target = docs::TargetPath(m_rootPath, year, cred, name);
+        fs::create_directories(target.parent_path(), e1);
+        const bool ok = m_settings.moveFiles ? MoveFileExW(src.c_str(), target.c_str(), MOVEFILE_COPY_ALLOWED) != 0
+                                             : CopyFileW(src.c_str(), target.c_str(), TRUE) != 0;
+        if (!ok) { ++fail; continue; }
+        std::wstring rel = fs::relative(target, m_rootPath, e1).wstring();
+        std::replace(rel.begin(), rel.end(), L'/', L'\\');
+        m_meta[rel] = docs::Meta{};   // Status Offen; Betrag und Faelligkeit ergaenzt man mit F2
+        imported.insert(rel);
+        last = rel;
+        known.push_back(cred);
+    }
+    if (!imported.empty()) SaveIndex();
+    Refresh();
+    if (!imported.empty()) {
+        m_node = 0;   // "Alle Rechnungen": die neuen Belege sollen sichtbar sein
+        RebuildView();
+        m_search.ed.SetText(L"");
+        m_tagFilter.clear();
+        RebuildView();
+        m_sel = imported;
+        m_focusRel = m_anchorRel = last;
+        for (int i = 0; i < (int)m_view.size(); ++i)
+            if (m_all[m_view[i]].rel == last) { EnsureRowVisible(i); break; }
+    }
+    std::wstring note = std::to_wstring(imported.size()) + (imported.size() == 1 ? L" Beleg" : L" Belege") + L" automatisch nach Jahr und Gläubiger einsortiert";
+    if (imported.empty()) note = L"Nichts importiert";
+    else if (imported.size() == 1) note += L"  ·  F2: Betrag und Fälligkeit ergänzen, Doppelklick: im PDF Reader öffnen";
+    if (dup) note += L"  ·  " + std::to_wstring(dup) + L" schon vorhanden";
+    if (fail) note += L"  ·  " + std::to_wstring(fail) + L" fehlgeschlagen";
+    SetNote(note);
+    Invalidate();
+}
+
+void App::BeginTagsDialog() {
+    if (m_dlg.kind != DlgKind::None) return;
+    const auto sel = SelectedDocs();
+    if (sel.empty()) {
+        SetNote(L"Zuerst Belege markieren, dann Tags vergeben.");
+        Invalidate();
+        return;
+    }
+    m_dlg = Dialog{};
+    Dialog& d = m_dlg;
+    d.kind = DlgKind::Tags;
+    d.title = L"Tags vergeben";
+    d.subtitle = sel.size() == 1 ? sel[0]->name : std::to_wstring(sel.size()) + L" markierte Belege";
+    d.fields.push_back(MakeField(0, L"Tags hinzufügen (mit Komma trennen)", L"z. B. Steuer, Büro, Software", L"", 100));
+    d.fields.push_back(MakeField(1, L"Tags entfernen", L"leer lassen, wenn nichts entfernt werden soll", L"", 100));
+    d.error.clear();
+    for (const auto& t : m_tags)
+        if (d.creditorChips.size() < 8) d.creditorChips.push_back(t.first);   // vorhandene Tags als Vorschlaege
+    m_focusId = kNoFocus;
+    FocusNext(false);
+    Invalidate();
+}
+
+void App::ApplyTags() {
+    Dialog& d = m_dlg;
+    const Field* addF = FieldById(0);
+    const Field* remF = FieldById(1);
+    const std::wstring add = addF ? addF->ed.text : L"", rem = remF ? remF->ed.text : L"";
+    if (docs::SplitTags(add).empty() && docs::SplitTags(rem).empty()) {
+        d.error = L"Bitte mindestens einen Tag eingeben.";
+        Invalidate();
+        return;
+    }
+    int changed = 0;
+    for (const docs::Doc* doc : SelectedDocs()) {
+        docs::Meta m = doc->m;
+        m.tags = docs::EditTags(m.tags, add, rem);
+        if (m.tags == doc->m.tags) continue;
+        m_meta[doc->rel] = m;
+        ++changed;
+    }
+    if (changed) SaveIndex();
+    CloseDialog();
+    Refresh();
+    SetNote(changed == 0 ? L"Keine Änderung an den Tags." : L"Tags bei " + std::to_wstring(changed) + (changed == 1 ? L" Beleg" : L" Belegen") + L" geändert");
+    Invalidate();
+}
+
+void App::SetKindOfSelected(bool income) {
+    int n = 0;
+    for (const docs::Doc* doc : SelectedDocs()) {
+        if (doc->m.income == income) continue;
+        docs::Meta m = doc->m;
+        m.income = income;
+        m_meta[doc->rel] = m;
+        ++n;
+    }
+    if (n) SaveIndex();
+    Refresh();
+    SetNote(std::to_wstring(n) + (n == 1 ? L" Beleg" : L" Belege") + (income ? L" als Einnahme markiert" : L" als Ausgabe markiert"));
+    Invalidate();
+}
+
+void App::DrawTagsDialog() {
+    Dialog& d = m_dlg;
+    const float bw = 560 * k, pad = 24 * k, fh = 38 * k;
+    const float height = pad + 30 * k + 28 * k + 2 * (fh + 22 * k) + 36 * k /*Vorschlaege*/ + 30 * k /*Fehler*/ + 44 * k + pad;
+    RECT cr;
+    GetClientRect(m_hwnd, &cr);
+    d.box = {(cr.right - bw) / 2, std::max(20.f * k, (cr.bottom - height) / 2), (cr.right + bw) / 2, 0};
+    d.box.bottom = d.box.top + height;
+    FillRR(d.box, 14 * k, Theme::Panel);
+    StrokeRR(d.box, 14 * k, Theme::Border);
+    float y = d.box.top + pad;
+    Txt(d.title, {d.box.left + pad, y, d.box.right - pad, y + 30 * k}, fTitle.Get(), Theme::Text);
+    y += 30 * k;
+    Txt(d.subtitle, {d.box.left + pad, y, d.box.right - pad, y + 24 * k}, fSmall.Get(), Theme::TextDim);
+    y += 28 * k;
+    const float x0 = d.box.left + pad, fw = W(d.box) - 2 * pad;
+    auto place = [&](int id) {
+        Field* f = FieldById(id);
+        if (!f) return;
+        Txt(f->label, {x0, y, x0 + fw, y + 18 * k}, fSmall.Get(), Theme::TextDim);
+        f->rc = {x0, y + 20 * k, x0 + fw, y + 20 * k + fh};
+        y += 22 * k + fh;
+    };
+    place(0);
+    float cx = x0;   // vorhandene Tags zum Anklicken
+    for (int i = 0; i < (int)d.creditorChips.size() && i < 8; ++i) {
+        const float cw = TextW(d.creditorChips[i], fSmall.Get()) + 22 * k;
+        if (cx + cw > x0 + fw) break;
+        const D2D1_RECT_F r{cx, y + 2 * k, cx + cw, y + 26 * k};
+        FillRR(r, 12 * k, m_hoverBtn == D_TAGSUG0 + i ? Theme::CardHover : Theme::Card);
+        Txt(d.creditorChips[i], r, fBadge.Get(), Theme::TextDim);
+        m_hits.push_back({D_TAGSUG0 + i, r});
+        cx += cw + 8 * k;
+    }
+    y += 36 * k;
+    place(1);
+    if (!d.error.empty()) Txt(d.error, {x0, y, x0 + fw, y + 26 * k}, fNormal.Get(), Theme::Danger);
+    y += 30 * k;
+    const float bh = 38 * k;
+    float bx = d.box.right - pad;
+    D2D1_RECT_F ok{bx - 150 * k, y, bx, y + bh};
+    Button(D_OK, ok, L"Übernehmen", true);
+    bx = ok.left - 10 * k;
+    Button(D_CANCEL, {bx - 130 * k, y, bx, y + bh}, L"Abbrechen", false);
+    for (auto& f : d.fields) DrawField(f, m_focusId == f.id);
 }
 
 void App::BeginEditDialog(const docs::Doc& doc) {
@@ -1728,7 +1980,8 @@ void App::ApplyInvoice() {
     m.cents = invoice::Compute(data).gross;
     m.due = data.dueIso;
     m.status = d.exampleLoaded ? docs::Status::Paid : docs::Status::Open;   // Beispiele sollen die offenen Betraege nicht verfaelschen
-    m.tags = (d.exampleLoaded ? L"Beispiel " : L"") + std::wstring(L"eigene Rechnung ") + docs::CleanField(data.recipient);
+    m.income = !d.exampleLoaded;   // eigene Rechnung = Einnahme; Beispiele zaehlen nicht in die Finanz-Uebersicht
+    m.tags = docs::EditTags(L"", std::wstring(d.exampleLoaded ? L"Beispiel, " : L"") + L"eigene Rechnung, " + data.recipient, L"");
     m_meta[rel] = m;
     SaveIndex();
     // Absenderdaten als Standard fuer die naechsten Rechnungen merken (nur wenn die Checkbox gesetzt ist)
@@ -1765,6 +2018,7 @@ void App::ShowGearMenu() {
     AppendMenuW(m, MF_STRING, M_OPENROOT, L"Rechnungsordner im Explorer öffnen");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (m_settings.moveFiles ? MF_CHECKED : 0), M_MOVE, L"Beim Hinzufügen verschieben statt kopieren");
+    AppendMenuW(m, MF_STRING | (m_settings.autoImport ? MF_CHECKED : 0), M_AUTOIMPORT, L"Beim Ablegen automatisch einsortieren (Umschalt = Dialog)");
     const bool haveReader = !FindPdfReader().empty();
     AppendMenuW(m, MF_STRING | (m_settings.pdfReader && haveReader ? MF_CHECKED : 0) | (haveReader ? 0 : MF_GRAYED), M_PDFREADER,
                 haveReader ? L"PDFs im Duncan's PDF Reader \u00F6ffnen" : L"PDFs im Duncan's PDF Reader \u00F6ffnen (nicht gefunden)");
@@ -1779,6 +2033,7 @@ void App::ShowGearMenu() {
         case M_ROOT: ChangeRoot(); break;
         case M_OPENROOT: ShellExecuteW(m_hwnd, L"open", m_settings.root.c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
         case M_MOVE: m_settings.moveFiles = !m_settings.moveFiles; SaveSettings(m_settings); break;
+        case M_AUTOIMPORT: m_settings.autoImport = !m_settings.autoImport; SaveSettings(m_settings); break;
         case M_PDFREADER: m_settings.pdfReader = !m_settings.pdfReader; SaveSettings(m_settings); break;
         case M_RESCAN: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); break;
         case M_ABOUT: {
@@ -1846,6 +2101,13 @@ void App::ShowContextMenu(int x, int y) {
         InsertMenuItemW(m, GetMenuItemCount(m), TRUE, &mi);
     }
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    bool allIncome = true;
+    for (const auto* d : sel) allIncome = allIncome && d->m.income;
+    AppendMenuW(m, MF_STRING | (allIncome ? MF_CHECKED : 0), C_INCOME, L"Als Einnahme z\u00E4hlen");
+    AppendMenuW(m, MF_STRING | (!allIncome && std::none_of(sel.begin(), sel.end(), [](const docs::Doc* d) { return d->m.income; }) ? MF_CHECKED : 0), C_EXPENSE,
+                L"Als Ausgabe z\u00E4hlen");
+    AppendMenuW(m, MF_STRING, C_TAGS, L"Tags vergeben \u2026\tStrg+T");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (sel.size() == 1 ? 0 : MF_GRAYED), C_EDIT, L"Bearbeiten \u2026");
     AppendMenuW(m, MF_STRING, C_DELETE, L"L\u00F6schen");
     POINT pt{x, y};
@@ -1859,6 +2121,9 @@ void App::ShowContextMenu(int x, int y) {
     else if (cmd >= C_STATUS0 && cmd < C_STATUS0 + 4) SetStatusOfSelected((docs::Status)(cmd - C_STATUS0));
     else if (cmd == C_EDIT && sel.size() == 1) BeginEditDialog(*sel[0]);
     else if (cmd == C_DELETE) TrashSelected();
+    else if (cmd == C_INCOME) SetKindOfSelected(true);
+    else if (cmd == C_EXPENSE) SetKindOfSelected(false);
+    else if (cmd == C_TAGS) BeginTagsDialog();
 }
 
 // ============================================================================
@@ -1873,6 +2138,7 @@ void App::DialogKey(WPARAM vk) {
         if (m_dlg.kind == DlgKind::Invoice && !ctrl) FocusNext(false);   // im Rechnungsformular: Enter = naechstes Feld
         else if (m_dlg.kind == DlgKind::Add) ApplyAdd(false);
         else if (m_dlg.kind == DlgKind::Edit) ApplyEdit();
+        else if (m_dlg.kind == DlgKind::Tags) ApplyTags();
         else ApplyInvoice();
         return;
     }
@@ -1900,6 +2166,7 @@ void App::OnKey(WPARAM vk) {
             case 'F': m_focusId = kSearchId; m_search.ed.SelectAll(); ResetCaret(); Invalidate(); return;
             case 'N': BeginInvoiceDialog(); return;
             case 'O': PickFilesToAdd(); return;
+            case 'T': BeginTagsDialog(); return;
             case 'A':
                 m_sel.clear();
                 for (int i : m_view) m_sel.insert(m_all[i].rel);
@@ -1907,7 +2174,7 @@ void App::OnKey(WPARAM vk) {
                 return;
         }
     }
-    const int page = std::max(1, (int)((H(rcList) - kHeadH * k) / (kRowH * k)) - 1);
+    const int page = std::max(1, (int)((H(rcList) - HeadOff()) / (kRowH * k)) - 1);
     switch (vk) {
         case VK_UP: MoveSelection(-1, shift); break;
         case VK_DOWN: MoveSelection(1, shift); break;
@@ -1952,8 +2219,11 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case D_OK:
                 if (m_dlg.kind == DlgKind::Add) ApplyAdd(false);
                 else if (m_dlg.kind == DlgKind::Edit) ApplyEdit();
+                else if (m_dlg.kind == DlgKind::Tags) ApplyTags();
                 else ApplyInvoice();
                 break;
+            case T_ADD: BeginTagsDialog(); break;
+            case T_CLEAR: m_tagFilter.clear(); m_scroll = 0; RebuildView(); break;
             case D_CANCEL: CloseDialog(); break;
             case D_SAVESENDER: m_dlg.saveSender = !m_dlg.saveSender; break;
             case D_PAGE0: case D_PAGE1:
@@ -1989,7 +2259,19 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 }
                 break;
             default:
-                if (id >= D_STATUS0 && id < D_STATUS0 + 4) {
+                if (id >= T_TAG0 && id < T_TAG0 + kMaxTagChips) {   // Tag-Filter ein-/ausschalten
+                    if (const int i = id - T_TAG0; i < (int)m_tags.size()) {
+                        const std::wstring key = docs::Lower(m_tags[i].first);
+                        if (!m_tagFilter.erase(key)) m_tagFilter.insert(key);
+                        m_scroll = 0;
+                        RebuildView();
+                    }
+                }
+                else if (id >= D_TAGSUG0 && id < D_TAGSUG0 + 8) {   // Vorschlag in das Feld "Tags hinzufuegen" uebernehmen
+                    if (Field* f = FieldById(0); f && id - D_TAGSUG0 < (int)m_dlg.creditorChips.size())
+                        f->ed.SetText(docs::EditTags(f->ed.text, m_dlg.creditorChips[id - D_TAGSUG0], L""));
+                }
+                else if (id >= D_STATUS0 && id < D_STATUS0 + 4) {
                     m_dlg.status = kStatusOrder[id - D_STATUS0];
                     if (m_focusId == 6 && m_dlg.status != docs::Status::Installment) m_focusId = kNoFocus;   // Ratenfeld wird ausgeblendet
                 }
@@ -2130,7 +2412,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                     m_sel = {d.rel};
                     m_focusRel = m_anchorRel = d.rel;
                 }
-            } else if (In(rcList, x, y)) {
+            } else if (In(rcList, x, y) && y >= rcHead.bottom) {   // Klick auf die leere Liste hebt die Auswahl auf (nicht in Statistik/Tag-Leiste)
                 m_sel.clear();
             }
             Invalidate();
