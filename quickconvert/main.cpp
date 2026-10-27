@@ -4,6 +4,7 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <shobjidl.h>
 
 #include <algorithm>
@@ -19,7 +20,7 @@
 #include "Convert.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.1.0"
+#define APP_VERSION L"0.2.0"
 #endif
 
 namespace {
@@ -37,18 +38,26 @@ constexpr COLORREF kRed = RGB(0xF3, 0x8B, 0xA8);
 constexpr COLORREF kOnAccent = RGB(0x1E, 0x1E, 0x2E);
 
 enum : int {
-    IDC_ADD = 100, IDC_OUT = 101, IDC_CLEAR = 102, IDC_GO = 103,
+    IDC_ADD = 100, IDC_OUT = 101, IDC_CLEAR = 102, IDC_GO = 103, IDC_OPEN = 104,
     IDC_IMG0 = 110,   // 110..114: PNG, JPG, WEBP, BMP, HEIC
-    IDC_AUD0 = 120,   // 120..122: MP3, M4A, WAV
-    IDM_OUT_PICK = 200, IDM_OUT_SAME = 201,
+    IDC_AUD0 = 120,   // 120..123: MP3, M4A, WAV, MP4
+    IDM_OUT_PICK = 200, IDM_OUT_SAME = 201, IDM_OUT_SHOW = 202,
+    IDM_OUT_RECENT0 = 210,   // 210..214: zuletzt benutzte Zielordner
 };
+constexpr int kAudCount = 4, kMaxRecent = 5;
 constexpr UINT WM_APP_UPDATE = WM_APP + 1;   // ein Eintrag hat sich geaendert
 constexpr UINT WM_APP_DONE = WM_APP + 2;     // alle Worker sind fertig
 
 constexpr conv::ImageFmt kImgFmts[] = {conv::ImageFmt::Png, conv::ImageFmt::Jpeg, conv::ImageFmt::Webp, conv::ImageFmt::Bmp, conv::ImageFmt::Heic};
 constexpr const wchar_t* kImgNames[] = {L"PNG", L"JPG", L"WEBP", L"BMP", L"HEIC"};
-constexpr conv::AudioFmt kAudFmts[] = {conv::AudioFmt::Mp3, conv::AudioFmt::M4a, conv::AudioFmt::Wav};
-constexpr const wchar_t* kAudNames[] = {L"MP3", L"M4A", L"WAV"};
+constexpr conv::AudioFmt kAudFmts[kAudCount] = {conv::AudioFmt::Mp3, conv::AudioFmt::M4a, conv::AudioFmt::Wav, conv::AudioFmt::Mp4};
+constexpr const wchar_t* kAudNames[kAudCount] = {L"MP3", L"M4A", L"WAV", L"MP4"};
+
+const wchar_t* AudName(conv::AudioFmt f) {
+    for (int i = 0; i < kAudCount; ++i)
+        if (kAudFmts[i] == f) return kAudNames[i];
+    return L"";
+}
 
 enum class State { Waiting, Running, Done, Failed };
 
@@ -57,7 +66,8 @@ struct Item {
     conv::Kind kind = conv::Kind::Unknown;
     State state = State::Waiting;
     int pct = 0;
-    std::wstring text;   // Ergebnisdatei (Done) oder Fehlertext (Failed)
+    std::wstring text;      // Ergebnisdatei (Done) oder Fehlertext (Failed)
+    std::wstring outPath;   // vollstaendiger Pfad der Ergebnisdatei (Done)
 };
 
 struct App {
@@ -72,6 +82,8 @@ struct App {
     int audSel = 0;      // MP3
     int quality = 85;
     std::wstring outDir; // leer: neben der Originaldatei
+    std::vector<std::wstring> recent;   // zuletzt benutzte Zielordner (neueste zuerst)
+    bool openFolder = false;            // nach dem Stapel den Zielordner im Explorer oeffnen
 
     bool running = false;
     std::atomic<bool> cancel{false};
@@ -84,8 +96,8 @@ struct App {
     RECT zone{}, slider{};
     int scroll = 0;
     bool dragSlider = false;
-    HWND btnAdd = nullptr, btnOut = nullptr, btnClear = nullptr, btnGo = nullptr;
-    HWND chipImg[5]{}, chipAud[3]{};
+    HWND btnAdd = nullptr, btnOut = nullptr, btnClear = nullptr, btnGo = nullptr, btnOpen = nullptr;
+    HWND chipImg[5]{}, chipAud[kAudCount]{};
 
     int S(int v) const { return MulDiv(v, static_cast<int>(dpi), 96); }
 } g;
@@ -93,6 +105,48 @@ struct App {
 // ---------------------------------------------------------------------------------------------------------------------
 // Hilfen
 // ---------------------------------------------------------------------------------------------------------------------
+
+std::wstring IniPath() {
+    PWSTR p = nullptr;
+    if (FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &p)) || !p) return L"";
+    std::wstring dir = std::wstring(p) + L"\\DuncansQuickConvert";
+    CoTaskMemFree(p);
+    CreateDirectoryW(dir.c_str(), nullptr);
+    return dir + L"\\settings.ini";
+}
+
+void LoadSettings() {
+    const std::wstring ini = IniPath();
+    if (ini.empty()) return;
+    auto str = [&](const wchar_t* sec, const wchar_t* key) {
+        wchar_t buf[1024]{};
+        GetPrivateProfileStringW(sec, key, L"", buf, 1024, ini.c_str());
+        return std::wstring(buf);
+    };
+    g.imgSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"BildFormat", g.imgSel, ini.c_str())), 0, 4);
+    g.audSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"AudioFormat", g.audSel, ini.c_str())), 0, kAudCount - 1);
+    g.quality = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"Qualitaet", g.quality, ini.c_str())), 0, 100);
+    g.openFolder = GetPrivateProfileIntW(L"Allgemein", L"OrdnerOeffnen", 0, ini.c_str()) != 0;
+    g.outDir = str(L"Allgemein", L"Zielordner");
+    if (!g.outDir.empty() && !(GetFileAttributesW(g.outDir.c_str()) & FILE_ATTRIBUTE_DIRECTORY)) g.outDir.clear();   // Ordner gibt es nicht mehr
+    g.recent.clear();
+    for (int i = 0; i < kMaxRecent; ++i) {
+        const std::wstring d = str(L"Zuletzt", (L"Ordner" + std::to_wstring(i)).c_str());
+        if (!d.empty()) g.recent.push_back(d);
+    }
+}
+
+void SaveSettings() {
+    const std::wstring ini = IniPath();
+    if (ini.empty()) return;
+    auto put = [&](const wchar_t* sec, const wchar_t* key, const std::wstring& v) { WritePrivateProfileStringW(sec, key, v.c_str(), ini.c_str()); };
+    put(L"Allgemein", L"BildFormat", std::to_wstring(g.imgSel));
+    put(L"Allgemein", L"AudioFormat", std::to_wstring(g.audSel));
+    put(L"Allgemein", L"Qualitaet", std::to_wstring(g.quality));
+    put(L"Allgemein", L"OrdnerOeffnen", g.openFolder ? L"1" : L"0");
+    put(L"Allgemein", L"Zielordner", g.outDir);
+    for (int i = 0; i < kMaxRecent; ++i) put(L"Zuletzt", (L"Ordner" + std::to_wstring(i)).c_str(), i < static_cast<int>(g.recent.size()) ? g.recent[i] : L"");
+}
 
 std::wstring Lower(std::wstring s) { for (auto& c : s) c = static_cast<wchar_t>(std::towlower(c)); return s; }
 
@@ -163,13 +217,23 @@ void AddPaths(const std::vector<std::wstring>& paths) {
 }
 
 std::wstring TargetLabel(const Item& it) {
-    return it.kind == conv::Kind::Image ? kImgNames[g.imgSel] : kAudNames[g.audSel];
+    return it.kind == conv::Kind::Image ? kImgNames[g.imgSel] : AudName(conv::EffectiveFmt(it.path, kAudFmts[g.audSel]));
+}
+
+// Zielordner setzen und an die Spitze der Zuletzt-Liste stellen
+void UseOutDir(const std::wstring& dir) {
+    g.outDir = dir;
+    if (dir.empty()) return;
+    g.recent.erase(std::remove_if(g.recent.begin(), g.recent.end(), [&](const std::wstring& r) { return Lower(r) == Lower(dir); }), g.recent.end());
+    g.recent.insert(g.recent.begin(), dir);
+    if (g.recent.size() > static_cast<size_t>(kMaxRecent)) g.recent.resize(kMaxRecent);
 }
 
 std::wstring QualityDetail() {
     std::wstring s = L"Bilder (JPG, WEBP, HEIC): " + std::to_wstring(g.quality) + L" %   ·   ";
     const int kb = conv::BitrateKbps(kAudFmts[g.audSel], g.quality);
-    s += kb ? std::wstring(kAudNames[g.audSel]) + L": " + std::to_wstring(kb) + L" kbit/s" : L"WAV: verlustfrei";
+    if (kAudFmts[g.audSel] == conv::AudioFmt::Mp4) s += L"MP4: H.264 nach Auflösung, Ton " + std::to_wstring(kb) + L" kbit/s";
+    else s += kb ? std::wstring(kAudNames[g.audSel]) + L": " + std::to_wstring(kb) + L" kbit/s" : L"WAV: verlustfrei";
     return s;
 }
 
@@ -197,7 +261,7 @@ void Worker(HWND hwnd, std::shared_ptr<Settings> s) {
             if (g.cancel.load()) { it.state = State::Failed; it.text = L"Abgebrochen"; PostMessageW(hwnd, WM_APP_UPDATE, i, 0); continue; }
             src = it.path;
             kind = it.kind;
-            const std::wstring ext = kind == conv::Kind::Image ? conv::ImageExt(s->img) : conv::AudioExt(s->aud);
+            const std::wstring ext = kind == conv::Kind::Image ? conv::ImageExt(s->img) : conv::AudioExt(conv::EffectiveFmt(src, s->aud));
             target = UniqueTarget(s->outDir.empty() ? DirOf(src) : s->outDir, StemOf(FileName(src)), ext, src);
             it.state = State::Running;
             it.pct = 0;
@@ -224,6 +288,7 @@ void Worker(HWND hwnd, std::shared_ptr<Settings> s) {
             it.state = ok ? State::Done : State::Failed;
             it.pct = ok ? 100 : it.pct;
             it.text = ok ? FileName(target) : err;
+            it.outPath = ok ? target : std::wstring();
         }
         PostMessageW(hwnd, WM_APP_UPDATE, i, 0);
     }
@@ -306,7 +371,7 @@ void PickFolder() {
         IShellItem* it = nullptr;
         if (SUCCEEDED(dlg->GetResult(&it))) {
             PWSTR p = nullptr;
-            if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &p))) { g.outDir = p; CoTaskMemFree(p); }
+            if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &p))) { UseOutDir(p); CoTaskMemFree(p); }
             it->Release();
         }
     }
@@ -345,7 +410,8 @@ void Relayout() {
     int x = m + g.S(120);
     for (int i = 0; i < 5; ++i, x += g.S(72)) MoveWindow(g.chipImg[i], x, y0, g.S(64), g.S(30), TRUE);
     x = m + g.S(120);
-    for (int i = 0; i < 3; ++i, x += g.S(72)) MoveWindow(g.chipAud[i], x, y0 + g.S(40), g.S(64), g.S(30), TRUE);
+    for (int i = 0; i < kAudCount; ++i, x += g.S(72)) MoveWindow(g.chipAud[i], x, y0 + g.S(40), g.S(64), g.S(30), TRUE);
+    MoveWindow(g.btnOpen, m, y0 + g.S(146), g.S(400), g.S(26), TRUE);
 
     const int sx0 = m + g.S(120), sx1 = std::max(sx0 + g.S(80), std::min(sx0 + g.S(300), colX - g.S(24)));
     g.slider = {sx0, y0 + g.S(88), sx1, y0 + g.S(108)};
@@ -506,7 +572,7 @@ void SetRunning(bool run) {
 
 bool IsChipSelected(int id) {
     if (id >= IDC_IMG0 && id < IDC_IMG0 + 5) return g.imgSel == id - IDC_IMG0;
-    if (id >= IDC_AUD0 && id < IDC_AUD0 + 3) return g.audSel == id - IDC_AUD0;
+    if (id >= IDC_AUD0 && id < IDC_AUD0 + kAudCount) return g.audSel == id - IDC_AUD0;
     return false;
 }
 
@@ -517,6 +583,28 @@ void DrawButton(const DRAWITEMSTRUCT* d) {
     const bool disabled = (d->itemState & ODS_DISABLED) != 0;
     const bool pressed = (d->itemState & ODS_SELECTED) != 0;
     const bool selected = chip && IsChipSelected(id);
+
+    if (id == IDC_OPEN) {   // Checkbox: Kaestchen + Beschriftung
+        HBRUSH bgb = CreateSolidBrush(kBg);
+        FillRect(d->hDC, &d->rcItem, bgb);
+        DeleteObject(bgb);
+        const int bx = g.S(18), top = d->rcItem.top + (d->rcItem.bottom - d->rcItem.top - bx) / 2;
+        const RECT box = {d->rcItem.left, top, d->rcItem.left + bx, top + bx};
+        FillRound(d->hDC, box, g.S(5), g.openFolder ? kAccent : kCtrl);
+        if (g.openFolder) {   // Haken
+            HPEN pen = CreatePen(PS_SOLID, std::max(2, g.S(2)), kOnAccent);
+            HGDIOBJ op = SelectObject(d->hDC, pen);
+            MoveToEx(d->hDC, box.left + g.S(4), top + bx / 2, nullptr);
+            LineTo(d->hDC, box.left + bx * 2 / 5, box.bottom - g.S(5));
+            LineTo(d->hDC, box.right - g.S(4), box.top + g.S(5));
+            SelectObject(d->hDC, op);
+            DeleteObject(pen);
+        }
+        SetBkMode(d->hDC, TRANSPARENT);
+        Text(d->hDC, g.fBody, disabled ? kOverlay : kText, {box.right + g.S(10), d->rcItem.top, d->rcItem.right, d->rcItem.bottom},
+             L"Ordner nach Konvertierung im Explorer öffnen");
+        return;
+    }
 
     COLORREF fill = kCtrl, fg = kText;
     if (primary) { fill = g.running ? kRed : kAccent; fg = kOnAccent; }
@@ -533,7 +621,7 @@ void DrawButton(const DRAWITEMSTRUCT* d) {
     SetBkMode(d->hDC, TRANSPARENT);
     std::wstring label = buf;
     if (id == IDC_OUT) {
-        label = g.outDir.empty() ? L"Ausgabe: neben Original" : L"Ausgabe: " + FileName(g.outDir);
+        label = (g.outDir.empty() ? L"Ausgabe: neben Original" : L"Ausgabe: " + FileName(g.outDir)) + L"  ▾";
     }
     Text(d->hDC, primary || selected ? g.fBold : g.fBody, fg, d->rcItem, label, DT_CENTER);
 }
@@ -549,8 +637,18 @@ int SliderToValue(int x) {
 
 void ShowOutMenu() {
     HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING | (g.outDir.empty() ? MF_CHECKED : 0), IDM_OUT_SAME, L"Neben der Originaldatei speichern");
+    if (!g.recent.empty()) {
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+        for (size_t i = 0; i < g.recent.size(); ++i) {
+            std::wstring label;   // "&" im Pfad wuerde im Menue als Tastenkuerzel gelten
+            for (wchar_t c : g.recent[i]) { if (c == L'&') label += L'&'; label += c; }
+            AppendMenuW(m, MF_STRING | (Lower(g.recent[i]) == Lower(g.outDir) ? MF_CHECKED : 0), IDM_OUT_RECENT0 + static_cast<UINT>(i), label.c_str());
+        }
+    }
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, IDM_OUT_PICK, L"Zielordner wählen …");
-    AppendMenuW(m, MF_STRING | (g.outDir.empty() ? MF_GRAYED : 0), IDM_OUT_SAME, L"Neben der Originaldatei speichern");
+    AppendMenuW(m, MF_STRING | (g.outDir.empty() ? MF_GRAYED : 0), IDM_OUT_SHOW, L"Zielordner im Explorer öffnen");
     RECT r;
     GetWindowRect(g.btnOut, &r);
     TrackPopupMenu(m, TPM_LEFTALIGN | TPM_BOTTOMALIGN, r.left, r.top, 0, g.hwnd, nullptr);
@@ -562,17 +660,19 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CREATE: {
         g.hwnd = hwnd;
         g.dpi = GetDpiForWindow(hwnd);
+        LoadSettings();
         MakeFonts();
         auto btn = [&](const wchar_t* text, int id) {
             return CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 10, 10, hwnd,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
         };
         for (int i = 0; i < 5; ++i) g.chipImg[i] = btn(kImgNames[i], IDC_IMG0 + i);
-        for (int i = 0; i < 3; ++i) g.chipAud[i] = btn(kAudNames[i], IDC_AUD0 + i);
+        for (int i = 0; i < kAudCount; ++i) g.chipAud[i] = btn(kAudNames[i], IDC_AUD0 + i);
         g.btnGo = btn(L"Konvertieren", IDC_GO);
         g.btnAdd = btn(L"Hinzufügen", IDC_ADD);
         g.btnClear = btn(L"Leeren", IDC_CLEAR);
         g.btnOut = btn(L"Ausgabe", IDC_OUT);
+        g.btnOpen = btn(L"Ordner öffnen", IDC_OPEN);
         DragAcceptFiles(hwnd, TRUE);
         // Drag-and-Drop auch erlauben, wenn der Explorer mit anderen Rechten laeuft
         ChangeWindowMessageFilterEx(hwnd, WM_DROPFILES, MSGFLT_ALLOW, nullptr);
@@ -644,13 +744,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_COMMAND: {
         const int id = LOWORD(wp);
         if (id >= IDC_IMG0 && id < IDC_IMG0 + 5) { g.imgSel = id - IDC_IMG0; }
-        else if (id >= IDC_AUD0 && id < IDC_AUD0 + 3) { g.audSel = id - IDC_AUD0; }
+        else if (id >= IDC_AUD0 && id < IDC_AUD0 + kAudCount) { g.audSel = id - IDC_AUD0; }
+        else if (id >= IDM_OUT_RECENT0 && id < IDM_OUT_RECENT0 + kMaxRecent) {
+            if (const size_t i = static_cast<size_t>(id - IDM_OUT_RECENT0); i < g.recent.size()) {
+                const std::wstring dir = g.recent[i];
+                if (GetFileAttributesW(dir.c_str()) & FILE_ATTRIBUTE_DIRECTORY) UseOutDir(dir);
+                else { g.recent.erase(g.recent.begin() + static_cast<std::ptrdiff_t>(i)); g.note = L"Der Ordner existiert nicht mehr"; }
+            }
+        }
         else switch (id) {
             case IDC_ADD: PickFiles(); Relayout(); break;
             case IDC_CLEAR: g.items.clear(); g.scroll = 0; g.note = L"Liste geleert"; break;
             case IDC_OUT: ShowOutMenu(); break;
             case IDM_OUT_PICK: PickFolder(); break;
             case IDM_OUT_SAME: g.outDir.clear(); break;
+            case IDM_OUT_SHOW: ShellExecuteW(hwnd, L"open", g.outDir.c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
+            case IDC_OPEN: g.openFolder = !g.openFolder; break;
             case IDC_GO:
                 if (g.running) { g.cancel = true; g.note = L"Wird abgebrochen …"; }
                 else if (g.items.empty()) { g.note = L"Zuerst Dateien hinzufügen"; }
@@ -658,9 +767,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 break;
             default: return DefWindowProcW(hwnd, msg, wp, lp);
         }
+        SaveSettings();
         for (HWND c : g.chipImg) InvalidateRect(c, nullptr, FALSE);
         for (HWND c : g.chipAud) InvalidateRect(c, nullptr, FALSE);
         InvalidateRect(g.btnOut, nullptr, FALSE);
+        InvalidateRect(g.btnOpen, nullptr, FALSE);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
@@ -679,6 +790,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                           : L"Fertig: " + std::to_wstring(ok) + (ok == 1 ? L" Datei" : L" Dateien") + L" konvertiert" +
                                 (fail ? L", " + std::to_wstring(fail) + L" mit Fehler" : L"");
         SetRunning(false);
+        if (g.openFolder && ok > 0 && !g.cancel) {
+            std::set<std::wstring> seen;   // je Ordner einmal, die erste Datei wird markiert; hoechstens 3 Fenster
+            for (const Item& it : g.items) {
+                if (it.state != State::Done || it.outPath.empty() || seen.size() >= 3) continue;
+                if (!seen.insert(Lower(DirOf(it.outPath))).second) continue;
+                ShellExecuteW(hwnd, L"open", L"explorer.exe", (L"/select,\"" + it.outPath + L"\"").c_str(), nullptr, SW_SHOWNORMAL);
+            }
+        }
         return 0;
     }
     case WM_LBUTTONDOWN: {
@@ -713,7 +832,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_LBUTTONUP:
-        if (g.dragSlider) { g.dragSlider = false; ReleaseCapture(); }
+        if (g.dragSlider) { g.dragSlider = false; ReleaseCapture(); SaveSettings(); }
         return 0;
     case WM_MOUSEWHEEL: {
         POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};

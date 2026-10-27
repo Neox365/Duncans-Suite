@@ -127,6 +127,7 @@ const wchar_t* AudioExt(AudioFmt f) {
         case AudioFmt::Mp3: return L"mp3";
         case AudioFmt::M4a: return L"m4a";
         case AudioFmt::Wav: return L"wav";
+        case AudioFmt::Mp4: return L"mp4";
     }
     return L"mp3";
 }
@@ -137,10 +138,25 @@ int BitrateKbps(AudioFmt f, int quality) {
     static const int kAac[] = {96, 128, 160, 192};              // vom Windows-AAC-Encoder unterstuetzt
     switch (f) {
         case AudioFmt::Mp3: return kMp3[(quality * 5 + 50) / 100];
-        case AudioFmt::M4a: return kAac[(quality * 3 + 50) / 100];
+        case AudioFmt::M4a:
+        case AudioFmt::Mp4: return kAac[(quality * 3 + 50) / 100];
         case AudioFmt::Wav: return 0;
     }
     return 0;
+}
+
+int VideoBitrateKbps(int width, int height, double fps, int quality) {
+    const double bpp = 0.04 + 0.16 * std::clamp(quality, 0, 100) / 100.0;
+    const double kbps = static_cast<double>(width) * height * std::clamp(fps, 1.0, 120.0) * bpp / 1000.0;
+    return static_cast<int>(std::clamp(kbps, 300.0, 40000.0));
+}
+
+bool IsAudioOnlyFile(const std::wstring& path) {
+    return InList(LowerExt(path), {L"mp3", L"wav", L"m4a", L"aac", L"wma", L"flac", L"mp2"});
+}
+
+AudioFmt EffectiveFmt(const std::wstring& src, AudioFmt requested) {
+    return requested == AudioFmt::Mp4 && IsAudioOnlyFile(src) ? AudioFmt::M4a : requested;
 }
 
 bool MediaStartup() { return SUCCEEDED(MFStartup(MF_VERSION, MFSTARTUP_LITE)); }
@@ -305,10 +321,171 @@ bool WriteWavHeader(HANDLE f, uint32_t dataBytes) {
     return WriteFile(f, h, sizeof(h), &wr, nullptr) && wr == sizeof(h);
 }
 
+
+// Video -> MP4 (H.264 + AAC) ueber den Windows-Encoder. Videobild wird auf gerade Seitenlaengen gebracht (H.264 verlangt das).
+bool ConvertVideoMp4(const std::wstring& src, const std::wstring& dst, int quality, const std::atomic<bool>& cancel,
+                     const std::function<void(int)>& progress, std::wstring* err) {
+    Com<IMFAttributes> ra;
+    MFCreateAttributes(&ra, 1);
+    ra->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);   // erlaubt Farbraum-Umwandlung und Skalierung
+    Com<IMFSourceReader> reader;
+    HRESULT hr = MFCreateSourceReaderFromURL(src.c_str(), ra.Get(), &reader);
+    if (FAILED(hr)) { SetErr(err, L"Datei kann nicht geöffnet werden – Format oder Codec wird von Windows nicht unterstützt (" + Hex(hr) + L")"); return false; }
+
+    // Streams der Quelle: erster Video- und erster Audio-Stream
+    DWORD vSrc = MAXDWORD, aSrc = MAXDWORD;
+    for (DWORD i = 0; i < 32; ++i) {
+        Com<IMFMediaType> t;
+        if (FAILED(reader->GetNativeMediaType(i, 0, &t))) { if (i > 8) break; continue; }
+        GUID major{};
+        t->GetGUID(MF_MT_MAJOR_TYPE, &major);
+        if (major == MFMediaType_Video && vSrc == MAXDWORD) vSrc = i;
+        else if (major == MFMediaType_Audio && aSrc == MAXDWORD) aSrc = i;
+    }
+    if (vSrc == MAXDWORD) { SetErr(err, L"Die Datei enthält kein Videobild"); return false; }
+
+    Com<IMFMediaType> nv;
+    reader->GetNativeMediaType(vSrc, 0, &nv);
+    UINT32 w = 0, h = 0, fn = 30, fd = 1;
+    MFGetAttributeSize(nv.Get(), MF_MT_FRAME_SIZE, &w, &h);
+    MFGetAttributeRatio(nv.Get(), MF_MT_FRAME_RATE, &fn, &fd);
+    if (fd == 0 || fn == 0) { fn = 30; fd = 1; }
+    w &= ~1u; h &= ~1u;
+    if (w < 16 || h < 16) { SetErr(err, L"Das Videobild ist zu klein"); return false; }
+    const double fps = static_cast<double>(fn) / fd;
+
+    reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE);
+    reader->SetStreamSelection(vSrc, TRUE);
+    Com<IMFMediaType> vin;
+    MFCreateMediaType(&vin);
+    vin->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+    vin->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_NV12);
+    vin->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+    MFSetAttributeSize(vin.Get(), MF_MT_FRAME_SIZE, w, h);
+    MFSetAttributeRatio(vin.Get(), MF_MT_FRAME_RATE, fn, fd);
+    MFSetAttributeRatio(vin.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+    hr = reader->SetCurrentMediaType(vSrc, nullptr, vin.Get());
+    if (FAILED(hr)) { SetErr(err, L"Das Videoformat der Quelle kann nicht gelesen werden (" + Hex(hr) + L")"); return false; }
+
+    Com<IMFMediaType> pcm;
+    if (aSrc != MAXDWORD) {
+        reader->SetStreamSelection(aSrc, TRUE);
+        MFCreateMediaType(&pcm);
+        pcm->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+        pcm->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+        pcm->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, kChannels);
+        pcm->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, kRate);
+        pcm->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, kBits);
+        pcm->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, kChannels * kBits / 8);
+        pcm->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, kRate * kChannels * kBits / 8);
+        pcm->SetUINT32(MF_MT_ALL_SAMPLES_INDEPENDENT, TRUE);
+        if (FAILED(reader->SetCurrentMediaType(aSrc, nullptr, pcm.Get()))) {   // Tonspur nicht lesbar: Video ohne Ton
+            reader->SetStreamSelection(aSrc, FALSE);
+            pcm.Reset();
+            aSrc = MAXDWORD;
+        }
+    }
+
+    LONGLONG duration = 0;
+    {
+        PROPVARIANT v;
+        PropVariantInit(&v);
+        if (SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &v)) && v.vt == VT_UI8)
+            duration = static_cast<LONGLONG>(v.uhVal.QuadPart);
+        PropVariantClear(&v);
+    }
+
+    Com<IMFAttributes> wa;
+    MFCreateAttributes(&wa, 1);
+    wa->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE);
+    Com<IMFSinkWriter> writer;
+    bool ok = false;
+    std::wstring why = L"Konvertierung fehlgeschlagen";
+    do {
+        hr = MFCreateSinkWriterFromURL(dst.c_str(), nullptr, wa.Get(), &writer);
+        if (FAILED(hr)) { why = L"Zieldatei kann nicht angelegt werden (" + Hex(hr) + L")"; break; }
+
+        Com<IMFMediaType> vout;
+        MFCreateMediaType(&vout);
+        vout->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
+        vout->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
+        vout->SetUINT32(MF_MT_AVG_BITRATE, static_cast<UINT32>(VideoBitrateKbps(static_cast<int>(w), static_cast<int>(h), fps, quality)) * 1000u);
+        vout->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
+        vout->SetUINT32(MF_MT_MPEG2_PROFILE, 77);   // eAVEncH264VProfile_Main
+        MFSetAttributeSize(vout.Get(), MF_MT_FRAME_SIZE, w, h);
+        MFSetAttributeRatio(vout.Get(), MF_MT_FRAME_RATE, fn, fd);
+        MFSetAttributeRatio(vout.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
+        DWORD vOut = 0, aOut = 0;
+        hr = writer->AddStream(vout.Get(), &vOut);
+        if (FAILED(hr)) { why = L"Der H.264-Encoder von Windows ist nicht verfügbar (" + Hex(hr) + L")"; break; }
+        hr = writer->SetInputMediaType(vOut, vin.Get(), nullptr);
+        if (FAILED(hr)) { why = L"Der Video-Encoder nimmt das Bildformat nicht an (" + Hex(hr) + L")"; break; }
+
+        if (pcm) {
+            Com<IMFMediaType> aout;
+            MFCreateMediaType(&aout);
+            aout->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+            aout->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC);
+            aout->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, kChannels);
+            aout->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, kRate);
+            aout->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, kBits);
+            aout->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, BitrateKbps(AudioFmt::M4a, quality) * 1000 / 8);
+            aout->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 1);
+            aout->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 0);
+            aout->SetUINT32(MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0x29);
+            hr = writer->AddStream(aout.Get(), &aOut);
+            if (FAILED(hr)) { why = L"Der AAC-Encoder von Windows ist nicht verfügbar (" + Hex(hr) + L")"; break; }
+            hr = writer->SetInputMediaType(aOut, pcm.Get(), nullptr);
+            if (FAILED(hr)) { why = L"Der Audio-Encoder nimmt das Format nicht an (" + Hex(hr) + L")"; break; }
+        }
+        hr = writer->BeginWriting();
+        if (FAILED(hr)) { why = L"Encoder lässt sich nicht starten (" + Hex(hr) + L")"; break; }
+
+        bool vDone = false, aDone = !pcm, failed = false, aborted = false;
+        int lastPct = -1;
+        while (!(vDone && aDone)) {
+            if (cancel.load()) { aborted = true; break; }
+            DWORD si = 0, flags = 0;
+            LONGLONG ts = 0;
+            Com<IMFSample> sample;
+            hr = reader->ReadSample(static_cast<DWORD>(MF_SOURCE_READER_ANY_STREAM), 0, &si, &flags, &ts, &sample);
+            if (FAILED(hr) || (flags & MF_SOURCE_READERF_ERROR)) { failed = true; why = L"Lesefehler in der Quelldatei"; break; }
+            const bool isVideo = si == vSrc;
+            if (sample) {
+                hr = writer->WriteSample(isVideo ? vOut : aOut, sample.Get());
+                if (FAILED(hr)) { failed = true; why = L"Encoder meldet einen Fehler (" + Hex(hr) + L")"; break; }
+                if (isVideo && progress && duration > 0) {
+                    const int pct = static_cast<int>(std::clamp<LONGLONG>(ts * 100 / duration, 0, 99));
+                    if (pct != lastPct) { lastPct = pct; progress(pct); }
+                }
+            }
+            if (flags & MF_SOURCE_READERF_ENDOFSTREAM) (isVideo ? vDone : aDone) = true;
+        }
+        if (aborted) { why = L"Abgebrochen"; break; }
+        if (failed) break;
+        hr = writer->Finalize();
+        if (FAILED(hr)) { why = L"Datei konnte nicht abgeschlossen werden (" + Hex(hr) + L")"; break; }
+        ok = true;
+    } while (false);
+
+    writer.Reset();
+    if (ok) {
+        if (progress) progress(100);
+    } else {
+        DeleteFileW(dst.c_str());
+        SetErr(err, why);
+    }
+    return ok;
+}
+
 }  // namespace
 
 bool ConvertMedia(const std::wstring& src, const std::wstring& dst, AudioFmt fmt, int quality, const std::atomic<bool>& cancel,
                   const std::function<void(int)>& progress, std::wstring* err) {
+    if (fmt == AudioFmt::Mp4) {
+        if (IsAudioOnlyFile(src)) fmt = AudioFmt::M4a;   // ohne Videobild gibt es nichts nach MP4 zu kodieren
+        else return ConvertVideoMp4(src, dst, quality, cancel, progress, err);
+    }
     Com<IMFSourceReader> reader;
     HRESULT hr = MFCreateSourceReaderFromURL(src.c_str(), nullptr, &reader);
     if (FAILED(hr)) { SetErr(err, L"Datei kann nicht geöffnet werden – Format oder Codec wird von Windows nicht unterstützt (" + Hex(hr) + L")"); return false; }
