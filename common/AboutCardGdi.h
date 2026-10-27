@@ -33,10 +33,25 @@ struct State {
     bool open = false;
     int hover = 0;            // 1 GitHub, 2 Schliessen
     RECT card{}, github{}, close{};
+    std::vector<HWND> hidden;  // Kindfenster, die fuer die Dauer der Karte ausgeblendet sind
 };
 
-inline void Open(State& st, HWND hwnd) { st.open = true; st.hover = 0; InvalidateRect(hwnd, nullptr, FALSE); }
-inline void Close(State& st, HWND hwnd) { st.open = false; st.hover = 0; InvalidateRect(hwnd, nullptr, FALSE); }
+// Blendet alle sichtbaren Kindfenster aus (Knoepfe, Eingabefelder): sie wuerden sonst ueber der Karte liegen. Auch nach Layout-Aenderungen aufrufbar.
+inline void HideChildren(HWND hwnd, State& st) {
+    for (HWND c = GetWindow(hwnd, GW_CHILD); c; c = GetWindow(c, GW_HWNDNEXT)) {
+        if (!IsWindowVisible(c)) continue;
+        ShowWindow(c, SW_HIDE);
+        st.hidden.push_back(c);
+    }
+}
+inline void Open(State& st, HWND hwnd) { st.open = true; st.hover = 0; HideChildren(hwnd, st); InvalidateRect(hwnd, nullptr, FALSE); }
+inline void Close(State& st, HWND hwnd) {
+    st.open = false;
+    st.hover = 0;
+    for (HWND c : st.hidden) if (IsWindow(c)) ShowWindow(c, SW_SHOW);
+    st.hidden.clear();
+    InvalidateRect(hwnd, nullptr, FALSE);
+}
 
 namespace detail {
 inline HFONT MakeFont(int dpi, int pt, int weight) {

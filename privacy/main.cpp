@@ -29,6 +29,7 @@ using std::min;
 #include "PrivacyRules.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
+#include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
 #define APP_VERSION L"0.6.3"   // normalerweise aus CMake (PROJECT_VERSION)
@@ -52,7 +53,7 @@ const wchar_t* kTitle = L"Duncan's Privacy Shield";
 const UINT WM_RP_DONE = WM_APP + 1;     // Wiederherstellungspunkt fertig (wp = Erfolg)
 const UINT WM_JOB_DONE = WM_APP + 2;    // Hintergrund-Auftrag fertig (lp = JobResult*)
 
-enum HitId { H_NONE = -1, H_ALL = 1000, H_RESTORE = 1001, H_RP = 1002, H_FOLDER = 1003, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_INFO_BASE = 3000 };
+enum HitId { H_NONE = -1, H_ALL = 1000, H_RESTORE = 1001, H_RP = 1002, H_FOLDER = 1003, H_ABOUT = 1004, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_INFO_BASE = 3000 };
 
 struct Row {
     bool group = false;
@@ -76,7 +77,8 @@ struct App {
     std::vector<bool> applied;
     std::vector<Row> rows;
     int scroll = 0, contentH = 0;
-    RECT list{}, btnAll{}, btnRestore{}, btnRp{}, folderLink{}, toolbar{}, footer{};
+    RECT list{}, btnAll{}, btnRestore{}, btnRp{}, folderLink{}, toolbar{}, footer{}, aboutLink{};
+    aboutgdi::State about;             // "Ueber"-Kachelansicht im Fenster
     bool hasBackup = false;
     int hover = H_NONE, press = H_NONE;
     bool tracking = false;
@@ -542,9 +544,14 @@ void Paint(HDC dc, RECT cr) {
     RestoreDC(dc, -1);
 
     // Fusszeile: Urheber/Version links, Status rechts
-    DrawText2(dc, g.fSmall, kTextDim, { g.footer.left, g.footer.top, g.footer.left + S(200), g.footer.bottom }, L"© 2026 Duncan · v" APP_VERSION,
-              DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-    DrawText2(dc, g.fSmall, g.statusColor, { g.footer.left + S(190), g.footer.top, g.folderLink.left - S(12), g.footer.bottom }, g.status,
+    {
+        const std::wstring base = L"© 2026 Duncan · v" APP_VERSION L"  ·  ";
+        const int bw = gfx::TextWidth(dc, g.fSmall, base), lw = gfx::TextWidth(dc, g.fSmall, L"Über");
+        DrawText2(dc, g.fSmall, kTextDim, { g.footer.left, g.footer.top, g.footer.left + bw, g.footer.bottom }, base, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        g.aboutLink = { g.footer.left + bw, g.footer.top, g.footer.left + bw + lw + S(2), g.footer.bottom };
+        DrawText2(dc, g.fSmall, g.hover == H_ABOUT ? kAccent : kText, g.aboutLink, L"Über", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
+    DrawText2(dc, g.fSmall, g.statusColor, { g.aboutLink.right + S(24), g.footer.top, g.folderLink.left - S(12), g.footer.bottom }, g.status,
               DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     {   // Link "Sicherung / Ordner oeffnen" mit kleinem Ordner-Symbol: oeffnet %ProgramData%\DuncansSuite\Backups im Explorer
         const bool hot = !busy && g.hover == H_FOLDER;
@@ -598,6 +605,7 @@ int HitTest(POINT p) {
         if (g.modalCancel.right > g.modalCancel.left && PtInRect(&g.modalCancel, p)) return H_MODAL_CANCEL;
         return H_NONE;
     }
+    if (PtInRect(&g.aboutLink, p)) return H_ABOUT;
     if (PtInRect(&g.btnAll, p)) return H_ALL;
     if (PtInRect(&g.btnRestore, p)) return H_RESTORE;
     if (PtInRect(&g.btnRp, p)) return H_RP;
@@ -635,11 +643,17 @@ void Activate(int id) {
     else if (id == H_RESTORE) RestoreDefaults();
     else if (id == H_RP) CreateRestorePointNow();
     else if (id == H_FOLDER) OpenBackupFolder();
+    else if (id == H_ABOUT) aboutgdi::Open(g.about, g.hwnd);
     else if (id >= H_INFO_BASE) return;                 // Info-Symbol: nur Tooltip
     else if (id >= 0 && id < static_cast<int>(g.applied.size())) ToggleSetting(id);
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (g.about.open) {
+        const int r = aboutgdi::HandleMessage(hwnd, g.about, msg, wp, lp, L"https://github.com/Neox365/Duncans-Suite");
+        if (r == 2) return TRUE;
+        if (r == 1) return 0;
+    }
     switch (msg) {
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: {
@@ -650,6 +664,18 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         HBITMAP bmp = CreateCompatibleBitmap(dc, cr.right, cr.bottom);
         HGDIOBJ old = SelectObject(mem, bmp);
         Paint(mem, cr);
+        if (g.about.open) {
+            aboutgdi::Spec sp;
+            sp.name = L"Duncan's Privacy Shield";
+            sp.letter = L'S';
+            sp.tiles = {
+                {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
+                {L"Quellcode", L"github.com/Neox365/Duncans-Suite"}, {L"Teil von", L"Duncan's Suite"},
+                {L"Sicherung", L"Vor jeder Änderung sichert das Programm die Originalwerte unter %ProgramData%\\DuncansSuite\\Backups; jeder Schalter lässt sich rückgängig machen.", true},
+                {L"Datenschutz", L"Das Programm ändert nur lokale Windows-Einstellungen. Es überträgt keine Daten an externe Server.", true},
+            };
+            aboutgdi::Draw(mem, cr, static_cast<int>(g.dpi), sp, g.about);
+        }
         BitBlt(dc, 0, 0, cr.right, cr.bottom, mem, 0, 0, SRCCOPY);
         SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem);
         EndPaint(hwnd, &ps);

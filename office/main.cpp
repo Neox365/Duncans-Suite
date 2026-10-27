@@ -25,6 +25,8 @@
 #include "../docs/PdfWriter.h"
 #include "Codec.h"
 #include "Sheet.h"
+#include <gdiplus.h>
+#include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
 #define APP_VERSION L"0.0.0"
@@ -332,6 +334,9 @@ private:
     int m_hot = -1, m_press = -1;
     bool m_tracking = false;
     std::wstring m_status;
+    aboutgdi::State m_about;               // "Ueber"-Kachelansicht im Fenster
+    RECT m_aboutRc{};                      // Link "Ueber" (Statusleiste bzw. Startseite)
+    bool m_aboutHot = false;
 
     // Writer
     std::wstring m_wPath;
@@ -824,10 +829,31 @@ void App::Paint(HDC dc, const RECT& rc)
         HBRUSH lb = CreateSolidBrush(kLine);
         FillRect(dc, &sl, lb);
         DeleteObject(lb);
-        RECT left{ S(16), m_statusRc.top, rc.right - S(200), m_statusRc.bottom };
+        RECT left{ S(16), m_statusRc.top, rc.right - S(260), m_statusRc.bottom };
         Text(dc, m_fSmall, kDim, left, m_status, DT_SINGLELINE | DT_VCENTER | DT_NOPREFIX | DT_END_ELLIPSIS);
-        RECT right{ rc.right - S(200), m_statusRc.top, rc.right - S(16), m_statusRc.bottom };
-        Text(dc, m_fSmall, kDim, right, L"Duncan's Office v" APP_VERSION, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+        {
+            const std::wstring ver = L"Duncan's Office v" APP_VERSION L"  ·  ";
+            SIZE sv{}, szl{};
+            HGDIOBJ of = SelectObject(dc, m_fSmall);
+            GetTextExtentPoint32W(dc, ver.c_str(), static_cast<int>(ver.size()), &sv);
+            GetTextExtentPoint32W(dc, L"Über", 4, &szl);
+            SelectObject(dc, of);
+            m_aboutRc = { (rc.right - S(16)) - szl.cx - S(2), m_statusRc.top, (rc.right - S(16)), m_statusRc.bottom };
+            Text(dc, m_fSmall, kDim, { m_aboutRc.left - sv.cx, m_aboutRc.top, m_aboutRc.left, m_aboutRc.bottom }, ver, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+            Text(dc, m_fSmall, m_aboutHot ? kAccent : kText, m_aboutRc, L"Über", DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+        }
+    } else {
+        {
+            const std::wstring ver = L"Duncan's Office v" APP_VERSION L"  ·  ";
+            SIZE sv{}, szl{};
+            HGDIOBJ of = SelectObject(dc, m_fSmall);
+            GetTextExtentPoint32W(dc, ver.c_str(), static_cast<int>(ver.size()), &sv);
+            GetTextExtentPoint32W(dc, L"Über", 4, &szl);
+            SelectObject(dc, of);
+            m_aboutRc = { (rc.right - S(20)) - szl.cx - S(2), rc.bottom - S(30), (rc.right - S(20)), rc.bottom - S(8) };
+            Text(dc, m_fSmall, kDim, { m_aboutRc.left - sv.cx, m_aboutRc.top, m_aboutRc.left, m_aboutRc.bottom }, ver, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+            Text(dc, m_fSmall, m_aboutHot ? kAccent : kText, m_aboutRc, L"Über", DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
+        }
     }
 }
 
@@ -915,6 +941,11 @@ void App::Command(int id)
 
 LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
 {
+    if (m_about.open) {
+        const int r = aboutgdi::HandleMessage(m_hwnd, m_about, msg, wp, lp, L"https://github.com/Neox365/Duncans-Suite");
+        if (r == 2) return TRUE;
+        if (r == 1) return 0;
+    }
     switch (msg) {
         case WM_CREATE: {
             m_dpi = GetDpiForWindow(m_hwnd);
@@ -978,6 +1009,19 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
             HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
             HGDIOBJ old = SelectObject(mem, bmp);
             Paint(mem, rc);
+            if (m_about.open) {
+                aboutgdi::HideChildren(m_hwnd, m_about);
+                aboutgdi::Spec sp;
+                sp.name = L"Duncan's Office";
+                sp.letter = L'O';
+                sp.tiles = {
+                    {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
+                    {L"Quellcode", L"github.com/Neox365/Duncans-Suite"}, {L"Teil von", L"Duncan's Suite"},
+                    {L"Funktionen", L"Writer (Texte, .txt und .rtf, PDF-Export, Drucken) und Sheets (Tabellen mit Formeln, .csv) in einem Programm.", true},
+                    {L"Datenschutz", L"Deine Dokumente bleiben auf diesem Gerät. Das Programm überträgt nichts.", true},
+                };
+                aboutgdi::Draw(mem, rc, static_cast<int>(m_dpi), sp, m_about);
+            }
             BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
             SelectObject(mem, old);
             DeleteObject(bmp);
@@ -986,6 +1030,9 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         }
         case WM_MOUSEMOVE: {
+            const POINT mp{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            const bool ah = PtInRect(&m_aboutRc, mp) != FALSE;
+            if (ah != m_aboutHot) { m_aboutHot = ah; InvalidateRect(m_hwnd, nullptr, FALSE); }
             const int h = HitBtn({ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
             if (h != m_hot) { m_hot = h; InvalidateRect(m_hwnd, nullptr, FALSE); }
             if (!m_tracking) {
@@ -1000,9 +1047,10 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
             if (m_hot != -1) { m_hot = -1; InvalidateRect(m_hwnd, nullptr, FALSE); }
             return 0;
         case WM_SETCURSOR:
-            if (LOWORD(lp) == HTCLIENT && m_hot >= 0) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
+            if (LOWORD(lp) == HTCLIENT && (m_hot >= 0 || m_aboutHot)) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
             break;
         case WM_LBUTTONDOWN:
+            if (PtInRect(&m_aboutRc, POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) })) { aboutgdi::Open(m_about, m_hwnd); return 0; }
             m_press = HitBtn({ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
             SetCapture(m_hwnd);
             InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -2541,7 +2589,12 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
         if (argc > 1) open = argv[1];
         LocalFree(argv);
     }
+    ULONG_PTR gdipToken = 0;
+    Gdiplus::GdiplusStartupInput gsi;
+    Gdiplus::GdiplusStartup(&gdipToken, &gsi, nullptr);   // fuer die "Ueber"-Karte (Kantenglaettung)
     static App app;
     if (!app.Create(inst, show, open)) return 1;
-    return app.Run();
+    const int code = app.Run();
+    Gdiplus::GdiplusShutdown(gdipToken);
+    return code;
 }
