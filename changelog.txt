@@ -254,6 +254,8 @@
 - Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
 
 [DuncansSuite.exe]
+## 1.1.37 | 2026-10-27
+- Verbessert: Die Reiter im Info-Dialog („Neuigkeiten & Updates“) stehen jetzt in zwei Reihen mit ausgeschriebenen Namen statt gekürzt in einer Zeile.
 ## 1.1.36 | 2026-10-27
 - Neues Programm in der Suite: Duncan's QuickConvert (lokaler Medien- und Dateikonverter). Die Karten füllen das 3×3-Raster.
 ## 1.1.35 | 2026-10-23

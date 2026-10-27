@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.36"
+#define SUITE_VERSION L"1.1.37"
 #endif
 
 namespace
@@ -1800,20 +1800,15 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
     DrawLabel(dc, m_fontHeading, kText, { box.left + pad, box.top + pad + S(3), box.right - pad, box.top + pad + S(30) }, L"Neuigkeiten & Updates");
 
     // Reiter: einer pro Programm (Farbe wie die Karte), gruener Punkt = Update verfuegbar
+    // zwei Reihen gleich breiter Reiter, damit die Namen ausgeschrieben lesbar bleiben
     const int tabH = S(34), tabGap = S(8), tabTop = box.top + pad + S(42);
-    int want[kInfoTabs], sum = 0;
+    const int perRow = (kInfoTabs + 1) / 2;
+    const int tw = (boxW - 2 * pad - (perRow - 1) * tabGap) / perRow;
     for (int i = 0; i < kInfoTabs; ++i)
     {
-        want[i] = TextWidth(dc, m_fontBody, kNames[i]) + S(44);
-        sum += want[i];
-    }
-    const int avail = boxW - 2 * pad - (kInfoTabs - 1) * tabGap;
-    int x = box.left + pad;
-    for (int i = 0; i < kInfoTabs; ++i)
-    {
-        const int tw = sum > avail ? want[i] * avail / sum : want[i];
-        m_infoTabs[i] = { x, tabTop, x + tw, tabTop + tabH };
-        x += tw + tabGap;
+        const int row = i / perRow, col = i % perRow;
+        const int tx = box.left + pad + col * (tw + tabGap), ty = tabTop + row * (tabH + tabGap);
+        m_infoTabs[i] = { tx, ty, tx + tw, ty + tabH };
         const COLORREF color = i < kToolCount ? m_tools[i].color : kAccent;
         const bool active = i == m_infoTab, hover = m_hover == 24 + i;
         FillRound(dc, m_infoTabs[i], S(10), active ? Blend(kCardRaised, color, 22) : (hover ? kCardHover : kCardRaised),
@@ -1842,7 +1837,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
         status = L"Installiert: v" + installed + L"   ·   aktuell";
     else
         status = L"Nicht installiert (die Einträge zeigen, was die aktuelle Version kann)";
-    const int statusTop = tabTop + tabH + S(14);
+    const int statusTop = tabTop + 2 * tabH + tabGap + S(14);
     DrawLabel(dc, m_fontBody, statusColor, { box.left + pad, statusTop, box.right - pad, statusTop + S(24) }, status);
 
     // Eintraege (scrollbar)
