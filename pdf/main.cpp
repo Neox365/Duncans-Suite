@@ -24,9 +24,10 @@ using std::min;
 #include "PdfDocument.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
+#include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.2.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.2.1"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -70,6 +71,7 @@ struct App {
     int dpi = 96;
     HFONT font = nullptr, fontBold = nullptr, fontSmall = nullptr;
 
+    aboutgdi::State about;                 // "Ueber"-Kachelansicht im Canvas (statt eigenem Fenster)
     PdfDocument doc;
     int page = 0;
     double zoom = 1.0;
@@ -210,6 +212,7 @@ std::wstring FileName(const std::wstring& p) {
 
 // ---------- Vorwaertsdeklarationen ----------
 void RunCommand(int cmd);
+void DrawAboutPanel(HDC dc, const RECT& cr);
 void LayoutChildren();
 void LayoutToolbar();
 void LayoutSidebar();
@@ -1008,7 +1011,8 @@ void PaintCanvas(HDC dc, RECT cr) {
     }
     if (g.searchOpen) DrawSearchPanel(dc, cr);
 
-    if (!g.toast.empty()) {
+    if (g.about.open) DrawAboutPanel(dc, cr);
+    if (!g.toast.empty() && !g.about.open) {
         const int w = Min(cr.right - S(40), TextW(g.toast, g.font) + S(48)), h = S(40);
         RECT r{ (cr.right - w) / 2, cr.bottom - h - S(24), (cr.right + w) / 2, cr.bottom - S(24) };
         FillRound(dc, r, S(12), RGB(27, 29, 36), g.toastErr ? kRed : kGreen);
@@ -1217,15 +1221,24 @@ bool PromptText(HWND owner, const wchar_t* title, std::wstring& text, const wcha
     return st.ok;
 }
 
-// "Ueber"-Fenster im selben Dark-Stil
+// "Ueber": Kachelansicht im Canvas, kein eigenes Fenster
 void ShowAbout() {
-    const std::wstring body = std::wstring(L"Duncan's PDF Reader\n") +
-        L"Version v" + APP_VERSION + L"\n\n" +
-        L"Entwickler: Duncan  ·  © 2026\n\n" +
-        L"Teil von Duncan's Suite (Driver Updater, PDF Reader, Tidy).\n" +
-        L"Quellcode: github.com/Neox365/Duncans-Suite";
-    std::wstring unused;
-    PromptText(g.main, L"Über Duncan's PDF Reader", unused, body.c_str());
+    aboutgdi::Open(g.about, g.canvas);
+    SetFocus(g.canvas);
+}
+
+void DrawAboutPanel(HDC dc, const RECT& cr) {
+    aboutgdi::Spec sp;
+    sp.name = L"Duncan's PDF Reader";
+    sp.letter = L'P';
+    sp.tiles = {
+        {L"Version", std::wstring(L"v") + APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
+        {L"Quellcode", L"github.com/Neox365/Duncans-Suite"}, {L"Teil von", L"Duncan's Suite"},
+        {L"PDF-Engine", L"PDFium (Google), zur Laufzeit aus pdfium.dll geladen. Stempel, Unterschrift, Schwärzen und Split arbeiten direkt auf den Seitenobjekten.", true},
+        {L"Einstellungen", L"%LOCALAPPDATA%\\DuncansPdf\\settings.ini (daneben signature.png, falls eine Unterschrift gespeichert ist)", true},
+        {L"Datenschutz", L"Deine PDFs werden nur lokal gelesen und geschrieben. Das Programm überträgt keine Daten.", true},
+    };
+    aboutgdi::Draw(dc, cr, g.dpi, sp, g.about);
 }
 
 
@@ -2103,6 +2116,7 @@ void RefreshAllPages() {
 }
 
 void RunCommand(int cmd) {
+    if (cmd != C_NONE && g.about.open) aboutgdi::Close(g.about, g.canvas);
     if (cmd != C_NONE) ResetFormFocus();       // Feldinhalt uebernehmen, bevor etwas anderes passiert
     switch (cmd) {
     case C_CROP: {
@@ -2416,6 +2430,11 @@ bool FormKeyDown(UINT vk) {
 }
 
 LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (g.about.open) {
+        const int r = aboutgdi::HandleMessage(hwnd, g.about, msg, wp, lp, L"https://github.com/Neox365/Duncans-Suite");
+        if (r == 2) return TRUE;
+        if (r == 1) return 0;
+    }
     switch (msg) {
     case WM_ERASEBKGND: return 1;
     case WM_PAINT: PaintBuffered(hwnd, PaintCanvas); return 0;

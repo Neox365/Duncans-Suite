@@ -29,9 +29,10 @@
 #include "Store.h"
 #include "TextEdit.h"
 #include "Theme.h"
+#include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.4.1"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -360,6 +361,7 @@ private:
     ComPtr<IDWriteFactory> dw;
     ComPtr<ID2D1HwndRenderTarget> rt;
     ComPtr<ID2D1SolidColorBrush> brush;
+    aboutcard::State m_about;             // "Ueber"-Kachelansicht im Fenster (statt MessageBox)
     ComPtr<IDWriteTextFormat> fNormal, fSmall, fBold, fTitle, fTitleR, fLogo, fCenter, fRight, fBadge;
 
     D2D1_RECT_F rcTop{}, rcTree{}, rcList{}, rcStats{}, rcTags{}, rcHead{}, rcStatus{}, rcSearch{};
@@ -508,6 +510,23 @@ void App::Paint() {
     DrawTop();
     DrawStatusBar();
     if (m_dlg.kind != DlgKind::None) DrawDialog();
+    if (m_about.open) {
+        RECT acr;
+        GetClientRect(m_hwnd, &acr);
+        aboutcard::Spec sp;
+        sp.name = L"Oggys Docs-Files";
+        sp.version = APP_VERSION;
+        sp.letter = L'O';
+        sp.accent = Theme::Accent;
+        sp.tiles = {
+            {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
+            {L"Quellcode", L"github.com/Neox365/Duncans-Suite"}, {L"Teil von", L"Duncan's Suite"},
+            {L"Rechnungsordner", m_settings.root, true},
+            {L"Einstellungen", L"%LOCALAPPDATA%\\OggysDocsFiles\\settings.ini", true},
+            {L"Datenschutz", L"Alle Daten werden zu 100 % lokal auf deinem Gerät gespeichert. Es erfolgt keine Übertragung personenbezogener Daten an externe Server.", true},
+        };
+        aboutcard::Draw(rt.Get(), brush.Get(), dw.Get(), k, acr, sp, m_about);
+    }
     if (rt->EndDraw() == static_cast<HRESULT>(D2DERR_RECREATE_TARGET)) {
         DiscardDevice();
         Invalidate();
@@ -2036,14 +2055,7 @@ void App::ShowGearMenu() {
         case M_AUTOIMPORT: m_settings.autoImport = !m_settings.autoImport; SaveSettings(m_settings); break;
         case M_PDFREADER: m_settings.pdfReader = !m_settings.pdfReader; SaveSettings(m_settings); break;
         case M_RESCAN: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); break;
-        case M_ABOUT: {
-            const std::wstring text = L"Oggys Docs-Files\nTeil von Duncan's Suite\n\nVersion " APP_VERSION L"\n\nRechnungsordner: " + m_settings.root +
-                                      L"\nEinstellungen: %LOCALAPPDATA%\\OggysDocsFiles\\settings.ini"
-                                      L"\n\nDatenschutz: Alle Daten werden zu 100 % lokal auf Ihrem Gerät gespeichert. "
-                                      L"Es erfolgt keine Übertragung personenbezogener Daten an externe Server.";
-            MessageBoxW(m_hwnd, text.c_str(), L"Über", MB_OK | MB_ICONINFORMATION);
-            break;
-        }
+        case M_ABOUT: aboutcard::Open(m_about, m_hwnd); break;
     }
     Invalidate();
 }
@@ -2203,6 +2215,11 @@ LRESULT CALLBACK App::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
+    if (m_about.open) {
+        const int r = aboutcard::HandleMessage(m_hwnd, m_about, msg, wp, lp, L"https://github.com/Neox365/Duncans-Suite");
+        if (r == 2) return TRUE;
+        if (r == 1) return 0;
+    }
     auto hit = [&](float x, float y) {
         int id = 0;
         for (const auto& b : m_hits) {
