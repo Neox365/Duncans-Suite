@@ -60,6 +60,12 @@ jobs:
           cl /nologo /std:c++17 /EHsc /W4 /utf-8 office\tests\OfficeTest.cpp /Fe:build\OfficeTest.exe /Fo:build\
           build\OfficeTest.exe
 
+      - name: Test von Duncan's QuickConvert (WIC-Bilder, Media-Foundation-Audio)
+        shell: cmd
+        run: |
+          cl /nologo /std:c++17 /EHsc /W4 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX quickconvert\tests\ConvertTest.cpp quickconvert\Convert.cpp /Fe:build\QcTest.exe /Fo:build\ /link windowscodecs.lib mfplat.lib mfreadwrite.lib mfuuid.lib ole32.lib oleaut32.lib uuid.lib propsys.lib
+          build\QcTest.exe
+
       - name: Test des Aenderungsprotokoll-Parsers
         shell: cmd
         run: |
