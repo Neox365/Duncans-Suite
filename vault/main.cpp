@@ -4,7 +4,7 @@
 // PBKDF2-HMAC-SHA256 aus dem Master-Passwort (siehe Crypto.h / Vault.h). Keine Cloud, kein Sync, keine Telemetrie.
 // Oberflaeche wie in den anderen Modulen komplett selbst gezeichnet; Textfelder nutzen docs/TextEdit.h.
 //   Entsperrmaske | Kategorien | Liste | Detailansicht mit Schnellkopie | Dialoge (Eintrag, Master-Passwort, Loeschen)
-// Sicherheit im Betrieb: Auto-Lock nach 5 Minuten Inaktivitaet (abschaltbar), Zwischenablage wird 30 s nach dem Kopieren eines
+// Sicherheit im Betrieb: Auto-Lock nach 5 Minuten Inaktivitaet (abschaltbar), Zwischenablage wird 15 s nach dem Kopieren eines
 // Geheimnisses geleert (und von Verlauf/Cloud-Zwischenablage ausgenommen), beim Sperren werden Daten und Schluessel aus dem
 // Speicher geloescht.
 #include <windows.h>
@@ -29,7 +29,7 @@
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.3.1"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.4.0"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -39,13 +39,13 @@ namespace {
 
 constexpr UINT_PTR TIMER_CARET = 1, TIMER_SEC = 2;
 constexpr int kNoFocus = -1;
-constexpr ULONGLONG kAutoLockMs = 5ull * 60 * 1000, kClipClearMs = 30ull * 1000;
+constexpr ULONGLONG kAutoLockMs = 5ull * 60 * 1000, kClipClearMs = 15ull * 1000, kAutoTypeDelayMs = 5ull * 1000;   // Auto-Type: so lange hat man Zeit, das Eingabefeld im Zielfenster anzuklicken
 constexpr float kTopH = 60, kStatusH = 28, kCatW = 240, kDetailW = 430, kRowH = 58, kCatH = 38;
 
 enum Id {
     B_NEW = 1, B_GEAR, B_LOCK,
     C_CAT0 = 10,                    // 10..14: Alle, dann die vier Kategorien
-    DT_COPYUSER = 20, DT_COPYSECRET, DT_SHOW, DT_OPENURL, DT_EDIT, DT_DELETE,
+    DT_COPYUSER = 20, DT_COPYSECRET, DT_SHOW, DT_OPENURL, DT_EDIT, DT_DELETE, DT_LOGIN = 26,   // DT_LOGIN: "Einloggen / Daten kopieren"
     L_UNLOCK = 30, L_REVEAL, S_CREATE, S_REVEAL, S_SKIP,
     D_OK = 40, D_CANCEL, D_CAT0 = 42,   // 42..45: Kategorie im Eintragsdialog
     D_REVEAL = 46, D_GENTOGGLE, D_GENRUN, D_LENMINUS, D_LENPLUS, D_GU, D_GL, D_GD, D_GS
@@ -87,6 +87,7 @@ struct Dialog {
 
 struct Settings {
     bool autoLock = true;
+    bool autoType = true;     // Auto-Type (Tastatursimulation per SendInput) im Menue "Einloggen" anbieten
     vault::GenOptions gen;
 };
 
@@ -122,6 +123,7 @@ std::wstring SettingsPath() {
 void LoadSettings(Settings& st) {
     const std::wstring ini = SettingsPath();
     st.autoLock = GetPrivateProfileIntW(L"Allgemein", L"AutoSperre", 1, ini.c_str()) != 0;
+    st.autoType = GetPrivateProfileIntW(L"Allgemein", L"AutoType", 1, ini.c_str()) != 0;
     st.gen.length = std::clamp((int)GetPrivateProfileIntW(L"Generator", L"Laenge", 20, ini.c_str()), vault::kGenMin, vault::kGenMax);
     st.gen.upper = GetPrivateProfileIntW(L"Generator", L"Gross", 1, ini.c_str()) != 0;
     st.gen.lower = GetPrivateProfileIntW(L"Generator", L"Klein", 1, ini.c_str()) != 0;
@@ -132,6 +134,7 @@ void SaveSettings(const Settings& st) {
     const std::wstring ini = SettingsPath();
     auto put = [&](const wchar_t* sec, const wchar_t* k, int v) { WritePrivateProfileStringW(sec, k, std::to_wstring(v).c_str(), ini.c_str()); };
     put(L"Allgemein", L"AutoSperre", st.autoLock);
+    put(L"Allgemein", L"AutoType", st.autoType);
     put(L"Generator", L"Laenge", st.gen.length);
     put(L"Generator", L"Gross", st.gen.upper);
     put(L"Generator", L"Klein", st.gen.lower);
@@ -150,6 +153,39 @@ std::wstring ClipboardText() {
     }
     CloseClipboard();
     return out;
+}
+
+// Text per SendInput als Unicode-Tastendruecke tippen (keine Tastaturlayout-Abhaengigkeit); der Puffer wird danach genullt.
+// false, wenn Windows die Eingabe blockiert (z. B. Zielfenster mit hoeheren Rechten).
+bool TypeText(const std::wstring& text) {
+    std::vector<INPUT> in;
+    in.reserve(text.size() * 2);
+    for (wchar_t c : text) {
+        INPUT d{};
+        d.type = INPUT_KEYBOARD;
+        d.ki.wScan = c;
+        d.ki.dwFlags = KEYEVENTF_UNICODE;
+        in.push_back(d);
+        d.ki.dwFlags = KEYEVENTF_UNICODE | KEYEVENTF_KEYUP;
+        in.push_back(d);
+    }
+    bool ok = true;
+    for (size_t i = 0; i < in.size() && ok; i += 64) {   // in kleinen Bloecken, damit Browser keine Zeichen verschlucken
+        const UINT n = static_cast<UINT>(std::min<size_t>(64, in.size() - i));
+        ok = SendInput(n, in.data() + i, sizeof(INPUT)) == n;
+        Sleep(8);
+    }
+    SecureZeroMemory(in.data(), in.size() * sizeof(INPUT));
+    return ok;
+}
+
+bool TypeKey(WORD vk) {
+    INPUT in[2]{};
+    in[0].type = in[1].type = INPUT_KEYBOARD;
+    in[0].ki.wVk = in[1].ki.wVk = vk;
+    in[0].ki.wScan = in[1].ki.wScan = static_cast<WORD>(MapVirtualKeyW(vk, MAPVK_VK_TO_VSC));
+    in[1].ki.dwFlags = KEYEVENTF_KEYUP;
+    return SendInput(2, in, sizeof(INPUT)) == 2;
 }
 
 // sensitive: nicht in den Windows-Zwischenablageverlauf und nicht in die Cloud-Zwischenablage
@@ -267,6 +303,10 @@ private:
     void GenerateInto();
     void CopyText(const std::wstring& text, bool secret, const wchar_t* what);
     void ClearClipboardIfOurs();
+    void OpenUrl(const std::wstring& url);
+    void ShowLoginMenu();
+    void BeginAutoType(bool enter);
+    void RunAutoType();
     void ShowGearMenu();
     void SetNote(const std::wstring& s, bool sticky = false) { m_note = s; m_noteUntil = sticky ? 0 : GetTickCount64() + 7000; }
     void Invalidate() { InvalidateRect(m_hwnd, nullptr, FALSE); }
@@ -313,6 +353,9 @@ private:
     bool m_lockNoPw = false;             // Tresor ohne Master-Passwort: die Sperrmaske hat nur einen Entsperren-Knopf
     int m_fails = 0;
     ULONGLONG m_nextTry = 0, m_lastInput = 0, m_clipUntil = 0;
+    std::wstring m_autoId;                // Auto-Type: Eintrag, der nach der Wartezeit getippt wird (nur die Id, keine Geheimnisse)
+    bool m_autoEnter = false;
+    ULONGLONG m_autoAt = 0;               // Zeitpunkt (GetTickCount64) fuer den Start, 0 = nichts geplant
     std::wstring m_clipText;              // was wir in die Zwischenablage gelegt haben (zum Vergleichen beim Leeren)
 
     int m_focusId = kNoFocus;
@@ -787,7 +830,10 @@ void App::DrawDetail() {
             Button(extraId, {right - w, box.top + 5 * k, right, box.bottom - 5 * k}, extraLabel, false);
             right -= w + 6 * k;
         }
-        Txt(value.empty() ? L"–" : value, {box.left + 12 * k, box.top, right, box.bottom}, fNormal.Get(), value.empty() ? Theme::TextDim : Theme::Text);
+        const bool link = copyId == DT_OPENURL && !value.empty();   // Web-Adresse: Text ist ein Link (Klick oeffnet im Standardbrowser)
+        Txt(value.empty() ? L"–" : value, {box.left + 12 * k, box.top, right, box.bottom}, fNormal.Get(),
+            value.empty() ? Theme::TextDim : (link ? Theme::Accent : Theme::Text));
+        if (link) m_hits.push_back({DT_OPENURL, {box.left + 12 * k, box.top, right, box.bottom}});
         y += bh + 12 * k;
     };
     if (sc.user) block(sc.user, e->user, e->user.empty() ? 0 : DT_COPYUSER, L"Kopieren", 0, nullptr);
@@ -802,7 +848,7 @@ void App::DrawDetail() {
     if (sc.url) block(sc.url, e->url, e->url.empty() ? 0 : DT_OPENURL, L"Öffnen", 0, nullptr);
     if (!e->tags.empty()) block(L"Tags", e->tags, 0, nullptr, 0, nullptr);
     // Notiz: mehrzeilig, bis vor die unteren Knoepfe
-    const float footerH = 96 * k;
+    const float footerH = 148 * k;
     if (!e->notes.empty() && y < rcDetail.bottom - footerH - 40 * k) {
         Txt(sc.notes, {x0, y, x0 + fw, y + 18 * k}, fSmall.Get(), Theme::TextDim);
         y += 20 * k;
@@ -814,6 +860,8 @@ void App::DrawDetail() {
     // unten: Zeitstempel und Knoepfe
     const float by = rcDetail.bottom - 22 * k - 38 * k;
     Txt(L"Erstellt " + TimeText(e->created) + L"   ·   Geändert " + TimeText(e->modified), {x0, by - 28 * k, x0 + fw, by - 6 * k}, fSmall.Get(), Theme::TextDim);
+    if ((sc.user && !e->user.empty()) || !e->secret.empty())   // Einloggen / Daten kopieren: Menue mit Kopieren, Website oeffnen und Auto-Type
+        Button(DT_LOGIN, {x0, by - 28 * k - 10 * k - 44 * k, x0 + fw, by - 28 * k - 10 * k}, L"Einloggen / Daten kopieren  \u25BE", true);
     Button(DT_EDIT, {x0, by, x0 + (fw - 10 * k) / 2, by + 38 * k}, L"Bearbeiten", false);
     Button(DT_DELETE, {x0 + (fw + 10 * k) / 2, by, x0 + fw, by + 38 * k}, L"Löschen", false, true);
 }
@@ -1399,7 +1447,7 @@ void App::CopyText(const std::wstring& text, bool secret, const wchar_t* what) {
     if (secret) {
         m_clipText = text;
         m_clipUntil = GetTickCount64() + kClipClearMs;
-        SetNote(std::wstring(what) + L" kopiert! Zwischenablage wird in 30s geleert.");
+        SetNote(std::wstring(what) + L" kopiert! Zwischenablage wird in " + std::to_wstring(kClipClearMs / 1000) + L" s geleert.");
     } else {
         SetNote(std::wstring(what) + L" kopiert");
     }
@@ -1417,6 +1465,85 @@ void App::ClearClipboardIfOurs() {
     SetNote(L"Zwischenablage geleert");
 }
 
+// Nur Web-Adressen oeffnen (http/https); fehlt das Schema, wird https:// vorangestellt
+void App::OpenUrl(const std::wstring& url) {
+    std::wstring u = vault::Trim(url);
+    if (u.empty()) return;
+    if (u.compare(0, 7, L"http://") != 0 && u.compare(0, 8, L"https://") != 0) u = L"https://" + u;
+    ShellExecuteW(m_hwnd, L"open", u.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
+void App::ShowLoginMenu() {
+    const vault::Entry* e = Sel();
+    if (!e) return;
+    const vault::Schema& sc = vault::SchemaOf(e->cat);
+    const bool hasUser = sc.user && !e->user.empty(), hasSecret = !e->secret.empty(), hasUrl = !e->url.empty();
+    const std::wstring userWord = sc.user ? sc.user : L"Benutzername", secretWord = vault::SecretWord(e->cat);
+    HMENU m = CreatePopupMenu();
+    if (hasUrl) AppendMenuW(m, MF_STRING | (hasUser ? 0 : MF_GRAYED), 1, (L"Website öffnen und " + userWord + L" kopieren").c_str());
+    AppendMenuW(m, MF_STRING | (hasUser ? 0 : MF_GRAYED), 2, (userWord + L" kopieren").c_str());
+    AppendMenuW(m, MF_STRING | (hasSecret ? 0 : MF_GRAYED), 3, (secretWord + L" kopieren").c_str());
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    const UINT typeFlags = m_settings.autoType && (hasUser || hasSecret) ? 0 : MF_GRAYED;
+    AppendMenuW(m, MF_STRING | typeFlags, 4, L"Auto-Type: Benutzername ⇥ Passwort eintippen");
+    AppendMenuW(m, MF_STRING | typeFlags, 5, L"Auto-Type und mit Enter absenden");
+    if (!m_settings.autoType) AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"(Auto-Type im Zahnrad-Menü einschalten)");
+    POINT pt{};
+    GetCursorPos(&pt);
+    for (const auto& b : m_hits)
+        if (b.id == DT_LOGIN) {
+            pt = {(LONG)b.rc.left, (LONG)b.rc.top};
+            ClientToScreen(m_hwnd, &pt);
+        }
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_BOTTOMALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(m);
+    // Der Eintrag kann sich waehrend des Menues nicht aendern, die Zeiger bleiben gueltig
+    switch (cmd) {
+        case 1: OpenUrl(e->url); CopyText(e->user, true, userWord.c_str()); break;
+        case 2: CopyText(e->user, true, userWord.c_str()); break;   // true: nicht in Verlauf/Cloud-Zwischenablage, wird automatisch geleert
+        case 3: CopyText(e->secret, true, secretWord.c_str()); break;
+        case 4: BeginAutoType(false); break;
+        case 5: BeginAutoType(true); break;
+    }
+}
+
+// Auto-Type: das Fenster des Tresors verschwindet, nach kAutoTypeDelayMs wird in das dann aktive Fenster getippt.
+// In dieser Zeit klickt man das Benutzernamen-Feld an. Der Tresor selbst ist nie das Ziel.
+void App::BeginAutoType(bool enter) {
+    const vault::Entry* e = Sel();
+    if (!e || m_screen != Screen::Main) return;
+    if (!m_settings.autoType) { SetNote(L"Auto-Type ist ausgeschaltet (Zahnrad-Menü)."); return; }
+    if (e->user.empty() && e->secret.empty()) { SetNote(L"Dieser Eintrag hat nichts zum Eintippen."); return; }
+    m_autoId = e->id;
+    m_autoEnter = enter;
+    m_autoAt = GetTickCount64() + kAutoTypeDelayMs;
+    SetNote(L"Auto-Type startet in " + std::to_wstring(kAutoTypeDelayMs / 1000) + L" s – jetzt das Benutzernamen-Feld anklicken …", true);
+    ShowWindow(m_hwnd, SW_MINIMIZE);
+}
+
+void App::RunAutoType() {
+    const std::wstring id = m_autoId;
+    const bool enter = m_autoEnter;
+    m_autoAt = 0;
+    m_autoId.clear();
+    const vault::Entry* e = m_screen == Screen::Main ? FindEntry(id) : nullptr;
+    if (!e) { SetNote(L"Auto-Type abgebrochen: Der Tresor ist gesperrt."); return; }
+    HWND fg = GetForegroundWindow();
+    if (!fg || fg == m_hwnd || GetAncestor(fg, GA_ROOT) == m_hwnd) {   // kein anderes Fenster: nichts tippen
+        ShowWindow(m_hwnd, SW_RESTORE);
+        SetNote(L"Auto-Type abgebrochen: Es war kein anderes Fenster aktiv.");
+        return;
+    }
+    wchar_t title[160]{};
+    GetWindowTextW(fg, title, 160);
+    bool ok = true;
+    if (!e->user.empty()) ok = TypeText(e->user);
+    if (ok && !e->user.empty() && !e->secret.empty()) { Sleep(60); ok = TypeKey(VK_TAB); Sleep(120); }
+    if (ok && !e->secret.empty()) ok = TypeText(e->secret);
+    if (ok && enter) { Sleep(60); ok = TypeKey(VK_RETURN); }
+    SetNote(ok ? L"Eingetippt in: " + std::wstring(title) : L"Auto-Type wurde von Windows blockiert (Zielfenster mit Administratorrechten?).");
+}
+
 void App::ShowGearMenu() {
     HMENU m = CreatePopupMenu();
     if (m_session.dpapi) AppendMenuW(m, MF_STRING, 1, L"Master-Passwort festlegen …");
@@ -1425,6 +1552,7 @@ void App::ShowGearMenu() {
         AppendMenuW(m, MF_STRING, 7, L"Master-Passwort entfernen …");
     }
     AppendMenuW(m, MF_STRING | (m_settings.autoLock ? MF_CHECKED : 0), 2, L"Nach 5 Minuten Inaktivität automatisch sperren");
+    AppendMenuW(m, MF_STRING | (m_settings.autoType ? MF_CHECKED : 0), 8, L"Auto-Type (Eintippen per Tastatursimulation) anbieten");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, 5, L"Backup exportieren (.vault) …");
     AppendMenuW(m, MF_STRING, 6, L"Backup importieren (.vault) …");
@@ -1439,6 +1567,7 @@ void App::ShowGearMenu() {
         case 1: BeginChangePw(m_session.dpapi ? 1 : 0); break;
         case 7: BeginChangePw(2); break;
         case 2: m_settings.autoLock = !m_settings.autoLock; SaveSettings(m_settings); Touch(); break;
+        case 8: m_settings.autoType = !m_settings.autoType; SaveSettings(m_settings); break;
         case 5: ExportBackup(); break;
         case 6: BeginImport(); break;
         case 3: ShellExecuteW(m_hwnd, L"open", DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
@@ -1662,13 +1791,8 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case DT_COPYUSER: if (const vault::Entry* e = Sel()) CopyText(e->user, false, vault::SchemaOf(e->cat).user); break;
             case DT_COPYSECRET: if (const vault::Entry* e = Sel()) CopyText(e->secret, true, vault::SecretWord(e->cat)); break;
             case DT_SHOW: m_reveal = !m_reveal; break;
-            case DT_OPENURL:
-                if (const vault::Entry* e = Sel(); e && !e->url.empty()) {
-                    std::wstring u = e->url;
-                    if (u.compare(0, 7, L"http://") != 0 && u.compare(0, 8, L"https://") != 0) u = L"https://" + u;   // nur Web-Adressen oeffnen
-                    ShellExecuteW(m_hwnd, L"open", u.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
-                }
-                break;
+            case DT_OPENURL: if (const vault::Entry* e = Sel()) OpenUrl(e->url); break;
+            case DT_LOGIN: ShowLoginMenu(); break;
             case DT_EDIT: if (const vault::Entry* e = Sel()) BeginEntry(e); break;
             case DT_DELETE: BeginConfirmDelete(); break;
             case L_UNLOCK: TryUnlock(); break;
@@ -1737,6 +1861,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             else if (wp == TIMER_SEC) {
                 const ULONGLONG now = GetTickCount64();
                 if (m_clipUntil && now >= m_clipUntil) ClearClipboardIfOurs();
+                if (m_autoAt && now >= m_autoAt) RunAutoType();
                 if (m_noteUntil && now >= m_noteUntil) { m_note.clear(); m_noteUntil = 0; }
                 if (m_screen == Screen::Main && m_settings.autoLock && now - m_lastInput >= kAutoLockMs) Lock(true);
                 if (m_screen == Screen::Main) Invalidate();
