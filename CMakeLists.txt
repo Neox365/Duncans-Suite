@@ -5,7 +5,7 @@ set(SUITE_VER "1.1.37")
 set(PDF_VER "1.1.24")
 set(PHOTO_VER "0.3.0")
 set(DOCS_VER "0.4.0")
-set(VAULT_VER "0.3.1")
+set(VAULT_VER "0.4.0")
 set(OFFICE_VER "0.3.0")
 set(QUICKCONVERT_VER "0.2.0")
 

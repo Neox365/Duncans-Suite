@@ -208,6 +208,11 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.4.0 | 2026-10-27
+- Neu: Knopf „Einloggen / Daten kopieren“ in der Detailansicht. Das Menü kopiert Benutzername oder Passwort, öffnet die Website und kopiert dabei den Benutzernamen oder tippt beides per Auto-Type ein.
+- Neu: Auto-Type (abschaltbar im Zahnrad-Menü): Der Tresor minimiert sich, nach 5 Sekunden werden Benutzername, Tab und Passwort in das aktive Fenster getippt, optional mit Enter. Wenn kein anderes Fenster aktiv ist oder der Tresor gesperrt wurde, wird nichts getippt.
+- Geändert: Die Zwischenablage wird jetzt 15 statt 30 Sekunden nach dem Kopieren eines Geheimnisses geleert; auch der Benutzername aus dem Einloggen-Menü wird so behandelt (nicht im Verlauf, nicht in der Cloud-Zwischenablage).
+- Neu: Die Web-Adresse in der Detailansicht ist ein Link; ein Klick öffnet sie im Standardbrowser (nur http und https).
 ## 0.3.1 | 2026-10-21
 - Speicherschutz: Der Hauptschlüssel liegt jetzt in eigenen Speicherseiten, die gegen das Auslagern in die Windows-Auslagerungsdatei gesperrt sind (VirtualLock) und beim Freigeben sofort mit SecureZeroMemory überschrieben werden. Das gilt auch für alle Kopien des Schlüssels.
 - Passwortfelder, eingegebene Master-Passwörter und entschlüsselte Zwischenstände werden nach der Nutzung aus dem Speicher überschrieben (nicht nur geleert).
