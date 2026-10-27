@@ -248,7 +248,7 @@ Ergebnis: `release\DuncansSuite_Setup_1.1.24.exe` (schlanker Admin-Installer: nu
 
 ## Duncan's PDF Reader
 
-Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im selben Dark-Stil: Werkzeugleiste oben, Seitenleiste links, Canvas mit Scrollen,
+Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im selben Dark-Stil: Werkzeugleiste oben (bei schmalem Fenster nehmen „⋯“ die seltener gebrauchten Knöpfe auf), Seitenleiste links, Canvas mit Scrollen,
 `Strg+Mausrad`-Zoom und Drag & Drop.
 
 - **Seitenleiste:** Vorschaubilder aller Seiten; Klick wählt, `Strg`-/`Umschalt`-Klick wählt mehrere. Drehen und Löschen wirken auf die Auswahl (Werkzeugleiste, Tab „Werkzeuge“ oder Rechtsklick-Menü).
@@ -258,6 +258,9 @@ Nativer PDF-Betrachter (`pdf/`, Ziel `DuncansPdfReader` → `DuncansPdf.exe`) im
 - **Anmerkungen:** *Marker* (`H`) hebt per Maus überstrichenen Text gelb hervor, *Notiz* (`N`) setzt an der angeklickten Stelle eine Notiz mit Text. Beides wird als echte PDF-Anmerkung gespeichert; `Esc` beendet das Werkzeug.
 - **Zuschnitt:** *Zuschnitt* (`C`) zieht einen Rahmen auf der Seite auf; nach der Bestätigung wird der sichtbare Bereich (CropBox) der ausgewählten Seiten (sonst der aktuellen; `Strg+A` in der Seitenleiste wählt alle) darauf gesetzt. Der Seiteninhalt bleibt in der Datei erhalten, `U` hebt den Zuschnitt wieder auf.
 - **Formulare ausfüllen:** PDFs mit AcroForm-Feldern werden erkannt (Felder leicht blau hinterlegt). Textfelder, Kontrollkästchen, Optionsfelder, Auswahllisten und Schaltflächen lassen sich direkt anklicken und ausfüllen (Tastatur, `Strg+C/X/V/A`, `Esc` verlässt das Feld). Die Eingaben werden beim Speichern in die Datei geschrieben. XFA-Formulare werden nicht unterstützt.
+- **Stempel & Unterschrift:** *Stempel* öffnet ein Menü mit BEZAHLT, GENEHMIGT, ENTWURF und VERTRAULICH (mit Tagesdatum) sowie „Unterschrift zeichnen“, „Unterschrift aus Bilddatei“ und der zuletzt gespeicherten Unterschrift (`%LOCALAPPDATA%DuncansPdfsignature.png`; PNG mit Transparenz, ohne Transparenz wird heller Hintergrund durchsichtig). Das Bild folgt der Maus, ein Klick setzt es als Bildobjekt mit Alphakanal auf die Seite (`Umschalt+Mausrad` ändert die Größe, `Esc` beendet), auch auf gedrehten Seiten.
+- **Seiten extrahieren und teilen:** Rechtsklick auf die Vorschauen → „Ausgewählte Seiten als neue PDF speichern …“; der Knopf *Split* (auch Rechtsklick-Menü und Tab „Werkzeuge“) teilt die PDF nach Bereichen (`1-3, 4-7, 9`), Blöcken (`je 5`) oder einzeln (`einzeln`) in einen gewählten Ordner. Das geöffnete Dokument bleibt unverändert.
+- **Schwärzen:** *Schwärzen* zieht einen Rahmen auf. Text, der (fast) ganz darunter liegt, wird aus dem Seiteninhalt entfernt und durch einen schwarzen Balken ersetzt; nach der Änderung wird geprüft, dass unter dem Rahmen kein Text mehr steht. Lässt sich der Text nicht sauber trennen (Bilder, Formularobjekte, Textlauf über den Rahmen hinaus), wird die Seite mit 220 dpi als Bild neu aufgebaut (ohne Text, Notizen und Markierungen). Nach dem Schwärzen schreibt *Speichern* ein bereinigtes Dokument (nur erreichbare Seiteninhalte, ohne Lesezeichen und Formularfelder), damit keine entfernten Objekte in der Datei bleiben. Test: `pdf/tests/PdfEditTest.cpp`.
 - **Datei verkleinern** (Tab „Werkzeuge“): Bilder werden auf höchstens 150 dpi heruntergerechnet und mit JPEG-Qualität 70 neu kodiert, nur benutzte Objekte kommen in die neue Datei. Lesezeichen und Formularfelder gehen dabei verloren; das geöffnete Dokument bleibt unverändert.
 - **Speichern:** schreibt eine Kopie mit allen Änderungen (Drehungen, gelöschte und angehängte Seiten); das Original bleibt unverändert.
 

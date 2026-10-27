@@ -5,6 +5,7 @@
 #include <windowsx.h>
 #include <commdlg.h>
 #include <shellapi.h>
+#include <shlobj.h>
 #include <dwmapi.h>
 #include <uxtheme.h>
 
@@ -25,7 +26,7 @@ using std::min;
 #include "../common/Gfx.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.1.24"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.2.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -48,7 +49,7 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
     C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS, C_CROP, C_UNCROP,
-    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
+    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE, C_STAMP, C_REDACT, C_SPLIT, C_EXTRACT, C_MORE   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
 };
 
 struct Item {
@@ -58,6 +59,8 @@ struct Item {
     bool needsDoc = true;
     bool right = false;        // rechts ausgerichtet (Seitenwechsel)
     bool isPageLabel = false;
+    int prio = 0;              // > 0: bei schmalem Fenster in das Menue "..." verlagern (hoechster Wert zuerst)
+    bool hidden = false;       // derzeit im Menue "..." statt in der Leiste
     RECT rc{};
 };
 
@@ -97,13 +100,21 @@ struct App {
     int dragHit = -1, dragStartY = 0, dragInsert = -1;
     std::vector<int> dragPages;
 
-    // Anmerkungen: 0 = kein Werkzeug, 1 = Text markieren, 2 = Notiz setzen, 3 = Zuschnitt aufziehen, 4 = Radierer (Markierung entfernen)
+    // Anmerkungen: 0 = kein Werkzeug, 1 = Text markieren, 2 = Notiz setzen, 3 = Zuschnitt aufziehen, 4 = Radierer (Markierung entfernen), 5 = Stempel/Unterschrift setzen, 6 = Schwärzen
     int tool = 0;
     bool selDrag = false;                  // Textauswahl beim Markieren laeuft
     bool eraseDrag = false;                // Radierer: Maustaste gedrueckt, Markierungen werden entfernt
     int selPage = -1, selA = -1, selB = -1;
     bool cropDrag = false;                 // Zuschnitt-Rahmen wird aufgezogen
-    POINT cropA{}, cropB{};                // Eckpunkte in Canvas-Koordinaten
+    POINT cropA{}, cropB{};                // Eckpunkte in Canvas-Koordinaten (auch fuer den Schwaerzen-Rahmen)
+    bool redDrag = false;                  // Schwaerzen-Rahmen wird aufgezogen
+
+    // Stempel / Unterschrift: das Bild folgt der Maus, ein Klick setzt es auf die Seite
+    PdfDocument::Image stampImg;
+    Gdiplus::Bitmap* stampGdi = nullptr;   // Sicht auf stampImg.bgra fuer die Vorschau
+    double stampFrac = 0.30;               // Breite des Stempels als Anteil der Seitenbreite
+    POINT stampPos{};
+    bool stampHover = false, stampTrack = false;
 
     // Formulare
     bool formFocus = false;                // ein Text-/Auswahlfeld hat den Eingabefokus (Tasten gehen an das Feld)
@@ -222,28 +233,32 @@ bool ItemEnabled(const Item& it) { return !it.needsDoc || g.doc.IsOpen(); }
 
 // ---------- Werkzeugleiste ----------
 void BuildItems() {
-    auto add = [](int cmd, const wchar_t* label, int minW, bool needsDoc, bool right = false, bool pageLabel = false) {
-        Item it; it.cmd = cmd; it.label = label; it.minWidth = minW; it.needsDoc = needsDoc; it.right = right; it.isPageLabel = pageLabel;
+    auto add = [](int cmd, const wchar_t* label, int minW, bool needsDoc, bool right = false, bool pageLabel = false, int prio = 0) {
+        Item it; it.cmd = cmd; it.label = label; it.minWidth = minW; it.needsDoc = needsDoc; it.right = right; it.isPageLabel = pageLabel; it.prio = prio;
         g.items.push_back(it);
     };
     add(C_SIDE, L"☰", 40, false);
     add(C_NONE, L"", 0, false);
     add(C_OPEN, L"Öffnen", 0, false);
     add(C_SAVE, L"Speichern", 0, true);
-    add(C_MERGE, L"Merge", 0, true);
-    add(C_FIND, L"Suchen", 0, true);
-    add(C_HILITE, L"Marker", 0, true);
-    add(C_ERASE, L"⌫", 40, true);   // Radierer: entfernt Markierungen
-    add(C_NOTE, L"Notiz", 0, true);
-    add(C_CROP, L"Zuschnitt", 0, true);
+    add(C_MERGE, L"Merge", 0, true, false, false, 3);
+    add(C_SPLIT, L"Split", 0, true);
+    add(C_FIND, L"Suchen", 0, true, false, false, 1);
+    add(C_HILITE, L"Marker", 0, true, false, false, 2);
+    add(C_ERASE, L"⌫", 40, true, false, false, 5);   // Radierer: entfernt Markierungen
+    add(C_NOTE, L"Notiz", 0, true, false, false, 6);
+    add(C_CROP, L"Zuschnitt", 0, true, false, false, 4);
+    add(C_STAMP, L"Stempel", 0, true);
+    add(C_REDACT, L"Schwärzen", 0, true);
     add(C_NONE, L"", 0, false);
     add(C_ZOOMOUT, L"−", 40, true);
     add(C_ACTUAL, L"100 %", 64, true);
     add(C_ZOOMIN, L"+", 40, true);
-    add(C_FITW, L"Breite", 0, true);
+    add(C_FITW, L"Breite", 0, true, false, false, 7);
     add(C_NONE, L"", 0, false);
-    add(C_ROTL, L"↺", 40, true);
-    add(C_ROTR, L"↻", 40, true);
+    add(C_ROTL, L"↺", 40, true, false, false, 9);
+    add(C_ROTR, L"↻", 40, true, false, false, 8);
+    add(C_MORE, L"⋯", 40, false, true);   // nimmt bei schmalem Fenster die ausgeblendeten Knoepfe auf
     add(C_PREV, L"‹", 40, true, true);
     add(C_NONE, L"1 / 1", 84, true, true, true);   // Seitenanzeige (nicht klickbar)
     add(C_NEXT, L"›", 40, true, true);
@@ -414,15 +429,47 @@ void LayoutToolbar() {
         int w = it.label.empty() ? 0 : TextW(it.label, g.font) + S(28);
         return Max(w, S(it.minWidth));
     };
+    // Reicht die Breite nicht, wandern die unwichtigsten Knoepfe (hoechste prio zuerst) in das Menue "⋯"
+    int moreIdx = -1;
+    for (size_t i = 0; i < g.items.size(); ++i) { g.items[i].hidden = false; if (g.items[i].cmd == C_MORE) moreIdx = static_cast<int>(i); }
+    bool anyHidden = false;
+    auto need = [&]() {
+        int total = 2 * pad;
+        for (size_t i = 0; i < g.items.size(); ++i) {
+            const Item& it = g.items[i];
+            if (it.hidden || (static_cast<int>(i) == moreIdx && !anyHidden)) continue;
+            total += width(it) + (it.cmd == C_NONE ? 0 : gap);
+        }
+        return total;
+    };
+    while (need() > cr.right) {
+        int best = -1;
+        for (size_t i = 0; i < g.items.size(); ++i)
+            if (!g.items[i].hidden && g.items[i].prio > 0 && (best < 0 || g.items[i].prio > g.items[best].prio)) best = static_cast<int>(i);
+        if (best < 0) break;
+        g.items[best].hidden = true;
+        anyHidden = true;
+    }
+    if (moreIdx >= 0 && !anyHidden) g.items[moreIdx].hidden = true;
+    for (size_t i = 0; i < g.items.size(); ++i) {                       // Trenner ohne Nachbarn (am Rand oder doppelt) ausblenden
+        Item& it = g.items[i];
+        if (!(it.cmd == C_NONE && it.label.empty()) || it.hidden || it.right) continue;
+        int prev = -1, next = -1;
+        for (int j = static_cast<int>(i) - 1; j >= 0 && prev < 0; --j) if (!g.items[j].hidden && !g.items[j].right) prev = j;
+        for (size_t j = i + 1; j < g.items.size() && next < 0; ++j) if (!g.items[j].hidden && !g.items[j].right) next = static_cast<int>(j);
+        const bool prevSep = prev >= 0 && g.items[prev].cmd == C_NONE && g.items[prev].label.empty();
+        if (prev < 0 || next < 0 || prevSep) it.hidden = true;
+    }
     int rx = cr.right - pad;
     for (Item& it : g.items) {
+        if (it.hidden) continue;
         if (it.right) continue;
         int w = width(it);
         it.rc = RECT{ x, top, x + w, top + bh };
         x += w + (it.cmd == C_NONE ? 0 : gap);
     }
     for (auto i = g.items.rbegin(); i != g.items.rend(); ++i) {
-        if (!i->right) continue;
+        if (!i->right || i->hidden) continue;
         int w = width(*i);
         i->rc = RECT{ rx - w, top, rx, top + bh };
         rx -= w + gap;
@@ -441,6 +488,7 @@ void DrawToolbar(HDC dc, int width) {
 
     for (size_t i = 0; i < g.items.size(); ++i) {
         const Item& it = g.items[i];
+        if (it.hidden) continue;
         if (it.cmd == C_NONE && it.label.empty()) {                      // Trenner
             HPEN sp = CreatePen(PS_SOLID, 1, kBorder);
             HGDIOBJ o = SelectObject(dc, sp);
@@ -453,7 +501,7 @@ void DrawToolbar(HDC dc, int width) {
         const bool enabled = ItemEnabled(it);
         const bool hot = enabled && static_cast<int>(i) == g.hot;
         const bool pressed = hot && static_cast<int>(i) == g.down;
-        const bool active = (it.cmd == C_SIDE && g.sideVisible) || (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2) || (it.cmd == C_CROP && g.tool == 3) || (it.cmd == C_ERASE && g.tool == 4);
+        const bool active = (it.cmd == C_SIDE && g.sideVisible) || (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2) || (it.cmd == C_CROP && g.tool == 3) || (it.cmd == C_ERASE && g.tool == 4) || (it.cmd == C_STAMP && g.tool == 5) || (it.cmd == C_REDACT && g.tool == 6);
         COLORREF fill = pressed ? RGB(28, 31, 39) : hot ? kCardHover : (it.cmd == C_OPEN ? kAccent : kCardRaised);
         COLORREF txt = !enabled ? RGB(95, 100, 112) : (it.cmd == C_OPEN && !hot) ? RGB(8, 20, 36) : kText;
         if (it.cmd == C_OPEN && hot) txt = kText;
@@ -465,7 +513,7 @@ void DrawToolbar(HDC dc, int width) {
 int HitToolbar(POINT p) {
     for (size_t i = 0; i < g.items.size(); ++i) {
         const Item& it = g.items[i];
-        if ((it.cmd != C_NONE) && PtInRect(&it.rc, p)) return static_cast<int>(i);
+        if (!it.hidden && (it.cmd != C_NONE) && PtInRect(&it.rc, p)) return static_cast<int>(i);
     }
     return -1;
 }
@@ -475,10 +523,11 @@ const struct { int cmd; const wchar_t* label; } kTools[] = {
     { C_ROTL, L"Seite nach links drehen" }, { C_ROTR, L"Seite nach rechts drehen" },
     { C_DELETE, L"Seite(n) löschen" }, { C_FIND, L"Im Dokument suchen" },
     { C_HILITE, L"Text markieren" }, { C_ERASE, L"Markierung entfernen" }, { C_NOTE, L"Notiz hinzufügen" }, { C_COMPRESS, L"Datei verkleinern …" },
-    { C_MERGE, L"PDF anhängen (Merge)" }, { C_SAVE, L"Speichern unter …" },
+    { C_MERGE, L"PDF anhängen (Merge)" }, { C_SPLIT, L"PDF teilen (Split) …" }, { C_EXTRACT, L"Gewählte Seiten als neue PDF …" },
+    { C_STAMP, L"Stempel & Unterschrift …" }, { C_REDACT, L"Schwärzen (dauerhaft)" }, { C_SAVE, L"Speichern unter …" },
     { C_FITW, L"Auf Seitenbreite einpassen" }, { C_ACTUAL, L"Originalgröße (100 %)" },
 };
-int ToolRowH() { return S(42); }
+int ToolRowH() { return S(38); }
 
 // Zeile "Text markieren": rechts daneben sitzt der Farbknopf (oeffnet die Farbpalette)
 int HiliteRow() {
@@ -486,13 +535,14 @@ int HiliteRow() {
     return -1;
 }
 RECT ToolRowRect(int i, const RECT& cr) {
-    RECT r{ S(12), S(12) + i * ToolRowH(), cr.right - S(12), S(12) + i * ToolRowH() + ToolRowH() - S(6) };
+    const int y0 = S(12) + i * ToolRowH() - g.sideScroll;
+    RECT r{ S(12), y0, cr.right - S(12), y0 + ToolRowH() - S(6) };
     if (i == HiliteRow()) r.right -= S(46);
     return r;
 }
 RECT ColorBtnRect(const RECT& cr) {
     const int i = HiliteRow();
-    const int top = S(12) + i * ToolRowH();
+    const int top = S(12) + i * ToolRowH() - g.sideScroll;
     return RECT{ cr.right - S(12) - S(38), top, cr.right - S(12), top + ToolRowH() - S(6) };
 }
 constexpr int kColorBtnHot = 1000;   // toolHot-Wert fuer den Farbknopf
@@ -516,10 +566,13 @@ std::vector<int> TargetPages() {
     return v;
 }
 
+// Hoehe des Inhalts der Seitenleiste: Vorschauen bzw. die Liste der Werkzeuge (scrollt bei niedrigem Fenster)
+int SideContentH() { return g.sideTab == 0 ? g.sideContentH : S(12) + static_cast<int>(sizeof(kTools) / sizeof(kTools[0])) * ToolRowH() + S(6); }
+
 void SideScrollbar() {
     RECT cr; GetClientRect(g.side, &cr);
     SCROLLINFO si{ sizeof(si), SIF_RANGE | SIF_PAGE | SIF_POS };
-    si.nMin = 0; si.nMax = g.sideTab == 0 ? Max(0, g.sideContentH - 1) : 0; si.nPage = cr.bottom; si.nPos = g.sideScroll;
+    si.nMin = 0; si.nMax = Max(0, SideContentH() - 1); si.nPage = cr.bottom; si.nPos = g.sideScroll;
     SetScrollInfo(g.side, SB_VERT, &si, TRUE);
 }
 
@@ -543,7 +596,7 @@ void LayoutSidebar() {
     g.thumbTop[n] = y;
     g.sideContentH = y;
     RECT cr; GetClientRect(g.side, &cr);
-    g.sideScroll = Max(0, Min(g.sideScroll, g.sideContentH - cr.bottom));
+    g.sideScroll = Max(0, Min(g.sideScroll, SideContentH() - cr.bottom));
     SideScrollbar();
     InvalidateRect(g.side, nullptr, FALSE);
 }
@@ -848,6 +901,15 @@ void DrawSearchPanel(HDC dc, RECT cr) {
     for (const auto& b : btns) DrawTextC(dc, g.font, b.t, b.r, kText);
 }
 
+// Zielrechteck des Stempels um die Mausposition p (Canvas-Koordinaten), innerhalb der Seite mit Ursprung (ox, oy)
+RECT StampRectAt(POINT p, int ox, int oy) {
+    const int w = std::max(8, static_cast<int>(std::lround(g.pageW * g.stampFrac)));
+    const int h = std::max(8, static_cast<int>(std::lround(double(w) * g.stampImg.h / std::max(1, g.stampImg.w))));
+    const int l = std::clamp<int>(p.x - w / 2, ox, std::max(ox, ox + g.pageW - w));
+    const int t = std::clamp<int>(p.y - h / 2, oy, std::max(oy, oy + g.pageH - h));
+    return RECT{ l, t, l + w, t + h };
+}
+
 void PaintCanvas(HDC dc, RECT cr) {
     HBRUSH bg = CreateSolidBrush(kCanvas);
     FillRect(dc, &cr, bg);
@@ -891,6 +953,31 @@ void PaintCanvas(HDC dc, RECT cr) {
             gr.FillRectangle(&dim, Rect(r, t, x + g.pageW - r, b - t));
             Pen frame(Color(255, 64, 156, 255), 2.0f);
             gr.DrawRectangle(&frame, Rect(l, t, r - l, b - t));
+        }
+        if (g.redDrag) {                             // Schwaerzen-Rahmen: dunkle Vorschau des spaeteren Balkens mit rotem Rand
+            using namespace Gdiplus;
+            Graphics gr(dc);
+            gr.SetClip(Rect(x, y, g.pageW, g.pageH));
+            const int l = std::min<int>(g.cropA.x, g.cropB.x), r = std::max<int>(g.cropA.x, g.cropB.x);
+            const int t = std::min<int>(g.cropA.y, g.cropB.y), b = std::max<int>(g.cropA.y, g.cropB.y);
+            SolidBrush fill(Color(170, 0, 0, 0));
+            gr.FillRectangle(&fill, Rect(l, t, r - l, b - t));
+            Pen frame(Color(255, 230, 60, 60), 2.0f);
+            gr.DrawRectangle(&frame, Rect(l, t, r - l, b - t));
+        }
+        if (g.tool == 5 && g.stampHover && g.stampGdi) {   // Stempel/Unterschrift als Vorschau unter dem Mauszeiger
+            using namespace Gdiplus;
+            Graphics gr(dc);
+            gr.SetClip(Rect(x, y, g.pageW, g.pageH));
+            gr.SetInterpolationMode(InterpolationModeHighQualityBicubic);
+            const RECT sr = StampRectAt(g.stampPos, x, y);
+            ColorMatrix cm = { 1,0,0,0,0,  0,1,0,0,0,  0,0,1,0,0,  0,0,0,0.8f,0,  0,0,0,0,1 };
+            ImageAttributes ia;
+            ia.SetColorMatrix(&cm);
+            gr.DrawImage(g.stampGdi, Rect(sr.left, sr.top, sr.right - sr.left, sr.bottom - sr.top), 0, 0, g.stampImg.w, g.stampImg.h, UnitPixel, &ia);
+            Pen outline(Color(160, 64, 156, 255), 1.0f);
+            outline.SetDashStyle(DashStyleDash);
+            gr.DrawRectangle(&outline, Rect(sr.left, sr.top, sr.right - sr.left - 1, sr.bottom - sr.top - 1));
         }
         if (g.selDrag && g.selPage == g.page) {      // laufende Textauswahl beim Markieren
             std::vector<RECT> rs;
@@ -974,7 +1061,7 @@ bool PickFiles(HWND owner, std::vector<std::wstring>& out, const wchar_t* title)
 
 // ---------- Kleiner Eingabedialog (Notiztext) im Dark-Stil ----------
 struct PromptState {
-    std::wstring title, text;
+    std::wstring title, text, hint, okLabel;   // hint: Erklaerung ueber dem Eingabefeld; okLabel ersetzt "Hinzufuegen"
     bool about = false;             // "Ueber"-Fenster: Text statt Eingabefeld, Knoepfe "GitHub oeffnen" / "Schliessen"
     std::wstring body;
     bool done = false, ok = false;
@@ -1001,7 +1088,10 @@ void PromptLayout(HWND hwnd) {
     g_prompt->btnOk = RECT{ cr.right - pad - bw, cr.bottom - pad - bh, cr.right - pad, cr.bottom - pad };
     g_prompt->btnCancel = RECT{ g_prompt->btnOk.left - S(10) - bw, g_prompt->btnOk.top, g_prompt->btnOk.left - S(10), g_prompt->btnOk.bottom };
     if (g_prompt->edit)
-        MoveWindow(g_prompt->edit, pad + S(10), S(62), cr.right - 2 * pad - S(20), cr.bottom - S(62) - pad - bh - S(24), TRUE);
+    {
+        const int et = S(62) + (g_prompt->hint.empty() ? 0 : S(126));
+        MoveWindow(g_prompt->edit, pad + S(10), et, cr.right - 2 * pad - S(20), std::max(S(30), static_cast<int>(cr.bottom) - et - pad - bh - S(24)), TRUE);
+    }
 }
 
 LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
@@ -1015,6 +1105,10 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         SendMessageW(g_prompt->edit, WM_SETFONT, reinterpret_cast<WPARAM>(g.font), TRUE);
         SendMessageW(g_prompt->edit, EM_SETLIMITTEXT, 2000, 0);
         SetWindowTheme(g_prompt->edit, L"DarkMode_Explorer", nullptr);
+        if (!g_prompt->text.empty()) {
+            SetWindowTextW(g_prompt->edit, g_prompt->text.c_str());
+            SendMessageW(g_prompt->edit, EM_SETSEL, 0, -1);
+        }
         return 0;
     }
     case WM_SIZE: PromptLayout(hwnd); return 0;
@@ -1039,6 +1133,10 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         DrawTextC(mem, g.fontBold, g_prompt->title, t, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         RECT card{ S(20), S(58), cr.right - S(20), cr.bottom - S(20) - S(38) - S(20) };
         FillRound(mem, card, S(10), kCardRaised, kBorder);
+        if (!g_prompt->about && !g_prompt->hint.empty()) {
+            RECT ht{ card.left + S(16), card.top + S(10), card.right - S(16), card.top + S(122) };
+            DrawTextC(mem, g.font, g_prompt->hint, ht, kTextDim, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        }
         if (g_prompt->about) {
             RECT bt{ card.left + S(16), card.top + S(12), card.right - S(16), card.bottom - S(10) };
             DrawTextC(mem, g.font, g_prompt->body, bt, kText, DT_LEFT | DT_TOP | DT_WORDBREAK);
@@ -1049,7 +1147,7 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             DrawTextC(mem, g.font, label, r, primary ? RGB(8, 20, 36) : kText);
         };
         button(g_prompt->btnCancel, false, g_prompt->hot == 2, g_prompt->about ? L"GitHub öffnen" : L"Abbrechen");
-        button(g_prompt->btnOk, true, g_prompt->hot == 1, g_prompt->about ? L"Schließen" : L"Hinzufügen");
+        button(g_prompt->btnOk, true, g_prompt->hot == 1, g_prompt->about ? L"Schließen" : (g_prompt->okLabel.empty() ? L"Hinzufügen" : g_prompt->okLabel.c_str()));
         BitBlt(dc, 0, 0, cr.right, cr.bottom, mem, 0, 0, SRCCOPY);
         SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem);
         EndPaint(hwnd, &ps);
@@ -1078,12 +1176,16 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 // Zeigt den Dialog modal (verschachtelte Nachrichtenschleife). true = Text eingegeben und bestaetigt.
-bool PromptText(HWND owner, const wchar_t* title, std::wstring& text, const wchar_t* aboutBody = nullptr) {
+bool PromptText(HWND owner, const wchar_t* title, std::wstring& text, const wchar_t* aboutBody = nullptr,
+                const wchar_t* hint = nullptr, const wchar_t* okLabel = nullptr) {
     PromptState st;
     st.title = title;
+    st.text = text;
+    if (hint) st.hint = hint;
+    if (okLabel) st.okLabel = okLabel;
     if (aboutBody) { st.about = true; st.body = aboutBody; }
     g_prompt = &st;
-    RECT cr{ 0, 0, S(460), S(300) };
+    RECT cr{ 0, 0, S(460), S(st.hint.empty() ? 300 : 366) };
     const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU, ex = WS_EX_DLGMODALFRAME;
     AdjustWindowRectEx(&cr, style, FALSE, ex);
     RECT orc; GetWindowRect(owner, &orc);
@@ -1375,6 +1477,557 @@ void ShowSettings() {
     ShowToast(L"Einstellungen gespeichert");
 }
 
+// ---------- Stempel, Unterschrift, Auszug und Split ----------
+bool GetEncoderClsid(const wchar_t* mime, CLSID* out) {
+    UINT num = 0, size = 0;
+    Gdiplus::GetImageEncodersSize(&num, &size);
+    if (!size) return false;
+    std::vector<char> buf(size);
+    auto* info = reinterpret_cast<Gdiplus::ImageCodecInfo*>(buf.data());
+    Gdiplus::GetImageEncoders(num, size, info);
+    for (UINT i = 0; i < num; ++i)
+        if (wcscmp(info[i].MimeType, mime) == 0) { *out = info[i].Clsid; return true; }
+    return false;
+}
+
+std::wstring SignaturePath() {
+    const std::wstring p = SettingsPath();
+    const size_t k = p.find_last_of(L'\\');
+    return k == std::wstring::npos ? L"" : p.substr(0, k + 1) + L"signature.png";
+}
+
+bool ImageFromBitmap(Gdiplus::Bitmap& bmp, PdfDocument::Image& out) {
+    const int w = static_cast<int>(bmp.GetWidth()), h = static_cast<int>(bmp.GetHeight());
+    if (w <= 0 || h <= 0) return false;
+    Gdiplus::BitmapData bd;
+    Gdiplus::Rect r(0, 0, w, h);
+    if (bmp.LockBits(&r, Gdiplus::ImageLockModeRead, PixelFormat32bppARGB, &bd) != Gdiplus::Ok) return false;
+    out.w = w; out.h = h;
+    out.bgra.resize(static_cast<size_t>(w) * h * 4);
+    for (int y = 0; y < h; ++y) memcpy(&out.bgra[static_cast<size_t>(y) * w * 4], static_cast<const unsigned char*>(bd.Scan0) + static_cast<ptrdiff_t>(y) * bd.Stride, static_cast<size_t>(w) * 4);
+    bmp.UnlockBits(&bd);
+    return true;
+}
+
+// Schneidet transparente Raender ab (3 Pixel Luft bleiben)
+void TrimImage(PdfDocument::Image& im) {
+    int x0 = im.w, y0 = im.h, x1 = -1, y1 = -1;
+    for (int y = 0; y < im.h; ++y)
+        for (int x = 0; x < im.w; ++x)
+            if (im.bgra[(static_cast<size_t>(y) * im.w + x) * 4 + 3] > 8) { x0 = std::min(x0, x); x1 = std::max(x1, x); y0 = std::min(y0, y); y1 = std::max(y1, y); }
+    if (x1 < x0 || y1 < y0) { im = PdfDocument::Image{}; return; }
+    x0 = std::max(0, x0 - 3); y0 = std::max(0, y0 - 3); x1 = std::min(im.w - 1, x1 + 3); y1 = std::min(im.h - 1, y1 + 3);
+    PdfDocument::Image o;
+    o.w = x1 - x0 + 1; o.h = y1 - y0 + 1;
+    o.bgra.resize(static_cast<size_t>(o.w) * o.h * 4);
+    for (int y = 0; y < o.h; ++y) memcpy(&o.bgra[static_cast<size_t>(y) * o.w * 4], &im.bgra[(static_cast<size_t>(y + y0) * im.w + x0) * 4], static_cast<size_t>(o.w) * 4);
+    im = std::move(o);
+}
+
+std::wstring TodayText() {
+    SYSTEMTIME t{};
+    GetLocalTime(&t);
+    wchar_t b[24];
+    swprintf(b, 24, L"%02d.%02d.%04d", t.wDay, t.wMonth, t.wYear);
+    return b;
+}
+
+// Gummistempel: Doppelrahmen, grosses Wort und Datum, leicht gekippt, auf transparentem Grund
+PdfDocument::Image RenderStamp(const std::wstring& word, COLORREF col) {
+    using namespace Gdiplus;
+    const int W = 800, H = 320;
+    Bitmap bmp(W, H, PixelFormat32bppARGB);
+    {
+        Graphics gr(&bmp);
+        gr.SetSmoothingMode(SmoothingModeAntiAlias);
+        gr.SetTextRenderingHint(TextRenderingHintAntiAlias);
+        gr.Clear(Color(0, 0, 0, 0));
+        gr.TranslateTransform(W / 2.0f, H / 2.0f);
+        gr.RotateTransform(-6.0f);
+        const Color c(235, GetRValue(col), GetGValue(col), GetBValue(col));
+        Pen outer(c, 12.0f), inner(c, 4.0f);
+        outer.SetLineJoin(LineJoinRound);
+        gr.DrawRectangle(&outer, -340.0f, -118.0f, 680.0f, 236.0f);
+        gr.DrawRectangle(&inner, -318.0f, -96.0f, 636.0f, 192.0f);
+        FontFamily ff(L"Segoe UI");
+        StringFormat sf;
+        sf.SetAlignment(StringAlignmentCenter);
+        sf.SetLineAlignment(StringAlignmentCenter);
+        float size = 112.0f;
+        RectF box;
+        for (; size > 30.0f; size -= 4.0f) {                          // lange Woerter verkleinern, bis sie in den Rahmen passen
+            Font f(&ff, size, FontStyleBold, UnitPixel);
+            gr.MeasureString(word.c_str(), -1, &f, PointF(0, 0), StringFormat::GenericTypographic(), &box);
+            if (box.Width <= 570.0f) break;
+        }
+        SolidBrush brush(c);
+        Font fw(&ff, size, FontStyleBold, UnitPixel), fd(&ff, 36.0f, FontStyleBold, UnitPixel);
+        gr.DrawString(word.c_str(), -1, &fw, RectF(-300.0f, -92.0f, 600.0f, 130.0f), &sf, &brush);
+        const std::wstring d = TodayText();
+        gr.DrawString(d.c_str(), -1, &fd, RectF(-300.0f, 40.0f, 600.0f, 50.0f), &sf, &brush);
+    }
+    PdfDocument::Image img;
+    if (ImageFromBitmap(bmp, img)) TrimImage(img);
+    return img;
+}
+
+bool SaveSignature(const PdfDocument::Image& im) {
+    const std::wstring path = SignaturePath();
+    CLSID png;
+    if (path.empty() || im.w <= 0 || !GetEncoderClsid(L"image/png", &png)) return false;
+    Gdiplus::Bitmap bmp(im.w, im.h, im.w * 4, PixelFormat32bppARGB, const_cast<BYTE*>(im.bgra.data()));
+    return bmp.Save(path.c_str(), &png, nullptr) == Gdiplus::Ok;
+}
+
+// Bilddatei (PNG, JPG, BMP) als Unterschrift: auf hoechstens 1200 Pixel Breite verkleinern; hat das Bild keine Transparenz, wird der helle Grund durchsichtig
+bool LoadSignatureFile(const std::wstring& path, PdfDocument::Image& out) {
+    Gdiplus::Bitmap src(path.c_str());
+    if (src.GetLastStatus() != Gdiplus::Ok) return false;
+    const int w = static_cast<int>(src.GetWidth()), h = static_cast<int>(src.GetHeight());
+    if (w <= 0 || h <= 0 || w > 30000 || h > 30000) return false;
+    const double sc = w > 1200 ? 1200.0 / w : 1.0;
+    const int tw = std::max(1, static_cast<int>(w * sc)), th = std::max(1, static_cast<int>(h * sc));
+    Gdiplus::Bitmap dst(tw, th, PixelFormat32bppARGB);
+    {
+        Gdiplus::Graphics gr(&dst);
+        gr.SetInterpolationMode(Gdiplus::InterpolationModeHighQualityBicubic);
+        gr.Clear(Gdiplus::Color(0, 0, 0, 0));
+        gr.DrawImage(&src, 0, 0, tw, th);
+    }
+    PdfDocument::Image im;
+    if (!ImageFromBitmap(dst, im)) return false;
+    bool hasAlpha = false;
+    for (size_t i = 3; i < im.bgra.size() && !hasAlpha; i += 4) hasAlpha = im.bgra[i] < 250;
+    if (!hasAlpha) {
+        for (size_t i = 0; i + 3 < im.bgra.size(); i += 4) {
+            const int lum = (im.bgra[i + 2] * 30 + im.bgra[i + 1] * 59 + im.bgra[i] * 11) / 100;
+            const int a = std::clamp((255 - lum) * 14 / 10, 0, 255);
+            im.bgra[i + 3] = static_cast<unsigned char>(a);
+            if (!a) im.bgra[i] = im.bgra[i + 1] = im.bgra[i + 2] = 0;
+        }
+    }
+    TrimImage(im);
+    if (im.w < 4 || im.h < 4) return false;
+    out = std::move(im);
+    return true;
+}
+
+// ---- Dialog "Unterschrift zeichnen" ----
+struct SignState {
+    bool done = false, ok = false, drawing = false;
+    std::vector<std::vector<POINT>> strokes;
+    RECT area{}, btnOk{}, btnCancel{}, btnClear{};
+    int hot = 0;                              // 1 = Uebernehmen, 2 = Abbrechen, 3 = Loeschen
+    PdfDocument::Image result;
+};
+SignState* g_sign = nullptr;
+
+void SignLayout(HWND hwnd) {
+    RECT cr; GetClientRect(hwnd, &cr);
+    const int pad = S(20), bh = S(38), bw = S(130);
+    g_sign->btnOk = RECT{ cr.right - pad - bw, cr.bottom - pad - bh, cr.right - pad, cr.bottom - pad };
+    g_sign->btnCancel = RECT{ g_sign->btnOk.left - S(10) - bw, g_sign->btnOk.top, g_sign->btnOk.left - S(10), g_sign->btnOk.bottom };
+    g_sign->btnClear = RECT{ pad, g_sign->btnOk.top, pad + bw, g_sign->btnOk.bottom };
+    g_sign->area = RECT{ pad, S(58), cr.right - pad, cr.bottom - pad - bh - S(16) };
+}
+
+// Zeichnet die Striche in eine transparente Grafik (doppelte Aufloesung) und beschneidet sie auf den Inhalt
+bool SignRender(PdfDocument::Image& out) {
+    LONG minx = LONG_MAX, miny = LONG_MAX, maxx = LONG_MIN, maxy = LONG_MIN;
+    for (const auto& st : g_sign->strokes)
+        for (const POINT& p : st) { minx = std::min(minx, p.x); maxx = std::max(maxx, p.x); miny = std::min(miny, p.y); maxy = std::max(maxy, p.y); }
+    if (minx > maxx) return false;
+    const int pad = S(6);
+    float k = 2.0f;
+    if ((maxx - minx + 2 * pad) * k > 2400.0f) k = 2400.0f / static_cast<float>(maxx - minx + 2 * pad);
+    const int w = std::max(16, static_cast<int>((maxx - minx + 2 * pad) * k)), h = std::max(16, static_cast<int>((maxy - miny + 2 * pad) * k));
+    Gdiplus::Bitmap bmp(w, h, PixelFormat32bppARGB);
+    {
+        Gdiplus::Graphics gr(&bmp);
+        gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        gr.Clear(Gdiplus::Color(0, 0, 0, 0));
+        const float pw = std::max(static_cast<float>(S(3)) * k, w / 100.0f);       // Strichstaerke wächst mit der Unterschrift
+        Gdiplus::Pen pen(Gdiplus::Color(255, 18, 28, 105), pw);
+        pen.SetLineJoin(Gdiplus::LineJoinRound);
+        pen.SetStartCap(Gdiplus::LineCapRound);
+        pen.SetEndCap(Gdiplus::LineCapRound);
+        Gdiplus::SolidBrush dot(Gdiplus::Color(255, 18, 28, 105));
+        for (const auto& st : g_sign->strokes) {
+            std::vector<Gdiplus::PointF> pts;
+            for (const POINT& p : st) pts.emplace_back((p.x - minx + pad) * k, (p.y - miny + pad) * k);
+            if (pts.size() == 1) gr.FillEllipse(&dot, pts[0].X - pw / 2, pts[0].Y - pw / 2, pw, pw);
+            else if (pts.size() > 1) gr.DrawLines(&pen, pts.data(), static_cast<INT>(pts.size()));
+        }
+    }
+    if (!ImageFromBitmap(bmp, out)) return false;
+    TrimImage(out);
+    return out.w > 4 && out.h > 4;
+}
+
+void SignCommit() {
+    if (SignRender(g_sign->result)) { g_sign->ok = true; g_sign->done = true; }
+}
+
+LRESULT CALLBACK SignProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (!g_sign) return DefWindowProcW(hwnd, msg, wp, lp);
+    switch (msg) {
+    case WM_CREATE: gfx::EnableDarkTitleBar(hwnd); return 0;
+    case WM_SIZE: SignLayout(hwnd); return 0;
+    case WM_ERASEBKGND: return 1;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(hwnd, &ps);
+        RECT cr; GetClientRect(hwnd, &cr);
+        HDC mem = CreateCompatibleDC(dc);
+        HBITMAP bmp = CreateCompatibleBitmap(dc, cr.right, cr.bottom);
+        HGDIOBJ old = SelectObject(mem, bmp);
+        HBRUSH bg = CreateSolidBrush(kBackground);
+        FillRect(mem, &cr, bg);
+        DeleteObject(bg);
+        RECT t{ S(20), S(14), cr.right - S(20), S(50) };
+        DrawTextC(mem, g.fontBold, L"Unterschrift zeichnen", t, kText, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        FillRound(mem, g_sign->area, S(10), RGB(250, 250, 252), kBorder);
+        const int baseY = g_sign->area.top + (g_sign->area.bottom - g_sign->area.top) * 7 / 10;
+        HPEN lp2 = CreatePen(PS_SOLID, 1, RGB(200, 204, 214));
+        HGDIOBJ op = SelectObject(mem, lp2);
+        MoveToEx(mem, g_sign->area.left + S(24), baseY, nullptr); LineTo(mem, g_sign->area.right - S(24), baseY);
+        SelectObject(mem, op); DeleteObject(lp2);
+        if (g_sign->strokes.empty()) {
+            RECT hint{ g_sign->area.left, g_sign->area.top, g_sign->area.right, baseY };
+            DrawTextC(mem, g.font, L"Hier mit der Maus (oder dem Stift) unterschreiben", hint, RGB(150, 154, 166));
+        }
+        {
+            Gdiplus::Graphics gr(mem);
+            gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            gr.SetClip(Gdiplus::Rect(g_sign->area.left, g_sign->area.top, g_sign->area.right - g_sign->area.left, g_sign->area.bottom - g_sign->area.top));
+            Gdiplus::Pen pen(Gdiplus::Color(255, 18, 28, 105), static_cast<float>(S(3)));
+            pen.SetLineJoin(Gdiplus::LineJoinRound);
+            pen.SetStartCap(Gdiplus::LineCapRound);
+            pen.SetEndCap(Gdiplus::LineCapRound);
+            Gdiplus::SolidBrush dot(Gdiplus::Color(255, 18, 28, 105));
+            for (const auto& st : g_sign->strokes) {
+                std::vector<Gdiplus::Point> pts;
+                for (const POINT& p : st) pts.emplace_back(p.x, p.y);
+                if (pts.size() == 1) gr.FillEllipse(&dot, pts[0].X - S(2), pts[0].Y - S(2), S(4), S(4));
+                else if (pts.size() > 1) gr.DrawLines(&pen, pts.data(), static_cast<INT>(pts.size()));
+            }
+        }
+        auto button = [&](const RECT& r, bool primary, bool hot, const wchar_t* label) {
+            COLORREF fill = primary ? (hot ? RGB(96, 176, 255) : kAccent) : (hot ? kCardHover : kCardRaised);
+            FillRound(mem, r, S(10), fill, primary ? fill : (hot ? RGB(96, 104, 126) : kBorder));
+            DrawTextC(mem, g.font, label, r, primary ? RGB(8, 20, 36) : kText);
+        };
+        button(g_sign->btnClear, false, g_sign->hot == 3, L"Löschen");
+        button(g_sign->btnCancel, false, g_sign->hot == 2, L"Abbrechen");
+        button(g_sign->btnOk, true, g_sign->hot == 1, L"Übernehmen");
+        BitBlt(dc, 0, 0, cr.right, cr.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, old); DeleteObject(bmp); DeleteDC(mem);
+        EndPaint(hwnd, &ps);
+        return 0;
+    }
+    case WM_LBUTTONDOWN: {
+        POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (PtInRect(&g_sign->area, p)) {
+            g_sign->drawing = true;
+            g_sign->strokes.push_back({ p });
+            SetCapture(hwnd);
+            InvalidateRect(hwnd, &g_sign->area, FALSE);
+        }
+        return 0;
+    }
+    case WM_MOUSEMOVE: {
+        POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (g_sign->drawing) {
+            p.x = std::clamp<LONG>(p.x, g_sign->area.left, g_sign->area.right);
+            p.y = std::clamp<LONG>(p.y, g_sign->area.top, g_sign->area.bottom);
+            auto& st = g_sign->strokes.back();
+            if (st.empty() || st.back().x != p.x || st.back().y != p.y) { st.push_back(p); InvalidateRect(hwnd, &g_sign->area, FALSE); }
+            return 0;
+        }
+        const int hot = PtInRect(&g_sign->btnOk, p) ? 1 : PtInRect(&g_sign->btnCancel, p) ? 2 : PtInRect(&g_sign->btnClear, p) ? 3 : 0;
+        if (hot != g_sign->hot) { g_sign->hot = hot; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_LBUTTONUP: {
+        if (g_sign->drawing) { g_sign->drawing = false; if (GetCapture() == hwnd) ReleaseCapture(); return 0; }
+        POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (PtInRect(&g_sign->btnOk, p)) SignCommit();
+        else if (PtInRect(&g_sign->btnCancel, p)) g_sign->done = true;
+        else if (PtInRect(&g_sign->btnClear, p)) { g_sign->strokes.clear(); InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_CLOSE: g_sign->done = true; return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+bool DrawSignature(PdfDocument::Image& out) {
+    SignState st;
+    g_sign = &st;
+    RECT cr{ 0, 0, S(640), S(380) };
+    const DWORD style = WS_POPUP | WS_CAPTION | WS_SYSMENU, ex = WS_EX_DLGMODALFRAME;
+    AdjustWindowRectEx(&cr, style, FALSE, ex);
+    RECT orc; GetWindowRect(g.main, &orc);
+    const int w = cr.right - cr.left, h = cr.bottom - cr.top;
+    HWND hwnd = CreateWindowExW(ex, L"DuncansPdfSign", L"Unterschrift zeichnen", style, orc.left + ((orc.right - orc.left) - w) / 2,
+                                orc.top + ((orc.bottom - orc.top) - h) / 3, w, h, g.main, nullptr, g.inst, nullptr);
+    if (!hwnd) { g_sign = nullptr; return false; }
+    SignLayout(hwnd);
+    EnableWindow(g.main, FALSE);
+    ShowWindow(hwnd, SW_SHOW);
+    MSG m;
+    while (!st.done) {
+        const BOOL r = GetMessageW(&m, nullptr, 0, 0);
+        if (r == 0) { PostQuitMessage(static_cast<int>(m.wParam)); break; }   // WM_QUIT weiterreichen
+        if (r < 0) break;
+        if (m.message == WM_KEYDOWN) {
+            if (m.wParam == VK_ESCAPE) { st.done = true; continue; }
+            if (m.wParam == VK_RETURN) { SignCommit(); continue; }
+        }
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    EnableWindow(g.main, TRUE);
+    DestroyWindow(hwnd);
+    SetForegroundWindow(g.main);
+    g_sign = nullptr;
+    if (st.ok) out = std::move(st.result);
+    return st.ok;
+}
+
+// Das Bild folgt jetzt der Maus; ein Klick auf die Seite setzt es dort ein
+void ActivateStamp(PdfDocument::Image&& img, double frac, const std::wstring& what) {
+    g.stampImg = std::move(img);
+    delete g.stampGdi;
+    g.stampGdi = new Gdiplus::Bitmap(g.stampImg.w, g.stampImg.h, g.stampImg.w * 4, PixelFormat32bppARGB, g.stampImg.bgra.data());
+    g.stampFrac = frac;
+    g.stampHover = false;
+    g.tool = 5;
+    g.selDrag = g.cropDrag = g.redDrag = false;
+    InvalidateToolbar();
+    InvalidateRect(g.canvas, nullptr, FALSE);
+    ShowToast(what + L": auf die Seite klicken (Umschalt + Mausrad ändert die Größe, Esc beendet)");
+    SetFocus(g.canvas);
+}
+
+void ShowStampMenu() {
+    if (!g.doc.IsOpen()) return;
+    if (!PdfDocument::EditSupported()) { ShowToast(L"Diese pdfium.dll kann keine Stempel einfügen – bitte pdf\\third_party\\get_pdfium.ps1 ausführen.", true); return; }
+    const struct { const wchar_t* word; COLORREF col; } kStamps[4] = {
+        { L"BEZAHLT", RGB(28, 140, 62) }, { L"GENEHMIGT", RGB(30, 96, 200) }, { L"ENTWURF", RGB(205, 112, 20) }, { L"VERTRAULICH", RGB(200, 40, 40) } };
+    const std::wstring sigPath = SignaturePath();
+    const bool haveSig = !sigPath.empty() && GetFileAttributesW(sigPath.c_str()) != INVALID_FILE_ATTRIBUTES;
+    HMENU m = CreatePopupMenu();
+    for (int i = 0; i < 4; ++i) AppendMenuW(m, MF_STRING, 1 + i, (std::wstring(L"Stempel „") + kStamps[i].word + L"“").c_str());
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, 10, L"Unterschrift zeichnen …");
+    AppendMenuW(m, MF_STRING, 11, L"Unterschrift aus Bilddatei (PNG) …");
+    AppendMenuW(m, MF_STRING | (haveSig ? 0 : MF_GRAYED), 12, L"Gespeicherte Unterschrift einfügen");
+    POINT pt{};
+    GetCursorPos(&pt);
+    for (const Item& it : g.items)
+        if (it.cmd == C_STAMP) { pt = POINT{ it.rc.left, it.rc.bottom + S(4) }; ClientToScreen(g.main, &pt); }
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, g.main, nullptr);
+    DestroyMenu(m);
+    if (cmd >= 1 && cmd <= 4) {
+        PdfDocument::Image im = RenderStamp(kStamps[cmd - 1].word, kStamps[cmd - 1].col);
+        if (im.w > 0) ActivateStamp(std::move(im), 0.34, std::wstring(L"Stempel „") + kStamps[cmd - 1].word + L"“");
+        else ShowToast(L"Der Stempel konnte nicht erzeugt werden.", true);
+    } else if (cmd == 10) {
+        PdfDocument::Image im;
+        if (DrawSignature(im)) {
+            SaveSignature(im);                                       // fuer das naechste Mal merken
+            ActivateStamp(std::move(im), 0.26, L"Unterschrift");
+        }
+    } else if (cmd == 11 || cmd == 12) {
+        std::wstring path = sigPath;
+        if (cmd == 11) {
+            wchar_t buf[MAX_PATH * 2]{};
+            OPENFILENAMEW ofn{};
+            ofn.lStructSize = sizeof(ofn);
+            ofn.hwndOwner = g.main;
+            ofn.lpstrFilter = L"Bilder (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0Alle Dateien (*.*)\0*.*\0";
+            ofn.lpstrFile = buf;
+            ofn.nMaxFile = MAX_PATH * 2;
+            ofn.lpstrTitle = L"Unterschrift als Bild wählen (PNG mit transparentem Hintergrund ist ideal)";
+            ofn.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+            if (!GetOpenFileNameW(&ofn)) return;
+            path = buf;
+        }
+        PdfDocument::Image im;
+        if (!LoadSignatureFile(path, im)) { ShowToast(L"Das Bild konnte nicht gelesen werden.", true); return; }
+        if (cmd == 11) SaveSignature(im);
+        ActivateStamp(std::move(im), 0.26, L"Unterschrift");
+    }
+}
+
+// ---- Seiten-Auszug und Split ----
+std::wstring BaseName(const std::wstring& path) {
+    std::wstring n = FileName(path);
+    if (n.size() > 4 && _wcsicmp(n.c_str() + n.size() - 4, L".pdf") == 0) n.resize(n.size() - 4);
+    return n;
+}
+
+std::wstring DirName(const std::wstring& path) {
+    const size_t k = path.find_last_of(L"\\/");
+    return k == std::wstring::npos ? L"" : path.substr(0, k);
+}
+
+// Kurzform fuer Dateinamen: "S3", "S2-4" bzw. "S2+5+9"
+std::wstring PagesLabel(const std::vector<int>& p) {
+    if (p.empty()) return L"";
+    bool contiguous = true;
+    for (size_t i = 1; i < p.size(); ++i) contiguous = contiguous && p[i] == p[i - 1] + 1;
+    if (p.size() == 1) return L"S" + std::to_wstring(p[0] + 1);
+    if (contiguous) return L"S" + std::to_wstring(p.front() + 1) + L"-" + std::to_wstring(p.back() + 1);
+    if (p.size() > 4) return L"Auswahl";
+    std::wstring s = L"S" + std::to_wstring(p[0] + 1);
+    for (size_t i = 1; i < p.size(); ++i) s += L"+" + std::to_wstring(p[i] + 1);
+    return s;
+}
+
+bool SameFile(const std::wstring& a, const std::wstring& b) {
+    wchar_t fa[MAX_PATH * 2]{}, fb[MAX_PATH * 2]{};
+    if (!GetFullPathNameW(a.c_str(), MAX_PATH * 2, fa, nullptr) || !GetFullPathNameW(b.c_str(), MAX_PATH * 2, fb, nullptr)) return false;
+    return _wcsicmp(fa, fb) == 0;
+}
+
+void DoExtract() {
+    if (!g.doc.IsOpen()) return;
+    const std::vector<int> t = TargetPages();
+    std::wstring p;
+    if (!PickFile(g.main, true, p, L"Gewählte Seiten als neue PDF speichern", BaseName(g.doc.Path()) + L"_" + PagesLabel(t) + L".pdf")) return;
+    if (SameFile(p, g.doc.Path())) { ShowToast(L"Bitte einen anderen Dateinamen wählen – das Original bleibt unverändert.", true); return; }
+    HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    const bool ok = g.doc.SavePages(p, t);
+    SetCursor(old);
+    if (ok) ShowToast(std::to_wstring(t.size()) + L" Seite(n) gespeichert: " + FileName(p));
+    else ShowToast(PdfDocument::LastError(), true);
+}
+
+// "1-3, 4-7, 9" (je ein Bereich = eine Datei), "je 5" (alle 5 Seiten) oder "einzeln" (jede Seite)
+bool ParseSplit(const std::wstring& in, int n, std::vector<std::pair<int, int>>& parts) {
+    std::wstring s;
+    for (wchar_t c : in) s += static_cast<wchar_t>(towlower(c));
+    size_t i = 0;
+    while (i < s.size() && iswspace(s[i])) ++i;
+    auto each = [&](int k) { for (int p = 1; p <= n; p += k) parts.push_back({ p, std::min(n, p + k - 1) }); };
+    auto number = [&](size_t from, int& v, size_t& end) {
+        while (from < s.size() && iswspace(s[from])) ++from;
+        if (from >= s.size() || !iswdigit(s[from])) return false;
+        wchar_t* e = nullptr;
+        const long x = wcstol(s.c_str() + from, &e, 10);
+        if (x < 1 || x > 100000) return false;
+        v = static_cast<int>(x);
+        end = static_cast<size_t>(e - s.c_str());
+        return true;
+    };
+    if (s.compare(i, 7, L"einzeln") == 0 || s.compare(i, 4, L"jede") == 0) { each(1); return true; }
+    if (s.compare(i, 2, L"je") == 0 || s.compare(i, 4, L"alle") == 0) {
+        int k = 0;
+        size_t e = 0;
+        if (number(i + (s[i] == L'j' ? 2 : 4), k, e)) { each(k); return true; }
+        if (s[i] == L'a') { each(1); return true; }
+        return false;
+    }
+    size_t pos = 0;
+    while (pos <= s.size()) {
+        size_t e = s.find_first_of(L",;\r\n", pos);
+        if (e == std::wstring::npos) e = s.size();
+        std::wstring tok = s.substr(pos, e - pos);
+        pos = e + 1;
+        size_t b = 0;
+        while (b < tok.size() && iswspace(tok[b])) ++b;
+        tok = tok.substr(b);
+        while (!tok.empty() && iswspace(tok.back())) tok.pop_back();
+        if (tok.empty()) continue;
+        const std::wstring t2 = tok;
+        wchar_t* e1 = nullptr;
+        const long a = wcstol(t2.c_str(), &e1, 10);
+        if (e1 == t2.c_str()) return false;
+        long z = a;
+        const wchar_t* rest = e1;
+        while (iswspace(*rest)) ++rest;
+        if (*rest == L'-' || *rest == 0x2013) {
+            wchar_t* e2 = nullptr;
+            z = wcstol(rest + 1, &e2, 10);
+            if (e2 == rest + 1) return false;
+            rest = e2;
+            while (iswspace(*rest)) ++rest;
+        }
+        if (*rest != 0 || a < 1 || z < a || z > n) return false;
+        parts.push_back({ static_cast<int>(a), static_cast<int>(z) });
+    }
+    return !parts.empty();
+}
+
+bool PickFolder(HWND owner, std::wstring& path, const std::wstring& startDir) {
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);      // mehrfach aufrufbar; S_FALSE/Fehler sind hier unkritisch
+    IFileOpenDialog* dlg = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dlg)))) return false;
+    DWORD opts = 0;
+    dlg->GetOptions(&opts);
+    dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    dlg->SetTitle(L"Zielordner für die Teile wählen");
+    if (!startDir.empty()) {
+        IShellItem* si = nullptr;
+        if (SUCCEEDED(SHCreateItemFromParsingName(startDir.c_str(), nullptr, IID_PPV_ARGS(&si)))) { dlg->SetFolder(si); si->Release(); }
+    }
+    bool ok = false;
+    if (SUCCEEDED(dlg->Show(owner))) {
+        IShellItem* r = nullptr;
+        if (SUCCEEDED(dlg->GetResult(&r))) {
+            PWSTR p = nullptr;
+            if (SUCCEEDED(r->GetDisplayName(SIGDN_FILESYSPATH, &p))) { path = p; CoTaskMemFree(p); ok = true; }
+            r->Release();
+        }
+    }
+    dlg->Release();
+    return ok;
+}
+
+std::wstring UniquePath(const std::wstring& dir, const std::wstring& base) {
+    std::wstring p = dir + L"\\" + base + L".pdf";
+    for (int k = 2; GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES && k < 1000; ++k) p = dir + L"\\" + base + L" (" + std::to_wstring(k) + L").pdf";
+    return p;
+}
+
+void DoSplit() {
+    if (!g.doc.IsOpen()) return;
+    const int n = g.doc.PageCount();
+    if (n < 2) { ShowToast(L"Die PDF hat nur eine Seite – es gibt nichts zu teilen.", true); return; }
+    std::wstring spec = L"1-" + std::to_wstring(n / 2) + L", " + std::to_wstring(n / 2 + 1) + L"-" + std::to_wstring(n);
+    const std::wstring hint = L"Diese PDF hat " + std::to_wstring(n) + L" Seiten. Eingabe:\n"
+        L"•  Bereiche mit Komma, z. B. 1-3, 4-7, 9  (jeder Bereich wird eine Datei)\n"
+        L"•  je 5  –  alle 5 Seiten eine neue Datei\n"
+        L"•  einzeln  –  jede Seite als eigene Datei";
+    std::vector<std::pair<int, int>> parts;
+    for (;;) {
+        if (!PromptText(g.main, L"PDF teilen (Split)", spec, nullptr, hint.c_str(), L"Weiter …")) return;
+        parts.clear();
+        if (ParseSplit(spec, n, parts)) break;
+        MessageBoxW(g.main, (L"Die Eingabe passt nicht zu dieser PDF (Seiten 1 bis " + std::to_wstring(n) + L").\n\nBeispiele:  1-3, 4-7, 9   ·   je 5   ·   einzeln").c_str(), kAppTitle, MB_OK | MB_ICONWARNING);
+    }
+    if (parts.size() > 20 &&
+        MessageBoxW(g.main, (L"Es werden " + std::to_wstring(parts.size()) + L" Dateien erstellt. Fortfahren?").c_str(), kAppTitle, MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    std::wstring dir;
+    if (!PickFolder(g.main, dir, DirName(g.doc.Path()))) return;
+    while (dir.size() > 3 && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
+    const std::wstring base = BaseName(g.doc.Path());
+    HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    int ok = 0;
+    std::wstring err;
+    for (size_t i = 0; i < parts.size(); ++i) {
+        std::vector<int> pages;
+        for (int p = parts[i].first; p <= parts[i].second; ++p) pages.push_back(p - 1);
+        const std::wstring name = base + L"_Teil" + std::to_wstring(i + 1) + L"_" + PagesLabel(pages);
+        if (g.doc.SavePages(UniquePath(dir, name), pages)) ++ok; else err = PdfDocument::LastError();
+    }
+    SetCursor(old);
+    if (ok == static_cast<int>(parts.size())) ShowToast(std::to_wstring(ok) + L" Datei(en) erstellt in " + dir);
+    else ShowToast(std::to_wstring(ok) + L" von " + std::to_wstring(parts.size()) + L" Dateien erstellt – " + err, true);
+}
+
 // Radierer: entfernt Markierungen an der Mausposition (Canvas-Koordinaten)
 void EraseAtPoint(int x, int y);
 
@@ -1468,6 +2121,48 @@ void RunCommand(int cmd) {
         if (!g.doc.ResetCrop(t)) { ShowToast(PdfDocument::LastError(), true); break; }
         RefreshAllPages();
         ShowToast(L"Zuschnitt aufgehoben (" + std::to_wstring(t.size()) + L" Seite(n)) – noch nicht gespeichert");
+        break;
+    }
+    case C_MORE: {
+        HMENU m = CreatePopupMenu();
+        for (const Item& it : g.items) {
+            if (!it.hidden || it.cmd == C_NONE || it.cmd == C_MORE) continue;
+            const wchar_t* name = it.label.c_str();
+            switch (it.cmd) {
+            case C_ROTL: name = L"Seite nach links drehen"; break;
+            case C_ROTR: name = L"Seite nach rechts drehen"; break;
+            case C_FITW: name = L"Auf Seitenbreite einpassen"; break;
+            case C_NOTE: name = L"Notiz hinzufügen"; break;
+            case C_ERASE: name = L"Markierung entfernen (Radierer)"; break;
+            case C_CROP: name = L"Zuschnitt"; break;
+            case C_MERGE: name = L"PDF anhängen (Merge)"; break;
+            case C_HILITE: name = L"Text markieren (Marker)"; break;
+            case C_FIND: name = L"Im Dokument suchen"; break;
+            }
+            const bool on = (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2) || (it.cmd == C_CROP && g.tool == 3) || (it.cmd == C_ERASE && g.tool == 4);
+            AppendMenuW(m, MF_STRING | (ItemEnabled(it) ? 0 : MF_GRAYED) | (on ? MF_CHECKED : 0), 1000 + it.cmd, name);
+        }
+        POINT pt{};
+        GetCursorPos(&pt);
+        for (const Item& it : g.items)
+            if (it.cmd == C_MORE) { pt = POINT{ it.rc.right, it.rc.bottom + S(4) }; ClientToScreen(g.main, &pt); }
+        const int sel = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, g.main, nullptr);
+        DestroyMenu(m);
+        if (sel >= 1000) RunCommand(sel - 1000);
+        break;
+    }
+    case C_STAMP: ShowStampMenu(); break;
+    case C_SPLIT: DoSplit(); break;
+    case C_EXTRACT: DoExtract(); break;
+    case C_REDACT: {
+        if (!g.doc.IsOpen()) break;
+        if (!PdfDocument::EditSupported()) { ShowToast(L"Diese pdfium.dll kann nicht schwärzen – bitte pdf\\third_party\\get_pdfium.ps1 ausführen.", true); break; }
+        g.tool = g.tool == 6 ? 0 : 6;
+        g.selDrag = g.cropDrag = g.redDrag = false;
+        InvalidateToolbar();
+        InvalidateRect(g.canvas, nullptr, FALSE);
+        if (g.tool == 6) ShowToast(L"Schwärzen: Bereich mit der Maus aufziehen (Esc beendet)");
+        SetFocus(g.canvas);
         break;
     }
     case C_SIDE: g.sideVisible = !g.sideVisible; LayoutChildren(); InvalidateRect(g.main, nullptr, FALSE); break;
@@ -1617,7 +2312,7 @@ void HandleKey(UINT vk) {
     if (!g.doc.IsOpen()) return;
     switch (vk) {
     case VK_ESCAPE:
-        if (g.tool) { g.tool = 0; g.selDrag = g.cropDrag = false; InvalidateToolbar(); InvalidateRect(g.canvas, nullptr, FALSE); }
+        if (g.tool) { g.tool = 0; g.selDrag = g.cropDrag = g.redDrag = false; g.stampHover = false; InvalidateToolbar(); InvalidateRect(g.canvas, nullptr, FALSE); }
         else CloseSearch();
         break;
     case VK_F3: SearchStep(shift ? -1 : 1); break;
@@ -1759,6 +2454,11 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEWHEEL: {
         if (!g.doc.IsOpen()) return 0;
         const int delta = GET_WHEEL_DELTA_WPARAM(wp);
+        if (g.tool == 5 && (GET_KEYSTATE_WPARAM(wp) & MK_SHIFT)) {          // Stempelgroesse aendern
+            g.stampFrac = std::clamp(g.stampFrac * std::pow(1.1, delta / 120.0), 0.06, 0.95);
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (GET_KEYSTATE_WPARAM(wp) & MK_CONTROL) {
             SetZoom(g.zoom * std::pow(1.1, delta / 120.0), false);
             return 0;
@@ -1799,7 +2499,19 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             int ox, oy; PageOrigin(ox, oy);
             const int dx = p.x - ox, dy = p.y - oy;
             if (dx < 0 || dy < 0 || dx >= g.pageW || dy >= g.pageH) return 0;
-            if (g.tool == 3) {
+            if (g.tool == 5) {
+                const RECT sr = StampRectAt(p, ox, oy);
+                const RECT pr{ sr.left - ox, sr.top - oy, sr.right - ox, sr.bottom - oy };
+                if (g.doc.PlaceImage(g.page, g.pageW, g.pageH, pr, g.stampImg)) {
+                    RefreshAfterEdit(g.page);
+                    ShowToast(L"Eingefügt – noch nicht gespeichert (weiter klicken für weitere Stellen, Esc beendet)");
+                } else ShowToast(PdfDocument::LastError(), true);
+            } else if (g.tool == 6) {
+                g.redDrag = true;
+                g.cropA = g.cropB = POINT{ p.x, p.y };
+                SetCapture(hwnd);
+                InvalidateRect(hwnd, nullptr, FALSE);
+            } else if (g.tool == 3) {
                 g.cropDrag = true;
                 g.cropA = g.cropB = POINT{ p.x, p.y };
                 SetCapture(hwnd);
@@ -1822,7 +2534,14 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_MOUSEMOVE:
-        if (g.cropDrag) {
+        if (g.tool == 5) {
+            g.stampPos = POINT{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            g.stampHover = true;
+            if (!g.stampTrack) { TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, hwnd, 0 }; TrackMouseEvent(&t); g.stampTrack = true; }
+            InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
+        if (g.cropDrag || g.redDrag) {
             int ox, oy; PageOrigin(ox, oy);
             g.cropB.x = std::clamp<int>(GET_X_LPARAM(lp), ox, ox + g.pageW);
             g.cropB.y = std::clamp<int>(GET_Y_LPARAM(lp), oy, oy + g.pageH);
@@ -1844,7 +2563,39 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             if (c >= 0 && c != g.selB) { g.selB = c; InvalidateRect(hwnd, nullptr, FALSE); }
         }
         return 0;
+    case WM_MOUSELEAVE:
+        g.stampTrack = false;
+        if (g.stampHover) { g.stampHover = false; InvalidateRect(hwnd, nullptr, FALSE); }
+        return 0;
     case WM_LBUTTONUP:
+        if (g.redDrag) {
+            g.redDrag = false;
+            if (GetCapture() == hwnd) ReleaseCapture();
+            int ox, oy; PageOrigin(ox, oy);
+            RECT r{ std::min<int>(g.cropA.x, g.cropB.x) - ox, std::min<int>(g.cropA.y, g.cropB.y) - oy,
+                    std::max<int>(g.cropA.x, g.cropB.x) - ox, std::max<int>(g.cropA.y, g.cropB.y) - oy };
+            r.left = std::clamp<LONG>(r.left, 0, g.pageW); r.right = std::clamp<LONG>(r.right, 0, g.pageW);
+            r.top = std::clamp<LONG>(r.top, 0, g.pageH); r.bottom = std::clamp<LONG>(r.bottom, 0, g.pageH);
+            if (r.right - r.left < S(4) || r.bottom - r.top < S(4)) { InvalidateRect(hwnd, nullptr, FALSE); return 0; }   // nur ein Klick
+            const wchar_t* q =
+                L"Diesen Bereich dauerhaft schwärzen?\n\n"
+                L"Der Text darunter wird aus der Seite entfernt und durch einen schwarzen Balken ersetzt. Nach dem Speichern lässt sich das nicht mehr rückgängig machen.\n\n"
+                L"Lässt sich der Text nicht sauber herauslösen (Bilder, Text, der über den Bereich hinausgeht), wird die ganze Seite als Bild neu aufgebaut; "
+                L"ihr Text ist dann nicht mehr markierbar. Beim Speichern entfallen außerdem Lesezeichen und Formularfelder, damit keine Reste in der Datei bleiben.";
+            if (MessageBoxW(g.main, q, kAppTitle, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
+                PdfDocument::RedactResult res;
+                HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+                const bool ok = g.doc.Redact(g.page, g.pageW, g.pageH, { r }, res);
+                SetCursor(old);
+                if (ok) {
+                    ClearSearch();
+                    RefreshAfterEdit(g.page);
+                    ShowToast(res.flattened ? L"Geschwärzt – die Seite wurde als Bild neu aufgebaut, noch nicht gespeichert"
+                                            : L"Geschwärzt (Text entfernt) – noch nicht gespeichert");
+                } else ShowToast(PdfDocument::LastError(), true);
+            } else InvalidateRect(hwnd, nullptr, FALSE);
+            return 0;
+        }
         if (g.eraseDrag) { g.eraseDrag = false; if (GetCapture() == hwnd) ReleaseCapture(); return 0; }
         if (g.formMouse) {
             g.formMouse = false;
@@ -1886,6 +2637,7 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_CAPTURECHANGED:
         if (g.selDrag && reinterpret_cast<HWND>(lp) != hwnd) { g.selDrag = false; InvalidateRect(hwnd, nullptr, FALSE); }
+        if (g.redDrag && reinterpret_cast<HWND>(lp) != hwnd) { g.redDrag = false; InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     case WM_SETCURSOR:
         if (g.tool && LOWORD(lp) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, g.tool == 1 ? IDC_IBEAM : IDC_CROSS)); return TRUE; }
@@ -2048,21 +2800,20 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_VSCROLL: {
         RECT cr; GetClientRect(hwnd, &cr);
         ScrollMessage(hwnd, SB_VERT, wp, g.sideScroll, S(40), cr.bottom);
-        g.sideScroll = std::clamp(g.sideScroll, 0, Max(0, g.sideContentH - cr.bottom));
+        g.sideScroll = std::clamp(g.sideScroll, 0, Max(0, SideContentH() - cr.bottom));
         SideScrollbar(); InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
     case WM_MOUSEWHEEL: {
-        if (g.sideTab != 0) return 0;
         RECT cr; GetClientRect(hwnd, &cr);
-        g.sideScroll = std::clamp(g.sideScroll - static_cast<int>(GET_WHEEL_DELTA_WPARAM(wp) / 120.0 * S(70)), 0, Max(0, g.sideContentH - cr.bottom));
+        g.sideScroll = std::clamp(g.sideScroll - static_cast<int>(GET_WHEEL_DELTA_WPARAM(wp) / 120.0 * S(70)), 0, Max(0, SideContentH() - cr.bottom));
         SideScrollbar(); InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     }
     case WM_MOUSEMOVE: {
         if (!g.trackingSide) { TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, hwnd, 0 }; TrackMouseEvent(&t); g.trackingSide = true; }
         if (g.sideTab == 1) {
-            int row = (GET_Y_LPARAM(lp) - S(12)) / ToolRowH();
+            int row = (GET_Y_LPARAM(lp) - S(12) + g.sideScroll) / ToolRowH();
             if (row < 0 || row >= static_cast<int>(sizeof(kTools) / sizeof(kTools[0]))) row = -1;
             RECT scr; GetClientRect(hwnd, &scr);
             const POINT mp{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
@@ -2122,7 +2873,7 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         SetFocus(g.canvas);
         const int y = GET_Y_LPARAM(lp);
         if (g.sideTab == 1) {
-            int row = (y - S(12)) / ToolRowH();
+            int row = (y - S(12) + g.sideScroll) / ToolRowH();
             RECT scr; GetClientRect(hwnd, &scr);
             const POINT mp{ GET_X_LPARAM(lp), y };
             const RECT cb = ColorBtnRect(scr);
@@ -2168,6 +2919,9 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         AppendMenuW(menu, MF_STRING, 2, L"Nach rechts drehen");
         AppendMenuW(menu, MF_STRING, 3, L"Seite(n) löschen");
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(menu, MF_STRING, 5, L"Ausgewählte Seiten als neue PDF speichern …");
+        AppendMenuW(menu, MF_STRING, 6, L"PDF teilen (Split) …");
+        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
         AppendMenuW(menu, MF_STRING, 4, L"Alle auswählen");
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         ClientToScreen(hwnd, &pt);
@@ -2176,6 +2930,8 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (cmd == 1) RunCommand(C_ROTL);
         else if (cmd == 2) RunCommand(C_ROTR);
         else if (cmd == 3) RunCommand(C_DELETE);
+        else if (cmd == 5) RunCommand(C_EXTRACT);
+        else if (cmd == 6) RunCommand(C_SPLIT);
         else if (cmd == 4) { g.sel.assign(g.doc.PageCount(), 1); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     }
@@ -2371,6 +3127,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     reg(L"DuncansPdfSide", SideProc, nullptr, nullptr);
     reg(L"DuncansPdfCanvas", CanvasProc, nullptr, nullptr);
     reg(L"DuncansPdfPrompt", PromptProc, nullptr, nullptr);
+    reg(L"DuncansPdfSign", SignProc, nullptr, nullptr);
     reg(L"DuncansPdfPalette", PaletteProc, nullptr, nullptr);
     reg(L"DuncansPdfSettings", SettingsProc, nullptr, nullptr);
 
@@ -2401,6 +3158,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     ClearThumbs();
     if (g.pageBmp) DeleteObject(g.pageBmp);
     g.doc.Close();
+    delete g.stampGdi;
+    g.stampGdi = nullptr;
     Gdiplus::GdiplusShutdown(g_gdipToken);
     return 0;
 }

@@ -2,6 +2,7 @@
 #include "PdfiumApi.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <map>
 
@@ -47,6 +48,39 @@ namespace {
         fn = reinterpret_cast<T>(GetProcAddress(g_api.module, name));
         return fn != nullptr;
     }
+
+    // Schreibt 'doc' erst in eine Temp-Datei und ersetzt danach die Zieldatei: bei einem Fehler bleibt eine vorhandene Datei unversehrt
+    bool SaveDocAtomic(void* doc, const std::wstring& path) {
+        Writer w{};
+        w.version = 1;
+        w.WriteBlock = &WriteBlock;
+        w.ok = true;
+        const std::wstring tmp = path + L".tmp";
+        w.file = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (w.file == INVALID_HANDLE_VALUE) { g_error = L"Die Zieldatei kann nicht geschrieben werden."; return false; }
+        bool ok = g_api.SaveAsCopy(doc, &w, 0) != 0 && w.ok;
+        CloseHandle(w.file);
+        if (ok) ok = MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
+        if (!ok) { DeleteFileW(tmp.c_str()); g_error = L"Speichern fehlgeschlagen."; return false; }
+        return true;
+    }
+
+    // Seitenindizes (0-basiert, sortiert, eindeutig) als PDFium-Seitenbereich "1,3-5"
+    std::string PageRangeString(const std::vector<int>& idx) {
+        std::string s;
+        for (size_t i = 0; i < idx.size();) {
+            size_t j = i;
+            while (j + 1 < idx.size() && idx[j + 1] == idx[j] + 1) ++j;
+            if (!s.empty()) s += ',';
+            s += std::to_string(idx[i] + 1);
+            if (j > i) s += "-" + std::to_string(idx[j] + 1);
+            i = j + 1;
+        }
+        return s;
+    }
+
+    struct Box { double l, b, r, t; };
+    bool Overlap(const Box& a, double l, double b, double r, double t) { return l < a.r && r > a.l && b < a.t && t > a.b; }
 }
 
 bool PdfDocument::InitLibrary() {
@@ -148,6 +182,18 @@ bool PdfDocument::InitLibrary() {
         g_api.module = nullptr;
         return false;
     }
+    g_api.hasEdit = Load("FPDFPage_New", g_api.PageNew)
+        && Load("FPDFPageObj_NewImageObj", g_api.NewImageObj)
+        && Load("FPDFImageObj_SetBitmap", g_api.ImageObjSetBitmap)
+        && Load("FPDFPageObj_SetMatrix", g_api.PageObjSetMatrix)
+        && Load("FPDFPage_InsertObject", g_api.PageInsertObject)
+        && Load("FPDFPage_RemoveObject", g_api.PageRemoveObject)
+        && Load("FPDFPageObj_Destroy", g_api.PageObjDestroy)
+        && Load("FPDFPageObj_GetBounds", g_api.PageObjGetBounds)
+        && Load("FPDFPageObj_CreateNewRect", g_api.NewRectObj)
+        && Load("FPDFPageObj_SetFillColor", g_api.PageObjSetFillColor)
+        && Load("FPDFPath_SetDrawMode", g_api.PathSetDrawMode)
+        && Load("FPDFText_GetBoundedText", g_api.TextGetBoundedText);
     FPDF_LIBRARY_CONFIG cfg{};
     cfg.version = 2;
     g_api.InitLibraryWithConfig(&cfg);
@@ -188,6 +234,7 @@ void PdfDocument::Close() {
     m_path.clear();
     m_rot.clear();
     m_modified = false;
+    m_sanitize = false;
 }
 
 int PdfDocument::PageCount() const { return m_doc ? g_api.GetPageCount(m_doc) : 0; }
@@ -677,19 +724,212 @@ bool PdfDocument::SaveCopy(const std::wstring& path) {
     if (!m_doc) return false;
     CloseForm();
     BakeRotations();
-    Writer w{};
-    w.version = 1;
-    w.WriteBlock = &WriteBlock;
-    w.ok = true;
-    // Erst in eine Temp-Datei schreiben und danach ersetzen: bei einem Fehler bleibt eine vorhandene Zieldatei unversehrt
-    const std::wstring tmp = path + L".tmp";
-    w.file = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (w.file == INVALID_HANDLE_VALUE) { g_error = L"Die Zieldatei kann nicht geschrieben werden."; return false; }
-    bool ok = g_api.SaveAsCopy(m_doc, &w, 0) != 0 && w.ok;
-    CloseHandle(w.file);
-    if (ok) ok = MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) != 0;
-    if (!ok) { DeleteFileW(tmp.c_str()); g_error = L"Speichern fehlgeschlagen."; return false; }
+    void* doc = m_doc;
+    void* clean = nullptr;
+    if (m_sanitize) {
+        // Nach dem Schwaerzen liegen entfernte Seitenobjekte (z. B. Bilder) noch als unbenutzte Objekte im Dokument.
+        // Beim Uebernehmen der Seiten in ein neues Dokument wandert nur mit, was die Seiten wirklich erreichen.
+        clean = g_api.CreateNewDocument();
+        if (!clean || !g_api.ImportPages(clean, m_doc, nullptr, 0)) {
+            if (clean) g_api.CloseDocument(clean);
+            g_error = L"Das bereinigte Dokument konnte nicht erstellt werden.";
+            return false;
+        }
+        doc = clean;
+    }
+    const bool ok = SaveDocAtomic(doc, path);
+    if (clean) g_api.CloseDocument(clean);
+    if (!ok) return false;
     m_modified = false;
+    return true;
+}
+
+bool PdfDocument::SavePages(const std::wstring& path, const std::vector<int>& indices) {
+    if (!m_doc) return false;
+    const int n = PageCount();
+    std::vector<int> idx;
+    for (int i : indices) if (i >= 0 && i < n) idx.push_back(i);
+    std::sort(idx.begin(), idx.end());
+    idx.erase(std::unique(idx.begin(), idx.end()), idx.end());
+    if (idx.empty()) { g_error = L"Es ist keine Seite ausgewählt."; return false; }
+    CloseForm();
+    BakeRotations();
+    void* dst = g_api.CreateNewDocument();
+    if (!dst) { g_error = L"Das neue Dokument konnte nicht erstellt werden."; return false; }
+    const std::string range = PageRangeString(idx);
+    bool ok = g_api.ImportPages(dst, m_doc, range.c_str(), 0) != 0;
+    if (!ok) g_error = L"Die Seiten konnten nicht übernommen werden.";
+    else ok = SaveDocAtomic(dst, path);
+    g_api.CloseDocument(dst);
+    return ok;
+}
+
+// ---------- Stempel / Unterschrift ----------
+bool PdfDocument::EditSupported() { return InitLibrary() && g_api.hasEdit; }
+
+bool PdfDocument::PlaceImage(int index, int pw, int ph, const RECT& px, const Image& img) {
+    if (!m_doc || !g_api.hasEdit || pw <= 0 || ph <= 0 || img.w <= 0 || img.h <= 0 || img.bgra.size() < static_cast<size_t>(img.w) * img.h * 4) {
+        g_error = L"Das Bild kann nicht eingefügt werden.";
+        return false;
+    }
+    CloseForm();
+    void* page = g_api.LoadPage(m_doc, index);
+    if (!page) { g_error = L"Die Seite konnte nicht geladen werden."; return false; }
+    bool ok = false;
+    // Drei Ecken des Zielrechtecks in Seitenkoordinaten: die Bildmatrix richtet das Bild damit auch auf gedrehten Seiten richtig aus
+    double blx = 0, bly = 0, brx = 0, bry = 0, tlx = 0, tly = 0;
+    const int rot = Rotation(index);
+    if (g_api.DeviceToPage(page, 0, 0, pw, ph, rot, px.left, px.bottom, &blx, &bly)
+        && g_api.DeviceToPage(page, 0, 0, pw, ph, rot, px.right, px.bottom, &brx, &bry)
+        && g_api.DeviceToPage(page, 0, 0, pw, ph, rot, px.left, px.top, &tlx, &tly)) {
+        void* bmp = g_api.BitmapCreateEx(img.w, img.h, FPDFBitmap_BGRA, const_cast<unsigned char*>(img.bgra.data()), img.w * 4);
+        void* obj = g_api.NewImageObj(m_doc);
+        if (bmp && obj && g_api.ImageObjSetBitmap(&page, 1, obj, bmp)) {
+            const FS_MATRIX m{ static_cast<float>(brx - blx), static_cast<float>(bry - bly), static_cast<float>(tlx - blx), static_cast<float>(tly - bly),
+                               static_cast<float>(blx), static_cast<float>(bly) };
+            if (g_api.PageObjSetMatrix(obj, &m)) {
+                g_api.PageInsertObject(page, obj);      // die Seite gehoert das Objekt jetzt
+                obj = nullptr;
+                ok = g_api.PageGenerateContent(page) != 0;
+            }
+        }
+        if (obj) g_api.PageObjDestroy(obj);
+        if (bmp) g_api.BitmapDestroy(bmp);
+    }
+    g_api.ClosePage(page);
+    if (ok) m_modified = true; else g_error = L"Das Bild konnte nicht eingefügt werden.";
+    return ok;
+}
+
+// ---------- Schwaerzen ----------
+bool PdfDocument::Redact(int index, int pw, int ph, const std::vector<RECT>& rects, RedactResult& out) {
+    out = RedactResult{};
+    if (!m_doc || !g_api.hasEdit || pw <= 0 || ph <= 0 || rects.empty() || index < 0 || index >= PageCount()) {
+        g_error = L"Schwärzen ist hier nicht möglich.";
+        return false;
+    }
+    CloseForm();
+    void* page = g_api.LoadPage(m_doc, index);
+    if (!page) { g_error = L"Die Seite konnte nicht geladen werden."; return false; }
+    // Die Zusatzdrehung dieser Seite fest in die Seite schreiben; die Ansicht aendert sich dadurch nicht
+    const int rot = Rotation(index);
+    if (rot) {
+        g_api.PageSetRotation(page, (g_api.PageGetRotation(page) + rot) % 4);
+        m_rot[index] = 0;
+    }
+    std::vector<Box> boxes;
+    for (const RECT& r : rects) {
+        double x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+        if (!g_api.DeviceToPage(page, 0, 0, pw, ph, 0, r.left, r.top, &x1, &y1) || !g_api.DeviceToPage(page, 0, 0, pw, ph, 0, r.right, r.bottom, &x2, &y2)) continue;
+        boxes.push_back({ std::min(x1, x2), std::min(y1, y2), std::max(x1, x2), std::max(y1, y2) });
+    }
+    if (boxes.empty()) { g_api.ClosePage(page); g_error = L"Der Bereich liegt nicht auf der Seite."; return false; }
+
+    // 1) Was liegt unter den Bereichen? Text, der fast ganz im Bereich liegt, wird entfernt; alles andere erzwingt das Neuaufbauen der Seite.
+    bool flatten = false;
+    std::vector<void*> remove;
+    for (int i = 0, n = g_api.PageCountObjects(page); i < n; ++i) {
+        void* obj = g_api.PageGetObject(page, i);
+        float l = 0, b = 0, r = 0, t = 0;
+        if (!obj || !g_api.PageObjGetBounds(obj, &l, &b, &r, &t)) continue;
+        const int type = g_api.PageObjGetType(obj);
+        if (type == FPDF_PAGEOBJ_PATH) continue;                 // Linien/Flaechen: der schwarze Balken deckt sie ab
+        bool hit = false, whole = false;
+        for (const Box& bx : boxes) {
+            if (!Overlap(bx, l, b, r, t)) continue;
+            hit = true;
+            const double w = r - l, h = t - b;
+            const double ix = std::min<double>(r, bx.r) - std::max<double>(l, bx.l), iy = std::min<double>(t, bx.t) - std::max<double>(b, bx.b);
+            if (type == FPDF_PAGEOBJ_TEXT && (w <= 0 || ix / w >= 0.9) && (h <= 0 || iy / h >= 0.4)) whole = true;
+        }
+        if (!hit) continue;
+        if (whole) remove.push_back(obj); else flatten = true;
+    }
+
+    auto verifyClean = [&]() {
+        bool clean = true;
+        if (void* tp = g_api.TextLoadPage(page)) {
+            for (const Box& bx : boxes) {
+                const double pad = (bx.r - bx.l > 3 && bx.t - bx.b > 3) ? 1.0 : 0.0;      // Randberuehrungen zaehlen nicht
+                unsigned short buf[256] = {};
+                const int got = g_api.TextGetBoundedText(tp, bx.l + pad, bx.t - pad, bx.r - pad, bx.b + pad, buf, 255);
+                for (int c = 0; c < got && c < 255; ++c) if (buf[c] > 32) clean = false;
+            }
+            g_api.TextClosePage(tp);
+        }
+        return clean;
+    };
+
+    if (!flatten) {
+        for (void* obj : remove) {
+            if (g_api.PageRemoveObject(page, obj)) { g_api.PageObjDestroy(obj); ++out.textRemoved; }
+        }
+        for (int i = g_api.PageGetAnnotCount(page) - 1; i >= 0; --i) {     // Notizen, Markierungen und Links unter dem Bereich
+            void* a = g_api.PageGetAnnot(page, i);
+            if (!a) continue;
+            FS_RECTF rc{};
+            bool hit = false;
+            if (g_api.AnnotGetRect(a, &rc)) {
+                for (const Box& bx : boxes) hit = hit || Overlap(bx, std::min(rc.left, rc.right), std::min(rc.bottom, rc.top), std::max(rc.left, rc.right), std::max(rc.bottom, rc.top));
+            }
+            g_api.PageCloseAnnot(a);
+            if (hit && g_api.PageRemoveAnnot(page, i)) ++out.annotsRemoved;
+        }
+        for (const Box& bx : boxes) {
+            void* bar = g_api.NewRectObj(static_cast<float>(bx.l), static_cast<float>(bx.b), static_cast<float>(bx.r - bx.l), static_cast<float>(bx.t - bx.b));
+            if (!bar) continue;
+            g_api.PageObjSetFillColor(bar, 0, 0, 0, 255);
+            g_api.PathSetDrawMode(bar, 1, 0);                              // FPDF_FILLMODE_ALTERNATE, ohne Rand
+            g_api.PageInsertObject(page, bar);
+        }
+        if (!g_api.PageGenerateContent(page)) { g_api.ClosePage(page); g_error = L"Die Seite konnte nicht aktualisiert werden."; return false; }
+        if (!verifyClean()) flatten = true;                                // Rest-Text, z. B. in einem Formularobjekt: Seite neu aufbauen
+    }
+
+    if (flatten) {
+        // Seite rendern, schwarze Balken einbrennen und die Seite durch eine neue Seite mit genau diesem Bild ersetzen.
+        const double wpt = g_api.GetPageWidthF(page), hpt = g_api.GetPageHeightF(page);
+        double scale = 220.0 / 72.0;
+        scale = std::min(scale, 7000.0 / std::max(wpt, hpt));
+        const int W = std::max(1, static_cast<int>(wpt * scale)), H = std::max(1, static_cast<int>(hpt * scale));
+        const int stride = (W * 3 + 3) & ~3;
+        std::vector<unsigned char> pix(static_cast<size_t>(stride) * H, 255);
+        void* bmp = g_api.BitmapCreateEx(W, H, FPDFBitmap_BGR, pix.data(), stride);
+        if (!bmp) { g_api.ClosePage(page); g_error = L"Zu wenig Speicher zum Neuaufbau der Seite."; return false; }
+        g_api.BitmapFillRect(bmp, 0, 0, W, H, 0xFFFFFFFF);
+        g_api.RenderPageBitmap(bmp, page, 0, 0, W, H, 0, FPDF_ANNOT);
+        for (const RECT& r : rects) {
+            const int x0 = std::clamp(static_cast<int>(std::floor(double(r.left) * W / pw)) - 1, 0, W), x1 = std::clamp(static_cast<int>(std::ceil(double(r.right) * W / pw)) + 1, 0, W);
+            const int y0 = std::clamp(static_cast<int>(std::floor(double(r.top) * H / ph)) - 1, 0, H), y1 = std::clamp(static_cast<int>(std::ceil(double(r.bottom) * H / ph)) + 1, 0, H);
+            if (x1 > x0 && y1 > y0) g_api.BitmapFillRect(bmp, x0, y0, x1 - x0, y1 - y0, 0xFF000000);
+        }
+        g_api.ClosePage(page);
+        page = nullptr;
+        void* np = g_api.PageNew(m_doc, index, wpt, hpt);              // landet vor der alten Seite
+        bool ok = false;
+        if (np) {
+            void* obj = g_api.NewImageObj(m_doc);
+            if (obj && g_api.ImageObjSetBitmap(&np, 1, obj, bmp)) {
+                const FS_MATRIX m{ static_cast<float>(wpt), 0.f, 0.f, static_cast<float>(hpt), 0.f, 0.f };
+                if (g_api.PageObjSetMatrix(obj, &m)) {
+                    g_api.PageInsertObject(np, obj);
+                    obj = nullptr;
+                    ok = g_api.PageGenerateContent(np) != 0;
+                }
+            }
+            if (obj) g_api.PageObjDestroy(obj);
+            g_api.ClosePage(np);
+            if (ok) g_api.PageDelete(m_doc, index + 1);                // die alte Seite
+            else g_api.PageDelete(m_doc, index);                       // misslungen: neue Seite wieder entfernen, die alte bleibt
+        }
+        g_api.BitmapDestroy(bmp);
+        if (!ok) { g_error = L"Die Seite konnte nicht neu aufgebaut werden."; return false; }
+        out.flattened = true;
+    } else {
+        g_api.ClosePage(page);
+    }
+    m_sanitize = true;
+    m_modified = true;
     return true;
 }
 
