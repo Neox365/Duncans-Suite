@@ -31,7 +31,7 @@
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.1"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.5.2"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
