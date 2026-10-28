@@ -279,7 +279,7 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
-## 0.3.1 | 2026-10-28
+## 0.3.2 | 2026-10-28
 - Neu: „Über“-Kachelansicht direkt im Programmfenster (Link „Über“ neben der Version unten rechts) mit Version, Entwickler, Quellcode und Datenschutz.
 - Behoben: Sheets rechnet Potenzen wie Excel: =-2^2 ergibt 4, =2^3^2 ergibt 64 (von links nach rechts).
 ## 0.3.0 | 2026-10-26
