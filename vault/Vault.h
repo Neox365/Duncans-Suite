@@ -479,6 +479,12 @@ inline Result SaveFile(const std::filesystem::path& path, const Session& s, cons
         o.flush();
         if (!o) { o.close(); std::filesystem::remove(tmp, ec); return Result::IoError; }
     }
+    {   // Daten wirklich auf den Datentraeger zwingen, bevor die Datei die alte ersetzt
+        HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        const bool synced = h != INVALID_HANDLE_VALUE && FlushFileBuffers(h);
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+        if (!synced) { std::filesystem::remove(tmp, ec); return Result::IoError; }
+    }
     if (std::filesystem::exists(path, ec)) std::filesystem::copy_file(path, bak, std::filesystem::copy_options::overwrite_existing, ec);
     if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         std::filesystem::remove(tmp, ec);

@@ -228,6 +228,8 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.5.2 | 2026-10-28
+- Verbessert: Beim Speichern wird die Tresordatei erst vollständig auf den Datenträger geschrieben, bevor sie die alte ersetzt. Bei Stromausfall oder Absturz bleibt der bisherige Tresor heil.
 ## 0.5.1 | 2026-10-27
 - Geändert: „Über“ ist jetzt eine Kachelansicht direkt im Programmfenster (Version, Entwickler, Quellcode, Datenschutz, Speicherorte) statt eines Windows-Fensters.
 ## 0.5.0 | 2026-10-27
@@ -277,8 +279,9 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
-## 0.3.1 | 2026-10-27
+## 0.3.1 | 2026-10-28
 - Neu: „Über“-Kachelansicht direkt im Programmfenster (Link „Über“ neben der Version unten rechts) mit Version, Entwickler, Quellcode und Datenschutz.
+- Behoben: Sheets rechnet Potenzen wie Excel: =-2^2 ergibt 4, =2^3^2 ergibt 64 (von links nach rechts).
 ## 0.3.0 | 2026-10-26
 - Sheets: neue Funktionen WENN (mit Vergleichen und Text), ZÄHLENWENN (auch mit Platzhaltern wie "n*") und Vergleiche wie =A1>5.
 - Bereiche markieren: mit der Maus ziehen, Shift+Pfeiltasten, Klick auf Spalten- oder Zeilenkopf, Strg+A. Die Statusleiste zeigt dabei Summe, Mittelwert und Anzahl.

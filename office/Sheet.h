@@ -263,11 +263,11 @@ struct Parser {
     }
     double Term()
     {
-        double v = Unary();
+        double v = Power();
         for (;;) {
-            if (Eat(L'*')) v *= Unary();
+            if (Eat(L'*')) v *= Power();
             else if (Eat(L'/')) {
-                const double d = Unary();
+                const double d = Power();
                 if (d == 0) Throw(L"#DIV/0!");
                 v /= d;
             }
@@ -279,12 +279,13 @@ struct Parser {
     {
         if (Eat(L'-')) return -Unary();
         if (Eat(L'+')) return Unary();
-        return Power();
+        return Primary();
     }
+    // Wie in Excel: Vorzeichen binden staerker als ^ (-2^2 = 4), ^ wird von links nach rechts ausgewertet (2^2^3 = 64)
     double Power()
     {
-        double b = Primary();
-        if (Eat(L'^')) b = Check(std::pow(b, Unary()));
+        double b = Unary();
+        while (Eat(L'^')) b = Check(std::pow(b, Unary()));
         return b;
     }
     static double Check(double v)
