@@ -61,7 +61,8 @@ int main()
     CHECK(Show(s, L"A1", L"=1+2*3") == L"7");
     CHECK(Show(s, L"A1", L"=(1+2)*3") == L"9");
     CHECK(Show(s, L"A1", L"=10/4") == L"2,5");
-    CHECK(Show(s, L"A1", L"=2^3^2") == L"512");
+    CHECK(Show(s, L"A1", L"=2^3^2") == L"64");   // wie Excel: von links nach rechts
+    CHECK(Show(s, L"A1", L"=-2^2") == L"4");
     CHECK(Show(s, L"A1", L"=-2+5") == L"3");
     CHECK(Show(s, L"A1", L"= 1,5 + 2,5 ") == L"4");
     CHECK(Show(s, L"A1", L"=2*-3") == L"-6");
