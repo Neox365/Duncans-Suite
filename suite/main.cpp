@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.37"
+#define SUITE_VERSION L"1.1.38"
 #endif
 
 namespace
@@ -1085,7 +1085,7 @@ private:
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
     };
 
-    RECT m_banner{}, m_footer{};
+    RECT m_banner{}, m_footer{}, m_footLink{};   // m_footLink: "GitHub" in der Fusszeile (Klick oeffnet das Repository)
     int  m_hover = -1;       // 0/1 Karten, 2 Ordner-Button, 3 Modal-OK
     int  m_press = -1;
     bool m_tracking = false;
@@ -1528,13 +1528,20 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
             DrawCard(dc, i);
 
     // Footer: Version links, Hinweis in der Mitte
-    DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(176), m_footer.bottom },
-              std::wstring(L"© 2026 Duncan · v") + SUITE_VERSION);
+    {
+        const std::wstring base = std::wstring(L"© 2026 Duncan · v") + SUITE_VERSION + L"  ·  ";
+        const int bw = TextWidth(dc, m_fontSmall, base), lw = TextWidth(dc, m_fontSmall, L"GitHub");
+        DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(4) + bw, m_footer.bottom }, base);
+        m_footLink = { m_footer.left + S(4) + bw, m_footer.top + S(9), m_footer.left + S(4) + bw + lw + S(2), m_footer.bottom - S(4) };
+        const bool linkHover = m_hover == 35 && !m_modal && !m_settingsOpen && !m_infoOpen;
+        DrawLabel(dc, m_fontSmall, linkHover ? kAccent : kText, { m_footLink.left, m_footer.top + S(13), m_footLink.right + S(8), m_footer.bottom }, L"GitHub");
+    }
+    const int noteLeft = m_footLink.right + S(24);
     if (!m_note.empty())
-        DrawLabel(dc, m_fontSmall, kText, { m_footer.left + S(176), m_footer.top + S(13), m_footer.right - S(16), m_footer.bottom },
+        DrawLabel(dc, m_fontSmall, kText, { noteLeft, m_footer.top + S(13), m_footer.right - S(16), m_footer.bottom },
                   m_note, DT_CENTER);
     else if (!suite_safety::IsElevated())     // dezenter Hinweis: die Suite selbst braucht keine Adminrechte, zwei Programme schon
-        DrawLabel(dc, m_fontSmall, Blend(kBackground, kTextDim, 70), { m_footer.left + S(176), m_footer.top + S(13), m_footer.right - S(16), m_footer.bottom },
+        DrawLabel(dc, m_fontSmall, Blend(kBackground, kTextDim, 70), { noteLeft, m_footer.top + S(13), m_footer.right - S(16), m_footer.bottom },
                   L"Privacy Shield und Driver Updater fragen beim Start nach Administratorrechten", DT_CENTER | DT_END_ELLIPSIS);
 
     if (m_settingsOpen)
@@ -2417,6 +2424,8 @@ void SuiteWindow::OnMouseMove(int x, int y)
         if (PtInRect(&m_infoClose, pt))
             hover = 34;
     }
+    else if (PtInRect(&m_footLink, pt))
+        hover = 35;
     else if (PtInRect(&m_gearRect, pt))
         hover = 6;
     else if (PtInRect(&m_infoRect, pt))
@@ -2458,6 +2467,8 @@ void SuiteWindow::OnClick(int, int)
         m_modal = false;
         InvalidateRect(m_hwnd, nullptr, FALSE);
     }
+    else if (pressed == 35)
+        ShellExecuteW(m_hwnd, L"open", L"https://github.com/Neox365/Duncans-Suite", nullptr, nullptr, SW_SHOWNORMAL);
     else if (pressed == 6)
         OpenSettings();
     else if (pressed == 23)

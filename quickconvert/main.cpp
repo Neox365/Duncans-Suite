@@ -17,10 +17,12 @@
 #include <thread>
 #include <vector>
 
+#include <gdiplus.h>
 #include "Convert.h"
+#include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.0"
+#define APP_VERSION L"0.2.1"
 #endif
 
 namespace {
@@ -60,6 +62,10 @@ const wchar_t* AudName(conv::AudioFmt f) {
 }
 
 enum class State { Waiting, Running, Done, Failed };
+
+aboutgdi::State g_about;      // "Ueber"-Kachelansicht im Fenster
+RECT g_aboutRc{};             // Link "Ueber" neben der Version unten rechts
+ULONG_PTR g_gdipToken = 0;
 
 struct Item {
     std::wstring path;
@@ -559,8 +565,21 @@ void Paint(HDC dc, const RECT& rc) {
     std::wstring status = g.note;
     if (g.running) status = L"Konvertiere … " + std::to_wstring(done + failed) + L" von " + std::to_wstring(g.items.size());
     Text(dc, g.fSmall, failed && !g.running ? kRed : kDim, {m, rc.bottom - g.S(44), rc.right - g.S(120), rc.bottom - g.S(18)}, status);
-    Text(dc, g.fSmall, kOverlay, {rc.right - g.S(120) - m, rc.bottom - g.S(44), rc.right - m, rc.bottom - g.S(18)},
-         std::wstring(L"v") + APP_VERSION, DT_RIGHT);
+    {
+        const std::wstring ver = std::wstring(L"v") + APP_VERSION + L"  ·  ";
+        SIZE sv{}, sl{};
+        HGDIOBJ of = SelectObject(dc, g.fSmall);
+        GetTextExtentPoint32W(dc, ver.c_str(), static_cast<int>(ver.size()), &sv);
+        GetTextExtentPoint32W(dc, L"Über", 4, &sl);
+        SelectObject(dc, of);
+        const int right = rc.right - m, top = rc.bottom - g.S(44), bottom = rc.bottom - g.S(18);
+        g_aboutRc = {right - sl.cx - g.S(2), top, right, bottom};
+        Text(dc, g.fSmall, kOverlay, {g_aboutRc.left - sv.cx, top, g_aboutRc.left, bottom}, ver, DT_RIGHT);
+        POINT cp{};
+        GetCursorPos(&cp);
+        ScreenToClient(g.hwnd, &cp);
+        Text(dc, g.fSmall, PtInRect(&g_aboutRc, cp) ? kAccent : kDim, g_aboutRc, L"Über", DT_RIGHT);
+    }
 }
 
 void SetRunning(bool run) {
@@ -656,7 +675,19 @@ void ShowOutMenu() {
 }
 
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
+    if (g_about.open) {
+        const int r = aboutgdi::HandleMessage(hwnd, g_about, msg, wp, lp, L"https://github.com/Neox365/Duncans-Suite");
+        if (r == 2) return TRUE;
+        if (r == 1) return 0;
+    }
     switch (msg) {
+    case WM_SETCURSOR: {
+        POINT cp{};
+        GetCursorPos(&cp);
+        ScreenToClient(hwnd, &cp);
+        if (LOWORD(lp) == HTCLIENT && PtInRect(&g_aboutRc, cp)) { SetCursor(LoadCursorW(nullptr, IDC_HAND)); return TRUE; }
+        break;
+    }
     case WM_CREATE: {
         g.hwnd = hwnd;
         g.dpi = GetDpiForWindow(hwnd);
@@ -713,6 +744,20 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
         HGDIOBJ old = SelectObject(mem, bmp);
         Paint(mem, rc);
+        if (g_about.open) {
+            aboutgdi::HideChildren(hwnd, g_about);
+            aboutgdi::Spec sp;
+            sp.name = L"Duncan's QuickConvert";
+            sp.letter = L'Q';
+            sp.tiles = {
+                {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
+                {L"Quellcode", L"github.com/Neox365/Duncans-Suite"}, {L"Teil von", L"Duncan's Suite"},
+                {L"Technik", L"Bilder über Windows Imaging (WIC), Audio und Video über Media Foundation, mehrere Dateien parallel. Es wird nichts mitgeliefert, was nicht in Windows steckt.", true},
+                {L"Einstellungen", L"%LOCALAPPDATA%\\DuncansQuickConvert\\settings.ini", true},
+                {L"Datenschutz", L"Alle Dateien werden lokal auf diesem Gerät umgewandelt. Das Programm überträgt nichts.", true},
+            };
+            aboutgdi::Draw(mem, rc, static_cast<int>(g.dpi), sp, g_about);
+        }
         BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
         SelectObject(mem, old);
         DeleteObject(bmp);
@@ -802,6 +847,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_LBUTTONDOWN: {
         const POINT pt = {GET_X_LPARAM(lp), GET_Y_LPARAM(lp)};
+        if (PtInRect(&g_aboutRc, pt)) { aboutgdi::Open(g_about, hwnd); return 0; }
         RECT hit = g.slider;
         InflateRect(&hit, g.S(8), g.S(8));
         if (PtInRect(&hit, pt)) {
@@ -864,6 +910,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))) return 1;
     conv::MediaStartup();
+    Gdiplus::GdiplusStartupInput gsi;
+    Gdiplus::GdiplusStartup(&g_gdipToken, &gsi, nullptr);   // fuer die "Ueber"-Karte (Kantenglaettung)
 
     WNDCLASSEXW wc = {sizeof(wc)};
     wc.lpfnWndProc = WndProc;

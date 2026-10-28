@@ -5,6 +5,12 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansTidy.exe]
+## 1.2.6 | 2026-10-27
+- Geändert: Das „Über“-Fenster mit dem GitHub-Link ist entfernt. Die Informationen stehen jetzt in der Fußzeile der Duncan's Suite.
+## 1.2.5 | 2026-10-27
+- Geändert: „Optimieren“ sitzt in einer eigenen Aktionszeile unter der Kopfzeile, damit die Besen-Animation im Banner voll sichtbar bleibt.
+## 1.2.4 | 2026-10-27
+- Geändert: Die Übersicht zeigt nur noch die vier Kernbereiche (Downloads, Temp, Systemdateien, Browser-Cache) als große Kacheln; Fundmenge, Hinweis und Fortschritt stehen kompakt im Banner.
 ## 1.2.3 | 2026-10-25
 - Vereinfacht: Es gibt nur noch Standard und Ultra. Ultra enthält alles auf einmal: Shader-Caches, Update- und Treiber-Reste, Fehlerberichte, Windows-Temp, App-Caches, Store-Reste und ETL-Protokolle.
 - Auf der Seite Systemdateien kommen in Ultra weiterhin DISM, Schattenkopien und Ereignisprotokolle dazu, jede mit eigener Rückfrage. Die frühere Tiefen-Reinigung ist in Ultra aufgegangen.
@@ -137,6 +143,8 @@
 - Der PDF Reader kommt als Programm in die Suite.
 
 [DuncansPrivacy.exe]
+## 0.8.1 | 2026-10-27
+- Neu: „Über“-Kachelansicht direkt im Programmfenster (Link „Über“ neben der Version unten rechts) mit Version, Entwickler, Quellcode und Datenschutz.
 ## 0.8.0 | 2026-10-26
 - Neue Schalter für Leistung und Hintergrund: Widgets & News-Feed aus, Xbox-Bildschirmaufzeichnung (Game DVR) aus und Hintergrund-Apps verbieten.
 - Neue Dienst-Schalter über die Windows-Dienstverwaltung: Druckwarteschlange (Print Spooler), SysMain (nur bei SSD erlaubt), Remoteregistrierung und Windows-Fehlerberichterstattung deaktivieren. Der ursprüngliche Starttyp wird gesichert, „Standard wiederherstellen“ stellt ihn wieder her und startet den Dienst bei Bedarf.
@@ -258,6 +266,8 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansQuickConvert.exe]
+## 0.2.1 | 2026-10-27
+- Neu: „Über“-Kachelansicht direkt im Programmfenster (Link „Über“ neben der Version unten rechts) mit Version, Entwickler, Quellcode und Datenschutz.
 ## 0.2.0 | 2026-10-27
 - Neu: Video-Ziel MP4 (H.264 + AAC) in der Audio/Video-Leiste. Die Videoqualität folgt dem Regler (Bitrate nach Auflösung und Bildrate), der Ton bleibt erhalten. Reine Audio-Dateien werden bei MP4 als M4A ausgegeben. MKV fehlt, weil Windows keinen Matroska-Encoder mitbringt.
 - Neu: Das Ausgabe-Menü merkt sich die letzten fünf Zielordner, bietet „Zielordner im Explorer öffnen“ und speichert die Wahl. Auch Formate, Qualität und der neue Haken bleiben beim nächsten Start erhalten.
@@ -270,6 +280,7 @@
 
 [DuncansOffice.exe]
 ## 0.3.1 | 2026-10-28
+- Neu: „Über“-Kachelansicht direkt im Programmfenster (Link „Über“ neben der Version unten rechts) mit Version, Entwickler, Quellcode und Datenschutz.
 - Behoben: Sheets rechnet Potenzen wie Excel: =-2^2 ergibt 4, =2^3^2 ergibt 64 (von links nach rechts).
 ## 0.3.0 | 2026-10-26
 - Sheets: neue Funktionen WENN (mit Vergleichen und Text), ZÄHLENWENN (auch mit Platzhaltern wie "n*") und Vergleiche wie =A1>5.
@@ -289,6 +300,8 @@
 - Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
 
 [DuncansSuite.exe]
+## 1.1.38 | 2026-10-27
+- Neu: Die Fußzeile zeigt jetzt Version und einen „GitHub“-Link zum Repository (die Über-Informationen von Duncan's Tidy sind hierher gewandert).
 ## 1.1.37 | 2026-10-27
 - Verbessert: Die Reiter im Info-Dialog („Neuigkeiten & Updates“) stehen jetzt in zwei Reihen mit ausgeschriebenen Namen statt gekürzt in einer Zeile.
 ## 1.1.36 | 2026-10-27
