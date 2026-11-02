@@ -128,6 +128,7 @@ const wchar_t* AudioExt(AudioFmt f) {
         case AudioFmt::M4a: return L"m4a";
         case AudioFmt::Wav: return L"wav";
         case AudioFmt::Mp4: return L"mp4";
+        case AudioFmt::Mkv: return L"mkv";
     }
     return L"mp3";
 }
@@ -139,6 +140,7 @@ int BitrateKbps(AudioFmt f, int quality) {
     switch (f) {
         case AudioFmt::Mp3: return kMp3[(quality * 5 + 50) / 100];
         case AudioFmt::M4a:
+        case AudioFmt::Mkv:
         case AudioFmt::Mp4: return kAac[(quality * 3 + 50) / 100];
         case AudioFmt::Wav: return 0;
     }
@@ -156,7 +158,7 @@ bool IsAudioOnlyFile(const std::wstring& path) {
 }
 
 AudioFmt EffectiveFmt(const std::wstring& src, AudioFmt requested) {
-    return requested == AudioFmt::Mp4 && IsAudioOnlyFile(src) ? AudioFmt::M4a : requested;
+    return (requested == AudioFmt::Mp4 || requested == AudioFmt::Mkv) && IsAudioOnlyFile(src) ? AudioFmt::M4a : requested;
 }
 
 bool MediaStartup() { return SUCCEEDED(MFStartup(MF_VERSION, MFSTARTUP_LITE)); }
@@ -478,12 +480,383 @@ bool ConvertVideoMp4(const std::wstring& src, const std::wstring& dst, int quali
     return ok;
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Matroska (MKV): Windows liest MKV, schreibt es aber nicht. Das Video wird deshalb wie bei MP4 kodiert (H.264 + AAC) und danach
+// ohne erneute Kodierung in einen Matroska-Container umgepackt (schlanker Muxer: Header, Info, Tracks, Cluster mit SimpleBlocks, Cues).
+// ---------------------------------------------------------------------------------------------------------------------
+
+using Bytes = std::vector<BYTE>;
+
+void EId(Bytes& o, uint32_t id) {
+    const int n = id > 0xFFFFFF ? 4 : id > 0xFFFF ? 3 : id > 0xFF ? 2 : 1;
+    for (int i = n - 1; i >= 0; --i) o.push_back(static_cast<BYTE>(id >> (8 * i)));
+}
+
+void ESize(Bytes& o, uint64_t sz) {
+    int n = 1;
+    while (n < 8 && sz >= (1ull << (7 * n)) - 1) ++n;
+    o.push_back(static_cast<BYTE>((0x80 >> (n - 1)) | (sz >> (8 * (n - 1)))));
+    for (int i = n - 2; i >= 0; --i) o.push_back(static_cast<BYTE>(sz >> (8 * i)));
+}
+
+void EBin(Bytes& o, uint32_t id, const void* d, size_t n) {
+    EId(o, id);
+    ESize(o, n);
+    const BYTE* p = static_cast<const BYTE*>(d);
+    o.insert(o.end(), p, p + n);
+}
+
+void EUint(Bytes& o, uint32_t id, uint64_t v) {
+    int n = 1;
+    while (n < 8 && (v >> (8 * n)) != 0) ++n;
+    EId(o, id);
+    ESize(o, static_cast<uint64_t>(n));
+    for (int i = n - 1; i >= 0; --i) o.push_back(static_cast<BYTE>(v >> (8 * i)));
+}
+
+void EStr(Bytes& o, uint32_t id, const char* s) { EBin(o, id, s, strlen(s)); }
+
+void EFloat64(Bytes& o, uint32_t id, double v) {
+    uint64_t bits = 0;
+    memcpy(&bits, &v, 8);
+    EId(o, id);
+    ESize(o, 8);
+    for (int i = 7; i >= 0; --i) o.push_back(static_cast<BYTE>(bits >> (8 * i)));
+}
+
+void EMaster(Bytes& o, uint32_t id, const Bytes& body) {
+    EId(o, id);
+    ESize(o, body.size());
+    o.insert(o.end(), body.begin(), body.end());
+}
+
+// Start- und Laenge der NAL-Einheiten eines Annex-B-Datenstroms (00 00 01 / 00 00 00 01)
+std::vector<std::pair<size_t, size_t>> AnnexBNals(const BYTE* p, size_t n) {
+    std::vector<std::pair<size_t, size_t>> out;
+    size_t start = SIZE_MAX;
+    for (size_t i = 0; i + 2 < n;) {
+        if (p[i] == 0 && p[i + 1] == 0 && p[i + 2] == 1) {
+            if (start != SIZE_MAX) {
+                size_t e = i;
+                while (e > start && p[e - 1] == 0) --e;
+                out.push_back({start, e - start});
+            }
+            start = i + 3;
+            i += 3;
+        } else {
+            ++i;
+        }
+    }
+    if (start != SIZE_MAX && start < n) {
+        size_t e = n;
+        while (e > start && p[e - 1] == 0) --e;
+        out.push_back({start, e - start});
+    }
+    return out;
+}
+
+bool IsAnnexB(const BYTE* p, size_t n) { return n > 4 && p[0] == 0 && p[1] == 0 && (p[2] == 1 || (p[2] == 0 && p[3] == 1)); }
+
+// avcC (CodecPrivate fuer H.264) aus SPS/PPS im Annex-B-Format
+bool BuildAvcC(const Bytes& seq, Bytes& avcc) {
+    std::vector<Bytes> sps, pps;
+    for (const auto& nal : AnnexBNals(seq.data(), seq.size())) {
+        if (nal.second == 0) continue;
+        const int type = seq[nal.first] & 0x1F;
+        Bytes n(seq.begin() + nal.first, seq.begin() + nal.first + nal.second);
+        if (type == 7 && sps.size() < 31) sps.push_back(std::move(n));
+        else if (type == 8 && pps.size() < 255) pps.push_back(std::move(n));
+    }
+    if (sps.empty() || pps.empty() || sps[0].size() < 4) return false;
+    avcc = {1, sps[0][1], sps[0][2], sps[0][3], 0xFF, static_cast<BYTE>(0xE0 | sps.size())};
+    for (const auto& s : sps) { avcc.push_back(static_cast<BYTE>(s.size() >> 8)); avcc.push_back(static_cast<BYTE>(s.size())); avcc.insert(avcc.end(), s.begin(), s.end()); }
+    avcc.push_back(static_cast<BYTE>(pps.size()));
+    for (const auto& s : pps) { avcc.push_back(static_cast<BYTE>(s.size() >> 8)); avcc.push_back(static_cast<BYTE>(s.size())); avcc.insert(avcc.end(), s.begin(), s.end()); }
+    return true;
+}
+
+bool RemuxToMkv(const std::wstring& src, const std::wstring& dst, const std::atomic<bool>& cancel, const std::function<void(int)>& progress,
+                std::wstring* err) {
+    Com<IMFSourceReader> reader;
+    HRESULT hr = MFCreateSourceReaderFromURL(src.c_str(), nullptr, &reader);
+    if (FAILED(hr)) { SetErr(err, L"Zwischendatei kann nicht gelesen werden (" + Hex(hr) + L")"); return false; }
+
+    DWORD vS = MAXDWORD, aS = MAXDWORD;
+    for (DWORD i = 0; i < 32; ++i) {
+        Com<IMFMediaType> t;
+        if (FAILED(reader->GetNativeMediaType(i, 0, &t))) { if (i > 8) break; continue; }
+        GUID major{};
+        t->GetGUID(MF_MT_MAJOR_TYPE, &major);
+        if (major == MFMediaType_Video && vS == MAXDWORD) vS = i;
+        else if (major == MFMediaType_Audio && aS == MAXDWORD) aS = i;
+    }
+    if (vS == MAXDWORD) { SetErr(err, L"Die Zwischendatei enthält kein Videobild"); return false; }
+
+    Com<IMFMediaType> vt, at;
+    reader->GetNativeMediaType(vS, 0, &vt);
+    if (aS != MAXDWORD) reader->GetNativeMediaType(aS, 0, &at);
+    reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE);
+    reader->SetStreamSelection(vS, TRUE);
+    reader->SetCurrentMediaType(vS, nullptr, vt.Get());   // gleicher Typ wie die Quelle: Samples bleiben unveraendert (kein Decoder)
+    if (at) {
+        reader->SetStreamSelection(aS, TRUE);
+        reader->SetCurrentMediaType(aS, nullptr, at.Get());
+    }
+
+    UINT32 w = 0, h = 0, fn = 30, fd = 1;
+    MFGetAttributeSize(vt.Get(), MF_MT_FRAME_SIZE, &w, &h);
+    MFGetAttributeRatio(vt.Get(), MF_MT_FRAME_RATE, &fn, &fd);
+    if (fd == 0 || fn == 0) { fn = 30; fd = 1; }
+
+    Bytes avcc;
+    {
+        UINT32 n = 0;
+        Bytes seq;
+        if (SUCCEEDED(vt->GetBlobSize(MF_MT_MPEG_SEQUENCE_HEADER, &n)) && n > 0) {
+            seq.resize(n);
+            vt->GetBlob(MF_MT_MPEG_SEQUENCE_HEADER, seq.data(), n, &n);
+        }
+        if (!BuildAvcC(seq, avcc)) { SetErr(err, L"Die H.264-Parameter des Videos fehlen"); return false; }
+    }
+
+    Bytes asc;
+    UINT32 channels = kChannels, rate = kRate;
+    if (at) {
+        channels = MFGetAttributeUINT32(at.Get(), MF_MT_AUDIO_NUM_CHANNELS, kChannels);
+        rate = MFGetAttributeUINT32(at.Get(), MF_MT_AUDIO_SAMPLES_PER_SECOND, kRate);
+        UINT32 n = 0;
+        if (SUCCEEDED(at->GetBlobSize(MF_MT_USER_DATA, &n)) && n > 12) {   // 12 Byte HEAACWAVEINFO, danach die AudioSpecificConfig
+            Bytes ud(n);
+            at->GetBlob(MF_MT_USER_DATA, ud.data(), n, &n);
+            asc.assign(ud.begin() + 12, ud.end());
+        } else {
+            static const UINT32 kRates[] = {96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000};
+            UINT32 idx = 4;
+            for (UINT32 i = 0; i < 12; ++i) if (kRates[i] == rate) idx = i;
+            const UINT32 bits = (2u << 11) | (idx << 7) | (channels << 3);
+            asc = {static_cast<BYTE>(bits >> 8), static_cast<BYTE>(bits)};
+        }
+    }
+
+    LONGLONG duration = 0;
+    {
+        PROPVARIANT v;
+        PropVariantInit(&v);
+        if (SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &v)) && v.vt == VT_UI8)
+            duration = static_cast<LONGLONG>(v.uhVal.QuadPart);
+        PropVariantClear(&v);
+    }
+
+    HANDLE f = CreateFileW(dst.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) { SetErr(err, L"Zieldatei kann nicht angelegt werden"); return false; }
+    uint64_t pos = 0;
+    bool wrOk = true;
+    auto put = [&](const Bytes& b) {
+        DWORD wr = 0;
+        if (!b.empty() && (!WriteFile(f, b.data(), static_cast<DWORD>(b.size()), &wr, nullptr) || wr != b.size())) wrOk = false;
+        pos += b.size();
+    };
+    auto patch = [&](uint64_t at64, const Bytes& b) {
+        LARGE_INTEGER li;
+        li.QuadPart = static_cast<LONGLONG>(at64);
+        DWORD wr = 0;
+        if (!SetFilePointerEx(f, li, nullptr, FILE_BEGIN) || !WriteFile(f, b.data(), static_cast<DWORD>(b.size()), &wr, nullptr) || wr != b.size()) wrOk = false;
+    };
+
+    // EBML-Kopf und Segment (Groesse wird am Ende eingetragen)
+    {
+        Bytes body, el;
+        EUint(body, 0x4286, 1);
+        EUint(body, 0x42F7, 1);
+        EUint(body, 0x42F2, 4);
+        EUint(body, 0x42F3, 8);
+        EStr(body, 0x4282, "matroska");
+        EUint(body, 0x4287, 4);
+        EUint(body, 0x4285, 2);
+        EMaster(el, 0x1A45DFA3, body);
+        EId(el, 0x18538067);
+        el.insert(el.end(), {0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF});
+        put(el);
+    }
+    const uint64_t segStart = pos;
+    const uint64_t segSizeAt = pos - 8;
+
+    uint64_t durationAt = 0;
+    {
+        Bytes body, el;
+        EUint(body, 0x2AD7B1, 1000000);   // Zeitstempel in Millisekunden
+        EFloat64(body, 0x4489, 0);
+        const size_t durOff = body.size() - 8;
+        EStr(body, 0x4D80, "Duncan's QuickConvert");
+        EStr(body, 0x5741, "Duncan's QuickConvert");
+        EId(el, 0x1549A966);
+        ESize(el, body.size());
+        durationAt = pos + el.size() + durOff;
+        el.insert(el.end(), body.begin(), body.end());
+        put(el);
+    }
+    {
+        Bytes tracks, v, a;
+        EUint(v, 0xD7, 1);
+        EUint(v, 0x73C5, 1);
+        EUint(v, 0x83, 1);
+        EUint(v, 0x9C, 0);
+        EStr(v, 0x86, "V_MPEG4/ISO/AVC");
+        EBin(v, 0x63A2, avcc.data(), avcc.size());
+        EUint(v, 0x23E383, 1000000000ull * fd / fn);
+        Bytes vid;
+        EUint(vid, 0xB0, w);
+        EUint(vid, 0xBA, h);
+        EMaster(v, 0xE0, vid);
+        EMaster(tracks, 0xAE, v);
+        if (at) {
+            EUint(a, 0xD7, 2);
+            EUint(a, 0x73C5, 2);
+            EUint(a, 0x83, 2);
+            EUint(a, 0x9C, 0);
+            EStr(a, 0x86, "A_AAC");
+            EBin(a, 0x63A2, asc.data(), asc.size());
+            Bytes aud;
+            EFloat64(aud, 0xB5, static_cast<double>(rate));
+            EUint(aud, 0x9F, channels);
+            EMaster(a, 0xE1, aud);
+            EMaster(tracks, 0xAE, a);
+        }
+        Bytes el;
+        EMaster(el, 0x1654AE6B, tracks);
+        put(el);
+    }
+
+    struct Cue { int64_t ms; uint64_t cluster; };
+    std::vector<Cue> cues;
+    std::vector<int64_t> pendingCues;
+    Bytes body;
+    int64_t clusterMs = 0, maxMs = 0;
+    auto flush = [&]() {
+        if (body.empty()) return;
+        const uint64_t clusterPos = pos - segStart;
+        for (int64_t t : pendingCues) cues.push_back({t, clusterPos});
+        pendingCues.clear();
+        Bytes el, head;
+        EUint(head, 0xE7, static_cast<uint64_t>(clusterMs));
+        EId(el, 0x1F43B675);
+        ESize(el, head.size() + body.size());
+        el.insert(el.end(), head.begin(), head.end());
+        put(el);
+        put(body);
+        body.clear();
+    };
+
+    bool vDone = false, aDone = !at, firstVideo = true, ok = false;
+    std::wstring why = L"Umpacken fehlgeschlagen";
+    int lastPct = -1;
+    Bytes data;
+    while (wrOk) {
+        if (vDone && aDone) { ok = true; break; }
+        if (cancel.load()) { why = L"Abgebrochen"; break; }
+        DWORD si = 0, flags = 0;
+        LONGLONG ts = 0;
+        Com<IMFSample> sample;
+        hr = reader->ReadSample(static_cast<DWORD>(MF_SOURCE_READER_ANY_STREAM), 0, &si, &flags, &ts, &sample);
+        if (FAILED(hr) || (flags & MF_SOURCE_READERF_ERROR)) { why = L"Lesefehler in der Zwischendatei"; break; }
+        const bool isVideo = si == vS;
+        if (sample) {
+            Com<IMFMediaBuffer> buf;
+            BYTE* p = nullptr;
+            DWORD len = 0;
+            if (FAILED(sample->ConvertToContiguousBuffer(&buf)) || FAILED(buf->Lock(&p, nullptr, &len))) { why = L"Lesefehler in der Zwischendatei"; break; }
+            data.clear();
+            if (isVideo && IsAnnexB(p, len)) {   // Annex B (Startcodes) -> Laengenpraefix, wie es Matroska fuer H.264 verlangt
+                for (const auto& nal : AnnexBNals(p, len)) {
+                    const uint32_t n = static_cast<uint32_t>(nal.second);
+                    data.insert(data.end(), {static_cast<BYTE>(n >> 24), static_cast<BYTE>(n >> 16), static_cast<BYTE>(n >> 8), static_cast<BYTE>(n)});
+                    data.insert(data.end(), p + nal.first, p + nal.first + nal.second);
+                }
+            } else {
+                data.assign(p, p + len);
+            }
+            buf->Unlock();
+
+            const int64_t ms = std::max<LONGLONG>(ts, 0) / 10000;
+            bool key = true;
+            if (isVideo) {
+                key = firstVideo || MFGetAttributeUINT32(sample.Get(), MFSampleExtension_CleanPoint, 0) != 0;
+                firstVideo = false;
+            }
+            if (!body.empty() && ((isVideo && key && ms - clusterMs >= 5000) || ms - clusterMs > 30000)) flush();
+            if (body.empty()) clusterMs = ms;
+            if (isVideo && key) pendingCues.push_back(ms);
+            const int64_t rel = std::clamp<int64_t>(ms - clusterMs, -32768, 32767);
+            Bytes blk;
+            blk.push_back(static_cast<BYTE>(0x80 | (isVideo ? 1 : 2)));
+            blk.push_back(static_cast<BYTE>(rel >> 8));
+            blk.push_back(static_cast<BYTE>(rel));
+            blk.push_back(key ? 0x80 : 0);
+            blk.insert(blk.end(), data.begin(), data.end());
+            EId(body, 0xA3);
+            ESize(body, blk.size());
+            body.insert(body.end(), blk.begin(), blk.end());
+            maxMs = std::max(maxMs, ms);
+
+            if (isVideo && progress && duration > 0) {
+                const int pct = static_cast<int>(std::clamp<LONGLONG>(ts * 100 / duration, 0, 99));
+                if (pct != lastPct) { lastPct = pct; progress(pct); }
+            }
+        }
+        if (flags & MF_SOURCE_READERF_ENDOFSTREAM) (isVideo ? vDone : aDone) = true;
+    }
+    if (ok) {
+        flush();
+        Bytes cuesBody;
+        for (const Cue& c : cues) {
+            Bytes pt, tp;
+            EUint(pt, 0xB3, static_cast<uint64_t>(c.ms));
+            EUint(tp, 0xF7, 1);
+            EUint(tp, 0xF1, c.cluster);
+            EMaster(pt, 0xB7, tp);
+            EMaster(cuesBody, 0xBB, pt);
+        }
+        Bytes el;
+        EMaster(el, 0x1C53BB6B, cuesBody);
+        put(el);
+        Bytes sz = {0x01};
+        const uint64_t segLen = pos - segStart;
+        for (int i = 6; i >= 0; --i) sz.push_back(static_cast<BYTE>(segLen >> (8 * i)));
+        patch(segSizeAt, sz);
+        Bytes dur;
+        const double d = static_cast<double>(maxMs + 1000ll * fd / fn);
+        uint64_t bits = 0;
+        memcpy(&bits, &d, 8);
+        for (int i = 7; i >= 0; --i) dur.push_back(static_cast<BYTE>(bits >> (8 * i)));
+        patch(durationAt, dur);
+    }
+    CloseHandle(f);
+    if (!ok || !wrOk) {
+        DeleteFileW(dst.c_str());
+        SetErr(err, wrOk ? why : L"Zieldatei konnte nicht geschrieben werden (Speicherplatz?)");
+        return false;
+    }
+    if (progress) progress(100);
+    return true;
+}
+
+// Video -> MKV: erst als MP4 kodieren (90 %), dann umpacken (10 %)
+bool ConvertVideoMkv(const std::wstring& src, const std::wstring& dst, int quality, const std::atomic<bool>& cancel,
+                     const std::function<void(int)>& progress, std::wstring* err) {
+    const std::wstring tmp = dst + L".tmp.mp4";
+    if (!ConvertVideoMp4(src, tmp, quality, cancel, [&](int p) { if (progress) progress(p * 9 / 10); }, err)) return false;
+    const bool ok = RemuxToMkv(tmp, dst, cancel, [&](int p) { if (progress) progress(90 + p / 10); }, err);
+    DeleteFileW(tmp.c_str());
+    return ok;
+}
+
 }  // namespace
 
 bool ConvertMedia(const std::wstring& src, const std::wstring& dst, AudioFmt fmt, int quality, const std::atomic<bool>& cancel,
                   const std::function<void(int)>& progress, std::wstring* err) {
-    if (fmt == AudioFmt::Mp4) {
-        if (IsAudioOnlyFile(src)) fmt = AudioFmt::M4a;   // ohne Videobild gibt es nichts nach MP4 zu kodieren
+    if (fmt == AudioFmt::Mp4 || fmt == AudioFmt::Mkv) {
+        if (IsAudioOnlyFile(src)) fmt = AudioFmt::M4a;   // ohne Videobild gibt es nichts nach MP4/MKV zu kodieren
+        else if (fmt == AudioFmt::Mkv) return ConvertVideoMkv(src, dst, quality, cancel, progress, err);
         else return ConvertVideoMp4(src, dst, quality, cancel, progress, err);
     }
     Com<IMFSourceReader> reader;

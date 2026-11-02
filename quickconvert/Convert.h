@@ -11,11 +11,11 @@ namespace conv {
 
 enum class Kind { Unknown, Image, Media };
 enum class ImageFmt { Png, Jpeg, Webp, Bmp, Heic };
-enum class AudioFmt { Mp3, M4a, Wav, Mp4 };   // Mp4 = Video (H.264 + AAC); Audio-Dateien werden dabei zu M4A (EffectiveFmt)
+enum class AudioFmt { Mp3, M4a, Wav, Mp4, Mkv };   // Mp4/Mkv = Video (H.264 + AAC); Audio-Dateien werden dabei zu M4A (EffectiveFmt)
 
 Kind KindOfFile(const std::wstring& path);                  // nach Endung
 const wchar_t* ImageExt(ImageFmt f);                        // "png", "jpg", ...
-const wchar_t* AudioExt(AudioFmt f);                        // "mp3", "m4a", "wav"
+const wchar_t* AudioExt(AudioFmt f);                        // "mp3", "m4a", "wav", "mp4", "mkv"
 
 // Qualitaets-Slider (0..100 %) -> Bitrate in kbit/s (MP3: 128..320, AAC: 96..192, WAV verlustfrei: 0)
 int BitrateKbps(AudioFmt f, int quality);

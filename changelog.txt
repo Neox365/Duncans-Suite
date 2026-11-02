@@ -275,6 +275,8 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansQuickConvert.exe]
+## 0.3.0 | 2026-11-02
+- Neu: Video-Ziel MKV (H.264 + AAC in Matroska) in der Audio/Video-Leiste. Das Video wird wie bei MP4 kodiert und danach ohne Qualitätsverlust in einen Matroska-Container umgepackt. Reine Audio-Dateien werden auch hier als M4A ausgegeben.
 ## 0.2.1 | 2026-10-27
 - Neu: „Über“-Kachelansicht direkt im Programmfenster (Link „Über“ neben der Version unten rechts) mit Version, Entwickler, Quellcode und Datenschutz.
 ## 0.2.0 | 2026-10-27

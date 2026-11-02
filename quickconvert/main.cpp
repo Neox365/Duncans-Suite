@@ -22,7 +22,7 @@
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.1"
+#define APP_VERSION L"0.3.0"
 #endif
 
 namespace {
@@ -42,18 +42,18 @@ constexpr COLORREF kOnAccent = RGB(0x1E, 0x1E, 0x2E);
 enum : int {
     IDC_ADD = 100, IDC_OUT = 101, IDC_CLEAR = 102, IDC_GO = 103, IDC_OPEN = 104,
     IDC_IMG0 = 110,   // 110..114: PNG, JPG, WEBP, BMP, HEIC
-    IDC_AUD0 = 120,   // 120..123: MP3, M4A, WAV, MP4
+    IDC_AUD0 = 120,   // 120..124: MP3, M4A, WAV, MP4, MKV
     IDM_OUT_PICK = 200, IDM_OUT_SAME = 201, IDM_OUT_SHOW = 202,
     IDM_OUT_RECENT0 = 210,   // 210..214: zuletzt benutzte Zielordner
 };
-constexpr int kAudCount = 4, kMaxRecent = 5;
+constexpr int kAudCount = 5, kMaxRecent = 5;
 constexpr UINT WM_APP_UPDATE = WM_APP + 1;   // ein Eintrag hat sich geaendert
 constexpr UINT WM_APP_DONE = WM_APP + 2;     // alle Worker sind fertig
 
 constexpr conv::ImageFmt kImgFmts[] = {conv::ImageFmt::Png, conv::ImageFmt::Jpeg, conv::ImageFmt::Webp, conv::ImageFmt::Bmp, conv::ImageFmt::Heic};
 constexpr const wchar_t* kImgNames[] = {L"PNG", L"JPG", L"WEBP", L"BMP", L"HEIC"};
-constexpr conv::AudioFmt kAudFmts[kAudCount] = {conv::AudioFmt::Mp3, conv::AudioFmt::M4a, conv::AudioFmt::Wav, conv::AudioFmt::Mp4};
-constexpr const wchar_t* kAudNames[kAudCount] = {L"MP3", L"M4A", L"WAV", L"MP4"};
+constexpr conv::AudioFmt kAudFmts[kAudCount] = {conv::AudioFmt::Mp3, conv::AudioFmt::M4a, conv::AudioFmt::Wav, conv::AudioFmt::Mp4, conv::AudioFmt::Mkv};
+constexpr const wchar_t* kAudNames[kAudCount] = {L"MP3", L"M4A", L"WAV", L"MP4", L"MKV"};
 
 const wchar_t* AudName(conv::AudioFmt f) {
     for (int i = 0; i < kAudCount; ++i)
@@ -238,7 +238,7 @@ void UseOutDir(const std::wstring& dir) {
 std::wstring QualityDetail() {
     std::wstring s = L"Bilder (JPG, WEBP, HEIC): " + std::to_wstring(g.quality) + L" %   ·   ";
     const int kb = conv::BitrateKbps(kAudFmts[g.audSel], g.quality);
-    if (kAudFmts[g.audSel] == conv::AudioFmt::Mp4) s += L"MP4: H.264 nach Auflösung, Ton " + std::to_wstring(kb) + L" kbit/s";
+    if (kAudFmts[g.audSel] == conv::AudioFmt::Mp4 || kAudFmts[g.audSel] == conv::AudioFmt::Mkv) s += std::wstring(kAudNames[g.audSel]) + L": H.264 nach Auflösung, Ton " + std::to_wstring(kb) + L" kbit/s";
     else s += kb ? std::wstring(kAudNames[g.audSel]) + L": " + std::to_wstring(kb) + L" kbit/s" : L"WAV: verlustfrei";
     return s;
 }
