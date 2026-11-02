@@ -235,6 +235,7 @@ Ergebnis: `release\DuncansSuite_Setup_1.1.24.exe` (schlanker Admin-Installer: nu
 | `src/VendorReleases.*` | Hersteller-Abgleich der Grafiktreiber |
 | `src/MainWindow.*`, `src/Icons.*` | UI (Win32 + GDI/GDI+), Banner, Splash, Dialoge |
 | `suite/main.cpp` | Duncan's Suite (Launcher) |
+| `tidy/` | Duncan's Tidy (`src/Download-Cleaner.cpp`, `Release.ps1`, `installer/`, `tools/`); gebaut wird es mit `tidy\Release.ps1`, die CI baut es nur zur Kontrolle |
 | `pdf/` | Duncan's PDF Reader (`main.cpp` UI, `PdfDocument.*` PDFium-Wrapper, `PdfiumApi.h`) |
 | `privacy/` | Duncan's Privacy Shield (`main.cpp` UI, `PrivacyRules.*` Registry-Logik mit Sicherung) |
 | `tools/` | `MakeSigningKey.ps1`, `SignRelease.ps1` |
@@ -295,3 +296,8 @@ Einmalig: `powershell -File tools\MakeSigningKey.ps1` erzeugt den privaten Schl�
 und schreibt `suite/public_key.inc`; danach neu bauen.
 Pro Release: Installer bauen, `powershell -File tools\SignRelease.ps1 release\<Datei>` ausführen und die erzeugte `.sig` als zusätzliches Asset ins selbe GitHub-Release laden.
 Fehlt die `.sig`, lehnt die Suite die Datei ab.
+
+## Veröffentlichen und Kontrollen (`tools\`)
+
+- **`PublishChanged.ps1`:** Vergleicht die Versionen der EXE-Dateien in `release\` mit den veröffentlichten (`modules.txt` im Release `modules`, `version.txt` im PDF-Release), prüft, dass `changelog.txt` zur neuen Version einen Eintrag hat, und veröffentlicht nur die geänderten Programme über `PublishModule.ps1`. `-DryRun` zeigt nur die Tabelle, `-Build` baut vorher alle Programme, `-Yes` fragt nicht nach, `-Only Vault,Docs` beschränkt die Auswahl. Tidy (`tidy\Release.ps1`) und die Suite (`ReleaseAll.ps1`) laufen weiter getrennt.
+- **`CheckVersions.ps1`:** Prüft für jedes Programm, dass CMake-Version, Versionsressource (`resources\*.rc`), Rückfall-Define im Quelltext und Changelog zusammenpassen (auch Installer und Tidy). Läuft in der CI; Exitcode 1 bei Fehlern.
