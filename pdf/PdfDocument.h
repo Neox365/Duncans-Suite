@@ -3,6 +3,7 @@
 // pdfium.dll wird zur Laufzeit per LoadLibrary geladen (siehe PdfiumApi.h); so baut das Projekt
 // auch ohne PDFium-Header/-Importbibliothek, und fehlt die DLL, meldet die App das freundlich.
 #include <windows.h>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -78,6 +79,12 @@ public:
     bool Redacted() const { return m_sanitize; }
     bool Modified() const { return m_modified; }
 
+    // Rueckgaengig / Wiederholen: vor jeder Aenderung wird das ganze Dokument als Schnappschuss im Speicher abgelegt (hoechstens 12, rund 400 MB).
+    bool CanUndo() const { return !m_undo.empty(); }
+    bool CanRedo() const { return !m_redo.empty(); }
+    bool Undo();
+    bool Redo();
+
     // Zuschneiden: setzt den sichtbaren Bereich (CropBox) der Seiten auf einen Ausschnitt der angezeigten Seite.
     // Koordinaten als Anteile 0..1 der angezeigten Seite (links/oben = 0); der Seiteninhalt bleibt in der Datei erhalten.
     bool CropPages(const std::vector<int>& indices, double fx0, double fy0, double fx1, double fy1);
@@ -100,6 +107,18 @@ public:
     static void SetBakeRotations(bool on);                 // false: Drehungen beim Speichern nicht in die Datei schreiben (nur Ansicht)
 
 private:
+    struct State {
+        std::shared_ptr<std::vector<char>> bytes;    // Dokument (ohne Verschluesselung); Drehungen stehen separat, weil sie erst beim Speichern in die Seiten geschrieben werden
+        std::vector<int> rot;
+        bool sanitize = false, modified = false;
+        unsigned gen = 0;                            // Inhaltsstand: gleicher Wert = gleiche Bytes (Drehungen aendern ihn nicht)
+    };
+    State Capture();
+    bool Restore(const State& s);
+    void PushUndo(bool content = true);              // vor jeder Aenderung; fasst Aufrufe innerhalb von 250 ms zu einem Schritt zusammen
+    std::vector<State> m_undo, m_redo;
+    ULONGLONG m_lastPush = 0;
+    unsigned m_gen = 1, m_genCounter = 1;
     void BakeRotations();                    // schreibt die Zusatzdrehungen in die Seiten
     void CloseForm();
     bool UseFormPage(int index);

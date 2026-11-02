@@ -27,7 +27,7 @@ using std::min;
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.3.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.4.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -50,7 +50,7 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
     C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS, C_CROP, C_UNCROP,
-    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE, C_STAMP, C_REDACT, C_SPLIT, C_EXTRACT, C_MORE   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
+    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE, C_STAMP, C_REDACT, C_SPLIT, C_EXTRACT, C_MORE, C_UNDO, C_REDO   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
 };
 
 struct Item {
@@ -529,6 +529,7 @@ const struct { int cmd; const wchar_t* label; } kTools[] = {
     { C_DELETE, L"Seite(n) löschen" }, { C_FIND, L"Im Dokument suchen" },
     { C_HILITE, L"Text markieren" }, { C_ERASE, L"Markierung entfernen" }, { C_NOTE, L"Notiz hinzufügen" }, { C_COMPRESS, L"Datei verkleinern …" },
     { C_MERGE, L"PDF anhängen (Merge)" }, { C_SPLIT, L"PDF teilen (Split) …" }, { C_EXTRACT, L"Gewählte Seiten als neue PDF …" },
+    { C_UNDO, L"Rückgängig (Strg+Z)" }, { C_REDO, L"Wiederholen (Strg+Y)" },
     { C_STAMP, L"Stempel & Unterschrift …" }, { C_REDACT, L"Schwärzen (dauerhaft)" }, { C_SAVE, L"Speichern unter …" },
     { C_FITW, L"Auf Seitenbreite einpassen" }, { C_ACTUAL, L"Originalgröße (100 %)" },
 };
@@ -2205,6 +2206,23 @@ void RunCommand(int cmd) {
         if (sel >= 1000) RunCommand(sel - 1000);
         break;
     }
+    case C_UNDO: case C_REDO: {
+        if (!g.doc.IsOpen()) break;
+        const bool undo = cmd == C_UNDO;
+        if (undo ? !g.doc.CanUndo() : !g.doc.CanRedo()) { ShowToast(undo ? L"Nichts zum Rückgängigmachen" : L"Nichts zum Wiederholen"); break; }
+        if (!(undo ? g.doc.Undo() : g.doc.Redo())) { ShowToast(PdfDocument::LastError(), true); break; }
+        ClearSearch();
+        g.page = std::clamp(g.page, 0, g.doc.PageCount() - 1);
+        SelectOnly(g.page);
+        ClearThumbs();
+        g.scrollX = g.scrollY = 0;
+        LayoutSidebar();
+        UpdateCanvas(true);
+        EnsureThumbVisible();
+        UpdateTitle();
+        ShowToast(undo ? L"Rückgängig gemacht" : L"Wiederholt");
+        break;
+    }
     case C_STAMP: ShowStampMenu(); break;
     case C_SPLIT: DoSplit(); break;
     case C_EXTRACT: DoExtract(); break;
@@ -2353,6 +2371,8 @@ void HandleKey(UINT vk) {
     if (ctrl) {
         switch (vk) {
         case 'M': RunCommand(C_MERGE); return;
+        case 'Z': RunCommand(C_UNDO); return;
+        case 'Y': RunCommand(C_REDO); return;
         case 'A':
             if (g.doc.IsOpen()) { g.sel.assign(g.doc.PageCount(), 1); InvalidateRect(g.side, nullptr, FALSE); }
             return;

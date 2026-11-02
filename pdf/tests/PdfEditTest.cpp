@@ -327,6 +327,61 @@ int main() {
         DeleteFileW(out.c_str());
     }
 
+    {   // Rueckgaengig / Wiederholen (Schritte liegen mehr als 250 ms auseinander, sonst werden sie zusammengefasst)
+        PdfDocument d;
+        CHECK(d.Open(src));
+        CHECK(!d.CanUndo() && !d.CanRedo() && !d.Undo());
+        // Schwaerzen (Textweg) und zurueck
+        PdfDocument::RedactResult res;
+        CHECK(d.Redact(0, 595, 842, { RECT{ 60, 170, 330, 200 } }, res) && res.textRemoved == 1);
+        CHECK(d.CanUndo() && d.Redacted() && d.Search(L"SECRETIBAN").empty());
+        CHECK(d.Undo() && !d.Redacted() && !d.CanUndo() && d.CanRedo() && !d.Search(L"SECRETIBAN").empty());
+        CHECK(d.Redo() && d.Redacted() && d.Search(L"SECRETIBAN").empty() && d.CanUndo() && !d.CanRedo());
+        CHECK(d.Undo());
+        // Schwaerzen (Bildweg: Seite wird neu aufgebaut) und zurueck
+        Sleep(300);
+        CHECK(d.Redact(0, 595, 842, { RECT{ 100, 170, 160, 200 } }, res) && res.flattened && d.Search(L"SECRETIBAN").empty());
+        CHECK(d.Undo() && !d.Search(L"SECRETIBAN").empty() && d.PageCount() == 1);
+        // Stempel setzen und zurueck
+        Sleep(300);
+        PdfDocument::Image px;
+        px.w = px.h = 4;
+        px.bgra.assign(4 * 4 * 4, 0);
+        for (size_t i = 0; i < px.bgra.size(); i += 4) { px.bgra[i + 2] = 255; px.bgra[i + 3] = 255; }   // rot, deckend
+        CHECK(d.PlaceImage(0, 595, 842, RECT{ 300, 400, 400, 500 }, px));
+        HBITMAP red = d.RenderPage(0, 595, 842);
+        CHECK(red && Near(PixelAt(red, 350, 450), 255, 0, 0));
+        if (red) DeleteObject(red);
+        CHECK(d.Undo());
+        HBITMAP plain = d.RenderPage(0, 595, 842);
+        CHECK(plain && Near(PixelAt(plain, 350, 450), 255, 255, 255));
+        if (plain) DeleteObject(plain);
+        CHECK(d.Redo());
+        HBITMAP red2 = d.RenderPage(0, 595, 842);
+        CHECK(red2 && Near(PixelAt(red2, 350, 450), 255, 0, 0));
+        if (red2) DeleteObject(red2);
+        // Drehen (nur Drehung, Bytes werden geteilt), Seiten anhaengen und loeschen
+        Sleep(300);
+        d.SetRotation(0, 1);
+        CHECK(d.Rotation(0) == 1 && d.Undo() && d.Rotation(0) == 0 && d.Redo() && d.Rotation(0) == 1 && d.Undo());
+        Sleep(300);
+        CHECK(d.Append(src) && d.PageCount() == 2);
+        Sleep(300);
+        CHECK(d.DeletePages({ 1 }) && d.PageCount() == 1);
+        CHECK(d.Undo() && d.PageCount() == 2 && d.Undo() && d.PageCount() == 1);
+        CHECK(d.Redo() && d.PageCount() == 2);
+        // Eine neue Aenderung verwirft die Wiederholen-Liste
+        Sleep(300);
+        d.SetRotation(1, 2);
+        CHECK(!d.CanRedo());
+        // Speichern nach Rueckgaengig liefert ein gueltiges Dokument
+        const std::wstring out = TempFile(L"undo.pdf");
+        CHECK(d.SaveCopy(out));
+        PdfDocument e;
+        CHECK(e.Open(out) && e.PageCount() == 2);
+        DeleteFileW(out.c_str());
+    }
+
     DeleteFileW(src.c_str());
     if (g_fail) { std::printf("%d Pruefung(en) fehlgeschlagen\n", g_fail); return 1; }
     std::printf("PDF-Bearbeitung: alle Pruefungen bestanden\n");
