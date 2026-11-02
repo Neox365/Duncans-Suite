@@ -364,9 +364,44 @@ static void usbKey() {
     CHECK(!vault::DeleteKeyFile(root));
 }
 
+static void windowCheckAndCsv() {
+    vault::Entry e;
+    e.title = L"Nexusmods";
+    e.url = L"https://login.nexusmods.com/sign_in";
+    CHECK(vault::DomainLabel(e.url) == L"nexusmods");
+    CHECK(vault::DomainLabel(L"www.github.com") == L"github");
+    CHECK(vault::DomainLabel(L"https://shop.example.co.uk:8443/a?b=c") == L"example");
+    CHECK(vault::DomainLabel(L"192.168.0.1") == L"0");     // keine brauchbare Domain: wird im Abgleich ignoriert, siehe unten
+    CHECK(vault::DomainLabel(L"") == L"");
+    CHECK(vault::WindowMatches(e, L"Nexus Mods :: Login - Google Chrome"));
+    CHECK(vault::WindowMatches(e, L"Sign in – NEXUSMODS – Mozilla Firefox"));
+    CHECK(!vault::WindowMatches(e, L"Posteingang - Mail - Google Chrome"));
+    vault::Entry t;
+    t.title = L"WLAN Büro";
+    CHECK(vault::WindowMatches(t, L"Irgendein Fenster") == false);
+    vault::Entry none;
+    none.title = L"X";
+    CHECK(vault::WindowMatches(none, L"Egal"));          // zu kurz zum Pruefen: nichts zu vergleichen
+
+    std::vector<std::vector<std::wstring>> rows;
+    vault::ParseCsv(L"\xFEFFname,url,username,password,note\r\nGitHub,https://github.com,duncan,\"p,\"\"w\"\"\",\"Zeile1\nZeile2\"\r\n\r\nMail,,me@x.org,secret,\r\n", rows);
+    CHECK(rows.size() == 3 && rows[0].size() == 5 && rows[1][3] == L"p,\"w\"" && rows[1][4] == L"Zeile1\nZeile2" && rows[2][0] == L"Mail");
+    vault::ParseCsv(L"url;username;password\nhttps://a.de;u;pw\n", rows);   // Semikolon-Dateien
+    CHECK(rows.size() == 2 && rows[1][2] == L"pw");
+
+    std::vector<vault::Entry> into;
+    int added = 0, skipped = 0;
+    const std::wstring csv = L"name,url,username,password,note\nGitHub,https://github.com,duncan,pw1,\n,https://login.nexusmods.com,me@x.org,pw2,Notiz\nLeer,,,,\n";
+    CHECK(vault::ImportBrowserCsv(csv, into, added, skipped) && added == 2 && skipped == 0 && into.size() == 2);
+    CHECK(into[0].title == L"GitHub" && into[0].secret == L"pw1" && into[1].title == L"nexusmods" && into[1].notes == L"Notiz" && !into[0].id.empty() && into[0].id != into[1].id);
+    CHECK(vault::ImportBrowserCsv(csv, into, added, skipped) && added == 0 && skipped == 2 && into.size() == 2);     // zweiter Import: nichts doppelt
+    CHECK(!vault::ImportBrowserCsv(L"a,b\n1,2\n", into, added, skipped));      // keine Passwort-Spalte
+    vault::Wipe(into);
+}
+
 int main() {
     vault::MinIterations() = 1000;   // die Tests arbeiten mit wenigen Runden, damit sie schnell laufen
-    serialization(); merge(); search(); generator(); strength(); kdf(); file(); noPassword(); memoryProtection(); usbKey();
+    serialization(); merge(); search(); generator(); strength(); kdf(); file(); noPassword(); memoryProtection(); usbKey(); windowCheckAndCsv();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

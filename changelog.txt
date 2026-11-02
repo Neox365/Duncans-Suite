@@ -114,6 +114,8 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.3.0 | 2026-11-02
+- Neu: In der Suchleiste schwärzt der Knopf „Schwärzen“ alle Treffer des Suchbegriffs auf einmal (mit Rückfrage), z. B. jede IBAN oder jeden Namen im ganzen Dokument.
 ## 1.2.1 | 2026-10-27
 - Geändert: „Über“ ist jetzt eine Kachelansicht direkt im Programmfenster (Version, Entwickler, Quellcode, Datenschutz, Speicherorte) statt eines Windows-Fensters.
 ## 1.2.0 | 2026-10-27
@@ -228,6 +230,9 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.6.0 | 2026-11-02
+- Neu: Auto-Type prüft vor dem Eintippen, ob das aktive Fenster zum Eintrag passt (Titel oder Domain, z. B. „Nexus Mods :: Login“ passt zu nexusmods.com). Bei einem anderen Fenster wird nichts getippt. Im Zahnrad-Menü abschaltbar.
+- Neu: Import aus Browser-Exporten (Zahnrad → „Aus Browser-Export importieren“): CSV-Dateien von Chrome, Edge, Firefox, Bitwarden u. a. werden an der Kopfzeile erkannt, schon vorhandene Zugänge übersprungen. Danach bietet der Tresor an, die Klartext-Datei zu überschreiben und zu löschen.
 ## 0.5.2 | 2026-10-28
 - Verbessert: Beim Speichern wird die Tresordatei erst vollständig auf den Datenträger geschrieben, bevor sie die alte ersetzt. Bei Stromausfall oder Absturz bleibt der bisherige Tresor heil.
 ## 0.5.1 | 2026-10-27

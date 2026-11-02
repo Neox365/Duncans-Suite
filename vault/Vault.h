@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <ctime>
+#include <initializer_list>
 #include <cwctype>
 #include <filesystem>
 #include <fstream>
@@ -176,6 +178,126 @@ inline void Merge(std::vector<Entry>& into, const std::vector<Entry>& from, int&
         if (!cur) { into.push_back(e); ++added; }
         else if (e.modified > cur->modified) { *cur = e; ++updated; }
     }
+}
+
+// ---- Auto-Type: passt das aktive Fenster zum Eintrag? ----
+// Kleinbuchstaben, nur Buchstaben und Ziffern (so passt "Nexus Mods :: Login" zu "nexusmods")
+inline std::wstring Squash(const std::wstring& s)
+{
+    std::wstring o;
+    for (wchar_t c : s)
+        if (std::iswalnum(c)) o += static_cast<wchar_t>(std::towlower(c));
+    return o;
+}
+
+// Haupt-Teil der Domain: "https://login.nexusmods.com:8443/x" -> "nexusmods"; leer, wenn keine brauchbare Adresse
+inline std::wstring DomainLabel(const std::wstring& url)
+{
+    std::wstring h = Lower(Trim(url));
+    const size_t sch = h.find(L"://");
+    if (sch != std::wstring::npos) h = h.substr(sch + 3);
+    h = h.substr(0, h.find_first_of(L"/?#:"));
+    const size_t at = h.rfind(L'@');
+    if (at != std::wstring::npos) h = h.substr(at + 1);
+    std::vector<std::wstring> parts;
+    for (size_t p = 0; p <= h.size();) {
+        size_t d = h.find(L'.', p);
+        if (d == std::wstring::npos) d = h.size();
+        if (d > p) parts.push_back(h.substr(p, d - p));
+        p = d + 1;
+    }
+    if (parts.size() < 2) return parts.empty() ? std::wstring() : Squash(parts[0]);
+    // co.uk, com.au usw.: dann zaehlt das Teil davor
+    static const wchar_t* const kSecond[] = {L"co", L"com", L"org", L"net", L"gov", L"ac"};
+    size_t idx = parts.size() - 2;
+    if (parts.size() >= 3 && parts.back().size() == 2)
+        for (const wchar_t* s : kSecond)
+            if (parts[idx] == s) { idx = parts.size() - 3; break; }
+    return Squash(parts[idx]);
+}
+
+// true, wenn der Fenstertitel den Eintragstitel oder die Domain des Eintrags enthaelt. Ohne brauchbaren Titel/Adresse gibt es nichts zu pruefen (true).
+inline bool WindowMatches(const Entry& e, const std::wstring& windowTitle)
+{
+    const std::wstring w = Squash(windowTitle), t = Squash(e.title), d = DomainLabel(e.url);
+    const bool haveT = t.size() >= 3, haveD = d.size() >= 3;
+    if (!haveT && !haveD) return true;
+    return (haveT && w.find(t) != std::wstring::npos) || (haveD && w.find(d) != std::wstring::npos);
+}
+
+// ---- CSV-Import aus Browsern (Chrome/Edge: name,url,username,password,note; Firefox: url,username,password,...; Bitwarden u. a.) ----
+// RFC 4180: Felder in Anfuehrungszeichen duerfen Kommas, Semikolons und Zeilenumbrueche enthalten; "" ist ein Anfuehrungszeichen. Trennzeichen , oder ; (nach der Kopfzeile).
+inline void ParseCsv(const std::wstring& text, std::vector<std::vector<std::wstring>>& rows)
+{
+    rows.clear();
+    size_t start = (!text.empty() && text[0] == 0xFEFF) ? 1 : 0;
+    const size_t eol = text.find_first_of(L"\r\n", start);
+    const std::wstring head = text.substr(start, eol == std::wstring::npos ? std::wstring::npos : eol - start);
+    const wchar_t delim = std::count(head.begin(), head.end(), L';') > std::count(head.begin(), head.end(), L',') ? L';' : L',';
+    std::vector<std::wstring> row;
+    std::wstring field;
+    bool quoted = false, any = false;
+    auto endField = [&]() { row.push_back(field); field.clear(); any = true; };
+    auto endRow = [&]() {
+        if (any || !field.empty()) { endField(); if (!(row.size() == 1 && row[0].empty())) rows.push_back(row); }
+        row.clear(); any = false;
+    };
+    for (size_t i = start; i < text.size(); ++i) {
+        const wchar_t c = text[i];
+        if (quoted) {
+            if (c == L'"') { if (i + 1 < text.size() && text[i + 1] == L'"') { field += L'"'; ++i; } else quoted = false; }
+            else field += c;
+        } else if (c == L'"' && field.empty()) quoted = true;
+        else if (c == delim) endField();
+        else if (c == L'\n' || c == L'\r') { if (c == L'\r' && i + 1 < text.size() && text[i + 1] == L'\n') ++i; endRow(); }
+        else field += c;
+    }
+    endRow();
+}
+
+// Baut aus den CSV-Zeilen Zugangs-Eintraege. Spalten werden an der Kopfzeile erkannt. Schon vorhandene (gleiche Adresse oder gleicher Titel UND gleicher Benutzername)
+// werden uebersprungen. Rueckgabe: false, wenn keine Passwort-Spalte gefunden wurde.
+inline bool ImportBrowserCsv(const std::wstring& csv, std::vector<Entry>& into, int& added, int& skipped)
+{
+    added = skipped = 0;
+    std::vector<std::vector<std::wstring>> rows;
+    ParseCsv(csv, rows);
+    if (rows.size() < 2) return false;
+    auto col = [&](std::initializer_list<const wchar_t*> names) {
+        for (size_t i = 0; i < rows[0].size(); ++i) {
+            const std::wstring h = Lower(Trim(rows[0][i]));
+            for (const wchar_t* n : names) if (h == n) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    const int cName = col({L"name", L"title", L"login_name"}), cUrl = col({L"url", L"login_uri", L"website", L"web site", L"hostname"}),
+              cUser = col({L"username", L"login_username", L"user", L"login", L"email"}), cPass = col({L"password", L"login_password", L"pass"}),
+              cNote = col({L"note", L"notes", L"extra"});
+    if (cPass < 0) return false;
+    auto at = [&](const std::vector<std::wstring>& r, int c) { return c >= 0 && c < static_cast<int>(r.size()) ? Trim(r[c]) : std::wstring(); };
+    const long long now = static_cast<long long>(std::time(nullptr));
+    for (size_t i = 1; i < rows.size(); ++i) {
+        const auto& r = rows[i];
+        Entry e;
+        e.cat = Cat::Password;
+        e.url = at(r, cUrl);
+        e.user = at(r, cUser);
+        e.secret = r.size() > static_cast<size_t>(cPass) ? r[cPass] : std::wstring();
+        e.notes = at(r, cNote);
+        e.title = at(r, cName);
+        if (e.title.empty()) { const std::wstring lbl = DomainLabel(e.url); e.title = lbl.empty() ? e.url : lbl; }
+        if (e.user.empty() && e.secret.empty()) continue;      // ohne Benutzername und Passwort gibt es nichts zu speichern
+        bool dup = false;
+        for (const Entry& x : into)
+            if (x.cat == Cat::Password && x.user == e.user && ((!e.url.empty() && Lower(x.url) == Lower(e.url)) || (e.url.empty() && Lower(x.title) == Lower(e.title)))) { dup = true; break; }
+        if (dup) { ++skipped; Wipe(e); continue; }
+        e.id = NewId();
+        e.created = e.modified = now;
+        into.push_back(std::move(e));
+        ++added;
+    }
+    for (auto& r : rows) for (auto& f : r) Wipe(f);
+    return true;
 }
 
 // ---- Suche: jedes Wort muss in Titel, Benutzername oder Tags vorkommen ----
