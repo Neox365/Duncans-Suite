@@ -25,6 +25,7 @@ $modules = @(
     [pscustomobject]@{ Name = 'QuickConvert';  Exe = 'DuncansQuickConvert.exe';  Target = 'DuncansQuickConvert' }
     [pscustomobject]@{ Name = 'Pdf';           Exe = 'DuncansPdf.exe';           Target = 'DuncansPdfReader' }
 )
+$Only = @($Only | ForEach-Object { $_ -split '[,;]' } | Where-Object { $_ })   # per "powershell -File" kommt "Vault,Pdf" als ein Text an
 if ($Only.Count) { $modules = @($modules | Where-Object { $Only -contains $_.Name }) }
 if (-not $modules.Count) { throw 'Kein Programm ausgewaehlt (-Only).' }
 
