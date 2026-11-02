@@ -194,6 +194,8 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.5.0 | 2026-11-02
+- Neu: Beim automatischen Einsortieren liest das Programm Betrag und Fälligkeit aus dem PDF-Text (Stichwörter wie „Gesamtbetrag“, „Rechnungsbetrag“, „zahlbar bis“, „fällig am“). Die Werte sind ein Vorschlag und stehen mit dem Hinweis „bitte prüfen“ in der Meldung; mit F2 lassen sie sich ändern. Braucht die pdfium.dll der Suite; im Zahnrad-Menü abschaltbar. Gescannte PDFs ohne Text bleiben unverändert.
 ## 0.4.1 | 2026-10-27
 - Geändert: „Über“ ist jetzt eine Kachelansicht direkt im Programmfenster (Version, Entwickler, Quellcode, Datenschutz, Speicherorte) statt eines Windows-Fensters.
 ## 0.4.0 | 2026-10-27

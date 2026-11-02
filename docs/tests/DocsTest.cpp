@@ -6,6 +6,7 @@
 #include <string>
 
 #include "../Invoice.h"
+#include "../InvoiceText.h"
 #include "../Store.h"
 #include "../TextEdit.h"
 
@@ -399,9 +400,25 @@ static void tagsStatsImport() {
     CHECK(GuessCreditor(L"Stromrechnung_Stadtwerke.pdf", {L"Stadtwerke", L"Strom"}) == L"Stadtwerke");   // laengster bekannter Name
 }
 
+static void invoiceText() {
+    using namespace docs;
+    ScannedInvoice r = ScanInvoiceText(L"Rechnung Nr. 4711\nNettobetrag 100,00 EUR\nMwSt 19,00 % 19,00 EUR\nGesamtbetrag brutto: 119,00 EUR\nBitte zahlen Sie bis zum 15.11.2026 auf das Konto DE12 3456.");
+    CHECK(r.hasAmount && r.cents == 11900 && r.hasDue && r.dueIso == L"2026-11-15");
+    r = ScanInvoiceText(L"Summe 1.234,56 EUR  davon USt 19%: 197,10  Zahlbar bis 01.12.26");
+    CHECK(r.hasAmount && r.cents == 123456 && r.hasDue && r.dueIso == L"2026-12-01");
+    r = ScanInvoiceText(L"Rechnungsbetrag\n\n 89,90 \u20AC\nF\u00E4llig am 30.09.2026");
+    CHECK(r.hasAmount && r.cents == 8990 && r.hasDue && r.dueIso == L"2026-09-30");
+    r = ScanInvoiceText(L"Gesamt 12,50 EUR, Zahlungsziel: 14 Tage");
+    CHECK(r.hasAmount && r.cents == 1250 && !r.hasDue);
+    r = ScanInvoiceText(L"Vielen Dank fuer Ihren Auftrag. Telefon 0123 456789.");
+    CHECK(!r.hasAmount && !r.hasDue);
+    r = ScanInvoiceText(L"Gesamtbetrag 100,00 EUR, Skonto 2,00 %, Rechnungsdatum 01.10.2026");
+    CHECK(r.hasAmount && r.cents == 10000 && !r.hasDue);
+}
+
 int main() {
     amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness(); installmentRate(); closingAndFooter();
-    tagsStatsImport();
+    tagsStatsImport(); invoiceText();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }
