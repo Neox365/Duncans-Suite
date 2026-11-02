@@ -31,7 +31,7 @@
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.2"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.6.0"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -90,6 +90,7 @@ struct Dialog {
 struct Settings {
     bool autoLock = true;
     bool autoType = true;     // Auto-Type (Tastatursimulation per SendInput) im Menue "Einloggen" anbieten
+    bool windowCheck = true;  // Auto-Type tippt nur, wenn das aktive Fenster zum Eintrag passt (Titel oder Domain)
     vault::GenOptions gen;
 };
 
@@ -140,6 +141,7 @@ void LoadSettings(Settings& st) {
     const std::wstring ini = SettingsPath();
     st.autoLock = GetPrivateProfileIntW(L"Allgemein", L"AutoSperre", 1, ini.c_str()) != 0;
     st.autoType = GetPrivateProfileIntW(L"Allgemein", L"AutoType", 1, ini.c_str()) != 0;
+    st.windowCheck = GetPrivateProfileIntW(L"Allgemein", L"FensterPruefung", 1, ini.c_str()) != 0;
     st.gen.length = std::clamp((int)GetPrivateProfileIntW(L"Generator", L"Laenge", 20, ini.c_str()), vault::kGenMin, vault::kGenMax);
     st.gen.upper = GetPrivateProfileIntW(L"Generator", L"Gross", 1, ini.c_str()) != 0;
     st.gen.lower = GetPrivateProfileIntW(L"Generator", L"Klein", 1, ini.c_str()) != 0;
@@ -151,6 +153,7 @@ void SaveSettings(const Settings& st) {
     auto put = [&](const wchar_t* sec, const wchar_t* k, int v) { WritePrivateProfileStringW(sec, k, std::to_wstring(v).c_str(), ini.c_str()); };
     put(L"Allgemein", L"AutoSperre", st.autoLock);
     put(L"Allgemein", L"AutoType", st.autoType);
+    put(L"Allgemein", L"FensterPruefung", st.windowCheck);
     put(L"Generator", L"Laenge", st.gen.length);
     put(L"Generator", L"Gross", st.gen.upper);
     put(L"Generator", L"Klein", st.gen.lower);
@@ -331,6 +334,7 @@ private:
     void ShowLoginMenu();
     void BeginAutoType(bool enter, int mode = 0);
     void RunAutoType();
+    void ImportCsv();
     void ShowGearMenu();
     void SetNote(const std::wstring& s, bool sticky = false) { m_note = s; m_noteUntil = sticky ? 0 : GetTickCount64() + 7000; }
     void Invalidate() { InvalidateRect(m_hwnd, nullptr, FALSE); }
@@ -1675,6 +1679,62 @@ void App::ExportBackup() {
     Invalidate();
 }
 
+// Ueberschreibt eine Datei mit Nullen und loescht sie (best effort: auf SSDs und mit Cloud-Ordnern gibt es keine Garantie)
+static bool ShredFile(const std::wstring& path) {
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f != INVALID_HANDLE_VALUE) {
+        LARGE_INTEGER sz{};
+        if (GetFileSizeEx(f, &sz)) {
+            std::vector<char> zero(64 * 1024, 0);
+            for (long long left = sz.QuadPart; left > 0;) {
+                const DWORD n = static_cast<DWORD>(std::min<long long>(left, static_cast<long long>(zero.size())));
+                DWORD w = 0;
+                if (!WriteFile(f, zero.data(), n, &w, nullptr) || !w) break;
+                left -= w;
+            }
+            FlushFileBuffers(f);
+        }
+        CloseHandle(f);
+    }
+    return DeleteFileW(path.c_str()) != 0;
+}
+
+// Zugangsdaten aus einer CSV-Datei des Browsers (Chrome, Edge, Firefox, Bitwarden ...) uebernehmen
+void App::ImportCsv() {
+    if (m_screen != Screen::Main) return;
+    wchar_t name[MAX_PATH]{};
+    OPENFILENAMEW ofn{sizeof(ofn)};
+    ofn.hwndOwner = m_hwnd;
+    ofn.lpstrFilter = L"CSV-Export (*.csv)\0*.csv\0Alle Dateien (*.*)\0*.*\0";
+    ofn.lpstrFile = name;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrTitle = L"Passwort-Export des Browsers wählen (CSV)";
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) return;
+    std::string raw;
+    {
+        std::ifstream in(fs::path(name), std::ios::binary);
+        if (!in) { SetNote(L"Die Datei konnte nicht gelesen werden.", true); Invalidate(); return; }
+        raw.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    }
+    if (raw.size() > 32u * 1024 * 1024) { vault::Wipe(raw); SetNote(L"Die Datei ist zu groß für einen Passwort-Export.", true); Invalidate(); return; }
+    std::wstring csv = vault::FromUtf8(raw);
+    vault::Wipe(raw);
+    int added = 0, skipped = 0;
+    const bool ok = vault::ImportBrowserCsv(csv, m_entries, added, skipped);
+    vault::Wipe(csv);
+    if (!ok) { SetNote(L"Keine Passwort-Spalte gefunden – das ist kein Passwort-Export (erwartet: Spalten wie name, url, username, password).", true); Invalidate(); return; }
+    if (added) Persist();
+    Rebuild();
+    SetNote(std::to_wstring(added) + L" Zugänge importiert, " + std::to_wstring(skipped) + L" schon vorhanden", true);
+    Invalidate();
+    UpdateWindow(m_hwnd);
+    if (MessageBoxW(m_hwnd, L"Die CSV-Datei enthält deine Passwörter im Klartext.\n\nJetzt überschreiben und löschen?\n\n(Auch im Browser-Export-Ordner, Papierkorb und Cloud-Ordnern können Kopien liegen.)", L"CSV-Datei löschen",
+                    MB_YESNO | MB_ICONWARNING) == IDYES)
+        SetNote(ShredFile(name) ? L"Importiert; die CSV-Datei wurde überschrieben und gelöscht." : L"Importiert; die CSV-Datei konnte nicht gelöscht werden – bitte selbst löschen.", true);
+    Invalidate();
+}
+
 void App::BeginImport() {
     wchar_t name[MAX_PATH]{};
     OPENFILENAMEW ofn{sizeof(ofn)};
@@ -1889,6 +1949,11 @@ void App::RunAutoType() {
     }
     wchar_t title[160]{};
     GetWindowTextW(fg, title, 160);
+    if (m_settings.windowCheck && !vault::WindowMatches(*e, title)) {   // falsches Fenster: nichts tippen (Schutz vor Phishing-Seiten und versehentlichem Tippen)
+        ShowWindow(m_hwnd, SW_RESTORE);
+        SetNote(L"Auto-Type abgebrochen: Das aktive Fenster „" + std::wstring(title) + L"“ passt nicht zu „" + e->title + L"“ (Titel oder Adresse). Fensterprüfung im Zahnrad-Menü abschaltbar.", true);
+        return;
+    }
     bool ok = true;
     const bool wantUser = mode != 2 && !e->user.empty(), wantSecret = mode != 1 && !e->secret.empty();
     if (wantUser) ok = TypeText(e->user);
@@ -1921,9 +1986,11 @@ void App::ShowGearMenu() {
     }
     AppendMenuW(m, MF_STRING | (m_settings.autoLock ? MF_CHECKED : 0), 2, L"Nach 5 Minuten Inaktivität automatisch sperren");
     AppendMenuW(m, MF_STRING | (m_settings.autoType ? MF_CHECKED : 0), 8, L"Auto-Type (Eintippen per Tastatursimulation) anbieten");
+    AppendMenuW(m, MF_STRING | (m_settings.windowCheck ? MF_CHECKED : 0) | (m_settings.autoType ? 0 : MF_GRAYED), 9, L"Auto-Type nur bei passendem Fenster (Titel oder Adresse)");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, 5, L"Backup exportieren (.vault) …");
     AppendMenuW(m, MF_STRING, 6, L"Backup importieren (.vault) …");
+    AppendMenuW(m, MF_STRING, 10, L"Aus Browser-Export importieren (.csv) …");
     AppendMenuW(m, MF_STRING, 3, L"Tresor-Ordner im Explorer öffnen");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, 4, L"Über Duncan's Vault");
@@ -1939,6 +2006,8 @@ void App::ShowGearMenu() {
         case 22: BeginChangePw(4); break;
         case 2: m_settings.autoLock = !m_settings.autoLock; SaveSettings(m_settings); Touch(); break;
         case 8: m_settings.autoType = !m_settings.autoType; SaveSettings(m_settings); break;
+        case 9: m_settings.windowCheck = !m_settings.windowCheck; SaveSettings(m_settings); break;
+        case 10: ImportCsv(); break;
         case 5: ExportBackup(); break;
         case 6: BeginImport(); break;
         case 3: ShellExecuteW(m_hwnd, L"open", DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
