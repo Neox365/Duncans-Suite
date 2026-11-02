@@ -804,7 +804,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.2.6";
+constexpr wchar_t kVersion[] = L"1.3.0";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -3563,6 +3563,36 @@ static std::wstring DeepPreview(const std::vector<fs::path>& sys) {
     return out;
 }
 
+// Vorschau fuer die Rueckfrage: die groessten Eintraege einer Liste (Name und Groesse), der Rest als Anzahl. Bisher nicht vermessene Eintraege
+// werden (hoechstens 60) nachgemessen und im Cache abgelegt, damit die Reihenfolge stimmt.
+static std::wstring TopPreview(const std::vector<fs::path>& items, int cat, size_t n = 3) {
+    if (items.empty()) return L"";
+    std::vector<std::pair<unsigned long long, size_t>> sz;
+    std::vector<size_t> misses;
+    {
+        std::lock_guard<std::mutex> lk(g_statMx);
+        for (size_t i = 0; i < items.size(); ++i) {
+            auto it = g_sizeCache.find(items[i].wstring());
+            sz.push_back({it != g_sizeCache.end() ? it->second : 0, i});
+            if (it == g_sizeCache.end() && misses.size() < 60) misses.push_back(i);
+        }
+    }
+    for (size_t i : misses) {
+        const unsigned long long b = PathSize(items[i]);
+        sz[i].first = b;
+        std::lock_guard<std::mutex> lk(g_statMx);
+        g_sizeCache[items[i].wstring()] = b;
+    }
+    std::sort(sz.begin(), sz.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+    std::wstring out;
+    for (size_t k = 0; k < sz.size() && k < n; ++k) {
+        out += L"\n      – " + ItemLabel(cat, items[sz[k].second]);
+        if (sz[k].first) out += L" (" + FormatSize(sz[k].first) + L")";
+    }
+    if (sz.size() > n) out += std::wstring(L"\n      … ") + Tr(L"und ") + std::to_wstring(sz.size() - n) + Tr(L" weitere");
+    return out;
+}
+
 // Symbol- und Vorschau-Cache liegen im Explorer in Benutzung: nur mit kurzem Explorer-Neustart loeschbar. Ja = neu starten, Nein = diese Caches auslassen.
 static void AskExplorerReset(HWND h, std::vector<fs::path>& items) {
     g_restartExplorer = false;
@@ -3609,6 +3639,7 @@ static void CloseBrowserGracefully(const wchar_t* exe) {
     }, (LPARAM)&ctx);
     for (int i = 0; i < 32 && IsRunning(exe); ++i) Sleep(250);
 }
+static int g_mbExtraH = 0;  // zusaetzliche Hoehe (px) fuer das naechste AppBox-Fenster, z. B. wenn die letzte Zeile sonst abgeschnitten wird
 static int ShowBrowserPrompt(HWND owner, const std::wstring& names);
 static void DoClean(HWND h) {
     if (g_page == 0) {  // Optimieren: Temp und Systemdateien
@@ -3621,17 +3652,19 @@ static void DoClean(HWND h) {
             AppBox(h, Tr(L"Es gibt nichts zu bereinigen."), kApp, MB_OK | MB_ICONINFORMATION);
             return;
         }
-        std::wstring q = Tr(L"Folgendes wird bereinigt:\n\n • Downloads: ") + std::to_wstring(d.count) + L" (" + FormatSize(d.bytes) +
-                         Tr(L") – landen im Papierkorb\n • Temp-Dateien: ") + std::to_wstring(t.count) + L" (" + FormatSize(t.bytes) +
-                         Tr(L") – endgültig\n • Systemdateien: ") + std::to_wstring(s.count) + L" (" + FormatSize(s.bytes) +
-                         Tr(L") – endgültig\n\nGeschützte Dateien (Schutzliste) bleiben erhalten. Temp- und Systemdateien lassen sich nicht wiederherstellen.");
-        if (DeepOn()) q += Tr(L"\n\nUltra-Tiefenreinigung – Systemdateien im Detail:") + DeepPreview(ListItems(CAT_SYS, true));
-        if (AppBox(h, q.c_str(), Tr(L"Optimieren"), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
         auto items = ListItems(CAT_TEMP);
         auto sys = ListItems(CAT_SYS, DeepOn());
+        auto dl = ListItems(CAT_DL);
+        std::wstring q = Tr(L"Folgendes wird bereinigt:\n\n • Downloads: ") + std::to_wstring(d.count) + L" (" + FormatSize(d.bytes) +
+                         Tr(L") – landen im Papierkorb") + TopPreview(dl, CAT_DL) + Tr(L"\n • Temp-Dateien: ") + std::to_wstring(t.count) + L" (" + FormatSize(t.bytes) +
+                         Tr(L") – endgültig") + TopPreview(items, CAT_TEMP) + Tr(L"\n • Systemdateien: ") + std::to_wstring(s.count) + L" (" + FormatSize(s.bytes) +
+                         Tr(L") – endgültig") + (DeepOn() ? std::wstring() : TopPreview(sys, CAT_SYS)) +
+                         Tr(L"\n\nGeschützte Dateien (Schutzliste) bleiben erhalten. Temp- und Systemdateien lassen sich nicht wiederherstellen.");
+        if (DeepOn()) q += Tr(L"\n\nUltra-Tiefenreinigung – Systemdateien im Detail:") + DeepPreview(ListItems(CAT_SYS, true));
+        g_mbExtraH = 40;   // die Rueckfrage ist lang: etwas Luft, damit die letzte Zeile bei anderer Schrift/Sprache nicht abgeschnitten wird
+        if (AppBox(h, q.c_str(), Tr(L"Optimieren"), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
         if (DeepOn()) AskExplorerReset(h, sys);
         items.insert(items.end(), sys.begin(), sys.end());
-        auto dl = ListItems(CAT_DL);
         g_optDl = !dl.empty();
         StartClean(h, std::move(items), true, false, -1, std::move(dl));
         return;
@@ -4614,7 +4647,7 @@ struct MsgDlg {
     bool open = false;
 };
 static MsgDlg g_md;
-static int g_mbExtraH = 0;  // zusaetzliche Hoehe (px) fuer das naechste AppBox-Fenster, z. B. wenn die letzte Zeile sonst abgeschnitten wird
+// g_mbExtraH: siehe weiter oben (vor DoClean)
 
 static LRESULT CALLBACK MsgBoxProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     const UINT type = g_md.flags & 0xF;
