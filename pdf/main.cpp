@@ -27,7 +27,7 @@ using std::min;
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.2.1"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.3.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -225,6 +225,8 @@ void OpenSearch();
 void CloseSearch();
 void SearchStep(int dir);
 void ClearSearch();
+void RedactAllHits();
+void RefreshAllPages();
 void ShowSettings();
 
 void InvalidateToolbar() {
@@ -762,7 +764,7 @@ void ShowToast(const std::wstring& text, bool err) {
 
 // ---------- Textsuche ----------
 // Suchfeld oben rechts im Canvas: [Eingabe] [Treffer x / y] [‹] [›] [✕]
-struct SearchLayout { RECT panel, edit, count, prev, next, close; };
+struct SearchLayout { RECT panel, edit, count, prev, next, close, redact; };
 
 SearchLayout GetSearchLayout(RECT cr) {
     SearchLayout l{};
@@ -771,8 +773,9 @@ SearchLayout GetSearchLayout(RECT cr) {
     l.close = RECT{ l.panel.right - S(8) - btn, l.panel.top + (h - btn) / 2, l.panel.right - S(8), l.panel.top + (h - btn) / 2 + btn };
     l.next = RECT{ l.close.left - S(4) - btn, l.close.top, l.close.left - S(4), l.close.bottom };
     l.prev = RECT{ l.next.left - S(4) - btn, l.close.top, l.next.left - S(4), l.close.bottom };
-    l.count = RECT{ l.prev.left - S(8) - S(92), l.panel.top, l.prev.left - S(8), l.panel.bottom };
-    l.edit = RECT{ l.panel.left + S(14), l.panel.top + (h - S(22)) / 2, l.count.left - S(6), l.panel.top + (h - S(22)) / 2 + S(22) };
+    l.count = RECT{ l.prev.left - S(8) - S(72), l.panel.top, l.prev.left - S(8), l.panel.bottom };
+    l.redact = RECT{ l.count.left - S(6) - S(88), l.close.top, l.count.left - S(6), l.close.bottom };   // "Schwaerzen": alle Treffer schwaerzen
+    l.edit = RECT{ l.panel.left + S(14), l.panel.top + (h - S(22)) / 2, l.redact.left - S(6), l.panel.top + (h - S(22)) / 2 + S(22) };
     return l;
 }
 
@@ -902,6 +905,43 @@ void DrawSearchPanel(HDC dc, RECT cr) {
     DrawTextC(dc, g.fontSmall, c, l.count, g.hits.empty() && !g.lastQuery.empty() ? kRed : kTextDim, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     const struct { RECT r; const wchar_t* t; } btns[] = { { l.prev, L"‹" }, { l.next, L"›" }, { l.close, L"✕" } };
     for (const auto& b : btns) DrawTextC(dc, g.font, b.t, b.r, kText);
+    const bool canRedact = !g.hits.empty() && PdfDocument::EditSupported();
+    FillRound(dc, l.redact, S(8), canRedact ? RGB(60, 30, 34) : kCardRaised, canRedact ? RGB(150, 60, 70) : kBorder);
+    DrawTextC(dc, g.fontSmall, L"Schwärzen", l.redact, canRedact ? RGB(255, 140, 150) : RGB(95, 100, 112));
+}
+
+// Alle Suchtreffer schwaerzen: pro Seite werden die Trefferrechtecke gesammelt und wie beim Aufziehen eines Rahmens geschwaerzt
+void RedactAllHits() {
+    if (!g.doc.IsOpen() || g.hits.empty()) return;
+    if (!PdfDocument::EditSupported()) { ShowToast(L"Diese pdfium.dll kann nicht schwärzen – bitte pdf\\third_party\\get_pdfium.ps1 ausführen.", true); return; }
+    std::vector<int> pages;
+    for (const auto& h : g.hits) if (std::find(pages.begin(), pages.end(), h.page) == pages.end()) pages.push_back(h.page);
+    const std::wstring q = std::wstring(L"Alle ") + std::to_wstring(g.hits.size()) + L" Treffer für „" + g.lastQuery + L"“ auf " + std::to_wstring(pages.size()) +
+        (pages.size() == 1 ? L" Seite" : L" Seiten") + L" dauerhaft schwärzen?\n\n"
+        L"Der Text darunter wird aus den Seiten entfernt und durch schwarze Balken ersetzt. Nach dem Speichern lässt sich das nicht mehr rückgängig machen. "
+        L"Lässt sich der Text nicht sauber herauslösen, wird die jeweilige Seite als Bild neu aufgebaut (ihr Text ist dann nicht mehr markierbar). "
+        L"Beim Speichern entfallen Lesezeichen und Formularfelder.";
+    if (MessageBoxW(g.main, q.c_str(), kAppTitle, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+    HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+    int done = 0, flattened = 0, failed = 0;
+    const std::vector<PdfDocument::TextHit> hits = g.hits;     // Redact aendert die Seiten; die Trefferliste wird danach verworfen
+    for (int page : pages) {
+        double w = 0, h = 0;
+        if (!g.doc.PageSize(page, w, h)) { ++failed; continue; }
+        const int pw = std::max(1, static_cast<int>(w * 2)), ph = std::max(1, static_cast<int>(h * 2));   // Rechenaufloesung der Rahmen (2 Pixel je Punkt)
+        std::vector<RECT> rects;
+        for (const auto& hit : hits) if (hit.page == page) g.doc.HitRects(hit, pw, ph, rects);
+        if (rects.empty()) continue;
+        PdfDocument::RedactResult res;
+        if (g.doc.Redact(page, pw, ph, rects, res)) { ++done; flattened += res.flattened ? 1 : 0; } else ++failed;
+    }
+    SetCursor(old);
+    ClearSearch();
+    RefreshAllPages();
+    std::wstring msg = std::to_wstring(done) + L" Seite(n) geschwärzt";
+    if (flattened) msg += L" (" + std::to_wstring(flattened) + L" als Bild neu aufgebaut)";
+    if (failed) msg += L", " + std::to_wstring(failed) + L" fehlgeschlagen";
+    ShowToast(msg + L" – noch nicht gespeichert", failed != 0);
 }
 
 // Zielrechteck des Stempels um die Mausposition p (Canvas-Koordinaten), innerhalb der Seite mit Ursprung (ox, oy)
@@ -2495,6 +2535,7 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g.searchOpen) {
             RECT cr; GetClientRect(hwnd, &cr);
             const SearchLayout l = GetSearchLayout(cr);
+            if (PtInRect(&l.redact, p)) { RedactAllHits(); return 0; }
             if (PtInRect(&l.prev, p)) { SearchStep(-1); return 0; }
             if (PtInRect(&l.next, p)) { SearchStep(1); return 0; }
             if (PtInRect(&l.close, p)) { CloseSearch(); return 0; }
