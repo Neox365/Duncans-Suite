@@ -176,6 +176,28 @@ int main() {
         CHECK(conv::ConvertMedia(o1, Tmp(L"vid_audio.mp3"), conv::AudioFmt::Mp3, 60, cancel, nullptr, &err));
         CHECK(Size(Tmp(L"vid_audio.mp3")) > 1000);
     }
+    {   // Video -> MKV: Matroska-Kopf, Zwischendatei weg, von Windows wieder lesbar (Ton extrahierbar), Audio-Quelle -> M4A
+        int lastK = -1;
+        std::wstring k = Tmp(L"vid_out.mkv");
+        DeleteFileW(k.c_str());
+        bool ok = conv::ConvertMedia(vid, k, conv::AudioFmt::Mkv, 60, cancel, [&](int p) { lastK = p; }, &err);
+        std::wprintf(L"Video -> MKV: %ls %ls (%lld Bytes)\n", ok ? L"ok" : L"Fehler", ok ? L"" : err.c_str(), Size(k));
+        CHECK(ok); CHECK(Size(k) > 1000); CHECK(lastK == 100);
+        CHECK(Size(k + L".tmp.mp4") < 0);
+        FILE* fp = _wfopen(k.c_str(), L"rb");
+        unsigned char head[4] = {};
+        if (fp) { fread(head, 1, 4, fp); fclose(fp); }
+        CHECK(head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3);
+        std::wstring mp3 = Tmp(L"mkv_audio.mp3");
+        DeleteFileW(mp3.c_str());
+        CHECK(conv::ConvertMedia(k, mp3, conv::AudioFmt::Mp3, 60, cancel, nullptr, &err));
+        CHECK(Size(mp3) > 1000);
+        std::wstring back = Tmp(L"mkv_back.mp4");
+        DeleteFileW(back.c_str());
+        CHECK(conv::ConvertMedia(k, back, conv::AudioFmt::Mp4, 30, cancel, nullptr, &err));   // Bild laesst sich aus dem MKV wieder dekodieren
+        CHECK(Size(back) > 1000);
+        CHECK(conv::EffectiveFmt(L"x.mp3", conv::AudioFmt::Mkv) == conv::AudioFmt::M4a && std::wstring(conv::AudioExt(conv::AudioFmt::Mkv)) == L"mkv");
+    }
     CHECK(conv::ConvertMedia(vid, Tmp(L"vid_only_audio.mp3"), conv::AudioFmt::Mp3, 60, cancel, nullptr, &err));
     CHECK(conv::EffectiveFmt(L"x.mp3", conv::AudioFmt::Mp4) == conv::AudioFmt::M4a && conv::EffectiveFmt(L"x.mov", conv::AudioFmt::Mp4) == conv::AudioFmt::Mp4);
     {
