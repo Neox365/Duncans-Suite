@@ -26,13 +26,15 @@
 #include <vector>
 
 #include "Invoice.h"
+#include "InvoiceText.h"
+#include "PdfText.h"
 #include "Store.h"
 #include "TextEdit.h"
 #include "Theme.h"
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.1"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.5.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -60,7 +62,7 @@ enum Id {
 };
 constexpr int kMaxTagChips = 24;
 enum MenuId {
-    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT,
+    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF,
     C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE, C_INCOME, C_EXPENSE, C_TAGS
 };
 
@@ -74,6 +76,7 @@ struct Settings {
     std::wstring taxNo;                 // Steuernummer / USt-IdNr. des Absenders
     bool smallBiz = false;              // Kleinunternehmer nach § 19 UStG (keine USt auf der Rechnung)
     std::wstring owner, court, phone, email, web, bank, iban, bic;   // Absender-Profil fuer die 3-spaltige PDF-Fusszeile
+    bool readPdf = true;                // Beim automatischen Einsortieren Betrag und Faelligkeit aus dem PDF-Text raten (braucht pdfium.dll der Suite)
     bool autoImport = true;             // Ablegen per Drag-and-Drop: Jahr/Glaeubiger automatisch bestimmen und einsortieren (Umschalt = Dialog)
     bool pdfReader = true;              // PDFs im Duncan's PDF Reader oeffnen (falls installiert), sonst Standardprogramm
 };
@@ -162,6 +165,7 @@ void LoadSettings(Settings& st) {
     st.vat = std::clamp((int)GetPrivateProfileIntW(L"Allgemein", L"MwSt", 19, ini.c_str()), 0, 30);
     st.pdfReader = GetPrivateProfileIntW(L"Allgemein", L"PdfReader", 1, ini.c_str()) != 0;
     st.autoImport = GetPrivateProfileIntW(L"Allgemein", L"AutoImport", 1, ini.c_str()) != 0;
+    st.readPdf = GetPrivateProfileIntW(L"Allgemein", L"PdfLesen", 1, ini.c_str()) != 0;
     st.taxNo = IniString(ini, L"Steuernummer");
     st.owner = IniString(ini, L"Inhaber");
     st.court = IniString(ini, L"Registergericht");
@@ -201,6 +205,7 @@ void SaveSettings(const Settings& st) {
     put(L"MwSt", std::to_wstring(st.vat));
     put(L"PdfReader", st.pdfReader ? L"1" : L"0");
     put(L"AutoImport", st.autoImport ? L"1" : L"0");
+    put(L"PdfLesen", st.readPdf ? L"1" : L"0");
     put(L"Steuernummer", st.taxNo);
     put(L"Inhaber", st.owner);
     put(L"Registergericht", st.court);
@@ -1648,7 +1653,8 @@ void App::ImportAuto(const std::vector<std::wstring>& files) {
     std::vector<std::wstring> known(knownSet.begin(), knownSet.end());
     std::set<std::wstring> imported;
     std::wstring last;
-    int dup = 0, fail = 0;
+    int dup = 0, fail = 0, scanned = 0;
+    std::unique_ptr<docs::PdfText> pdfText;           // erst beim ersten PDF anlegen
     for (const auto& src : files) {
         const std::wstring name = fs::path(src).filename().wstring();
         const std::wstring year = docs::GuessYear(name, FileYear(src));
@@ -1663,7 +1669,23 @@ void App::ImportAuto(const std::vector<std::wstring>& files) {
         if (!ok) { ++fail; continue; }
         std::wstring rel = fs::relative(target, m_rootPath, e1).wstring();
         std::replace(rel.begin(), rel.end(), L'/', L'\\');
-        m_meta[rel] = docs::Meta{};   // Status Offen; Betrag und Faelligkeit ergaenzt man mit F2
+        docs::Meta meta;              // Status Offen; Betrag und Faelligkeit ergaenzt man mit F2, falls sie nicht aus dem PDF gelesen werden konnten
+        if (m_settings.readPdf && _wcsicmp(fs::path(target).extension().c_str(), L".pdf") == 0) {
+            if (!pdfText) {
+                std::vector<std::wstring> dirs;
+                const std::wstring reader = FindPdfReader();
+                if (!reader.empty()) dirs.push_back(fs::path(reader).parent_path().wstring());
+                wchar_t self[MAX_PATH * 2]{};
+                GetModuleFileNameW(nullptr, self, MAX_PATH * 2);
+                dirs.push_back(fs::path(self).parent_path().wstring());
+                pdfText = std::make_unique<docs::PdfText>(dirs);
+            }
+            const docs::ScannedInvoice si = docs::ScanInvoiceText(pdfText->Extract(target.wstring()));
+            if (si.hasAmount) meta.cents = si.cents;
+            if (si.hasDue) meta.due = si.dueIso;
+            if (si.hasAmount || si.hasDue) ++scanned;
+        }
+        m_meta[rel] = meta;
         imported.insert(rel);
         last = rel;
         known.push_back(cred);
@@ -1684,6 +1706,7 @@ void App::ImportAuto(const std::vector<std::wstring>& files) {
     std::wstring note = std::to_wstring(imported.size()) + (imported.size() == 1 ? L" Beleg" : L" Belege") + L" automatisch nach Jahr und Gläubiger einsortiert";
     if (imported.empty()) note = L"Nichts importiert";
     else if (imported.size() == 1) note += L"  ·  F2: Betrag und Fälligkeit ergänzen, Doppelklick: im PDF Reader öffnen";
+    if (scanned) note += L"  ·  Betrag/Fälligkeit bei " + std::to_wstring(scanned) + L" aus dem PDF gelesen (bitte prüfen)";
     if (dup) note += L"  ·  " + std::to_wstring(dup) + L" schon vorhanden";
     if (fail) note += L"  ·  " + std::to_wstring(fail) + L" fehlgeschlagen";
     SetNote(note);
@@ -2038,6 +2061,7 @@ void App::ShowGearMenu() {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (m_settings.moveFiles ? MF_CHECKED : 0), M_MOVE, L"Beim Hinzufügen verschieben statt kopieren");
     AppendMenuW(m, MF_STRING | (m_settings.autoImport ? MF_CHECKED : 0), M_AUTOIMPORT, L"Beim Ablegen automatisch einsortieren (Umschalt = Dialog)");
+    AppendMenuW(m, MF_STRING | (m_settings.readPdf ? MF_CHECKED : 0) | (m_settings.autoImport ? 0 : MF_GRAYED), M_READPDF, L"Betrag und Fälligkeit aus dem PDF lesen");
     const bool haveReader = !FindPdfReader().empty();
     AppendMenuW(m, MF_STRING | (m_settings.pdfReader && haveReader ? MF_CHECKED : 0) | (haveReader ? 0 : MF_GRAYED), M_PDFREADER,
                 haveReader ? L"PDFs im Duncan's PDF Reader \u00F6ffnen" : L"PDFs im Duncan's PDF Reader \u00F6ffnen (nicht gefunden)");
@@ -2053,6 +2077,7 @@ void App::ShowGearMenu() {
         case M_OPENROOT: ShellExecuteW(m_hwnd, L"open", m_settings.root.c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
         case M_MOVE: m_settings.moveFiles = !m_settings.moveFiles; SaveSettings(m_settings); break;
         case M_AUTOIMPORT: m_settings.autoImport = !m_settings.autoImport; SaveSettings(m_settings); break;
+        case M_READPDF: m_settings.readPdf = !m_settings.readPdf; SaveSettings(m_settings); break;
         case M_PDFREADER: m_settings.pdfReader = !m_settings.pdfReader; SaveSettings(m_settings); break;
         case M_RESCAN: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); break;
         case M_ABOUT: aboutcard::Open(m_about, m_hwnd); break;
