@@ -78,6 +78,18 @@ jobs:
           cl /nologo /std:c++17 /EHsc /W4 /utf-8 suite\tests\ChangelogTest.cpp /Fe:build\ChangelogTest.exe /Fo:build\
           cd suite\tests && ..\..\build\ChangelogTest.exe
 
+      - name: Versionsnummern pruefen (CMake, Ressource, Changelog, Installer, Tidy)
+        shell: pwsh
+        run: ./tools/CheckVersions.ps1
+
+      - name: Duncan's Tidy bauen (Kompilieren und Linken; Signieren und Veroeffentlichen laufen lokal ueber tidy\Release.ps1)
+        shell: cmd
+        run: |
+          cd tidy\src
+          rc /nologo version.rc
+          cl /nologo /EHsc /std:c++17 /O2 /MT /utf-8 Download-Cleaner.cpp version.res /Fe:..\..\build\DuncansTidy.exe /Fo:..\..\build\ /link /MANIFEST:EMBED /DEPENDENTLOADFLAG:0x800
+          if not exist ..\..\build\DuncansTidy.exe exit /b 1
+
       - name: EXE-Dateien als Artefakt ablegen (unsigniert)
         uses: actions/upload-artifact@v4
         with:

@@ -29,7 +29,7 @@
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.0.0"
+#define APP_VERSION L"0.3.2"
 #endif
 
 namespace {
