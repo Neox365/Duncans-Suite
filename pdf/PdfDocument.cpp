@@ -235,6 +235,9 @@ void PdfDocument::Close() {
     m_rot.clear();
     m_modified = false;
     m_sanitize = false;
+    m_undo.clear();
+    m_redo.clear();
+    m_lastPush = 0;
 }
 
 int PdfDocument::PageCount() const { return m_doc ? g_api.GetPageCount(m_doc) : 0; }
@@ -245,6 +248,7 @@ int PdfDocument::Rotation(int index) const {
 
 void PdfDocument::SetRotation(int index, int quarterTurns) {
     if (index < 0 || index >= static_cast<int>(m_rot.size())) return;
+    PushUndo(false);
     m_rot[index] = ((quarterTurns % 4) + 4) % 4;
     m_modified = true;
 }
@@ -294,6 +298,7 @@ HBITMAP PdfDocument::RenderPage(int index, int w, int h) const {
 bool PdfDocument::Append(const std::wstring& otherPath) {
     if (!m_doc) return false;
     CloseForm();
+    PushUndo();
     std::vector<char> data;
     if (!ReadFileBytes(otherPath, data)) { g_error = L"Die Datei konnte nicht gelesen werden."; return false; }
     void* src = g_api.LoadMemDocument(data.data(), static_cast<int>(data.size()), nullptr);
@@ -315,6 +320,7 @@ bool PdfDocument::DeletePages(std::vector<int> indices) {
     indices.erase(std::remove_if(indices.begin(), indices.end(), [n](int i) { return i < 0 || i >= n; }), indices.end());
     if (indices.empty()) { g_error = L"Es ist keine Seite ausgewählt."; return false; }
     if (static_cast<int>(indices.size()) >= n) { g_error = L"Die letzte Seite kann nicht gelöscht werden."; return false; }
+    PushUndo();
     for (auto it = indices.rbegin(); it != indices.rend(); ++it) {   // von hinten, damit die Indizes stimmen
         g_api.PageDelete(m_doc, *it);
         if (*it < static_cast<int>(m_rot.size())) m_rot.erase(m_rot.begin() + *it);
@@ -408,6 +414,7 @@ bool PdfDocument::MovePages(const std::vector<int>& indices, int insertBefore, s
     bool identity = true;
     for (int i = 0; i < n; ++i) if (order[i] != i) identity = false;
     if (identity) return true;
+    PushUndo();
 
     if (!g_api.MovePages(m_doc, idx.data(), static_cast<unsigned long>(idx.size()), dest)) {
         g_error = L"Die Seiten konnten nicht verschoben werden.";
@@ -442,6 +449,7 @@ int PdfDocument::CharAt(int index, int w, int h, int dx, int dy) const {
 }
 
 bool PdfDocument::AddHighlight(int index, int startChar, int charCount, unsigned long rgb) {
+    PushUndo();
     if (!m_doc || charCount <= 0 || startChar < 0) return false;
     void* page = g_api.LoadPage(m_doc, index);
     if (!page) return false;
@@ -505,6 +513,7 @@ bool PdfDocument::RemoveHighlightAt(int index, int w, int h, int dx, int dy) {
                 }
             }
             g_api.PageCloseAnnot(a);
+            if (hit) PushUndo();                                      // erst wenn wirklich etwas entfernt wird (der Radierer ruft das staendig auf)
             if (hit && g_api.PageRemoveAnnot(page, i)) removed = true;
         }
     }
@@ -515,6 +524,7 @@ bool PdfDocument::RemoveHighlightAt(int index, int w, int h, int dx, int dy) {
 
 bool PdfDocument::AddNote(int index, int w, int h, int dx, int dy, const std::wstring& text) {
     if (!m_doc || text.empty()) return false;
+    PushUndo();
     void* page = g_api.LoadPage(m_doc, index);
     if (!page) return false;
     bool ok = false;
@@ -720,6 +730,81 @@ bool PdfDocument::SaveCompressed(const std::wstring& path, int maxDpi, int jpegQ
     return true;
 }
 
+// ---------- Rueckgaengig / Wiederholen ----------
+PdfDocument::State PdfDocument::Capture() {
+    State s;
+    s.rot = m_rot;
+    s.sanitize = m_sanitize;
+    s.modified = m_modified;
+    s.gen = m_gen;
+    if (!m_undo.empty() && m_undo.back().gen == m_gen && m_undo.back().bytes) { s.bytes = m_undo.back().bytes; return s; }   // Inhalt unveraendert (nur Drehungen): Bytes teilen
+    auto buf = std::make_shared<std::vector<char>>();
+    MemWriter w{};
+    w.version = 1;
+    w.WriteBlock = &MemWriteBlock;
+    w.buf = buf.get();
+    CloseForm();
+    if (m_doc && g_api.SaveAsCopy(m_doc, &w, 3 /* FPDF_REMOVE_SECURITY: der Schnappschuss laesst sich ohne Passwort wieder laden */) && !buf->empty()) s.bytes = buf;
+    return s;
+}
+
+void PdfDocument::PushUndo(bool content) {
+    if (!m_doc) return;
+    const ULONGLONG now = GetTickCount64();
+    if (m_lastPush && now - m_lastPush < 250) return;        // mehrere Aenderungen einer Aktion (z. B. Drehen mehrerer Seiten)
+    m_lastPush = now;
+    State s = Capture();
+    if (!s.bytes) return;                                    // Schnappschuss nicht moeglich: ohne Rueckgaengig weiterarbeiten
+    m_undo.push_back(std::move(s));
+    m_redo.clear();
+    if (content) m_gen = ++m_genCounter;
+    // Begrenzen: Anzahl und grob die Speichergroesse (geteilte Puffer werden mehrfach gezaehlt: das ist absichtlich konservativ)
+    constexpr size_t kMaxSteps = 12, kMaxBytes = 400ull * 1024 * 1024;
+    auto total = [&]() { size_t t = 0; for (const State& x : m_undo) t += x.bytes ? x.bytes->size() : 0; return t; };
+    while (m_undo.size() > 1 && (m_undo.size() > kMaxSteps || total() > kMaxBytes)) m_undo.erase(m_undo.begin());
+}
+
+bool PdfDocument::Restore(const State& s) {
+    if (!s.bytes || s.bytes->empty()) return false;
+    void* doc = g_api.LoadMemDocument(s.bytes->data(), static_cast<int>(s.bytes->size()), nullptr);
+    if (!doc) { g_error = L"Der Zustand konnte nicht wiederhergestellt werden."; return false; }
+    CloseForm();
+    g_api.CloseDocument(m_doc);
+    m_doc = doc;
+    m_data.assign(s.bytes->begin(), s.bytes->end());       // PDFium liest direkt aus diesem Puffer
+    m_rot = s.rot;
+    m_rot.resize(PageCount(), 0);
+    m_sanitize = s.sanitize;
+    m_modified = s.modified;
+    m_gen = s.gen;
+    m_hasForms = -1;
+    return true;
+}
+
+bool PdfDocument::Undo() {
+    if (!m_doc || m_undo.empty()) return false;
+    State cur = Capture();
+    if (!cur.bytes) return false;
+    const State target = m_undo.back();
+    if (!Restore(target)) return false;
+    m_undo.pop_back();
+    m_redo.push_back(std::move(cur));
+    m_lastPush = 0;
+    return true;
+}
+
+bool PdfDocument::Redo() {
+    if (!m_doc || m_redo.empty()) return false;
+    State cur = Capture();
+    if (!cur.bytes) return false;
+    const State target = m_redo.back();
+    if (!Restore(target)) return false;
+    m_redo.pop_back();
+    m_undo.push_back(std::move(cur));
+    m_lastPush = 0;
+    return true;
+}
+
 bool PdfDocument::SaveCopy(const std::wstring& path) {
     if (!m_doc) return false;
     CloseForm();
@@ -773,6 +858,7 @@ bool PdfDocument::PlaceImage(int index, int pw, int ph, const RECT& px, const Im
         return false;
     }
     CloseForm();
+    PushUndo();
     void* page = g_api.LoadPage(m_doc, index);
     if (!page) { g_error = L"Die Seite konnte nicht geladen werden."; return false; }
     bool ok = false;
@@ -809,6 +895,7 @@ bool PdfDocument::Redact(int index, int pw, int ph, const std::vector<RECT>& rec
         return false;
     }
     CloseForm();
+    PushUndo();
     void* page = g_api.LoadPage(m_doc, index);
     if (!page) { g_error = L"Die Seite konnte nicht geladen werden."; return false; }
     // Die Zusatzdrehung dieser Seite fest in die Seite schreiben; die Ansicht aendert sich dadurch nicht
@@ -942,6 +1029,7 @@ bool PdfDocument::CropPages(const std::vector<int>& indices, double fx0, double 
     fy0 = std::clamp(fy0, 0.0, 1.0); fy1 = std::clamp(fy1, 0.0, 1.0);
     if (fx1 - fx0 < 0.02 || fy1 - fy0 < 0.02) { g_error = L"Der Ausschnitt ist zu klein."; return false; }
     CloseForm();
+    PushUndo();
     int done = 0;
     for (int index : indices) {
         double w = 0, h = 0;
@@ -967,6 +1055,7 @@ bool PdfDocument::CropPages(const std::vector<int>& indices, double fx0, double 
 bool PdfDocument::ResetCrop(const std::vector<int>& indices) {
     if (!m_doc) return false;
     CloseForm();
+    PushUndo();
     int done = 0;
     for (int index : indices) {
         void* page = g_api.LoadPage(m_doc, index);
