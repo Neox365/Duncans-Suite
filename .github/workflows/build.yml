@@ -45,8 +45,8 @@ jobs:
       - name: Test PDF-Text und Rechnungserkennung in Docs-Files (ohne pdfium.dll wird uebersprungen)
         shell: cmd
         run: |
-          cl /nologo /std:c++17 /EHsc /W4 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX docs	estsPdfTextTest.cpp /Fe:buildPdfTextTest.exe /Fo:build\
-          buildPdfTextTest.exe
+          cl /nologo /std:c++17 /EHsc /W4 /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX docs\tests\PdfTextTest.cpp /Fe:build\PdfTextTest.exe /Fo:build\
+          build\PdfTextTest.exe
 
       - name: Test von Duncan's Vault (AES-256-GCM, PBKDF2, Tresor-Datei, Generator)
         shell: cmd
