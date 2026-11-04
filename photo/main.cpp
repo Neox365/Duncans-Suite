@@ -88,7 +88,10 @@ struct Settings {
     bool sortDesc = false;
     int slideSeconds = 4;             // Diashow: Sekunden pro Bild
     std::wstring lastFolder;
+    std::vector<std::wstring> recent;  // zuletzt geoeffnete Ordner, neuester zuerst (Startbildschirm)
 };
+
+constexpr size_t kMaxRecent = 6;
 
 struct Btn {
     int id;
@@ -166,6 +169,7 @@ struct ScanState {
     std::mutex mutex;
     uint32_t gen = 0;
     std::vector<FileEntry> files;
+    std::vector<std::wstring> dirs;   // Unterordner (Namen), fuer den Startbildschirm eines Ordners ohne Bilder
     bool ready = false;
 };
 
@@ -225,6 +229,14 @@ void LoadSettings(Settings& st) {
     wchar_t buf[2048]{};
     GetPrivateProfileStringW(L"Allgemein", L"LetzterOrdner", L"", buf, 2048, ini.c_str());
     st.lastFolder = buf;
+    st.recent.clear();
+    for (size_t i = 0; i < kMaxRecent; ++i) {
+        wchar_t key[16];
+        swprintf_s(key, L"Zuletzt%zu", i);
+        wchar_t v[2048]{};
+        GetPrivateProfileStringW(L"Allgemein", key, L"", v, 2048, ini.c_str());
+        if (v[0]) st.recent.push_back(v);
+    }
 }
 
 void SaveSettings(const Settings& st) {
@@ -239,6 +251,11 @@ void SaveSettings(const Settings& st) {
     put(L"Absteigend", st.sortDesc ? L"1" : L"0");
     put(L"DiashowSekunden", std::to_wstring(st.slideSeconds));
     put(L"LetzterOrdner", st.lastFolder);
+    for (size_t i = 0; i < kMaxRecent; ++i) {
+        wchar_t key[16];
+        swprintf_s(key, L"Zuletzt%zu", i);
+        put(key, i < st.recent.size() ? st.recent[i] : std::wstring());
+    }
 }
 
 // Zielname fuer eine Konvertierung: gleicher Ordner und Name mit neuer Endung; gibt es sie schon, wird " (2)", " (3)" ... angehaengt
@@ -359,6 +376,8 @@ private:
     void BrowseForFolder();
     GridM Metrics() const;
     int HitGrid(float x, float y) const;
+    int HitTile(float x, float y) const;     // Kachel im Startbildschirm (leerer Ordner), -1 = keine
+    void DrawWelcome();                      // Unterordner, zuletzt geoeffnet und Schnellzugriff statt einer leeren Flaeche
     void Select(int idx);                       // genau ein Bild auswaehlen (-1 = Auswahl leeren)
     void Focus(int idx);                        // Vorschau/Info fuer dieses Bild laden
     void SelectRange(int a, int b, bool add);
@@ -486,6 +505,10 @@ private:
 
     // Grid
     std::wstring m_folder;
+    std::vector<std::wstring> m_subDirs;     // Unterordner des geoeffneten Ordners (aus dem Listing)
+    struct Tile { D2D1_RECT_F rc; std::wstring path; };
+    std::vector<Tile> m_tiles;               // Kacheln des Startbildschirms, bei jedem Zeichnen neu berechnet
+    int m_hoverTile = -1;
     std::vector<Item> m_items;
     std::vector<Item> m_hidden;                  // durch Filter ausgeblendete Bilder des Ordners
     bool m_gpsOnly = false;                      // Filter: nur Bilder mit Standortdaten
@@ -888,18 +911,85 @@ void App::DrawTree() {
     rt->PopAxisAlignedClip();
 }
 
+// Startbildschirm statt leerer Flaeche: Unterordner des geoeffneten Ordners, zuletzt geoeffnete Ordner und Schnellzugriff.
+// Die Kacheln werden hier berechnet und gezeichnet; HitTile() und der Klick im Grid nutzen m_tiles.
+void App::DrawWelcome() {
+    m_tiles.clear();
+    const bool filtered = !m_hidden.empty();   // Bilder sind da, nur ausgeblendet (Suche/GPS-Filter): keine Ordnerkacheln
+    const std::wstring head = m_folder.empty()          ? L"Ordner öffnen, um Bilder anzuzeigen"
+                              : !m_search.empty() && filtered ? L"Keine Bilder passend zur Suche"
+                              : m_gpsOnly && filtered   ? L"Keine Bilder mit Standortdaten in diesem Ordner (Filter aktiv)"
+                              : m_subDirs.empty()       ? L"Keine Bilder in diesem Ordner"
+                                                        : L"Keine Bilder direkt in diesem Ordner – wähle einen Unterordner";
+    const float pad = 28 * k, tw = 240 * k, th = 54 * k, gap = 12 * k;
+    const float x0 = rcGrid.left + pad;
+    float y = rcGrid.top + pad;
+    Txt(head, {x0, y, rcGrid.right - pad, y + 34 * k}, fTitle.Get(), Theme::Text);
+    y += 48 * k;
+    if (m_scanning || filtered) return;
+    const int cols = std::max(1, (int)((W(rcGrid) - 2 * pad + gap) / (tw + gap)));
+
+    auto leaf = [](const std::wstring& p) {
+        std::wstring s = p;
+        while (s.size() > 3 && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
+        const size_t cut = s.find_last_of(L"\\/");
+        return cut == std::wstring::npos || s.size() <= 3 ? s : s.substr(cut + 1);
+    };
+    struct Entry { std::wstring name, path; };
+    auto section = [&](const wchar_t* title, const std::vector<Entry>& list) {
+        if (list.empty() || y + 28 * k + th > rcGrid.bottom) return;
+        Txt(title, {x0, y, rcGrid.right - pad, y + 24 * k}, fSmall.Get(), Theme::TextDim);
+        y += 30 * k;
+        int c = 0;
+        for (const Entry& e : list) {
+            if (c >= cols) { c = 0; y += th + gap; }
+            if (y + th > rcGrid.bottom) break;
+            const D2D1_RECT_F r{x0 + c * (tw + gap), y, x0 + c * (tw + gap) + tw, y + th};
+            const bool hov = (int)m_tiles.size() == m_hoverTile;
+            m_tiles.push_back({r, e.path});
+            FillRR(r, 8 * k, hov ? Theme::CardHover : Theme::Card);
+            StrokeRR(r, 8 * k, hov ? Theme::Accent : Theme::Border, 1 * k);
+            Txt(e.name, {r.left + 14 * k, r.top + 5 * k, r.right - 10 * k, r.top + 29 * k}, fBold.Get(), Theme::Text);
+            Txt(e.path, {r.left + 14 * k, r.top + 29 * k, r.right - 10 * k, r.bottom - 5 * k}, fSmall.Get(), Theme::TextDim);
+            ++c;
+        }
+        y += th + gap + 14 * k;
+    };
+
+    std::wstring base = m_folder;
+    if (!base.empty() && base.back() != L'\\') base += L'\\';
+    std::vector<Entry> subs, recent, quick;
+    for (size_t i = 0; i < m_subDirs.size() && i < 60; ++i) subs.push_back({m_subDirs[i], base + m_subDirs[i]});
+    auto isCurrent = [&](const std::wstring& p) { return _wcsicmp(p.c_str(), m_folder.c_str()) == 0; };
+    auto exists = [](const std::wstring& p) { const DWORD a = GetFileAttributesW(p.c_str()); return a != INVALID_FILE_ATTRIBUTES && (a & FILE_ATTRIBUTE_DIRECTORY); };
+    for (const std::wstring& r : m_settings.recent)
+        if (!isCurrent(r) && exists(r)) recent.push_back({leaf(r), r});
+    const struct { REFKNOWNFOLDERID id; const wchar_t* name; } known[] = {
+        {FOLDERID_Pictures, L"Bilder"}, {FOLDERID_Desktop, L"Desktop"}, {FOLDERID_Downloads, L"Downloads"}, {FOLDERID_Documents, L"Dokumente"}};
+    for (const auto& kf : known) {
+        const std::wstring p = KnownFolder(kf.id);
+        if (!p.empty() && !isCurrent(p) && exists(p)) quick.push_back({kf.name, p});
+    }
+    section((L"Unterordner (" + std::to_wstring(m_subDirs.size()) + L")").c_str(), subs);
+    section(L"Zuletzt geöffnet", recent);
+    section(L"Schnellzugriff", quick);
+}
+
+int App::HitTile(float x, float y) const {
+    for (size_t i = 0; i < m_tiles.size(); ++i)
+        if (In(m_tiles[i].rc, x, y)) return (int)i;
+    return -1;
+}
+
 void App::DrawGrid() {
     Fill(rcGrid, Theme::Bg);
     rt->PushAxisAlignedClip(rcGrid, D2D1_ANTIALIAS_MODE_ALIASED);
     if (m_items.empty()) {
-        Txt(m_folder.empty()   ? L"Ordner öffnen, um Bilder anzuzeigen"
-            : !m_search.empty() && !m_hidden.empty() ? L"Keine Bilder passend zur Suche"
-            : m_gpsOnly && !m_hidden.empty() ? L"Keine Bilder mit Standortdaten in diesem Ordner (Filter aktiv)"
-                                             : L"Keine Bilder in diesem Ordner",
-            rcGrid, fCenter.Get(), Theme::TextDim);
+        DrawWelcome();
         rt->PopAxisAlignedClip();
         return;
     }
+    m_tiles.clear();
     GridM g = Metrics();
     const bool multi = SelCount() > 1;
     int firstRow = std::max(0, (int)std::floor(m_gridScroll / g.cellH));
@@ -1208,6 +1298,7 @@ void App::OpenFolder(const std::wstring& path, const std::wstring& selectPath, b
             m_ignoreSearch = false;
             m_search.clear();
         }
+        m_subDirs.clear();
         m_loaded = 0;
         m_sel = m_hoverItem = m_anchor = -1;
         m_preview.Reset();
@@ -1218,6 +1309,12 @@ void App::OpenFolder(const std::wstring& path, const std::wstring& selectPath, b
     }
     if (m_selNode && _wcsicmp(m_selNode->path.c_str(), path.c_str()) != 0) m_selNode = nullptr;
     m_settings.lastFolder = path;
+    if (!keepScroll) {   // Liste "zuletzt geoeffnet": neuester vorn, ohne Doppelte
+        auto& rec = m_settings.recent;
+        rec.erase(std::remove_if(rec.begin(), rec.end(), [&](const std::wstring& r) { return _wcsicmp(r.c_str(), path.c_str()) == 0; }), rec.end());
+        rec.insert(rec.begin(), path);
+        if (rec.size() > kMaxRecent) rec.resize(kMaxRecent);
+    }
     SaveSettingsNow();
 
     const uint32_t gen = ++m_scanGen;
@@ -1230,6 +1327,7 @@ void App::OpenFolder(const std::wstring& path, const std::wstring& selectPath, b
     HWND hwnd = m_hwnd;
     std::thread([st, hwnd, path, gen] {
         std::vector<FileEntry> files;
+        std::vector<std::wstring> dirs;
         WIN32_FIND_DATAW fd;
         std::wstring base = path;
         if (!base.empty() && base.back() != L'\\') base += L'\\';
@@ -1237,7 +1335,12 @@ void App::OpenFolder(const std::wstring& path, const std::wstring& selectPath, b
                                     FIND_FIRST_EX_LARGE_FETCH);
         if (h != INVALID_HANDLE_VALUE) {
             do {
-                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+                if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+                    if (wcscmp(fd.cFileName, L".") != 0 && wcscmp(fd.cFileName, L"..") != 0 &&
+                        !(fd.dwFileAttributes & (FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM)) && dirs.size() < 200)
+                        dirs.push_back(fd.cFileName);
+                    continue;
+                }
                 if (!imgops::IsSupportedImage(fd.cFileName)) continue;
                 FileEntry e;
                 e.name = fd.cFileName;
@@ -1253,6 +1356,7 @@ void App::OpenFolder(const std::wstring& path, const std::wstring& selectPath, b
             if (gen < st->gen) return;  // ein neueres Listing wurde bereits abgeliefert
             st->gen = gen;
             st->files = std::move(files);
+            st->dirs = std::move(dirs);
             st->ready = true;
         }
         PostMessageW(hwnd, WM_APP_SCAN, 0, 0);
@@ -1266,8 +1370,10 @@ void App::OnScanDone() {
         std::lock_guard<std::mutex> lk(m_scan->mutex);
         if (!m_scan->ready || m_scan->gen != m_scanGen.load()) return;
         files = std::move(m_scan->files);
+        m_subDirs = std::move(m_scan->dirs);
         m_scan->ready = false;
     }
+    std::sort(m_subDirs.begin(), m_subDirs.end(), [](const std::wstring& a, const std::wstring& b) { return _wcsicmp(a.c_str(), b.c_str()) < 0; });
     m_scanning = false;
 
     // Bereits geladene Thumbnails unveraendert gebliebener Dateien uebernehmen (kein Neuladen nach Strippen, Sortieren ...)
@@ -3316,6 +3422,8 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             for (auto& b : ActiveBtns())
                 if (In(b.rc, x, y) && BtnEnabled(b)) hb = b.id;
             int hi = -1, hr = -1;
+            const int ht = m_viewer ? -1 : HitTile(x, y);
+            if (ht != m_hoverTile) { m_hoverTile = ht; Invalidate(); }
             if (!m_viewer) {
                 hi = HitGrid(x, y);
                 if (In(rcTree, x, y) && y > rcTree.top + 30 * k) {
@@ -3324,7 +3432,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 }
             }
             LPCWSTR cur = IDC_ARROW;
-            if (hb || hi >= 0 || hr >= 0 || hbar >= 2) cur = IDC_HAND;
+            if (hb || hi >= 0 || hr >= 0 || hbar >= 2 || ht >= 0) cur = IDC_HAND;
             else if (m_viewer && EditSliderAt(x, y) >= 0) cur = IDC_HAND;
             else if (m_viewer && m_cropping && In(ViewerImageRect(), x, y)) cur = IDC_CROSS;
             else if (m_viewer && !m_editing && m_vZoom > 1.001f && In(rcViewer, x, y)) cur = IDC_SIZEALL;
@@ -3337,7 +3445,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
         }
         case WM_MOUSELEAVE:
             m_tracking = false;
-            m_hoverBtn = 0; m_hoverItem = m_hoverRow = -1; m_hoverBar = 0;
+            m_hoverBtn = 0; m_hoverItem = m_hoverRow = -1; m_hoverBar = 0; m_hoverTile = -1;
             Invalidate();
             return 0;
         case WM_LBUTTONDOWN: {
@@ -3398,6 +3506,12 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (In(rcGrid, x, y)) {
+                if (const int tile = HitTile(x, y); tile >= 0) {   // Startbildschirm: Ordnerkachel oeffnen
+                    const std::wstring target = m_tiles[tile].path;
+                    m_hoverTile = -1;
+                    OpenFolder(target);
+                    return 0;
+                }
                 const int idx = HitGrid(x, y);
                 const bool ctrl = GetKeyState(VK_CONTROL) < 0, shift = GetKeyState(VK_SHIFT) < 0;
                 if (idx < 0) {
