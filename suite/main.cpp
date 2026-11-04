@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.38"
+#define SUITE_VERSION L"1.1.39"
 #endif
 
 namespace
@@ -1026,6 +1026,9 @@ private:
     void ShowModal(const std::wstring& title, const std::wstring& text);
     void SetNote(const std::wstring& text);
     void StartDownload(int index);
+    int  PendingModuleUpdates() const;   // Programme mit neuerer Version, die die Suite selbst laden kann
+    void StartUpdateAll();               // alle Programm-Updates nacheinander laden
+    void ContinueUpdateQueue();          // naechstes Programm aus der Warteschlange starten (nach einem fertigen Download)
     void StartUpdateCheck();
     void StartUpdateDownload();
     void RunInstaller();
@@ -1112,7 +1115,9 @@ private:
     int  m_updProgress = 0;
     std::wstring m_updInstallerPath;   // fertig geladener Installer (leer = noch nicht geladen)
     RECT m_updateRect{};
-    std::wstring m_dlMessage;   // Fehlertext des letzten Downloads (vom Worker gesetzt, vor WM_DL_DONE)
+    RECT m_updAllRect{};                // Chip "Alle aktualisieren (N)" im Banner (Hover-Id 36)
+    std::vector<int> m_updQueue;        // Programme, die nach dem laufenden Download noch aktualisiert werden
+    std::wstring m_dlMessage;  // Fehlertext des letzten Downloads (vom Worker gesetzt, vor WM_DL_DONE)
 
     bool m_modal = false;
     std::wstring m_modalTitle, m_modalText;
@@ -1521,6 +1526,25 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         }
         DrawLabel(dc, m_fontBody, m_updDownloading ? kText : RGB(6, 30, 18),
                   { m_updateRect.left, m_updateRect.top + S(9), m_updateRect.right, m_updateRect.bottom }, label, DT_CENTER);
+    }
+
+    // "Alle aktualisieren": nur sinnvoll ab zwei Programm-Updates (ein einzelnes steht auf seiner Karte)
+    m_updAllRect = RECT{};
+    if (const int pending = PendingModuleUpdates(); pending >= 2 || (pending >= 1 && !m_updQueue.empty()))
+    {
+        const bool busy = m_dlBusy;
+        const std::wstring label = busy && !m_updQueue.empty() ? L"Aktualisiere … (" + std::to_wstring(m_updQueue.size() + 1) + L" übrig)"
+                                                               : L"Alle aktualisieren (" + std::to_wstring(pending) + L")";
+        const int width = TextWidth(dc, m_fontBody, label) + S(44);
+        const int right = (m_updAvailable ? m_updateRect.left : m_infoRect.left) - S(12);
+        m_updAllRect = { right - width, m_banner.top + S(18), right, m_banner.top + S(18) + S(38) };
+        const bool hover = m_hover == 36 && !m_modal && !m_settingsOpen && !m_infoOpen && !busy;
+        const bool pressed = m_press == 36 && hover;
+        const COLORREF fill = busy ? Blend(RGB(27, 40, 36), kGreen, 25)
+                                   : (pressed ? Blend(kGreen, RGB(0, 0, 0), 25) : (hover ? Blend(kGreen, RGB(255, 255, 255), 14) : kGreen));
+        FillRound(dc, m_updAllRect, S(12), fill, busy ? kBorder : fill);
+        DrawLabel(dc, m_fontBody, busy ? kText : RGB(6, 30, 18),
+                  { m_updAllRect.left, m_updAllRect.top + S(9), m_updAllRect.right, m_updAllRect.bottom }, label, DT_CENTER);
     }
 
     for (int i = 0; i < kToolCount; ++i)
@@ -2275,6 +2299,43 @@ void SuiteWindow::StartDownload(int index)
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
+int SuiteWindow::PendingModuleUpdates() const
+{
+    int n = 0;
+    for (int i = 0; i < kToolCount; ++i)
+        if (!m_tools[i].newVersion.empty() && !m_tools[i].path.empty() && (m_tools[i].downloadBase || m_tools[i].directUrl))
+            ++n;
+    return n;
+}
+
+void SuiteWindow::StartUpdateAll()
+{
+    if (m_dlBusy)
+    {
+        SetNote(L"Es läuft bereits ein Download …");
+        return;
+    }
+    m_updQueue.clear();
+    for (int i = 0; i < kToolCount; ++i)
+        if (!m_tools[i].newVersion.empty() && !m_tools[i].path.empty() && (m_tools[i].downloadBase || m_tools[i].directUrl))
+            m_updQueue.push_back(i);
+    ContinueUpdateQueue();
+}
+
+void SuiteWindow::ContinueUpdateQueue()
+{
+    while (!m_updQueue.empty())
+    {
+        const int i = m_updQueue.front();
+        m_updQueue.erase(m_updQueue.begin());
+        if (!m_tools[i].newVersion.empty())
+        {
+            StartDownload(i);   // Fortschritt und Fertig-Meldung laufen wie beim Klick auf die Karte
+            return;
+        }
+    }
+}
+
 void SuiteWindow::StartUpdateCheck()
 {
     // Pruefung im Hintergrund; Fehler (offline, Rate-Limit) bleiben still. Ergebnis ueber shared_ptr,
@@ -2432,6 +2493,8 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = 23;
     else if (m_updAvailable && PtInRect(&m_updateRect, pt))
         hover = 4;
+    else if (PtInRect(&m_updAllRect, pt))
+        hover = 36;
     else if (PtInRect(&m_tools[0].rect, pt))
         hover = 0;
     else if (PtInRect(&m_tools[1].rect, pt))
@@ -2467,6 +2530,8 @@ void SuiteWindow::OnClick(int, int)
         m_modal = false;
         InvalidateRect(m_hwnd, nullptr, FALSE);
     }
+    else if (pressed == 36)
+        StartUpdateAll();
     else if (pressed == 35)
         ShellExecuteW(m_hwnd, L"open", L"https://github.com/Neox365/Duncans-Suite", nullptr, nullptr, SW_SHOWNORMAL);
     else if (pressed == 6)
@@ -2821,9 +2886,14 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
                 const bool wasUpdate = !m_tools[index].newVersion.empty();
                 m_tools[index].newVersion.clear();
                 SetNote(std::wstring(m_tools[index].title) + (wasUpdate ? L" wurde aktualisiert" : L" wurde installiert"));
+                if (!m_updQueue.empty())
+                    ContinueUpdateQueue();   // "Alle aktualisieren": naechstes Programm
             }
             else
+            {
+                m_updQueue.clear();   // bei einem Fehler nicht weitermachen
                 ShowModal(L"Download fehlgeschlagen", m_dlMessage.empty() ? std::wstring(L"Unbekannter Fehler.") : m_dlMessage);
+            }
         }
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
