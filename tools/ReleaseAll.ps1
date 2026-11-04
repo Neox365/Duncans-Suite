@@ -69,20 +69,8 @@ if (-not $Yes) {
     if ($a -notmatch '^[jJyY]') { Write-Host 'Abgebrochen.'; return }
 }
 
-# Nur Programme hochladen, deren Version von der in modules.txt (Release "modules") abweicht
-$tmp = Join-Path $env:TEMP "modules_$([guid]::NewGuid().ToString('N'))"; New-Item -ItemType Directory $tmp | Out-Null
-$ErrorActionPreference = 'Continue'; gh release download modules --pattern modules.txt --dir $tmp --repo Neox365/Duncans-Suite 2>$null; $ErrorActionPreference = 'Stop'
-$published = @{}
-if (Test-Path (Join-Path $tmp 'modules.txt')) { Get-Content (Join-Path $tmp 'modules.txt') | Where-Object { $_ -match '=' } | ForEach-Object { $k, $v = $_ -split '=', 2; $published[$k.Trim()] = $v.Trim() } }
-Remove-Item $tmp -Recurse -Force
-$mods = [ordered]@{ Photo = 'DuncansPhotoCommander.exe'; Docs = 'OggysDocsFiles.exe'; Vault = 'DuncansVault.exe'; Office = 'DuncansOffice.exe'; QuickConvert = 'DuncansQuickConvert.exe' }
-foreach ($m in $mods.Keys) {
-    $exe = $mods[$m]
-    $local = (((Get-Item (Join-Path $rel $exe)).VersionInfo.FileVersion) -split '\.')[0..2] -join '.'
-    if ($published[$exe] -eq $local) { Write-Host "$m $local ist schon im Release 'modules' - uebersprungen" -ForegroundColor DarkGray; continue }
-    Step "$m $local -> Release 'modules' (bisher: $($published[$exe]))"
-    & (Join-Path $tools 'PublishModule.ps1') -Module $m
-}
+Step 'Geaenderte Programme -> Release modules / PDF-Release'
+& (Join-Path $tools 'PublishChanged.ps1') -Yes
 
 Step "Suite $tag veroeffentlichen"
 $notesText = if ($Notes) { $Notes } else { "Duncan's Suite $ver" }
