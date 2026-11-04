@@ -264,15 +264,14 @@ inline bool ImportBrowserCsv(const std::wstring& csv, std::vector<Entry>& into, 
     ParseCsv(csv, rows);
     if (rows.size() < 2) return false;
     auto col = [&](std::initializer_list<const wchar_t*> names) {
-        for (size_t i = 0; i < rows[0].size(); ++i) {
-            const std::wstring h = Lower(Trim(rows[0][i]));
-            for (const wchar_t* n : names) if (h == n) return static_cast<int>(i);
-        }
+        for (const wchar_t* n : names)   // Reihenfolge der Namen = Vorrang (z. B. "username" vor "email", wenn beide Spalten da sind)
+            for (size_t i = 0; i < rows[0].size(); ++i)
+                if (Lower(Trim(rows[0][i])) == n) return static_cast<int>(i);
         return -1;
     };
-    const int cName = col({L"name", L"title", L"login_name"}), cUrl = col({L"url", L"login_uri", L"website", L"web site", L"hostname"}),
-              cUser = col({L"username", L"login_username", L"user", L"login", L"email"}), cPass = col({L"password", L"login_password", L"pass"}),
-              cNote = col({L"note", L"notes", L"extra"});
+    const int cName = col({L"name", L"title", L"account", L"login_name"}), cUrl = col({L"url", L"login_uri", L"website", L"web site", L"hostname"}),
+              cUser = col({L"username", L"login_username", L"user name", L"login name", L"user", L"login", L"email", L"e-mail"}), cPass = col({L"password", L"login_password", L"pass"}),
+              cNote = col({L"note", L"notes", L"comments", L"extra"});
     if (cPass < 0) return false;
     auto at = [&](const std::vector<std::wstring>& r, int c) { return c >= 0 && c < static_cast<int>(r.size()) ? Trim(r[c]) : std::wstring(); };
     const long long now = static_cast<long long>(std::time(nullptr));

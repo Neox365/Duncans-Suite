@@ -397,6 +397,12 @@ static void windowCheckAndCsv() {
     CHECK(vault::ImportBrowserCsv(csv, into, added, skipped) && added == 0 && skipped == 2 && into.size() == 2);     // zweiter Import: nichts doppelt
     CHECK(!vault::ImportBrowserCsv(L"a,b\n1,2\n", into, added, skipped));      // keine Passwort-Spalte
     vault::Wipe(into);
+    // klassisches KeePass (Account / Login Name / Web Site / Comments) und Proton Pass (email vor username: username gewinnt)
+    CHECK(vault::ImportBrowserCsv(L"\"Account\",\"Login Name\",\"Password\",\"Web Site\",\"Comments\"\n\"Shop\",\"kp-user\",\"kp-pw\",\"https://shop.de\",\"Hinweis\"\n", into, added, skipped) && added == 1);
+    CHECK(into[0].title == L"Shop" && into[0].user == L"kp-user" && into[0].url == L"https://shop.de" && into[0].notes == L"Hinweis" && into[0].secret == L"kp-pw");
+    vault::Wipe(into);
+    CHECK(vault::ImportBrowserCsv(L"type,name,url,email,username,password,note\nlogin,Forum,https://f.de,me@x.org,forumuser,pp,\n", into, added, skipped) && added == 1);
+    CHECK(into[0].user == L"forumuser" && into[0].title == L"Forum");    vault::Wipe(into);
 }
 
 int main() {
