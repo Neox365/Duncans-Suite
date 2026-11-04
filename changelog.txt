@@ -294,6 +294,8 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.3.3 | 2026-11-04
+- Sheets: neue Funktion SUMMEWENN (englisch SUMIF) mit Kriterium wie bei ZÄHLENWENN, auch mit Platzhaltern, und optionalem Summenbereich: =SUMMEWENN(A1:A9;">5") oder =SUMMEWENN(B1:B9;"Miete";C1:C9).
 ## 0.3.2 | 2026-10-28
 - Neu: „Über“-Kachelansicht direkt im Programmfenster (Link „Über“ neben der Version unten rechts) mit Version, Entwickler, Quellcode und Datenschutz.
 - Behoben: Sheets rechnet Potenzen wie Excel: =-2^2 ergibt 4, =2^3^2 ergibt 64 (von links nach rechts).
