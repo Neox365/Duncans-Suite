@@ -659,13 +659,14 @@ struct Parser {
     {
         std::wstring name;
         for (wchar_t ch : nameIn) name.push_back(UpperName(ch));
-        enum { Sum, Avg, Min, Max, Count, CountIf } fn;
+        enum { Sum, Avg, Min, Max, Count, CountIf, SumIf } fn;
         if (name == L"SUMME" || name == L"SUM") fn = Sum;
         else if (name == L"MITTELWERT" || name == L"AVERAGE") fn = Avg;
         else if (name == L"MIN") fn = Min;
         else if (name == L"MAX") fn = Max;
         else if (name == L"ANZAHL" || name == L"COUNT") fn = Count;
         else if (IsCountIfName(name)) fn = CountIf;
+        else if (name == L"SUMMEWENN" || name == L"SUMIF") fn = SumIf;
         else Throw(L"#NAME?");
         if (!Eat(L'(')) Throw(L"#SYNTAX!");
         if (fn == CountIf) {   // ZAEHLENWENN(Bereich; Kriterium)
@@ -680,6 +681,33 @@ struct Parser {
                 for (int c = c1 < c2 ? c1 : c2; c <= (c1 < c2 ? c2 : c1); ++c)
                     if (CriterionMatches(sh.Get(r, c), crit)) ++cnt;
             return cnt;
+        }
+        if (fn == SumIf) {   // SUMMEWENN(Bereich; Kriterium; [Summenbereich]): ohne Summenbereich wird der Bereich selbst summiert
+            int r1 = 0, c1 = 0, r2 = 0, c2 = 0;
+            Ws();
+            if (!RangeCoords(r1, c1, r2, c2)) Throw(L"#SYNTAX!");
+            if (!(Eat(L';') || Eat(L','))) Throw(L"#SYNTAX!");
+            const Operand crit = CondOp();
+            int s1 = r1 < r2 ? r1 : r2, s2 = c1 < c2 ? c1 : c2;   // linke obere Ecke des Summenbereichs
+            if (Eat(L';') || Eat(L',')) {
+                int q1 = 0, q2 = 0, q3 = 0, q4 = 0;
+                Ws();
+                if (!RangeCoords(q1, q2, q3, q4)) Throw(L"#SYNTAX!");
+                s1 = q1 < q3 ? q1 : q3; s2 = q2 < q4 ? q2 : q4;
+            }
+            if (!Eat(L')')) Throw(L"#SYNTAX!");
+            const int top = r1 < r2 ? r1 : r2, left = c1 < c2 ? c1 : c2;
+            double sum = 0;
+            for (int r = top; r <= (r1 < r2 ? r2 : r1); ++r)
+                for (int c = left; c <= (c1 < c2 ? c2 : c1); ++c)
+                    if (CriterionMatches(sh.Get(r, c), crit)) {
+                        const int tr = s1 + (r - top), tc = s2 + (c - left);
+                        if (tr >= 0 && tc >= 0) {
+                            const Value& sv = sh.Get(tr, tc);
+                            if (sv.kind == Value::Number) sum += sv.num;
+                        }
+                    }
+            return Check(sum);
         }
         std::vector<double> vals;
         if (!Eat(L')')) {
@@ -710,6 +738,7 @@ struct Parser {
                 r = static_cast<double>(vals.size());
                 break;
             case CountIf:
+            case SumIf:
                 break;   // oben behandelt
         }
         return Check(r);

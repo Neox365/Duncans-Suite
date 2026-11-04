@@ -224,7 +224,12 @@ int main()
     CHECK(Show(s, L"D6", L"=ZÄHLENWENN(A1:A5;\">=\"&1)") == L"#SYNTAX!");  // & wird nicht unterstuetzt
     CHECK(Show(s, L"D7", L"=ZÄHLENWENN(A1:A5;A2)") == L"1");              // Kriterium aus einer Zelle
     CHECK(Show(s, L"D8", L"=ZÄHLENWENN(A1:A5;\"<=2\")+ANZAHL(A1:A5)") == L"7");
-
+    CHECK(Show(s, L"E1", L"=SUMMEWENN(A1:A5;\">2\")") == L"12");           // ohne Summenbereich: der Bereich selbst
+    CHECK(Show(s, L"E2", L"=SUMIF(A1:A5;3)") == L"3");
+    CHECK(Show(s, L"E3", L"=SUMMEWENN(C1:C5;\"ja\";A1:A5)") == L"4");      // Kriterium in C, summiert wird A (1 + 3)
+    CHECK(Show(s, L"E4", L"=summewenn(C1:C5;\"n*\";A1:A5)") == L"2");      // Platzhalter, Kleinschreibung
+    CHECK(Show(s, L"E5", L"=SUMMEWENN(A1:A5;\"<=2\")+1") == L"4");
+    CHECK(Show(s, L"E6", L"=SUMMEWENN(A1:A5;\">2\"") == L"#SYNTAX!");
     // Zahlenformate und Hintergrundfarbe
     CHECK(FormatCurrency(1234.5) == L"1.234,50 \u20AC");
     CHECK(FormatCurrency(-0.5) == L"-0,50 \u20AC");
