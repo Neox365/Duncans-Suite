@@ -48,6 +48,11 @@ int main()
     CHECK(MatchPreset(s) == -1);
     CHECK(ClampGain(99) == kMaxGain && ClampGain(-99) == -kMaxGain && ClampGain(3) == 3);
 
+    // Reglerbeschriftung
+    for (int b = 0; b < kBands; ++b) { CHECK(BandName(b)[0] != 0); CHECK(std::wstring(BandHint(b)).size() > 30); }
+    CHECK(std::wstring(BandName(3)) == L"Wärme" && std::wstring(BandHint(0)).find(L"31 Hz") == 0 && std::wstring(BandHint(9)).find(L"16 kHz") == 0);
+    CHECK(BandName(-5) == BandName(0) && BandHint(99) == BandHint(9));
+
     // Vorverstaerkung
     Settings p;
     CHECK(PreampDb(p) == 0);

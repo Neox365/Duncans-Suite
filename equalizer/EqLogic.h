@@ -14,6 +14,8 @@ namespace eq {
 constexpr int kBands = 10;      // 31 Hz ... 16 kHz
 constexpr int kMaxGain = 12;    // Regler: -12 ... +12 dB
 extern const int kFreqs[kBands];
+const wchar_t* BandName(int band);   // kurzes Wort, z. B. "Waerme"
+const wchar_t* BandHint(int band);   // ein Satz: was der Regler macht und was zu viel/zu wenig bewirkt
 
 struct Settings {
     bool enabled = false;       // Equalizer an/aus

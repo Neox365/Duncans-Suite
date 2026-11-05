@@ -67,6 +67,25 @@ std::string Trim(const std::string& s)
 
 }  // namespace
 
+namespace {
+const wchar_t* const kBandNames[kBands] = { L"Tiefbass", L"Bass", L"Druck", L"Wärme", L"Körper", L"Mitten", L"Stimme", L"Klarheit", L"Zischen", L"Glanz" };
+const wchar_t* const kBandHints[kBands] = {
+    L"31 Hz, Tiefbass: das Grollen unter dem Bass (Explosionen, Kickdrum). Zu viel dröhnt.",
+    L"63 Hz, Bass: der Wumms bei Beats und Bassgitarre. Zu viel wummert.",
+    L"125 Hz, Druck: gibt dem Bass Fülle und Druck. Zu viel klingt dröhnend.",
+    L"250 Hz, Wärme: macht den Klang warm. Zu viel klingt dumpf, zu wenig dünn.",
+    L"500 Hz, Körper: Grundton vieler Instrumente. Zu viel klingt aufgebläht.",
+    L"1 kHz, Mitten: Kern von Stimmen und Instrumenten. Zu viel klingt nasal.",
+    L"2 kHz, Stimme: Präsenz von Stimmen und Gitarren. Zu viel klingt hart.",
+    L"4 kHz, Klarheit: macht Sprache und Details deutlich. Zu viel klingt scharf.",
+    L"8 kHz, Zischen: S-Laute und Becken. Zu viel klingt spitz.",
+    L"16 kHz, Glanz: Luft und Brillanz ganz oben. Zu viel klingt rauschig.",
+};
+}  // namespace
+
+const wchar_t* BandName(int band) { return kBandNames[std::clamp(band, 0, kBands - 1)]; }
+const wchar_t* BandHint(int band) { return kBandHints[std::clamp(band, 0, kBands - 1)]; }
+
 int PresetCount() { return static_cast<int>(sizeof(kPresets) / sizeof(kPresets[0])); }
 const Preset& PresetAt(int index) { return kPresets[std::clamp(index, 0, PresetCount() - 1)]; }
 int ClampGain(int db) { return std::clamp(db, -kMaxGain, kMaxGain); }

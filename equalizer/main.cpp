@@ -163,7 +163,7 @@ void Recheck() {
 
 // ---------- Layout ----------
 int TrackTop() { return g.panel.top + S(42); }
-int TrackBottom() { return g.panel.bottom - S(40); }
+int TrackBottom() { return g.panel.bottom - S(106); }
 
 void Layout() {
     RECT cr; GetClientRect(g.hwnd, &cr);
@@ -200,7 +200,7 @@ void Layout() {
         x += w + S(8);
     }
     y += ph + S(14);
-    g.panel = { m, y, cr.right - m, y + S(300) };
+    g.panel = { m, y, cr.right - m, y + S(364) };
     const int inner = (g.panel.right - g.panel.left) - 2 * S(14);
     for (int b = 0; b < eq::kBands; ++b) {
         const int x0 = g.panel.left + S(14) + inner * b / eq::kBands, x1 = g.panel.left + S(14) + inner * (b + 1) / eq::kBands;
@@ -328,7 +328,17 @@ void Paint(HDC dc, const RECT& cr) {
             const COLORREF hc = hot ? Blend(accent, RGB(255, 255, 255), 25) : accent;
             Gdiplus::SolidBrush hb(Gdiplus::Color(255, GetRValue(hc), GetGValue(hc), GetBValue(hc)));
             gr.FillEllipse(&hb, cx - rad, hy - rad, rad * 2, rad * 2);
-            DrawText2(dc, g.fSmall, kTextDim, { c.left, TrackBottom() + S(14), c.right, g.panel.bottom - S(6) }, FreqText(eq::kFreqs[b]), DT_CENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fSmall, hot ? kText : kTextDim, { c.left, TrackBottom() + S(12), c.right, TrackBottom() + S(32) }, FreqText(eq::kFreqs[b]), DT_CENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fSmall, hot ? kEq : Blend(kTextDim, kCard, 25), { c.left - S(4), TrackBottom() + S(32), c.right + S(4), TrackBottom() + S(52) }, eq::BandName(b), DT_CENTER | DT_SINGLELINE);
+        }
+
+        {
+            const int shown = g.drag >= 0 ? g.drag : (g.hover >= H_BAND && g.hover < H_BAND + eq::kBands ? g.hover - H_BAND : -1);
+            RECT line{ g.panel.left + S(14), g.panel.bottom - S(48), g.panel.right - S(14), g.panel.bottom - S(47) };
+            FillRound(dc, line, 1, Blend(kCard, RGB(255, 255, 255), 12), Blend(kCard, RGB(255, 255, 255), 12));
+            DrawText2(dc, g.fSmall, shown >= 0 ? kText : kTextDim, { g.panel.left + S(18), g.panel.bottom - S(42), g.panel.right - S(18), g.panel.bottom - S(6) },
+                      shown >= 0 ? eq::BandHint(shown) : L"Fahre mit der Maus über einen Regler: Hier steht, was er macht. Doppelklick setzt ihn auf 0.",
+                      DT_LEFT | DT_VCENTER | DT_WORDBREAK);
         }
 
         DrawSwitchCard(dc, g.cardBass, L"Bass verstärken", L"Hebt die tiefen Töne zusätzlich an – kräftiger bei Musik und Filmen.", g.cfg.bass, g.hover == H_BASS);
@@ -504,7 +514,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     MakeFonts();
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;     // feste Groesse: alles passt immer
     auto windowSize = [&](UINT dpi, int& w, int& h) {
-        RECT r{ 0, 0, MulDiv(640, dpi, 96), MulDiv(800, dpi, 96) };
+        RECT r{ 0, 0, MulDiv(640, dpi, 96), MulDiv(864, dpi, 96) };
         AdjustWindowRectExForDpi(&r, style, FALSE, 0, dpi);
         w = r.right - r.left; h = r.bottom - r.top;
     };
