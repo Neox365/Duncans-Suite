@@ -5,6 +5,8 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.1.1 | 2026-11-05
+- Neu: Unter jedem Regler steht jetzt ein Wort (Tiefbass, Bass, Druck, Wärme, Körper, Mitten, Stimme, Klarheit, Zischen, Glanz). Fährt man mit der Maus über einen Regler, erklärt eine Zeile, was er macht und was zu viel oder zu wenig bewirkt.
 ## 0.1.0 | 2026-11-05
 - Neu: Duncan's Equalizer, Klang für den ganzen PC. Zehn Regler (31 Hz bis 16 kHz), Voreinstellungen (Flach, Bass, Musik, Spiele, Film, Stimmen), Schalter für mehr Bass und „Sprache klarer“.
 - Nutzt das kostenlose Equalizer APO als Unterbau. Fehlt es, erklärt das Programm die Installation in drei Schritten; Änderungen wirken sofort ohne Neustart der Programme.
