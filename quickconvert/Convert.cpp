@@ -65,11 +65,13 @@ const GUID& ContainerOf(ImageFmt f) {
         case ImageFmt::Webp: return kContainerWebp;
         case ImageFmt::Bmp:  return GUID_ContainerFormatBmp;
         case ImageFmt::Heic: return kContainerHeif;
+        case ImageFmt::Gif:  return GUID_ContainerFormatGif;
+        case ImageFmt::Pdf:  break;   // kein WIC-Encoder
     }
     return GUID_ContainerFormatPng;
 }
 
-bool HasAlpha(ImageFmt f) { return f == ImageFmt::Png || f == ImageFmt::Webp || f == ImageFmt::Heic; }
+bool HasAlpha(ImageFmt f) { return f == ImageFmt::Png || f == ImageFmt::Webp || f == ImageFmt::Heic || f == ImageFmt::Gif; }
 bool HasQuality(ImageFmt f) { return f == ImageFmt::Jpeg || f == ImageFmt::Webp || f == ImageFmt::Heic; }
 
 // EXIF-Ausrichtung (1..8) eines JPEG-Frames, sonst 1
@@ -118,6 +120,8 @@ const wchar_t* ImageExt(ImageFmt f) {
         case ImageFmt::Webp: return L"webp";
         case ImageFmt::Bmp:  return L"bmp";
         case ImageFmt::Heic: return L"heic";
+        case ImageFmt::Gif:  return L"gif";
+        case ImageFmt::Pdf:  return L"pdf";
     }
     return L"png";
 }
@@ -169,6 +173,7 @@ void MediaShutdown() { MFShutdown(); }
 // ---------------------------------------------------------------------------------------------------------------------
 
 bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt, int quality, std::wstring* err, int maxEdge) {
+    if (fmt == ImageFmt::Pdf) { SetErr(err, L"PDF entsteht nur aus mehreren Bildern zusammen"); return false; }
     Com<IWICImagingFactory> factory;
     HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
     if (FAILED(hr)) { SetErr(err, L"WIC nicht verfügbar (" + Hex(hr) + L")"); return false; }
@@ -287,6 +292,17 @@ bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt
         if (pf == GUID_WICPixelFormat32bppBGRA) {
             bmp->AddRef();
             *(&source) = bmp.Get();
+        } else if (pf == GUID_WICPixelFormat8bppIndexed) {   // GIF: Farbpalette (256 Farben, eine davon fuer Transparenz) berechnen und mit Fehlerverteilung umsetzen
+            Com<IWICPalette> pal;
+            Com<IWICFormatConverter> cv;
+            if (FAILED(factory->CreatePalette(&pal)) || FAILED(pal->InitializeFromBitmap(bmp.Get(), 256, TRUE)) || FAILED(out->SetPalette(pal.Get())) ||
+                FAILED(factory->CreateFormatConverter(&cv)) ||
+                FAILED(cv->Initialize(bmp.Get(), pf, WICBitmapDitherTypeErrorDiffusion, pal.Get(), 50.0, WICBitmapPaletteTypeCustom))) {
+                why = L"GIF-Farbpalette kann nicht berechnet werden";
+                break;
+            }
+            cv->AddRef();
+            *(&source) = cv.Get();
         } else {
             Com<IWICFormatConverter> cv;
             if (FAILED(factory->CreateFormatConverter(&cv)) ||
@@ -310,6 +326,108 @@ bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt
         SetErr(err, why);
     }
     return ok;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Bilder -> PDF
+// ---------------------------------------------------------------------------------------------------------------------
+
+namespace {
+
+bool ReadFileBytes(const std::wstring& path, std::string& out) {
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    out.clear();
+    char buf[65536];
+    DWORD n = 0;
+    while (ReadFile(f, buf, sizeof(buf), &n, nullptr) && n > 0) out.append(buf, n);
+    CloseHandle(f);
+    return !out.empty();
+}
+
+// Breite und Hoehe aus dem JPEG-Kopf (SOF-Marker)
+bool JpegSize(const std::string& d, int& w, int& h) {
+    size_t i = 2;
+    while (i + 9 < d.size()) {
+        if (static_cast<unsigned char>(d[i]) != 0xFF) { ++i; continue; }
+        const unsigned char m = static_cast<unsigned char>(d[i + 1]);
+        if (m == 0xFF) { ++i; continue; }
+        if (m >= 0xC0 && m <= 0xCF && m != 0xC4 && m != 0xC8 && m != 0xCC) {
+            h = (static_cast<unsigned char>(d[i + 5]) << 8) | static_cast<unsigned char>(d[i + 6]);
+            w = (static_cast<unsigned char>(d[i + 7]) << 8) | static_cast<unsigned char>(d[i + 8]);
+            return w > 0 && h > 0;
+        }
+        i += 2 + ((static_cast<unsigned char>(d[i + 2]) << 8) | static_cast<unsigned char>(d[i + 3]));
+    }
+    return false;
+}
+
+}  // namespace
+
+bool ConvertImagesToPdf(const std::vector<std::wstring>& srcs, const std::wstring& dst, int quality, int maxEdge, const std::atomic<bool>& cancel,
+                        const std::function<void(int)>& progress, std::wstring* err) {
+    struct Page { std::string jpg; int w = 0, h = 0; };
+    std::vector<Page> pages;
+    for (size_t i = 0; i < srcs.size(); ++i) {
+        if (cancel.load()) { SetErr(err, L"Abgebrochen"); return false; }
+        const std::wstring tmp = dst + L".tmp" + std::to_wstring(i) + L".jpg";
+        std::wstring e;
+        Page pg;
+        const bool ok = ConvertImage(srcs[i], tmp, ImageFmt::Jpeg, quality, &e, maxEdge) && ReadFileBytes(tmp, pg.jpg) && JpegSize(pg.jpg, pg.w, pg.h);
+        DeleteFileW(tmp.c_str());
+        if (!ok) {
+            const size_t cut = srcs[i].find_last_of(L"\\/");
+            SetErr(err, (cut == std::wstring::npos ? srcs[i] : srcs[i].substr(cut + 1)) + L": " + (e.empty() ? L"Bild kann nicht gelesen werden" : e));
+            return false;
+        }
+        pages.push_back(std::move(pg));
+        if (progress) progress(static_cast<int>((i + 1) * 90 / srcs.size()));
+    }
+    if (pages.empty()) { SetErr(err, L"Keine Bilder"); return false; }
+
+    // Objekte: 1 Katalog, 2 Seitenbaum, je Seite 3 Objekte (Seite, Inhalt, Bild)
+    std::string pdf = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+    std::vector<size_t> off(3 + pages.size() * 3, 0);
+    auto beginObj = [&](size_t n) { off[n] = pdf.size(); pdf += std::to_string(n) + " 0 obj\n"; };
+    auto num = [](double v) { char b[32]; snprintf(b, sizeof b, "%.2f", v); return std::string(b); };
+    beginObj(1);
+    pdf += "<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+    beginObj(2);
+    pdf += "<< /Type /Pages /Count " + std::to_string(pages.size()) + " /Kids [";
+    for (size_t i = 0; i < pages.size(); ++i) pdf += std::to_string(3 + i * 3) + " 0 R ";
+    pdf += "] >>\nendobj\n";
+    constexpr double kA4W = 595.28, kA4H = 841.89, kMargin = 28.0;
+    for (size_t i = 0; i < pages.size(); ++i) {
+        const Page& pg = pages[i];
+        const bool landscape = pg.w > pg.h;
+        const double pw = landscape ? kA4H : kA4W, ph = landscape ? kA4W : kA4H;
+        const double scale = std::min({(pw - 2 * kMargin) / pg.w, (ph - 2 * kMargin) / pg.h, 0.75});   // 0,75 = 96 dpi in Punkten: kleine Bilder bleiben klein
+        const double iw = pg.w * scale, ih = pg.h * scale, ix = (pw - iw) / 2, iy = (ph - ih) / 2;
+        const size_t pageObj = 3 + i * 3, contObj = pageObj + 1, imgObj = pageObj + 2;
+        beginObj(pageObj);
+        pdf += "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 " + num(pw) + " " + num(ph) + "] /Resources << /XObject << /Im0 " + std::to_string(imgObj) +
+               " 0 R >> >> /Contents " + std::to_string(contObj) + " 0 R >>\nendobj\n";
+        const std::string content = "q " + num(iw) + " 0 0 " + num(ih) + " " + num(ix) + " " + num(iy) + " cm /Im0 Do Q";
+        beginObj(contObj);
+        pdf += "<< /Length " + std::to_string(content.size()) + " >>\nstream\n" + content + "\nendstream\nendobj\n";
+        beginObj(imgObj);
+        pdf += "<< /Type /XObject /Subtype /Image /Width " + std::to_string(pg.w) + " /Height " + std::to_string(pg.h) +
+               " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " + std::to_string(pg.jpg.size()) + " >>\nstream\n";
+        pdf += pg.jpg;
+        pdf += "\nendstream\nendobj\n";
+    }
+    const size_t xref = pdf.size();
+    pdf += "xref\n0 " + std::to_string(off.size()) + "\n0000000000 65535 f \n";
+    for (size_t n = 1; n < off.size(); ++n) { char b[32]; snprintf(b, sizeof b, "%010zu 00000 n \n", off[n]); pdf += b; }
+    pdf += "trailer\n<< /Size " + std::to_string(off.size()) + " /Root 1 0 R >>\nstartxref\n" + std::to_string(xref) + "\n%%EOF\n";
+
+    HANDLE f = CreateFileW(dst.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    DWORD written = 0;
+    const bool ok = f != INVALID_HANDLE_VALUE && WriteFile(f, pdf.data(), static_cast<DWORD>(pdf.size()), &written, nullptr) && written == pdf.size();
+    if (f != INVALID_HANDLE_VALUE) CloseHandle(f);
+    if (!ok) { DeleteFileW(dst.c_str()); SetErr(err, L"PDF kann nicht geschrieben werden"); return false; }
+    if (progress) progress(100);
+    return true;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------
