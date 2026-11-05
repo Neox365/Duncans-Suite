@@ -9,10 +9,12 @@
 #include <windows.h>
 #include <windowsx.h>
 #include <shellapi.h>
+#include <commdlg.h>
 
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <vector>
 
 using std::max;
 using std::min;
@@ -26,7 +28,7 @@ using std::min;
 #include "EqLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.1.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.2.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -44,11 +46,14 @@ const COLORREF kEq = RGB(125, 211, 252);            // Akzent dieses Programms (
 const COLORREF kOnEq = RGB(8, 24, 34);              // Schrift auf dem Akzent
 
 const wchar_t* kTitle = L"Duncan's Equalizer";
-const UINT_PTR kTimerApply = 1;
+const UINT_PTR kTimerApply = 1, kTimerDevice = 2, kTimerDisarm = 3;
+const UINT WM_NAME_DONE = WM_APP + 1;      // wParam = 1: Name uebernehmen, 0: abbrechen
 
 enum HitId {
     H_NONE = -1, H_HERO = 1, H_BASS = 2, H_VOICE = 3, H_DOWNLOAD = 4, H_RECHECK = 5, H_CONFIGURATOR = 6, H_ADMIN = 7,
     H_PRESET = 10,      // 10 .. 10 + Anzahl Voreinstellungen
+    H_PROFILE = 200,    // 200 .. 205: Profil waehlen
+    H_PROFNEW = 210, H_BIND = 211, H_IMPORT = 212, H_PROFDEL = 213,
     H_BAND = 100        // 100 .. 109
 };
 
@@ -62,6 +67,14 @@ struct App {
     bool needAdmin = false;                        // Schreiben im Ordner von Equalizer APO wurde verweigert
     RECT hero{}, heroToggle{}, adminBar{}, adminBtn{}, presetRect[8]{}, panel{}, band[eq::kBands]{}, cardBass{}, cardVoice{}, confBtn{},
          setup{}, dlBtn{}, recheckBtn{}, footer{};
+    std::vector<eq::Profile> profiles;             // immer mindestens eines
+    int active = 0;                                // aktives Profil (Regler, Schalter und Korrektur werden darin gespeichert)
+    std::wstring profilesPath;
+    std::wstring lastDevice;                       // zuletzt gesehenes Standard-Ausgabegeraet
+    RECT profCard{}, profChip[eq::kMaxProfiles]{}, profNew{}, btnBind{}, btnImport{}, btnDel{}, nameRect{};
+    HWND nameEdit = nullptr;                       // Eingabefeld fuer den Namen eines neuen Profils
+    WNDPROC nameOldProc = nullptr;
+    bool delArmed = false;                         // "Loeschen" wurde einmal geklickt, zweiter Klick loescht
     int hover = H_NONE, press = H_NONE, drag = -1;
     bool tracking = false;
     std::wstring status;
@@ -101,7 +114,23 @@ std::wstring Detect() {
 }
 
 // ---------- Einstellungen anwenden ----------
-void SaveCfg() { eq::SaveSettings(g.cfg, g.settingsPath); }
+void SyncActive() {                                 // aktuelle Regler/Schalter/Korrektur ins aktive Profil schreiben
+    eq::Profile& p = g.profiles[static_cast<size_t>(g.active)];
+    for (int b = 0; b < eq::kBands; ++b) p.s.gains[b] = g.cfg.gains[b];
+    p.s.bass = g.cfg.bass; p.s.voice = g.cfg.voice; p.s.extra = g.cfg.extra;
+}
+
+void LoadActive() {                                 // Einstellungen des aktiven Profils uebernehmen (Ein/Aus bleibt)
+    const eq::Profile& p = g.profiles[static_cast<size_t>(g.active)];
+    for (int b = 0; b < eq::kBands; ++b) g.cfg.gains[b] = p.s.gains[b];
+    g.cfg.bass = p.s.bass; g.cfg.voice = p.s.voice; g.cfg.extra = p.s.extra;
+}
+
+void SaveCfg() {
+    SyncActive();
+    eq::SaveSettings(g.cfg, g.settingsPath);
+    eq::SaveProfiles(g.profiles, g.active, g.profilesPath);
+}
 
 void ApplyNow() {
     KillTimer(g.hwnd, kTimerApply);
@@ -126,8 +155,10 @@ void ApplyNow() {
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
 
+void Layout();
 void Changed() {                                    // speichern, kurz warten (Regler ziehen), dann uebernehmen
     SaveCfg();
+    Layout();
     SetTimer(g.hwnd, kTimerApply, 350, nullptr);
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
@@ -159,6 +190,130 @@ void Recheck() {
     if (g.installDir.empty()) SetStatus(L"Equalizer APO wurde noch nicht gefunden", kOrange);
     else { SetStatus(L"Equalizer APO gefunden", kGreen); ApplyNow(); }
     InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
+// ---------- Profile ----------
+void StopNameEdit() {
+    if (!g.nameEdit) return;
+    HWND e = g.nameEdit;
+    g.nameEdit = nullptr;
+    SetWindowLongPtrW(e, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(g.nameOldProc));
+    DestroyWindow(e);
+    SetFocus(g.hwnd);
+}
+
+void SwitchProfile(int i, const std::wstring& why = L"") {
+    if (i < 0 || i >= static_cast<int>(g.profiles.size()) || i == g.active) return;
+    SyncActive();
+    g.active = i;
+    LoadActive();
+    g.delArmed = false;
+    SaveCfg();
+    SetTimer(g.hwnd, kTimerApply, 150, nullptr);
+    if (!why.empty()) SetStatus(why, kGreen);
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
+LRESULT CALLBACK NameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    if (m == WM_KEYDOWN && (w == VK_RETURN || w == VK_ESCAPE)) { PostMessageW(g.hwnd, WM_NAME_DONE, w == VK_RETURN ? 1 : 0, 0); return 0; }
+    if (m == WM_CHAR && (w == VK_RETURN || w == VK_ESCAPE)) return 0;
+    if (m == WM_KILLFOCUS) PostMessageW(g.hwnd, WM_NAME_DONE, 0, 0);
+    return CallWindowProcW(g.nameOldProc, h, m, w, l);
+}
+
+void BeginNewProfile() {
+    if (g.nameEdit || static_cast<int>(g.profiles.size()) >= eq::kMaxProfiles) return;
+    g.nameEdit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL, g.nameRect.left, g.nameRect.top,
+                                 g.nameRect.right - g.nameRect.left, g.nameRect.bottom - g.nameRect.top, g.hwnd, nullptr,
+                                 GetModuleHandleW(nullptr), nullptr);
+    SendMessageW(g.nameEdit, WM_SETFONT, reinterpret_cast<WPARAM>(g.fBody), TRUE);
+    SendMessageW(g.nameEdit, EM_SETLIMITTEXT, eq::kMaxNameLen, 0);
+    SendMessageW(g.nameEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN, MAKELPARAM(S(10), S(10)));
+    g.nameOldProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(g.nameEdit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(NameProc)));
+    SetFocus(g.nameEdit);
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
+void FinishNewProfile(bool ok) {
+    if (!g.nameEdit) return;
+    wchar_t buf[64] = {};
+    GetWindowTextW(g.nameEdit, buf, 64);
+    StopNameEdit();
+    if (ok) {
+        const std::wstring name = eq::CleanName(buf);
+        if (name.empty()) SetStatus(L"Bitte einen Namen eingeben", kOrange);
+        else if (eq::FindProfile(g.profiles, name) >= 0) SetStatus(L"Ein Profil mit diesem Namen gibt es schon", kOrange);
+        else {
+            SyncActive();
+            eq::Profile p = g.profiles[static_cast<size_t>(g.active)];      // Kopie der aktuellen Einstellungen
+            p.name = name;
+            p.device.clear();
+            g.profiles.push_back(p);
+            g.active = static_cast<int>(g.profiles.size()) - 1;
+            SaveCfg();
+            SetStatus(L"Profil „" + name + L"“ angelegt", kGreen);
+        }
+    }
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
+void BindDevice() {
+    eq::Profile& p = g.profiles[static_cast<size_t>(g.active)];
+    if (!p.device.empty()) { p.device.clear(); SaveCfg(); SetStatus(L"Gerät gelöst – dieses Profil wird nicht mehr automatisch gewählt", kTextDim); return; }
+    if (g.lastDevice.empty()) { SetStatus(L"Kein Ausgabegerät erkannt", kOrange); return; }
+    for (eq::Profile& o : g.profiles) if (&o != &p && o.device == g.lastDevice) o.device.clear();      // ein Gerät gehört zu einem Profil
+    p.device = g.lastDevice;
+    SaveCfg();
+    SetStatus(L"Wird jetzt automatisch gewählt, sobald „" + g.lastDevice + L"“ das Standardgerät ist", kGreen);
+}
+
+void ImportFilters() {
+    if (!g.cfg.extra.empty()) { g.cfg.extra.clear(); Changed(); SetStatus(L"Korrektur entfernt", kTextDim); return; }
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g.hwnd;
+    ofn.lpstrFilter = L"Textdatei (*.txt)\0*.txt\0Alle Dateien\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) return;
+    HANDLE h = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { SetStatus(L"Datei konnte nicht gelesen werden", kRed); return; }
+    std::string text;
+    char buf[8192]; DWORD n = 0;
+    while (text.size() < 300000 && ReadFile(h, buf, sizeof(buf), &n, nullptr) && n) text.append(buf, n);
+    CloseHandle(h);
+    int ignored = 0;
+    std::vector<std::string> lines = eq::ParseFilterFile(text, ignored);
+    if (lines.empty()) { SetStatus(L"In der Datei stehen keine nutzbaren Filterzeilen (erwartet: „Filter: ON PK Fc … Hz Gain … dB Q …“)", kOrange); return; }
+    g.cfg.extra = lines;
+    Changed();
+    SetStatus(std::to_wstring(lines.size()) + L" Zeilen übernommen" + (ignored ? L", " + std::to_wstring(ignored) + L" ignoriert" : std::wstring()), kGreen);
+}
+
+void DeleteProfile() {
+    if (g.profiles.size() <= 1) { SetStatus(L"Das letzte Profil bleibt erhalten", kOrange); return; }
+    if (!g.delArmed) { g.delArmed = true; SetTimer(g.hwnd, kTimerDisarm, 3000, nullptr); return; }
+    g.delArmed = false;
+    KillTimer(g.hwnd, kTimerDisarm);
+    const std::wstring name = g.profiles[static_cast<size_t>(g.active)].name;
+    g.profiles.erase(g.profiles.begin() + g.active);
+    g.active = 0;
+    LoadActive();
+    SaveCfg();
+    SetTimer(g.hwnd, kTimerApply, 150, nullptr);
+    SetStatus(L"Profil „" + name + L"“ gelöscht", kTextDim);
+}
+
+void PollDevice() {                                 // Geraetewechsel erkennen und ein daran gebundenes Profil waehlen
+    const std::wstring now = eq::DefaultOutputName();
+    if (now.empty() || now == g.lastDevice) return;
+    g.lastDevice = now;
+    const int idx = eq::ProfileForDevice(g.profiles, now);
+    if (idx >= 0 && idx != g.active)
+        SwitchProfile(idx, L"Profil „" + g.profiles[static_cast<size_t>(idx)].name + L"“ gewählt (" + now + L")");
+    else InvalidateRect(g.hwnd, nullptr, FALSE);
 }
 
 // ---------- Layout ----------
@@ -200,17 +355,49 @@ void Layout() {
         x += w + S(8);
     }
     y += ph + S(14);
-    g.panel = { m, y, cr.right - m, y + S(364) };
+    g.panel = { m, y, cr.right - m, y + S(292) };
     const int inner = (g.panel.right - g.panel.left) - 2 * S(14);
     for (int b = 0; b < eq::kBands; ++b) {
         const int x0 = g.panel.left + S(14) + inner * b / eq::kBands, x1 = g.panel.left + S(14) + inner * (b + 1) / eq::kBands;
         g.band[b] = { x0, g.panel.top + S(8), x1, g.panel.bottom - S(8) };
     }
     y = g.panel.bottom + S(14);
-    g.cardBass = { m, y, cr.right - m, y + S(58) };
-    y = g.cardBass.bottom + S(8);
-    g.cardVoice = { m, y, cr.right - m, y + S(58) };
-    y = g.cardVoice.bottom + S(14);
+    const int half = (cr.right - 2 * m - S(12)) / 2;
+    g.cardBass = { m, y, m + half, y + S(58) };
+    g.cardVoice = { m + half + S(12), y, cr.right - m, y + S(58) };
+    y = g.cardBass.bottom + S(14);
+
+    // Profile: Titelzeile, Reihe mit Profil-Schaltflaechen, Reihe mit drei Knoepfen
+    g.profCard = { m, y, cr.right - m, y + S(120) };
+    const int ix = g.profCard.left + S(18), ir = g.profCard.right - S(18);
+    const int n = static_cast<int>(g.profiles.size());
+    const bool canNew = n < eq::kMaxProfiles;
+    const int avail = (ir - ix) - (canNew ? S(78) + S(8) : 0) - (n - 1) * S(8);
+    std::vector<int> w(static_cast<size_t>(n));
+    int sum = 0;
+    for (int i = 0; i < n; ++i) { w[static_cast<size_t>(i)] = TextWidth(dc, g.fBold, g.profiles[static_cast<size_t>(i)].name) + S(30); sum += w[static_cast<size_t>(i)]; }
+    for (int i = 0; i < n; ++i) {
+        int wi = sum > avail ? std::max(S(56), w[static_cast<size_t>(i)] * avail / std::max(1, sum)) : w[static_cast<size_t>(i)];
+        w[static_cast<size_t>(i)] = wi;
+    }
+    const int row1 = g.profCard.top + S(34), h1 = S(34);
+    int px = ix;
+    for (int i = 0; i < n && i < eq::kMaxProfiles; ++i) {
+        g.profChip[i] = { px, row1, px + w[static_cast<size_t>(i)], row1 + h1 };
+        px += w[static_cast<size_t>(i)] + S(8);
+    }
+    for (int i = n; i < eq::kMaxProfiles; ++i) g.profChip[i] = RECT{};
+    g.profNew = canNew ? RECT{ px, row1, px + S(78), row1 + h1 } : RECT{};
+    g.nameRect = { ix, row1, ir, row1 + h1 };
+    const int row2 = g.profCard.top + S(76), h2 = S(32);
+    const bool hasDev = !g.profiles[static_cast<size_t>(g.active)].device.empty();
+    const int bw1 = TextWidth(dc, g.fBold, hasDev ? L"Gerät lösen" : L"An aktuelles Gerät binden") + S(28);
+    const int bw2 = TextWidth(dc, g.fBold, g.cfg.extra.empty() ? L"Kopfhörer-Korrektur laden …" : L"Korrektur entfernen") + S(28);
+    const int bw3 = TextWidth(dc, g.fBold, g.delArmed ? L"Wirklich löschen?" : L"Löschen") + S(28);
+    g.btnBind = { ix, row2, ix + bw1, row2 + h2 };
+    g.btnImport = { g.btnBind.right + S(8), row2, g.btnBind.right + S(8) + bw2, row2 + h2 };
+    g.btnDel = { ir - bw3, row2, ir, row2 + h2 };
+    y = g.profCard.bottom + S(14);
     const int cw = std::max(S(200), TextWidth(dc, g.fBold, L"Configurator öffnen") + S(40));
     g.confBtn = { m, y, m + cw, y + S(36) };
     ReleaseDC(g.hwnd, dc);
@@ -253,8 +440,8 @@ int YToGain(int y) {
 void DrawSwitchCard(HDC dc, const RECT& card, const wchar_t* title, const wchar_t* desc, bool on, bool hot) {
     FillRound(dc, card, S(14), hot ? kCardHover : kCard, on ? Blend(kBorder, kEq, 55) : (hot ? kBorderHot : kBorder));
     const int pad = S(18);
-    DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(9), card.right - S(110), card.top + S(9) + S(24) }, title);
-    DrawText2(dc, g.fSmall, kTextDim, { card.left + pad, card.top + S(9) + S(24), card.right - S(110), card.bottom - S(4) }, desc, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(9), card.right - S(86), card.top + S(9) + S(24) }, title);
+    DrawText2(dc, g.fSmall, kTextDim, { card.left + pad, card.top + S(9) + S(24), card.right - S(86), card.bottom - S(4) }, desc, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
     DrawToggle(dc, { card.right - pad - S(52), card.top + (card.bottom - card.top - S(28)) / 2, card.right - pad, card.top + (card.bottom - card.top - S(28)) / 2 + S(28) }, on, hot);
 }
 
@@ -341,8 +528,46 @@ void Paint(HDC dc, const RECT& cr) {
                       DT_LEFT | DT_VCENTER | DT_WORDBREAK);
         }
 
-        DrawSwitchCard(dc, g.cardBass, L"Bass verstärken", L"Hebt die tiefen Töne zusätzlich an – kräftiger bei Musik und Filmen.", g.cfg.bass, g.hover == H_BASS);
-        DrawSwitchCard(dc, g.cardVoice, L"Sprache klarer", L"Macht Stimmen deutlicher – gut für Streams, Calls und Serien.", g.cfg.voice, g.hover == H_VOICE);
+        DrawSwitchCard(dc, g.cardBass, L"Bass verstärken", L"Mehr Druck in den Tiefen", g.cfg.bass, g.hover == H_BASS);
+        DrawSwitchCard(dc, g.cardVoice, L"Sprache klarer", L"Stimmen deutlicher", g.cfg.voice, g.hover == H_VOICE);
+
+        // Profile
+        FillRound(dc, g.profCard, S(16), kCard, kBorder);
+        {
+            const eq::Profile& ap = g.profiles[static_cast<size_t>(g.active)];
+            std::wstring info;
+            if (g.nameEdit) info = L"Name für das neue Profil eingeben – Enter speichert, Esc bricht ab";
+            else {
+                info = ap.device.empty() ? (g.lastDevice.empty() ? L"kein Gerät festgelegt" : L"kein Gerät festgelegt (aktuell: " + g.lastDevice + L")")
+                                         : L"wird automatisch gewählt für: " + ap.device;
+                if (!g.cfg.extra.empty()) info += L"  ·  Korrektur: " + std::to_wstring(g.cfg.extra.size()) + L" Zeilen";
+            }
+            DrawText2(dc, g.fBold, kText, { g.profCard.left + S(18), g.profCard.top + S(9), g.profCard.left + S(86), g.profCard.top + S(31) }, L"Profile");
+            DrawText2(dc, g.fSmall, kTextDim, { g.profCard.left + S(84), g.profCard.top + S(10), g.profCard.right - S(18), g.profCard.top + S(32) }, info,
+                      DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        if (g.nameEdit) {
+            FillRound(dc, g.nameRect, S(12), Blend(kCard, kBackground, 40), kEq);
+        } else {
+            for (size_t i = 0; i < g.profiles.size() && i < static_cast<size_t>(eq::kMaxProfiles); ++i) {
+                const bool act = static_cast<int>(i) == g.active, hot = g.hover == H_PROFILE + static_cast<int>(i);
+                FillRound(dc, g.profChip[i], S(12), act ? kEq : (hot ? kCardHover : Blend(kCard, kBackground, 25)), act ? kEq : (hot ? kBorderHot : kBorder));
+                DrawText2(dc, g.fBold, act ? kOnEq : kText, g.profChip[i], g.profiles[i].name, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            }
+            if (g.profNew.right > g.profNew.left) {
+                const bool hot = g.hover == H_PROFNEW;
+                FillRound(dc, g.profNew, S(12), hot ? kCardHover : Blend(kCard, kBackground, 25), hot ? kBorderHot : kBorder);
+                DrawText2(dc, g.fBold, kEq, g.profNew, L"+ Neu", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            }
+        }
+        auto smallBtn = [&](const RECT& r, const std::wstring& t, int id, bool warn) {
+            const bool hot = g.hover == id;
+            FillRound(dc, r, S(12), hot ? kCardHover : Blend(kCard, kBackground, 25), warn ? kOrange : (hot ? kBorderHot : kBorder));
+            DrawText2(dc, g.fBold, warn ? kOrange : kText, r, t, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        };
+        smallBtn(g.btnBind, g.profiles[static_cast<size_t>(g.active)].device.empty() ? L"An aktuelles Gerät binden" : L"Gerät lösen", H_BIND, false);
+        smallBtn(g.btnImport, g.cfg.extra.empty() ? L"Kopfhörer-Korrektur laden …" : L"Korrektur entfernen", H_IMPORT, false);
+        smallBtn(g.btnDel, g.delArmed ? L"Wirklich löschen?" : L"Löschen", H_PROFDEL, g.delArmed);
         DrawButton(dc, g.confBtn, L"Configurator öffnen", false, g.hover == H_CONFIGURATOR, g.press == H_CONFIGURATOR && g.hover == H_CONFIGURATOR);
         DrawText2(dc, g.fSmall, kTextDim, { g.confBtn.right + S(14), g.confBtn.top, g.footer.right, g.confBtn.bottom },
                   L"Dort stellst du ein, auf welchen Geräten der Equalizer wirkt.", DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -367,6 +592,13 @@ int HitTest(POINT p) {
     if (PtInRect(&g.cardBass, p)) return H_BASS;
     if (PtInRect(&g.cardVoice, p)) return H_VOICE;
     if (PtInRect(&g.confBtn, p)) return H_CONFIGURATOR;
+    if (!g.nameEdit) {
+        for (int i = 0; i < static_cast<int>(g.profiles.size()) && i < eq::kMaxProfiles; ++i) if (PtInRect(&g.profChip[i], p)) return H_PROFILE + i;
+        if (g.profNew.right > g.profNew.left && PtInRect(&g.profNew, p)) return H_PROFNEW;
+    }
+    if (PtInRect(&g.btnBind, p)) return H_BIND;
+    if (PtInRect(&g.btnImport, p)) return H_IMPORT;
+    if (PtInRect(&g.btnDel, p)) return H_PROFDEL;
     return H_NONE;
 }
 
@@ -385,6 +617,11 @@ void Activate(int id) {
         for (int b = 0; b < eq::kBands; ++b) g.cfg.gains[b] = eq::PresetAt(id - H_PRESET).gains[b];
         Changed();
     }
+    else if (id >= H_PROFILE && id < H_PROFILE + eq::kMaxProfiles) SwitchProfile(id - H_PROFILE);
+    else if (id == H_PROFNEW) BeginNewProfile();
+    else if (id == H_BIND) BindDevice();
+    else if (id == H_IMPORT) ImportFilters();
+    else if (id == H_PROFDEL) { DeleteProfile(); Layout(); }
     else if (id == H_DOWNLOAD) ShellExecuteW(g.hwnd, L"open", L"https://sourceforge.net/projects/equalizerapo/", nullptr, nullptr, SW_SHOWNORMAL);
     else if (id == H_RECHECK) { Recheck(); Layout(); }
     else if (id == H_ADMIN) { ApplyAsAdmin(); Layout(); }
@@ -469,7 +706,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_TIMER:
         if (wp == kTimerApply) ApplyNow();
+        else if (wp == kTimerDevice) PollDevice();
+        else if (wp == kTimerDisarm) { KillTimer(hwnd, kTimerDisarm); g.delArmed = false; Layout(); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
+    case WM_NAME_DONE: FinishNewProfile(wp == 1); return 0;
     case WM_DESTROY: if (!g.installDir.empty()) ApplyNow(); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
@@ -529,9 +769,22 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     gfx::EnableDarkTitleBar(g.hwnd);
 
     g.settingsPath = eq::SettingsPath();
-    eq::LoadSettings(g.cfg, g.settingsPath);
+    g.profilesPath = eq::ProfilesPath();
+    eq::LoadSettings(g.cfg, g.settingsPath);          // Ein/Aus und (aus aelteren Versionen) die Regler
+    if (!eq::LoadProfiles(g.profiles, g.active, g.profilesPath)) {
+        g.profiles.assign(1, eq::Profile{});
+        g.profiles[0].name = L"Standard";
+        g.active = 0;
+        SyncActive();                                  // Regler der Vorversion werden zum Profil "Standard"
+    } else LoadActive();
+    g.lastDevice = eq::DefaultOutputName();
+    {
+        const int dev = eq::ProfileForDevice(g.profiles, g.lastDevice);
+        if (dev >= 0 && dev != g.active) { g.active = dev; LoadActive(); }
+    }
     g.installDir = Detect();
     Layout();
+    SetTimer(g.hwnd, kTimerDevice, 2500, nullptr);
     if (!g.installDir.empty()) ApplyNow();      // beim Start die gespeicherten Einstellungen (neu) eintragen
     ShowWindow(g.hwnd, show);
     UpdateWindow(g.hwnd);

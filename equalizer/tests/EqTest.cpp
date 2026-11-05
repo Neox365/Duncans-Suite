@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <string>
+#include <vector>
 
 static int g_fail = 0, g_n = 0;
 #define CHECK(c) do { ++g_n; if (!(c)) { ++g_fail; std::printf("FEHLER Zeile %d: %s\n", __LINE__, #c); } } while (0)
@@ -126,6 +127,67 @@ int main()
     SetFileAttributesW((apo + L"/config/duncans-equalizer.txt").c_str(), FILE_ATTRIBUTE_READONLY);
     CHECK(ApplyToDir(apo, a) == ApplyResult::AccessDenied);
     SetFileAttributesW((apo + L"/config/duncans-equalizer.txt").c_str(), FILE_ATTRIBUTE_NORMAL);
+
+
+    // Zusatzzeilen (AutoEq) und Profile
+    {
+        const std::string autoeq =
+            "# AutoEq\r\nPreamp: -6.2 dB\r\nFilter 1: ON PK Fc 31 Hz Gain 2.1 dB Q 1.41\r\nFilter 2: ON LSC Fc 105 Hz Gain 5.5 dB Q 0.70\r\n"
+            "Include: C:/geheim.txt\r\nVSTPlugin: Library evil.dll\r\nFilter 3: ON PK Fc 1000 Hz Gain 1 dB Q 1; Include: x\r\nunsinn\r\nFilter x: ON PK\r\n";
+        int ignored = 0;
+        std::vector<std::string> ex = ParseFilterFile(autoeq, ignored);
+        CHECK(ex.size() == 3 && ignored == 5);
+        CHECK(ex[0] == "Preamp: -6.2 dB");
+        CHECK(ex[1] == "Filter: ON PK Fc 31 Hz Gain 2.1 dB Q 1.41");
+        CHECK(ex[2] == "Filter: ON LSC Fc 105 Hz Gain 5.5 dB Q 0.70");
+        std::string many;
+        for (int i = 0; i < 100; ++i) many += "Filter " + std::to_string(i) + ": ON PK Fc 100 Hz Gain 1 dB Q 1\r\n";
+        CHECK(ParseFilterFile(many, ignored).size() == kMaxExtraLines && ignored == 100 - (int)kMaxExtraLines);
+        CHECK(ParseFilterFile("", ignored).empty() && ignored == 0);
+
+        Settings x; x.enabled = true; x.extra = ex;
+        std::string cfg = BuildConfig(x);
+        CHECK(cfg.find("Preamp: -6.2 dB\r\nFilter: ON PK Fc 31 Hz Gain 2.1 dB Q 1.41\r\n") != std::string::npos);
+        CHECK(cfg.find("GraphicEQ") == std::string::npos && cfg.find("Alle Regler") == std::string::npos);
+        x.extra.push_back("Include: C:/boese.txt");           // von Hand eingeschleust: wird beim Schreiben verworfen
+        x.extra.push_back("Filter: ON PK; VSTPlugin: a.dll");
+        cfg = BuildConfig(x);
+        CHECK(cfg.find("Include") == std::string::npos && cfg.find("VSTPlugin") == std::string::npos);
+        Settings g6; g6.enabled = true; g6.gains[0] = -3;
+        CHECK(BuildConfig(g6).find("Preamp") == std::string::npos);      // nur Absenkungen: keine Vorabsenkung noetig
+
+        CHECK(CleanName(L"  Kopfhörer [Musik]=1  ") == L"Kopfhörer Musik1");
+        CHECK(CleanName(L"  ").empty() && CleanName(L"a\tb") == L"ab");
+        CHECK(CleanName(L"123456789012345678901234567890").size() == kMaxNameLen);
+
+        std::vector<Profile> pl(3);
+        pl[0].name = L"Standard";
+        pl[1].name = L"Kopfhörer"; pl[1].device = L"Kopfhörer (Realtek(R) Audio)"; pl[1].s.bass = true; pl[1].s.voice = true;
+        for (int b = 0; b < kBands; ++b) pl[1].s.gains[b] = b - 4;
+        pl[1].s.extra = ex;
+        pl[2].name = L"Boxen"; pl[2].device = L"Lautsprecher (HyperX)";
+        wchar_t tmp2[MAX_PATH]; GetTempPathW(MAX_PATH, tmp2);
+        std::wstring pp = std::wstring(tmp2) + L"eqprof" + std::to_wstring(GetCurrentProcessId()) + L".txt";
+        CHECK(SaveProfiles(pl, 1, pp));
+        std::vector<Profile> back; int act = -1;
+        CHECK(LoadProfiles(back, act, pp));
+        CHECK(back.size() == 3 && act == 1);
+        CHECK(back[1].name == L"Kopfhörer" && back[1].device == L"Kopfhörer (Realtek(R) Audio)" && back[1].s.bass && back[1].s.voice);
+        for (int b = 0; b < kBands; ++b) CHECK(back[1].s.gains[b] == b - 4);
+        CHECK(back[1].s.extra == ex && back[0].s.extra.empty() && back[2].device == L"Lautsprecher (HyperX)");
+        CHECK(FindProfile(back, L"KOPFHÖRER") == 1 && FindProfile(back, L"gibtsnicht") == -1);
+        CHECK(ProfileForDevice(back, L"lautsprecher (hyperx)") == 2 && ProfileForDevice(back, L"") == -1 && ProfileForDevice(back, L"Andere") == -1);
+        // beschaedigt: doppelter Name, Namenlose, aktives Profil fehlt, unsichere Zeile
+        Put(pp, "active=Gibtsnicht\r\n[profile]\r\nname=A\r\ngains=1,2,3\r\nextra=Include: x\r\n[profile]\r\nname=a\r\n[profile]\r\nbass=1\r\n");
+        CHECK(LoadProfiles(back, act, pp) && back.size() == 1 && act == 0 && back[0].s.extra.empty() && back[0].s.gains[2] == 3 && back[0].s.gains[3] == 0);
+        Put(pp, "nur muell\r\n");
+        CHECK(!LoadProfiles(back, act, pp) && back.empty());
+        CHECK(!LoadProfiles(back, act, pp + L".fehlt"));
+        DeleteFileW(pp.c_str());
+        CHECK(!ProfilesPath().empty());
+        std::wstring dev = DefaultOutputName();       // je nach Rechner leer oder ein Name; darf nicht abstuerzen
+        CHECK(dev.size() < 400);
+    }
 
     // Aufraeumen
     for (const wchar_t* f : { L"/apo/config/config.txt", L"/apo/config/duncans-equalizer.txt", L"/s.txt", L"/kaputt.txt" }) DeleteFileW((dir + f).c_str());
