@@ -144,7 +144,7 @@ const Meta kMeta[] = {
     { 10, L"Empfohlen", nullptr },
     { 11, L"Empfohlen", nullptr },
     { 12, L"Empfohlen", nullptr },
-    { 18, L"Empfohlen", L"Setzt die Richtlinie „Widgets zulassen = Aus“ und zusätzlich TaskbarDa = 0 für den Benutzer (Windows schützt diesen Wert in manchen Versionen; dann wirkt die Richtlinie allein). Eventuell ist ein Neustart von Explorer oder Windows nötig. Der Schalter macht alles rückgängig." },
+    { 18, L"Empfohlen", L"Setzt die Richtlinie „Widgets zulassen = Aus“ und zusätzlich TaskbarDa = 0 für den Benutzer (Windows schützt diesen Wert in manchen Versionen; dann wirkt die Richtlinie allein). Eventuell ist ein Neustart von Explorer oder Windows nötig. Auf neueren Windows-11-Versionen sperrt Windows diese Richtlinie auch für Administratoren und das Systemkonto; dann bleibt der Schalter wirkungslos. Widgets schaltest du dann von Hand ab: Einstellungen, Personalisierung, Taskleiste, Widgets. Der Schalter macht alles rückgängig." },
     { 19, L"Empfohlen", L"Die Game Bar kann dann nicht mehr im Hintergrund aufzeichnen; Screenshots und Aufnahmen mit anderen Programmen (z. B. NVIDIA, OBS) sind nicht betroffen. Der Schalter macht alles rückgängig." },
     { 20, L"Erweitert", L"Mail, Kalender, Messenger und andere Store-Apps aktualisieren sich dann nur noch bei geöffneter App und melden Neuigkeiten verspätet. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
     { 25, L"Empfohlen", L"Verhindert, dass Windows nach Updates Werbe-Apps nachinstalliert. Bereits installierte Apps werden nicht entfernt. Auf Home und Pro greifen die Benutzer-Werte, die Richtlinie wirkt vor allem auf Enterprise/Education. Der Schalter macht alles rückgängig." },
