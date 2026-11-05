@@ -23,6 +23,7 @@ struct Settings {
     int  gains[kBands] = {};    // dB je Band
     bool bass = false;          // zusaetzlicher Bass-Schub
     bool voice = false;         // Sprache klarer
+    int  preamp = 0;            // Vorverstaerkung in dB (-12 ... +12), kommt zur automatischen Absenkung dazu
     std::vector<std::string> extra;   // eingelesene Filterzeilen (z. B. AutoEq-Kopfhoerer-Korrektur), nur "Preamp:"/"Filter:"
 };
 
@@ -47,8 +48,10 @@ const Preset& PresetAt(int index);
 int MatchPreset(const Settings& s);          // Index der Voreinstellung, die zu den Reglern passt, sonst -1
 int ClampGain(int db);
 
-// Vorverstaerkung (<= 0 dB), damit die Lautstaerke durch Anhebungen nicht uebersteuert
+// Automatische Vorverstaerkung (<= 0 dB), damit die Lautstaerke durch Anhebungen, Bass und Sprache nicht uebersteuert
 int PreampDb(const Settings& s);
+// Gesamt: automatische Absenkung plus eigener Regler, begrenzt auf -30 ... +12 dB; das schreibt BuildConfig
+int TotalPreampDb(const Settings& s);
 
 // Text der Konfigurationsdatei fuer Equalizer APO (ASCII, Zeilenende CRLF)
 std::string BuildConfig(const Settings& s);

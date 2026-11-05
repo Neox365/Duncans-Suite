@@ -189,6 +189,34 @@ int main()
         CHECK(dev.size() < 400);
     }
 
+
+    // Eigener Preamp-Regler
+    {
+        Settings p; p.enabled = true; p.gains[2] = 6;
+        CHECK(PreampDb(p) == -6 && TotalPreampDb(p) == -6);
+        p.preamp = 3;  CHECK(TotalPreampDb(p) == -3 && BuildConfig(p).find("Preamp: -3 dB") != std::string::npos);
+        p.preamp = -4; CHECK(TotalPreampDb(p) == -10);
+        p.preamp = 99; CHECK(TotalPreampDb(p) == 6);                 // Regler wird auf +12 begrenzt (-6 + 12)
+        p.preamp = -99; CHECK(TotalPreampDb(p) == -18);              // -6 - 12
+        Settings q; q.enabled = true; q.preamp = 5;                  // nur der Preamp: schreibt Preamp, sonst nichts
+        std::string cq = BuildConfig(q);
+        CHECK(cq.find("Preamp: 5 dB") != std::string::npos && cq.find("GraphicEQ") == std::string::npos && cq.find("Alle Regler") == std::string::npos);
+        Settings z; z.enabled = true; CHECK(BuildConfig(z).find("Alle Regler") != std::string::npos);   // alles 0: weiter nichts
+        Settings bs; bs.enabled = true; bs.bass = true;              // Bass-Schub senkt automatisch ab
+        CHECK(PreampDb(bs) == -4 && BuildConfig(bs).find("Preamp: -4 dB") != std::string::npos);
+        bs.preamp = -2; CHECK(BuildConfig(bs).find("Preamp: -6 dB") != std::string::npos);
+        std::vector<Profile> pl(1); pl[0].name = L"A"; pl[0].s.preamp = -7;
+        wchar_t tmp3[MAX_PATH]; GetTempPathW(MAX_PATH, tmp3);
+        std::wstring pp3 = std::wstring(tmp3) + L"eqpre" + std::to_wstring(GetCurrentProcessId()) + L".txt";
+        std::vector<Profile> back3; int act3 = 0;
+        CHECK(SaveProfiles(pl, 0, pp3) && LoadProfiles(back3, act3, pp3) && back3.size() == 1 && back3[0].s.preamp == -7);
+        Put(pp3, "[profile]\r\nname=B\r\npreamp=500\r\n");
+        CHECK(LoadProfiles(back3, act3, pp3) && back3[0].s.preamp == kMaxGain);
+        Put(pp3, "[profile]\r\nname=C\r\n");
+        CHECK(LoadProfiles(back3, act3, pp3) && back3[0].s.preamp == 0);   // aeltere Dateien ohne Preamp
+        DeleteFileW(pp3.c_str());
+    }
+
     // Aufraeumen
     for (const wchar_t* f : { L"/apo/config/config.txt", L"/apo/config/duncans-equalizer.txt", L"/s.txt", L"/kaputt.txt" }) DeleteFileW((dir + f).c_str());
     RemoveDirectoryW((apo + L"/config").c_str()); RemoveDirectoryW(apo.c_str()); RemoveDirectoryW(dir.c_str());

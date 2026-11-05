@@ -28,7 +28,7 @@ using std::min;
 #include "EqLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.3.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -54,7 +54,8 @@ enum HitId {
     H_PRESET = 10,      // 10 .. 10 + Anzahl Voreinstellungen
     H_PROFILE = 200,    // 200 .. 205: Profil waehlen
     H_PROFNEW = 210, H_BIND = 211, H_IMPORT = 212, H_PROFDEL = 213,
-    H_BAND = 100        // 100 .. 109
+    H_BAND = 100,       // 100 .. 109 = Baender, 110 = Preamp
+    H_RESET = 121
 };
 
 struct App {
@@ -65,7 +66,7 @@ struct App {
     std::wstring settingsPath;
     std::wstring installDir;                       // leer = Equalizer APO nicht gefunden
     bool needAdmin = false;                        // Schreiben im Ordner von Equalizer APO wurde verweigert
-    RECT hero{}, heroToggle{}, adminBar{}, adminBtn{}, presetRect[8]{}, panel{}, band[eq::kBands]{}, cardBass{}, cardVoice{}, confBtn{},
+    RECT hero{}, heroToggle{}, adminBar{}, adminBtn{}, presetRect[8]{}, panel{}, band[eq::kBands + 1]{}, btnReset{}, cardBass{}, cardVoice{}, confBtn{},
          setup{}, dlBtn{}, recheckBtn{}, footer{};
     std::vector<eq::Profile> profiles;             // immer mindestens eines
     int active = 0;                                // aktives Profil (Regler, Schalter und Korrektur werden darin gespeichert)
@@ -117,12 +118,14 @@ std::wstring Detect() {
 void SyncActive() {                                 // aktuelle Regler/Schalter/Korrektur ins aktive Profil schreiben
     eq::Profile& p = g.profiles[static_cast<size_t>(g.active)];
     for (int b = 0; b < eq::kBands; ++b) p.s.gains[b] = g.cfg.gains[b];
+    p.s.preamp = g.cfg.preamp;
     p.s.bass = g.cfg.bass; p.s.voice = g.cfg.voice; p.s.extra = g.cfg.extra;
 }
 
 void LoadActive() {                                 // Einstellungen des aktiven Profils uebernehmen (Ein/Aus bleibt)
     const eq::Profile& p = g.profiles[static_cast<size_t>(g.active)];
     for (int b = 0; b < eq::kBands; ++b) g.cfg.gains[b] = p.s.gains[b];
+    g.cfg.preamp = p.s.preamp;
     g.cfg.bass = p.s.bass; g.cfg.voice = p.s.voice; g.cfg.extra = p.s.extra;
 }
 
@@ -357,10 +360,11 @@ void Layout() {
     y += ph + S(14);
     g.panel = { m, y, cr.right - m, y + S(292) };
     const int inner = (g.panel.right - g.panel.left) - 2 * S(14);
-    for (int b = 0; b < eq::kBands; ++b) {
-        const int x0 = g.panel.left + S(14) + inner * b / eq::kBands, x1 = g.panel.left + S(14) + inner * (b + 1) / eq::kBands;
-        g.band[b] = { x0, g.panel.top + S(8), x1, g.panel.bottom - S(8) };
+    for (int slot = 0; slot <= eq::kBands; ++slot) {              // Spalte 0 = Preamp, danach die zehn Baender
+        const int x0 = g.panel.left + S(14) + inner * slot / (eq::kBands + 1), x1 = g.panel.left + S(14) + inner * (slot + 1) / (eq::kBands + 1);
+        g.band[slot == 0 ? eq::kBands : slot - 1] = { x0, g.panel.top + S(8), x1, g.panel.bottom - S(8) };
     }
+    g.btnReset = { g.panel.right - S(14) - S(150), g.panel.bottom - S(40), g.panel.right - S(14), g.panel.bottom - S(10) };
     y = g.panel.bottom + S(14);
     const int half = (cr.right - 2 * m - S(12)) / 2;
     g.cardBass = { m, y, m + half, y + S(58) };
@@ -493,12 +497,18 @@ void Paint(HDC dc, const RECT& cr) {
         // Regler
         FillRound(dc, g.panel, S(16), kCard, kBorder);
         const int tw = S(4);
-        for (int b = 0; b < eq::kBands; ++b) {
+        {   // dezente Trennlinie zwischen Preamp und den Frequenzbaendern
+            RECT sep{ g.band[eq::kBands].right - 1, TrackTop(), g.band[eq::kBands].right, TrackBottom() + S(48) };
+            FillRound(dc, sep, 1, Blend(kCard, RGB(255, 255, 255), 10), Blend(kCard, RGB(255, 255, 255), 10));
+        }
+        for (int slot = 0; slot <= eq::kBands; ++slot) {
+            const int b = slot == 0 ? eq::kBands : slot - 1;           // kBands = Preamp
+            const bool pre = b == eq::kBands;
             const RECT& c = g.band[b];
             const int cx = (c.left + c.right) / 2;
-            const int gain = g.cfg.gains[b];
+            const int gain = pre ? g.cfg.preamp : g.cfg.gains[b];
             const bool hot = g.hover == H_BAND + b || g.drag == b;
-            const COLORREF accent = on ? kEq : Blend(kEq, kCard, 62);
+            const COLORREF accent = on ? (pre ? kOrange : kEq) : Blend(pre ? kOrange : kEq, kCard, 62);
             DrawText2(dc, g.fSmall, gain ? kText : kTextDim, { c.left, g.panel.top + S(12), c.right, g.panel.top + S(34) }, GainText(gain), DT_CENTER | DT_SINGLELINE);
             RECT track{ cx - tw / 2, TrackTop(), cx + tw / 2 + (tw & 1), TrackBottom() };
             FillRound(dc, track, tw / 2, Blend(kCard, kBackground, 55), Blend(kCard, kBackground, 55));
@@ -515,17 +525,23 @@ void Paint(HDC dc, const RECT& cr) {
             const COLORREF hc = hot ? Blend(accent, RGB(255, 255, 255), 25) : accent;
             Gdiplus::SolidBrush hb(Gdiplus::Color(255, GetRValue(hc), GetGValue(hc), GetBValue(hc)));
             gr.FillEllipse(&hb, cx - rad, hy - rad, rad * 2, rad * 2);
-            DrawText2(dc, g.fSmall, hot ? kText : kTextDim, { c.left, TrackBottom() + S(12), c.right, TrackBottom() + S(32) }, FreqText(eq::kFreqs[b]), DT_CENTER | DT_SINGLELINE);
-            DrawText2(dc, g.fSmall, hot ? kEq : Blend(kTextDim, kCard, 25), { c.left - S(4), TrackBottom() + S(32), c.right + S(4), TrackBottom() + S(52) }, eq::BandName(b), DT_CENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fSmall, hot ? kText : kTextDim, { c.left, TrackBottom() + S(12), c.right, TrackBottom() + S(32) }, pre ? std::wstring(L"Preamp") : FreqText(eq::kFreqs[b]), DT_CENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fSmall, hot ? (pre ? kOrange : kEq) : Blend(kTextDim, kCard, 25), { c.left - S(4), TrackBottom() + S(32), c.right + S(4), TrackBottom() + S(52) },
+                      pre ? L"auto " + std::to_wstring(eq::PreampDb(g.cfg)) : std::wstring(eq::BandName(b)), DT_CENTER | DT_SINGLELINE);
         }
 
         {
-            const int shown = g.drag >= 0 ? g.drag : (g.hover >= H_BAND && g.hover < H_BAND + eq::kBands ? g.hover - H_BAND : -1);
+            const int shown = g.drag >= 0 ? g.drag : (g.hover >= H_BAND && g.hover <= H_BAND + eq::kBands ? g.hover - H_BAND : -1);
+            const std::wstring preHint = L"Preamp: Gesamtlautstärke des Equalizers. Senke sie, wenn es verzerrt. Automatisch abgesenkt wird um " +
+                                         std::to_wstring(-eq::PreampDb(g.cfg)) + L" dB (Anhebungen, Bass, Sprache); dein Wert kommt dazu. Gesamt: " + std::to_wstring(eq::TotalPreampDb(g.cfg)) + L" dB.";
             RECT line{ g.panel.left + S(14), g.panel.bottom - S(48), g.panel.right - S(14), g.panel.bottom - S(47) };
             FillRound(dc, line, 1, Blend(kCard, RGB(255, 255, 255), 12), Blend(kCard, RGB(255, 255, 255), 12));
-            DrawText2(dc, g.fSmall, shown >= 0 ? kText : kTextDim, { g.panel.left + S(18), g.panel.bottom - S(42), g.panel.right - S(18), g.panel.bottom - S(6) },
-                      shown >= 0 ? eq::BandHint(shown) : L"Fahre mit der Maus über einen Regler: Hier steht, was er macht. Doppelklick setzt ihn auf 0.",
+            DrawText2(dc, g.fSmall, shown >= 0 ? kText : kTextDim, { g.panel.left + S(18), g.panel.bottom - S(44), g.btnReset.left - S(12), g.panel.bottom - S(4) },
+                      shown == eq::kBands ? preHint : shown >= 0 ? std::wstring(eq::BandHint(shown)) : std::wstring(L"Fahre mit der Maus über einen Regler: Hier steht, was er macht. Doppelklick setzt ihn auf 0."),
                       DT_LEFT | DT_VCENTER | DT_WORDBREAK);
+            const bool rh = g.hover == H_RESET;
+            FillRound(dc, g.btnReset, S(12), rh ? kCardHover : Blend(kCard, kBackground, 25), rh ? kBorderHot : kBorder);
+            DrawText2(dc, g.fBold, kText, g.btnReset, L"Alle auf 0", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
 
         DrawSwitchCard(dc, g.cardBass, L"Bass verstärken", L"Mehr Druck in den Tiefen", g.cfg.bass, g.hover == H_BASS);
@@ -588,7 +604,8 @@ int HitTest(POINT p) {
     }
     if (g.needAdmin && PtInRect(&g.adminBtn, p)) return H_ADMIN;
     for (int i = 0; i < eq::PresetCount() && i < 8; ++i) if (PtInRect(&g.presetRect[i], p)) return H_PRESET + i;
-    for (int b = 0; b < eq::kBands; ++b) if (PtInRect(&g.band[b], p)) return H_BAND + b;
+    if (PtInRect(&g.btnReset, p)) return H_RESET;
+    for (int b = 0; b <= eq::kBands; ++b) if (PtInRect(&g.band[b], p)) return H_BAND + b;
     if (PtInRect(&g.cardBass, p)) return H_BASS;
     if (PtInRect(&g.cardVoice, p)) return H_VOICE;
     if (PtInRect(&g.confBtn, p)) return H_CONFIGURATOR;
@@ -602,10 +619,11 @@ int HitTest(POINT p) {
     return H_NONE;
 }
 
-void SetBand(int b, int db) {
+void SetBand(int b, int db) {                       // b == kBands: der Preamp-Regler
     db = eq::ClampGain(db);
-    if (g.cfg.gains[b] == db) return;
-    g.cfg.gains[b] = db;
+    int& target = b == eq::kBands ? g.cfg.preamp : g.cfg.gains[b];
+    if (target == db) return;
+    target = db;
     Changed();
 }
 
@@ -613,6 +631,7 @@ void Activate(int id) {
     if (id == H_HERO) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
     else if (id == H_BASS) { g.cfg.bass = !g.cfg.bass; Changed(); }
     else if (id == H_VOICE) { g.cfg.voice = !g.cfg.voice; Changed(); }
+    else if (id == H_RESET) { for (int b = 0; b < eq::kBands; ++b) g.cfg.gains[b] = 0; g.cfg.preamp = 0; Changed(); SetStatus(L"Alle Regler auf 0 gesetzt", kTextDim); }
     else if (id >= H_PRESET && id < H_PRESET + eq::PresetCount()) {
         for (int b = 0; b < eq::kBands; ++b) g.cfg.gains[b] = eq::PresetAt(id - H_PRESET).gains[b];
         Changed();
@@ -685,13 +704,13 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         break;
     case WM_LBUTTONDBLCLK: {
         const int h = HitTest({ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
-        if (h >= H_BAND && h < H_BAND + eq::kBands) SetBand(h - H_BAND, 0);      // Doppelklick auf einen Regler: zurueck auf 0
+        if (h >= H_BAND && h <= H_BAND + eq::kBands) SetBand(h - H_BAND, 0);      // Doppelklick auf einen Regler: zurueck auf 0
         return 0;
     }
     case WM_LBUTTONDOWN: {
         const POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         g.press = HitTest(p);
-        if (g.press >= H_BAND && g.press < H_BAND + eq::kBands) { g.drag = g.press - H_BAND; SetBand(g.drag, YToGain(p.y)); }
+        if (g.press >= H_BAND && g.press <= H_BAND + eq::kBands) { g.drag = g.press - H_BAND; SetBand(g.drag, YToGain(p.y)); }
         SetCapture(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -710,7 +729,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         ScreenToClient(hwnd, &p);
         const int h = HitTest(p);
-        if (h >= H_BAND && h < H_BAND + eq::kBands) SetBand(h - H_BAND, g.cfg.gains[h - H_BAND] + (GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 1 : -1));
+        if (h >= H_BAND && h <= H_BAND + eq::kBands) { const int b = h - H_BAND; SetBand(b, (b == eq::kBands ? g.cfg.preamp : g.cfg.gains[b]) + (GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 1 : -1)); }
         return 0;
     }
     case WM_TIMER:
