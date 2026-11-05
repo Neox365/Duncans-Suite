@@ -18,6 +18,10 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.3.0 | 2026-11-05
+- Neu: Anleitungskarte „Was ist Clip?“ oben im Fenster mit drei Schritten (Kopieren, Kürzel drücken, Prompts mit {clip}) und dem Hinweis zum Datenschutz. „Verstanden“ blendet sie aus, der Knopf „Hilfe“ holt sie zurück.
+- Neu: Unter den Einstellungen erklärt eine Zeile, was der Knopf unter der Maus macht (Mit Windows starten, Verlauf speichern, Kürzel, Verlauf löschen nach, Markierung übernehmen, Export/Import).
+- Geändert: Klarere Beschriftung unter dem Titel; das Fenster ist beim ersten Öffnen höher, damit die Anleitung neben der Liste Platz hat.
 ## 0.2.0 | 2026-11-05
 - Neu: Schlüssel und Tokens (OpenAI, Anthropic, GitHub, AWS, Slack, Hugging Face, JWT, private Schlüssel u. a.), Zugangsdaten wie „password=…“, Kreditkartennummern und IBANs werden erkannt und nicht im Verlauf gespeichert. Das ist eine Mustererkennung, keine Garantie.
 - Neu: „Verlauf löschen nach“ (nie, 1 Stunde oder 1 Tag).

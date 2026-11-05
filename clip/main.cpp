@@ -30,7 +30,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.3.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -57,7 +57,7 @@ const int kIdEditTitle = 101, kIdEditText = 102, kIdSearch = 103, kIdPopupSearch
 
 enum Tab { T_HISTORY, T_PROMPTS };
 enum HitId {
-    H_NONE = -1, H_TAB_HISTORY = 1000, H_TAB_PROMPTS = 1001, H_ACTION = 1002, H_SET_BASE = 1010 /* 1010..1015 */, H_CHIP_BASE = 1100 /* 1100..1149 */,
+    H_NONE = -1, H_TAB_HISTORY = 1000, H_TAB_PROMPTS = 1001, H_ACTION = 1002, H_INTRO_OK = 1003, H_HELP = 1004, H_SET_BASE = 1010 /* 1010..1015 */, H_CHIP_BASE = 1100 /* 1100..1149 */,
     H_EDIT_SAVE = 2000, H_EDIT_CANCEL = 2001, H_ROW_BASE = 3000
 };
 
@@ -84,6 +84,7 @@ struct App {
     std::vector<Row> rows;
     int scroll = 0, contentH = 0;
     RECT tabHistory{}, tabPrompts{}, actionBtn{}, searchRc{}, chipsRc{}, list{}, set[6]{}, footer{}, editCard{}, editSave{}, editCancel{};
+    RECT introRc{}, introOk{}, helpBtn{}, hintRc{};
     EditState edit;
     int hover = H_NONE, press = H_NONE;
     bool tracking = false;
@@ -285,6 +286,35 @@ void PositionEditControls() {
     SetWindowPos(g.hEditText, nullptr, c.left + S(24), c.top + S(214), c.right - c.left - S(48), c.bottom - c.top - S(214) - S(86), SWP_NOZORDER);
 }
 
+// ---------- Anleitung ("Was ist Clip?") und Erklaerzeile zu den Einstellungen ----------
+const wchar_t* const kSetHints[6] = {
+    L"Mit Windows starten: Clip startet beim Anmelden von selbst im Infobereich (ohne Fenster), damit das Kürzel immer bereit ist.",
+    L"Verlauf speichern: Behält den Verlauf auch nach dem Beenden (verschlüsselt, nur auf diesem PC). Aus: nur im Arbeitsspeicher.",
+    L"Kürzel: Mit dieser Tastenkombination öffnest du die Schnellauswahl in jedem Programm. Ein Klick wechselt das Kürzel.",
+    L"Verlauf löschen nach: Entfernt kopierte Einträge nach der gewählten Zeit automatisch. Ein Klick wechselt (nie, 1 Stunde, 1 Tag).",
+    L"Markierung übernehmen: Markierten Text übernimmt Clip beim Öffnen der Schnellauswahl und setzt ihn für {clip} ein – ohne vorher Strg+C.",
+    L"Prompts: Export / Import: Prompts als Textdatei sichern oder aus einer Datei laden (zum Weitergeben oder Wechseln des PCs).",
+};
+
+std::vector<std::wstring> IntroSteps() {
+    const std::wstring key = clip::HotkeyPreset(g.cfg.hotkey).name;
+    return {
+        L"Kopiere wie immer (Strg+C). Alles Kopierte erscheint im Reiter „Verlauf“.",
+        L"Drücke in irgendeinem Programm " + key + L": Die Schnellauswahl öffnet sich. Tippen filtert, Enter fügt den Eintrag dort ein.",
+        L"Im Reiter „Prompts“ legst du Textbausteine an. {clip} wird beim Einfügen durch deinen kopierten oder markierten Text ersetzt, zum Beispiel „Fasse zusammen: {clip}“.",
+    };
+}
+const wchar_t* kIntroTop = L"Clip merkt sich, was du kopierst, und fügt es per Tastenkürzel in jedes Programm ein. Dazu gibt es Textbausteine („Prompts“) für alles, was du oft schreibst, etwa Fragen an eine KI.";
+const wchar_t* kIntroPrivacy = L"Privat: Passwörter, Schlüssel und Kartennummern speichert Clip nie. Der Verlauf liegt nur im Arbeitsspeicher, solange du „Verlauf speichern“ nicht einschaltest.";
+
+int IntroHeight(HDC dc, int width) {                   // Hoehe der Karte bei dieser Breite
+    const int tw = width - S(44);
+    int h = S(18) + S(30) + WrappedHeight(dc, g.fBody, kIntroTop, tw) + S(12);
+    for (const std::wstring& st : IntroSteps()) h += std::max(S(26), WrappedHeight(dc, g.fBody, st, tw - S(36))) + S(8);
+    h += S(4) + WrappedHeight(dc, g.fSmall, kIntroPrivacy, tw) + S(14) + S(38) + S(16);
+    return h;
+}
+
 void Layout() {
     RECT cr; GetClientRect(g.hwnd, &cr);
     const int m = S(28);
@@ -298,6 +328,8 @@ void Layout() {
     const std::wstring act = g.tab == T_HISTORY ? L"Verlauf leeren" : L"+ Neuer Prompt";
     const int aw = TextWidth(dc, g.fBold, act) + S(36);
     g.actionBtn = { right - aw, ty, right, ty + th };
+    const int hw = TextWidth(dc, g.fBold, L"Hilfe") + S(36);
+    g.helpBtn = { g.tabPrompts.right + S(10), ty, g.tabPrompts.right + S(10) + hw, ty + th };
     ReleaseDC(g.hwnd, dc);
     g.searchRc = { m, ty + th + S(14), right, ty + th + S(14) + S(36) };
     // Ordner-Chips (nur im Reiter Prompts, wenn es Ordner gibt)
@@ -327,12 +359,24 @@ void Layout() {
     }
     g.footer = { m, cr.bottom - S(34), right, cr.bottom - S(8) };
     const int setH = S(40), setGapY = S(8), row2Top = g.footer.top - S(10) - setH, row1Top = row2Top - setGapY - setH;
+    g.hintRc = { m, row1Top - S(40), right, row1Top - S(8) };
     const int gap = S(10), setW = (right - m - 2 * gap) / 3;
     for (int i = 0; i < 6; ++i) {
         const int top = i < 3 ? row1Top : row2Top, col = i % 3;
         g.set[i] = { m + col * (setW + gap), top, m + col * (setW + gap) + setW, top + setH };
     }
-    g.list = { m, listTop, right, row1Top - S(14) };
+    g.introRc = g.introOk = RECT{};
+    if (!g.cfg.hideIntro) {
+        HDC idc = GetDC(g.hwnd);
+        const int ih = IntroHeight(idc, right - m);
+        ReleaseDC(g.hwnd, idc);
+        if (g.hintRc.top - S(8) - (listTop + ih + S(12)) >= S(90)) {      // nur zeigen, wenn die Liste daneben noch Platz hat
+            g.introRc = { m, listTop, right, listTop + ih };
+            g.introOk = { right - S(24) - S(150), g.introRc.bottom - S(16) - S(38), right - S(24), g.introRc.bottom - S(16) };
+            listTop = g.introRc.bottom + S(12);
+        }
+    }
+    g.list = { m, listTop, right, g.hintRc.top - S(8) };
     // Prompt-Editor (Karte ueber der Liste)
     g.editCard = { m, S(84), right, cr.bottom - S(50) };
     const int bh = S(40), bw = S(130);
@@ -606,10 +650,11 @@ void Paint(HDC dc, const RECT& cr) {
     DeleteObject(bg);
     DrawText2(dc, g.fTitle, kText, { S(28), S(18), cr.right - S(28), S(56) }, kTitle);
     DrawText2(dc, g.fBody, kTextDim, { S(28), S(54), cr.right - S(28), S(80) },
-              std::wstring(L"Schnellauswahl überall mit ") + clip::HotkeyPreset(g.cfg.hotkey).name + (g.hotkeyOk ? L"" : L"  (Kürzel belegt!)"));
+              std::wstring(L"Dein Verlauf und deine Textbausteine – in jedem Programm mit ") + clip::HotkeyPreset(g.cfg.hotkey).name + (g.hotkeyOk ? L"" : L"  (Kürzel belegt!)"));
 
     DrawPill(dc, g.tabHistory, L"Verlauf", g.tab == T_HISTORY, g.hover == H_TAB_HISTORY, kClip);
     DrawPill(dc, g.tabPrompts, L"Prompts", g.tab == T_PROMPTS, g.hover == H_TAB_PROMPTS, kClip);
+    DrawPill(dc, g.helpBtn, L"Hilfe", !g.cfg.hideIntro && g.introRc.right > g.introRc.left, g.hover == H_HELP, kClip);
     DrawButton(dc, g.actionBtn, g.tab == T_HISTORY ? L"Verlauf leeren" : L"+ Neuer Prompt", g.tab == T_PROMPTS, g.hover == H_ACTION, g.press == H_ACTION && g.hover == H_ACTION);
 
     // Suchfeld (das EDIT liegt darueber)
@@ -618,6 +663,31 @@ void Paint(HDC dc, const RECT& cr) {
     for (size_t ci = 0; ci < g.chipRects.size(); ++ci)                                  // Ordner-Chips
         DrawChip(dc, g.chipRects[ci], g.chipNames[ci].empty() ? L"Alle" : g.chipNames[ci], g.chipNames[ci] == g.folderFilter, g.hover == H_CHIP_BASE + static_cast<int>(ci));
 
+    // Anleitung
+    if (g.introRc.right > g.introRc.left) {
+        const RECT& c = g.introRc;
+        FillRound(dc, c, S(16), Blend(kCard, kClip, 7), Blend(kBorder, kClip, 45));
+        const int pad = S(22), tw = (c.right - c.left) - 2 * pad;
+        int y = c.top + S(18);
+        DrawText2(dc, g.fHead, kText, { c.left + pad, y, c.right - pad, y + S(28) }, L"Was ist Clip?");
+        y += S(30);
+        int h = WrappedHeight(dc, g.fBody, kIntroTop, tw);
+        DrawText2(dc, g.fBody, kTextDim, { c.left + pad, y, c.right - pad, y + h }, kIntroTop, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        y += h + S(12);
+        int n = 1;
+        for (const std::wstring& st : IntroSteps()) {
+            const int sh = std::max(S(26), WrappedHeight(dc, g.fBody, st, tw - S(36)));
+            RECT badge{ c.left + pad, y, c.left + pad + S(24), y + S(24) };
+            FillRound(dc, badge, S(12), Blend(kCard, kClip, 30), kClip);
+            DrawText2(dc, g.fBold, kClip, badge, std::to_wstring(n++), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fBody, kText, { c.left + pad + S(36), y, c.right - pad, y + sh }, st, DT_LEFT | DT_TOP | DT_WORDBREAK);
+            y += sh + S(8);
+        }
+        y += S(4);
+        DrawText2(dc, g.fSmall, kTextDim, { c.left + pad, y, c.right - pad, y + WrappedHeight(dc, g.fSmall, kIntroPrivacy, tw) }, kIntroPrivacy, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        DrawButton(dc, g.introOk, L"Verstanden", true, g.hover == H_INTRO_OK, g.press == H_INTRO_OK && g.hover == H_INTRO_OK);
+    }
+
     // Liste
     SaveDC(dc);
     IntersectClipRect(dc, g.list.left - S(4), g.list.top, g.list.right + S(4), g.list.bottom);
@@ -625,7 +695,7 @@ void Paint(HDC dc, const RECT& cr) {
     if (g.rows.empty()) {
         const bool filtered = !g.filter.empty();
         std::wstring msg = filtered ? L"Nichts gefunden."
-                         : g.tab == T_HISTORY ? L"Noch nichts kopiert. Kopierte Texte erscheinen hier – nur im Arbeitsspeicher, solange du „Verlauf speichern“ nicht einschaltest."
+                         : g.tab == T_HISTORY ? L"Noch nichts kopiert. Kopiere irgendwo einen Text (Strg+C), dann erscheint er hier."
                                               : L"Noch keine Prompts. Mit „+ Neuer Prompt“ legst du einen an, oder du heftest einen kopierten Text im Verlauf mit dem Stern an.";
         DrawText2(dc, g.fSmall, kTextDim, { g.list.left + S(6), g.list.top + S(6), g.list.right - S(6), g.list.bottom }, msg, DT_LEFT | DT_TOP | DT_WORDBREAK);
     }
@@ -675,6 +745,13 @@ void Paint(HDC dc, const RECT& cr) {
     }
     RestoreDC(dc, -1);
 
+    {
+        const int hs = g.hover >= H_SET_BASE && g.hover < H_SET_BASE + 6 ? g.hover - H_SET_BASE : -1;
+        DrawText2(dc, g.fSmall, hs >= 0 ? kText : kTextDim, g.hintRc,
+                  hs >= 0 ? std::wstring(kSetHints[hs]) : std::wstring(L"Einstellungen – fahre mit der Maus über einen Knopf, um zu sehen, was er macht."),
+                  DT_LEFT | DT_BOTTOM | DT_WORDBREAK);
+    }
+
     // Einstellungen als sechs Schalter-Pillen (zwei Zeilen)
     DrawPill(dc, g.set[0], std::wstring(L"Mit Windows starten: ") + (g.cfg.autostart ? L"an" : L"aus"), g.cfg.autostart, g.hover == H_SET_BASE, kClip);
     DrawPill(dc, g.set[1], std::wstring(L"Verlauf speichern: ") + (g.cfg.saveHistory ? L"an" : L"aus"), g.cfg.saveHistory, g.hover == H_SET_BASE + 1, kClip);
@@ -699,6 +776,8 @@ int HitTest(POINT p) {
     if (PtInRect(&g.tabHistory, p)) return H_TAB_HISTORY;
     if (PtInRect(&g.tabPrompts, p)) return H_TAB_PROMPTS;
     if (PtInRect(&g.actionBtn, p)) return H_ACTION;
+    if (PtInRect(&g.helpBtn, p)) return H_HELP;
+    if (g.introOk.right > g.introOk.left && PtInRect(&g.introOk, p)) return H_INTRO_OK;
     for (size_t i = 0; i < g.chipRects.size(); ++i) if (PtInRect(&g.chipRects[i], p)) return H_CHIP_BASE + static_cast<int>(i);
     for (int i = 0; i < 6; ++i) if (PtInRect(&g.set[i], p)) return H_SET_BASE + i;
     if (PtInRect(&g.list, p) && p.x < g.list.left + CardWidth()) {
@@ -731,6 +810,8 @@ void Activate(int id) {
     else if (g.edit.open) return;
     else if (id == H_TAB_HISTORY) SetTab(T_HISTORY);
     else if (id == H_TAB_PROMPTS) SetTab(T_PROMPTS);
+    else if (id == H_INTRO_OK) { g.cfg.hideIntro = true; clip::SaveSettings(g.cfg); Layout(); }
+    else if (id == H_HELP) { g.cfg.hideIntro = !g.cfg.hideIntro; clip::SaveSettings(g.cfg); Layout(); }
     else if (id == H_ACTION) {
         if (g.tab == T_HISTORY) { g.store.history.clear(); SaveHistoryIfWanted(); Layout(); SetStatus(L"Verlauf geleert.", kGreen); }
         else OpenEditor(-1);
@@ -1029,7 +1110,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_GETMINMAXINFO: {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
         mmi->ptMinTrackSize.x = S(620);
-        mmi->ptMinTrackSize.y = S(560);
+        mmi->ptMinTrackSize.y = S(740);
         return 0;
     }
     case WM_DPICHANGED: {
@@ -1160,7 +1241,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
 
     g.dpi = GetDpiForSystem();
     g.editBrush = CreateSolidBrush(Blend(kCard, kBackground, 30));
-    g.hwnd = CreateWindowExW(0, kMainClass, kTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, S(680), S(760), nullptr, nullptr, inst, nullptr);
+    g.hwnd = CreateWindowExW(0, kMainClass, kTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, S(680), S(880), nullptr, nullptr, inst, nullptr);
     if (!g.hwnd) return 1;
     g.dpi = GetDpiForWindow(g.hwnd);
     g.hSearch = MakeEdit(g.hwnd, kIdSearch, WS_VISIBLE | ES_AUTOHSCROLL, 200);
