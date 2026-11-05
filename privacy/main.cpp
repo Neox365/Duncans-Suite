@@ -32,7 +32,7 @@ using std::min;
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.8.1"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.9.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -147,6 +147,12 @@ const Meta kMeta[] = {
     { 18, L"Empfohlen", L"Setzt die Richtlinie „Widgets zulassen = Aus“ und zusätzlich TaskbarDa = 0 für den Benutzer (Windows schützt diesen Wert in manchen Versionen; dann wirkt die Richtlinie allein). Eventuell ist ein Neustart von Explorer oder Windows nötig. Der Schalter macht alles rückgängig." },
     { 19, L"Empfohlen", L"Die Game Bar kann dann nicht mehr im Hintergrund aufzeichnen; Screenshots und Aufnahmen mit anderen Programmen (z. B. NVIDIA, OBS) sind nicht betroffen. Der Schalter macht alles rückgängig." },
     { 20, L"Erweitert", L"Mail, Kalender, Messenger und andere Store-Apps aktualisieren sich dann nur noch bei geöffneter App und melden Neuigkeiten verspätet. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
+    { 25, L"Empfohlen", L"Verhindert, dass Windows nach Updates Werbe-Apps nachinstalliert. Bereits installierte Apps werden nicht entfernt. Auf Home und Pro greifen die Benutzer-Werte, die Richtlinie wirkt vor allem auf Enterprise/Education. Der Schalter macht alles rückgängig." },
+    { 26, L"Empfohlen", L"Ergänzt Einstellung „Windows Copilot & KI-Analyse aus“ um die systemweite Richtlinie und die Taskleisten-Schaltfläche. Die Copilot-App selbst bleibt installiert und lässt sich über den Store entfernen. Der Schalter macht alles rückgängig." },
+    { 27, L"Empfohlen", L"Der Sperrbildschirm zeigt danach nur noch dein eigenes Bild oder deine Diashow; im Startmenü fehlen vorgeschlagene Apps. Der Schalter macht alles rückgängig." },
+    { 28, L"Empfohlen", nullptr },
+    { 29, L"Empfohlen", nullptr },
+    { 30, L"Empfohlen", L"Setzt Richtlinien für Microsoft Edge: Edge zeigt dann den Hinweis „Von deiner Organisation verwaltet“ an, funktioniert aber normal. Der Schalter macht alles rückgängig." },
     { 21, L"Erweitert", L"Nur ohne Drucker sinnvoll: Danach lässt sich weder drucken noch in PDF drucken, auch „Microsoft Print to PDF“ braucht den Dienst. Wird von „Alle schützen“ nicht mitgeschaltet. „Standard wiederherstellen“ stellt Starttyp und Betrieb des Dienstes wieder her." },
     { 22, L"Erweitert", L"Nur bei SSD als Systemlaufwerk: Auf Festplatten wird das Einschalten abgelehnt. Programme starten nach dem Abschalten eventuell minimal später. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
     { 23, L"Erweitert", L"Auf Heim-PCs ist der Dienst ohnehin meist schon aus. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
