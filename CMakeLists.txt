@@ -9,6 +9,7 @@ set(VAULT_VER "0.6.1")
 set(OFFICE_VER "0.3.6")
 set(QUICKCONVERT_VER "0.3.2")
 set(BOOST_VER "0.2.0")
+set(CLIP_VER "0.1.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -236,3 +237,22 @@ else()
     target_link_options(DuncansBoost PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
 target_link_libraries(DuncansBoost PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 powrprof psapi)
+
+# ---- Duncan's Clip: Zwischenablage-Verlauf und Prompts (Win32 + GDI, keine Administratorrechte; Logik in clip/ClipLogic) ----
+add_executable(DuncansClip WIN32
+    clip/main.cpp
+    clip/ClipLogic.cpp
+    src/Icons.cpp
+    resources/clip.rc
+)
+target_compile_definitions(DuncansClip PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"${CLIP_VER}\")
+if(MSVC)
+    target_compile_options(DuncansClip PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET DuncansClip PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(DuncansClip PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(DuncansClip PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
+    target_link_options(DuncansClip PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
+endif()
+target_link_libraries(DuncansClip PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 crypt32)

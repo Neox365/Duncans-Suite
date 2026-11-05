@@ -9,7 +9,7 @@
 #   .\tools\PublishModule.ps1 -Module Privacy            # release\DuncansPrivacy.exe       -> Release "modules" im Suite-Repo
 #   .\tools\PublishModule.ps1 -Module Pdf                # release\DuncansPdf.exe (+ pdfium.dll) -> Release v1.0.0 in Neox365/Duncans-PDF-Reader
 # Tidy hat sein eigenes Release.ps1 (DownloadCleaner). Das Skript LAEDT HOCH (gh) - nur nach ausdruecklicher Freigabe ausfuehren.
-param([Parameter(Mandatory)][ValidateSet('DriverUpdater', 'Privacy', 'Photo', 'Docs', 'Vault', 'Office', 'QuickConvert', 'Boost', 'Pdf')][string]$Module, [switch]$DryRun)
+param([Parameter(Mandatory)][ValidateSet('DriverUpdater', 'Privacy', 'Photo', 'Docs', 'Vault', 'Office', 'QuickConvert', 'Boost', 'Clip', 'Pdf')][string]$Module, [switch]$DryRun)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rel = Join-Path (Split-Path -Parent $root) 'release'
@@ -33,7 +33,7 @@ if ($Module -eq 'Pdf') {
 }
 
 $repo = 'Neox365/Duncans-Suite'; $tag = 'modules'
-$exe = switch ($Module) { 'DriverUpdater' { 'DuncansDriverUpdater.exe' } 'Photo' { 'DuncansPhotoCommander.exe' } 'Docs' { 'OggysDocsFiles.exe' } 'Vault' { 'DuncansVault.exe' } 'Office' { 'DuncansOffice.exe' } 'QuickConvert' { 'DuncansQuickConvert.exe' } 'Boost' { 'DuncansBoost.exe' } default { 'DuncansPrivacy.exe' } }
+$exe = switch ($Module) { 'DriverUpdater' { 'DuncansDriverUpdater.exe' } 'Photo' { 'DuncansPhotoCommander.exe' } 'Docs' { 'OggysDocsFiles.exe' } 'Vault' { 'DuncansVault.exe' } 'Office' { 'DuncansOffice.exe' } 'QuickConvert' { 'DuncansQuickConvert.exe' } 'Boost' { 'DuncansBoost.exe' } 'Clip' { 'DuncansClip.exe' } default { 'DuncansPrivacy.exe' } }
 $ver = FileVer $exe
 & $sign (Join-Path $rel $exe)
 
