@@ -5,6 +5,8 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.2.1 | 2026-11-05
+- Korrigiert: Der Knopf zum Öffnen der Geräteauswahl von Equalizer APO tat bei aktuellen Versionen nichts, weil das Programm dort „DeviceSelector.exe“ statt „Configurator.exe“ heißt. Der Knopf heißt jetzt „Geräte auswählen“, findet beide Namen und meldet, wenn etwas nicht klappt.
 ## 0.2.0 | 2026-11-05
 - Neu: Profile. Du kannst mehrere Einstellungen speichern (zum Beispiel „Kopfhörer“ und „Boxen“, bis zu sechs) und mit einem Klick wechseln. Regler, Bass-Schub, „Sprache klarer“ und Korrektur werden im gewählten Profil gespeichert.
 - Neu: Profil an ein Ausgabegerät binden. Wird ein Gerät zum Standardgerät, an das ein Profil gebunden ist, wählt der Equalizer dieses Profil automatisch (solange das Programm läuft).
