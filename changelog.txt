@@ -304,6 +304,9 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.3.6 | 2026-11-05
+- Verbessert: Der PDF-Export des Writers übernimmt jetzt Schriften, Fettdruck, Farben, Aufzählungen und Tabellen wie im Ausdruck. Dafür nutzt er den Windows-Drucker Microsoft Print to PDF; fehlt dieser, wird wie bisher nur der Text als PDF gespeichert.
+- Behoben: Eine Tabelle wurde immer am Anfang des Dokuments eingefügt statt an der Schreibmarke. Außerdem steht die Schreibmarke danach in der ersten Zelle.
 ## 0.3.5 | 2026-11-05
 - Writer: Tabellen. Der neue Knopf mit dem Gitter in der Werkzeugleiste fügt eine Tabelle an der Schreibmarke ein (von 2 × 2 bis 6 Spalten × 8 Zeilen). Die Tab-Taste springt von Zelle zu Zelle und legt am Ende eine neue Zeile an. Tabellen werden in .rtf gespeichert und gedruckt; beim Speichern als .txt bleibt nur der Text. Der PDF-Export gibt Tabellen noch nicht wieder.
 ## 0.3.4 | 2026-11-05

@@ -279,7 +279,7 @@ private:
     void WriterPrint();
     void StartPrinterScan();
     void ShowPrinterMenu();
-    void PrintTo(const std::wstring& printer);
+    bool PrintTo(const std::wstring& printer, const wchar_t* outFile = nullptr, bool quiet = false);
 
     // ---- Sheets ----
     void RegisterGrid();
@@ -1453,7 +1453,8 @@ bool App::WriterSave(bool saveAs)
     return true;
 }
 
-// Einfacher PDF-Export: der reine Text (ohne Formatierung) in Helvetica 11 pt auf A4-Seiten mit Zeilenumbruch
+// PDF-Export: zuerst ueber den Druckweg und den Windows-Drucker "Microsoft Print to PDF" (mit Schriften, Farben, Aufzaehlungen und Tabellen
+// wie im Ausdruck). Fehlt der Drucker oder schlaegt das fehl, folgt der einfache Export: der reine Text in Helvetica 11 pt auf A4-Seiten.
 void App::WriterPdf()
 {
     std::wstring base = m_wPath.empty() ? L"Unbenannt" : FileNameOf(m_wPath);
@@ -1461,6 +1462,18 @@ void App::WriterPdf()
     if (dot != std::wstring::npos) base.resize(dot);
     const std::wstring path = PickSave(L"PDF-Dokument (*.pdf)\0*.pdf\0", L"pdf", base);
     if (path.empty()) return;
+
+    static const wchar_t kPdfPrinter[] = L"Microsoft Print to PDF";
+    HANDLE hp = nullptr;
+    if (OpenPrinterW(const_cast<LPWSTR>(kPdfPrinter), &hp, nullptr)) {
+        ClosePrinter(hp);
+        DeleteFileW(path.c_str());   // das Ueberschreiben hat PickSave schon bestaetigt
+        if (PrintTo(kPdfPrinter, path.c_str(), true) && GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+            m_status = L"PDF gespeichert: " + FileNameOf(path);
+            InvalidateRect(m_hwnd, &m_statusRc, FALSE);
+            return;
+        }
+    }
 
     constexpr double kMargin = 56, kSize = 11, kLead = 15;
     const double maxW = pdfw::kPageW - 2 * kMargin;
@@ -1588,16 +1601,18 @@ void App::ShowPrinterMenu()
         PrintTo(names[static_cast<size_t>(pick - C_PRINTER_BASE)]);
 }
 
-void App::PrintTo(const std::wstring& printer)
+// outFile: in eine Datei statt aufs Papier drucken (Microsoft Print to PDF schreibt dann ohne Rueckfrage direkt ein PDF).
+// quiet: keine Fehlermeldung (der Aufrufer hat einen Ersatzweg). Rueckgabe: Auftrag vollstaendig durchgelaufen.
+bool App::PrintTo(const std::wstring& printer, const wchar_t* outFile, bool quiet)
 {
-    if (m_printing) return;
+    if (m_printing) return false;
     m_printing = true;
     SetCursor(LoadCursorW(nullptr, IDC_WAIT));
     HDC hdc = CreateDCW(L"WINSPOOL", printer.c_str(), nullptr, nullptr);   // Standardeinstellungen des Druckers
     bool ok = hdc != nullptr;
     if (ok) {
         const std::wstring name = m_wPath.empty() ? L"Unbenannt" : FileNameOf(m_wPath);
-        DOCINFOW di{ sizeof di, name.c_str(), nullptr, nullptr, 0 };
+        DOCINFOW di{ sizeof di, name.c_str(), outFile, nullptr, 0 };
         ok = StartDocW(hdc, &di) > 0;
         if (ok) {
             const int lx = GetDeviceCaps(hdc, LOGPIXELSX), ly = GetDeviceCaps(hdc, LOGPIXELSY);
@@ -1631,7 +1646,8 @@ void App::PrintTo(const std::wstring& printer)
         DeleteDC(hdc);
     }
     m_printing = false;
-    if (!ok) MessageBoxW(m_hwnd, L"Der Druckauftrag ist fehlgeschlagen.", L"Duncan's Office", MB_ICONWARNING);
+    if (!ok && !quiet) MessageBoxW(m_hwnd, L"Der Druckauftrag ist fehlgeschlagen.", L"Duncan's Office", MB_ICONWARNING);
+    return ok;
 }
 
 // ======================= Sheets: Raster =======================
@@ -2360,6 +2376,7 @@ void App::InsertTable(int cols, int rows)
     row.cbCell = sizeof(TABLECELLPARMS);
     row.cCell = static_cast<BYTE>(cols);
     row.cRow = static_cast<BYTE>(rows);
+    row.cpStartRow = -1;      // -1 = an der Schreibmarke einfuegen (0 wuerde immer am Dokumentanfang einfuegen)
     row.dxCellMargin = 108;   // twips (ca. 0,19 cm Innenabstand)
     std::vector<TABLECELLPARMS> cells(static_cast<size_t>(cols));
     const LONG total = 9000;   // Gesamtbreite in twips (ca. 15,9 cm, passt auf eine A4-Seite)
@@ -2369,12 +2386,16 @@ void App::InsertTable(int cols, int rows)
         c.crBrdrLeft = c.crBrdrTop = c.crBrdrRight = c.crBrdrBottom = RGB(0, 0, 0);
         c.crBackPat = c.crForePat = kPaper;   // Zellhintergrund wie die Seite (sonst schwarz)
     }
-    CHARRANGE sel{};
-    SendMessageW(m_rich, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&sel));
     SendMessageW(m_rich, EM_INSERTTABLE, reinterpret_cast<WPARAM>(&row), reinterpret_cast<LPARAM>(cells.data()));
-    CHARRANGE first{ sel.cpMin, sel.cpMin };   // Schreibmarke in die erste Zelle (sonst steht sie hinter der Tabelle)
-    SendMessageW(m_rich, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&first));
+    // Die Schreibmarke steht nach dem Einfuegen hinter der Tabelle. Direkt auf den Tabellenanfang gesetzt, zeigt Rich Edit sie manchmal noch im
+    // Absatz davor; deshalb von hinten mit Pfeiltasten in die erste Zelle fahren: so viele Zeilen nach oben, wie die Tabelle hat, dann Pos1.
     SetFocus(m_rich);
+    auto key = [&](WPARAM vk) {
+        SendMessageW(m_rich, WM_KEYDOWN, vk, 0);
+        SendMessageW(m_rich, WM_KEYUP, vk, 0);
+    };
+    for (int r = 0; r < rows; ++r) key(VK_UP);
+    key(VK_HOME);
 }
 
 void App::SetFontName(const std::wstring& name)
