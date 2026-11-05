@@ -30,7 +30,8 @@ void MediaShutdown();
 
 // Bild konvertieren. quality gilt fuer JPEG, WebP und HEIC. Liefert false mit err (lesbarer Text), wenn etwas fehlt,
 // z. B. der WebP-/HEVC-Codec von Windows nicht installiert ist. dst darf nicht src sein.
-bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt, int quality, std::wstring* err);
+// maxEdge > 0: Bild wird auf diese laengste Kante verkleinert (nie vergroessert, Seitenverhaeltnis bleibt), 0 = Originalgroesse.
+bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt, int quality, std::wstring* err, int maxEdge = 0);
 
 // Audio konvertieren oder aus einem Video extrahieren. progress(0..100) wird aus dem Worker-Thread gerufen.
 // cancel wird laufend geprueft; bei Abbruch liefert die Funktion false mit err == L"Abgebrochen" und loescht die Zieldatei.
