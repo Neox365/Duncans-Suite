@@ -1,6 +1,7 @@
 #pragma once
-// Duncan's Clip - Logik: Verlauf der Zwischenablage, Prompts/Textbausteine, Platzhalter, Sperrregeln, Speichern (DPAPI),
-// Zwischenablage lesen/schreiben und Einfuegen per Strg+V. Keine Oberflaeche, keine Administratorrechte noetig.
+// Duncan's Clip - Logik: Verlauf der Zwischenablage (Text und Bilder), Prompts/Textbausteine mit Ordnern, Platzhalter,
+// Sperrregeln (inkl. Erkennung von Schluesseln/Tokens), Speichern (DPAPI), Export/Import, Zwischenablage lesen/schreiben,
+// Markierung uebernehmen und Einfuegen per Strg+V. Keine Oberflaeche, keine Administratorrechte noetig.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -13,43 +14,96 @@ namespace clip {
 
 constexpr size_t kMaxHistory = 50;
 constexpr size_t kMaxTextLen = 100000;      // laengere Texte werden nicht in den Verlauf aufgenommen
+constexpr size_t kMaxImages = 10;           // hoechstens so viele Bilder im Verlauf (nur im Arbeitsspeicher)
+constexpr size_t kMaxImageBytes = 8u << 20; // groessere Bilder (als PNG) werden uebersprungen
 
 struct Prompt {
     std::wstring title;
     std::wstring text;
+    std::wstring folder;                    // optional, z. B. "Programmieren"
+    unsigned long long lastUsed = 0;        // Sekunden (Windows-Zeit), 0 = nie benutzt; bestimmt die Reihenfolge in der Schnellauswahl
+};
+
+struct HistoryItem {
+    unsigned id = 0;                        // stabile Nummer (fuer Vorschaubilder)
+    std::wstring text;                      // Text; bei Bildern die Beschriftung ("Bild 1280 x 720")
+    std::string png;                        // PNG-Bytes; leer = Textelement
+    int width = 0, height = 0;
+    unsigned long long time = 0;            // GetTickCount64 beim Aufnehmen (fuer die Aufbewahrung)
+    bool IsImage() const { return !png.empty(); }
 };
 
 struct Store {
-    std::vector<std::wstring> history;      // neuester Eintrag zuerst
+    std::vector<HistoryItem> history;       // neuester Eintrag zuerst
     std::vector<Prompt> prompts;
+    unsigned nextId = 1;
 };
 
-// ---- Verlauf und Prompts ----
+// ---- Verlauf ----
 // Nimmt einen kopierten Text auf: leere/zu lange Texte werden ignoriert, gleiche Texte wandern nach vorn, der Verlauf bleibt auf kMaxHistory begrenzt.
 // true = Verlauf hat sich geaendert.
-bool AddHistory(Store& s, const std::wstring& text);
+bool AddHistory(Store& s, const std::wstring& text, unsigned long long now = GetTickCount64());
+// Nimmt ein Bild (PNG-Bytes) auf; gleiche Bilder wandern nach vorn, aeltere Bilder ueber kMaxImages fliegen raus, zu grosse werden ignoriert.
+bool AddImage(Store& s, std::string png, int width, int height, unsigned long long now = GetTickCount64());
 bool RemoveHistory(Store& s, size_t index);
+// Entfernt Eintraege, die aelter als maxAgeMs sind (0 = nichts entfernen). Rueckgabe: Anzahl entfernter Eintraege.
+size_t PurgeHistory(Store& s, unsigned long long maxAgeMs, unsigned long long now = GetTickCount64());
+
+// ---- Prompts ----
 // Prompt aus einem Text; der Titel ist die erste nicht leere Zeile, gekuerzt auf 40 Zeichen
 Prompt MakePrompt(const std::wstring& text);
-// Ersetzt {clip} (ohne Beachtung der Gross-/Kleinschreibung) durch den aktuellen Zwischenablage-Text
-std::wstring Expand(const std::wstring& text, const std::wstring& clipText);
+// Ersetzt {clip} sowie {datum} (TT.MM.JJJJ), {zeit} (HH:MM) und {wochentag} (z. B. "Montag"), Gross-/Kleinschreibung egal.
+// now = nullptr: aktuelle Ortszeit.
+std::wstring Expand(const std::wstring& text, const std::wstring& clipText, const SYSTEMTIME* now = nullptr);
 // Filter: jedes Wort muss im Text vorkommen (Gross-/Kleinschreibung egal); leerer Filter passt immer
 bool Matches(const std::wstring& haystack, const std::wstring& filter);
 // Einzeilige Vorschau fuer Listen (Umbrueche und Tabs werden zu Leerzeichen, maximal maxChars Zeichen)
 std::wstring Preview(const std::wstring& text, size_t maxChars);
+// Aktuelle Zeit in Sekunden (fuer Prompt::lastUsed)
+unsigned long long NowSeconds();
+// Prompts in der Reihenfolge fuer die Schnellauswahl: zuletzt benutzte zuerst, sonst die gespeicherte Reihenfolge (Indizes in prompts)
+std::vector<size_t> PromptOrderByRecent(const std::vector<Prompt>& prompts);
+// Ordnernamen (ohne Duplikate, in der Reihenfolge des ersten Auftretens, ohne leeren Namen)
+std::vector<std::wstring> FolderNames(const std::vector<Prompt>& prompts);
+
+// ---- Export / Import (Textdatei, von Hand lesbar) ----
+std::wstring ExportPrompts(const std::vector<Prompt>& prompts);
+std::vector<Prompt> ImportPrompts(const std::wstring& fileText);
+// Haengt neue Prompts an (gleicher Titel + Text + Ordner wird nicht doppelt aufgenommen); Rueckgabe: Anzahl neu hinzugefuegter
+int MergePrompts(std::vector<Prompt>& dst, const std::vector<Prompt>& src);
+bool WriteTextFile(const std::wstring& path, const std::wstring& text);   // UTF-8 mit BOM
+bool ReadTextFile(const std::wstring& path, std::wstring& text);          // UTF-8 (mit/ohne BOM) oder UTF-16
 
 // ---- Sperrregeln: was nie in den Verlauf kommt ----
 // Kopien aus bekannten Passwort-Managern (EXE-Name in Kleinbuchstaben)
 bool IsPasswordManagerExe(const std::wstring& exeLower);
-// Entscheidet, ob eine Kopie uebersprungen wird (Windows-Markierung "nicht aufnehmen", Passwort-Manager, zu lang, leer)
+// Erkennt Texte, die wie Schluessel, Tokens, Zugangsdaten oder Zahlungsdaten aussehen. Rueckgabe: Art ("API-Schluessel", "Kreditkartennummer" ...)
+// oder leer. Das ist eine Mustererkennung, keine Garantie.
+std::wstring DetectSecret(const std::wstring& text);
+enum class SkipReason { None, Excluded, PasswordManager, Blank, TooLong, Secret };
+SkipReason SkipReasonFor(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower);
+// Entscheidet, ob eine Kopie uebersprungen wird (Windows-Markierung "nicht aufnehmen", Passwort-Manager, zu lang, leer, Geheimnis)
 bool ShouldSkip(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower);
 
 // ---- Zwischenablage (Windows) ----
 bool ReadClipboardText(std::wstring& out);                  // Text; false bei nicht-Text oder gesperrter Zwischenablage
 bool WriteClipboardText(const std::wstring& text, bool markPrivate = true);  // Text setzen; markPrivate = mit "nicht in Verlauf/Cloud"-Markierung (Windows fuehrt ihn nicht doppelt)
+bool ClipboardHasImage();                                    // Bild in der Zwischenablage (PNG, DIB)
+bool ReadClipboardImage(std::string& png, int& width, int& height);   // als PNG-Bytes; false bei Fehler oder zu grossem Bild
+bool WriteClipboardImage(const std::string& png, bool markPrivate = true);
+// Vorschaubild (Bitmap-Handle, vom Aufrufer mit DeleteObject freizugeben), eingepasst in maxW x maxH; 0 bei Fehler
+HBITMAP MakeThumbnail(const std::string& png, int maxW, int maxH, int& outW, int& outH);
 bool ClipboardIsExcluded();                                  // hat die Quelle die Aufnahme in Verlaeufe untersagt?
 std::wstring ClipboardOwnerExe();                            // EXE-Name (klein) des Programms, das zuletzt kopiert hat; leer = unbekannt
 void SendPasteKeys();                                        // sendet Strg+V an das aktive Fenster
+
+// ---- Markierung uebernehmen ----
+// Konsolen/Terminals werden nie angefasst (dort ist Strg+C "Abbrechen"); EXE-Name klein
+bool IsTerminalExe(const std::wstring& exeLower);
+bool IsTerminalWindow(HWND h);
+// Kopiert die Markierung im Fenster target per Strg+C, liest sie und gibt die vorherige Zwischenablage zurueck (wenn sie Text oder leer war).
+// Wartet zuerst, bis die Tasten des Tastenkuerzels losgelassen sind. false = nichts markiert/nicht moeglich.
+bool CaptureSelection(HWND target, std::wstring& selection);
 
 // ---- Einstellungen und Speicherung ----
 struct Hotkey { UINT mods; UINT vk; const wchar_t* name; };
@@ -60,7 +114,12 @@ struct Settings {
     bool autostart = false;                                  // mit Windows im Hintergrund starten (nur Anzeige, die Wahrheit steht in der Registry)
     bool saveHistory = false;                                // Verlauf verschluesselt speichern (sonst nur im Arbeitsspeicher)
     int hotkey = 0;                                          // Index in HotkeyPreset
+    int retention = 0;                                       // 0 = nie loeschen, 1 = nach 1 Stunde, 2 = nach 1 Tag
+    bool captureSelection = true;                            // Markierung beim Oeffnen der Schnellauswahl automatisch uebernehmen
 };
+
+unsigned long long RetentionMs(int retention);               // 0 = unbegrenzt
+const wchar_t* RetentionName(int retention);
 
 std::wstring DataDir();                                      // %LOCALAPPDATA%\DuncansClip (wird angelegt)
 void SetDataDirForTest(const std::wstring& dir);
@@ -69,7 +128,7 @@ Settings LoadSettings();
 bool SaveSettings(const Settings& s);
 bool SavePrompts(const std::vector<Prompt>& p);              // mit Windows-Schluessel (DPAPI) verschluesselt
 std::vector<Prompt> LoadPrompts();
-bool SaveHistory(const std::vector<std::wstring>& h);
+bool SaveHistory(const std::vector<std::wstring>& h);        // nur Texte (Bilder werden nie gespeichert)
 std::vector<std::wstring> LoadHistory();
 void DeleteHistoryFile();
 

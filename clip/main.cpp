@@ -8,11 +8,13 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <commdlg.h>
 
 #include <algorithm>
 #include <cstdlib>
 #include <cwchar>
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -28,7 +30,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.1.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.2.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -50,12 +52,12 @@ const wchar_t* kPopupClass = L"DuncansClipPopup";
 const UINT WM_TRAY = WM_APP + 10;
 const UINT WM_SHOWMAIN = WM_APP + 11;                // zweiter Start: bestehendes Fenster zeigen
 const int kHotkeyId = 1;
-const UINT_PTR kTimerPaste = 1, kTimerStatus = 2, kTimerRestore = 3;
-const int kIdEditTitle = 101, kIdEditText = 102, kIdSearch = 103, kIdPopupSearch = 104;
+const UINT_PTR kTimerPaste = 1, kTimerStatus = 2, kTimerRestore = 3, kTimerPurge = 5;
+const int kIdEditTitle = 101, kIdEditText = 102, kIdSearch = 103, kIdPopupSearch = 104, kIdEditFolder = 105;
 
 enum Tab { T_HISTORY, T_PROMPTS };
 enum HitId {
-    H_NONE = -1, H_TAB_HISTORY = 1000, H_TAB_PROMPTS = 1001, H_ACTION = 1002, H_SET_AUTOSTART = 1010, H_SET_SAVE = 1011, H_SET_HOTKEY = 1012,
+    H_NONE = -1, H_TAB_HISTORY = 1000, H_TAB_PROMPTS = 1001, H_ACTION = 1002, H_SET_BASE = 1010 /* 1010..1015 */, H_CHIP_BASE = 1100 /* 1100..1149 */,
     H_EDIT_SAVE = 2000, H_EDIT_CANCEL = 2001, H_ROW_BASE = 3000
 };
 
@@ -63,8 +65,10 @@ struct Row { size_t idx = 0; int top = 0, height = 0; };
 
 struct EditState { bool open = false; int index = -1; };   // index -1 = neuer Prompt
 
+struct Thumb { HBITMAP bmp = nullptr; int w = 0, h = 0; };      // Vorschaubild eines Bildes im Verlauf
+
 struct App {
-    HWND hwnd = nullptr, hSearch = nullptr, hEditTitle = nullptr, hEditText = nullptr;
+    HWND hwnd = nullptr, hSearch = nullptr, hEditTitle = nullptr, hEditFolder = nullptr, hEditText = nullptr;
     HWND popup = nullptr, popupSearch = nullptr;
     UINT dpi = 96;
     HFONT fTitle = nullptr, fHead = nullptr, fBody = nullptr, fSmall = nullptr, fBold = nullptr;
@@ -73,9 +77,13 @@ struct App {
     clip::Settings cfg;
     Tab tab = T_HISTORY;
     std::wstring filter;
+    std::wstring folderFilter;                       // Ordner-Chip im Reiter Prompts (leer = alle)
+    std::vector<RECT> chipRects;
+    std::vector<std::wstring> chipNames;
+    std::map<unsigned, Thumb> thumbs;                // Vorschaubilder je Verlaufseintrag (Id)
     std::vector<Row> rows;
     int scroll = 0, contentH = 0;
-    RECT tabHistory{}, tabPrompts{}, actionBtn{}, searchRc{}, list{}, set[3]{}, footer{}, editCard{}, editSave{}, editCancel{};
+    RECT tabHistory{}, tabPrompts{}, actionBtn{}, searchRc{}, chipsRc{}, list{}, set[6]{}, footer{}, editCard{}, editSave{}, editCancel{};
     EditState edit;
     int hover = H_NONE, press = H_NONE;
     bool tracking = false;
@@ -84,6 +92,7 @@ struct App {
     DWORD suppressUntil = 0;                         // eigene Zwischenablage-Aenderungen nicht in den Verlauf uebernehmen
     HWND prevFg = nullptr;                           // Fenster, in das eingefuegt wird
     bool prevElevated = false;
+    std::wstring selection;                          // beim Oeffnen der Schnellauswahl uebernommene Markierung (ersetzt {clip})
     bool hotkeyOk = false;
     bool quitting = false;
     NOTIFYICONDATAW nid{};
@@ -99,7 +108,7 @@ void MakeFonts() {
     };
     g.fTitle = make(20, FW_SEMIBOLD); g.fHead = make(11, FW_SEMIBOLD); g.fBody = make(10, FW_NORMAL);
     g.fSmall = make(9, FW_NORMAL); g.fBold = make(10, FW_SEMIBOLD);
-    for (HWND h : { g.hSearch, g.hEditTitle, g.hEditText, g.popupSearch }) if (h) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(g.fBody), TRUE);
+    for (HWND h : { g.hSearch, g.hEditTitle, g.hEditFolder, g.hEditText, g.popupSearch }) if (h) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(g.fBody), TRUE);
 }
 
 void DrawText2(HDC dc, HFONT f, COLORREF c, RECT r, const std::wstring& t, UINT flags = DT_LEFT | DT_TOP | DT_SINGLELINE) {
@@ -149,8 +158,57 @@ bool IsElevatedWindow(HWND h) {                      // laeuft das Zielfenster m
     return elevated;
 }
 
+// Holt ein Fenster zuverlaessig in den Vordergrund (Windows verweigert SetForegroundWindow oft, wenn die letzte Eingabe schon etwas her ist,
+// z. B. nach dem Uebernehmen der Markierung): kurz an die Eingabe des aktuellen Vordergrundfensters ankoppeln.
+void ForceForeground(HWND h) {
+    if (!h || !IsWindow(h)) return;
+    HWND fg = GetForegroundWindow();
+    const DWORD me = GetCurrentThreadId(), fgThread = fg ? GetWindowThreadProcessId(fg, nullptr) : 0;
+    const bool attach = fgThread && fgThread != me && AttachThreadInput(me, fgThread, TRUE);
+    BringWindowToTop(h);
+    SetForegroundWindow(h);
+    if (attach) AttachThreadInput(me, fgThread, FALSE);
+}
+
 // ---------- Daten ----------
-void SaveHistoryIfWanted() { if (g.cfg.saveHistory) clip::SaveHistory(g.store.history); }
+void SaveHistoryIfWanted() {
+    if (!g.cfg.saveHistory) return;
+    std::vector<std::wstring> texts;                  // Bilder werden nie gespeichert
+    for (const clip::HistoryItem& h : g.store.history) if (!h.IsImage()) texts.push_back(h.text);
+    clip::SaveHistory(texts);
+}
+
+// Vorschaubilder: eines je Verlaufseintrag, werden beim Entfernen des Eintrags freigegeben
+void FreeThumbs() {
+    for (auto& t : g.thumbs) if (t.second.bmp) DeleteObject(t.second.bmp);
+    g.thumbs.clear();
+}
+
+void PruneThumbs() {
+    for (auto it = g.thumbs.begin(); it != g.thumbs.end();) {
+        const unsigned id = it->first;
+        const bool alive = std::any_of(g.store.history.begin(), g.store.history.end(), [id](const clip::HistoryItem& h) { return h.id == id; });
+        if (!alive) { if (it->second.bmp) DeleteObject(it->second.bmp); it = g.thumbs.erase(it); } else ++it;
+    }
+}
+
+const Thumb& GetThumb(const clip::HistoryItem& it) {
+    auto f = g.thumbs.find(it.id);
+    if (f != g.thumbs.end()) return f->second;
+    Thumb t;
+    t.bmp = clip::MakeThumbnail(it.png, S(110), S(64), t.w, t.h);
+    return g.thumbs.emplace(it.id, t).first->second;
+}
+
+void DrawThumbBitmap(HDC dc, const Thumb& t, int x, int y, int w, int h) {
+    if (!t.bmp) return;
+    HDC m = CreateCompatibleDC(dc);
+    HGDIOBJ old = SelectObject(m, t.bmp);
+    SetStretchBltMode(dc, HALFTONE);
+    StretchBlt(dc, x, y, w, h, m, 0, 0, t.w, t.h, SRCCOPY);
+    SelectObject(m, old);
+    DeleteDC(m);
+}
 
 void SavePromptsNow() { if (!clip::SavePrompts(g.store.prompts)) SetStatus(L"Die Prompts konnten nicht gespeichert werden.", kRed); }
 
@@ -158,23 +216,47 @@ void Layout();
 
 void OnClipboardChanged() {
     if (GetTickCount() < g.suppressUntil) return;
+    if (clip::ClipboardIsExcluded()) return;
+    const std::wstring owner = clip::ClipboardOwnerExe();
+    bool changed = false;
     std::wstring text;
-    const bool excluded = clip::ClipboardIsExcluded();
-    if (excluded || !clip::ReadClipboardText(text)) return;
-    if (clip::ShouldSkip(text, excluded, clip::ClipboardOwnerExe())) return;
-    if (clip::AddHistory(g.store, text)) {
+    if (clip::ReadClipboardText(text)) {
+        const clip::SkipReason why = clip::SkipReasonFor(text, false, owner);
+        if (why == clip::SkipReason::Secret) {          // Schluessel/Token nie speichern, aber sagen, dass es so ist
+            SetStatus(L"Ein " + clip::DetectSecret(text) + L" wurde erkannt und nicht gespeichert.", kOrange);
+            return;
+        }
+        if (why != clip::SkipReason::None) return;
+        changed = clip::AddHistory(g.store, text);
+    } else if (clip::ClipboardHasImage() && !clip::IsPasswordManagerExe(owner)) {
+        std::string png; int w = 0, h = 0;
+        if (clip::ReadClipboardImage(png, w, h)) changed = clip::AddImage(g.store, std::move(png), w, h);
+    }
+    if (changed) {
+        PruneThumbs();
         SaveHistoryIfWanted();
         Layout();                                     // Zeilenliste neu aufbauen, sonst bleibt die Anzeige alt
         InvalidateRect(g.hwnd, nullptr, FALSE);
     }
 }
 
+// Aufbewahrung: alte Eintraege nach der gewaehlten Zeit entfernen (jede Minute geprueft)
+void PurgeNow() {
+    if (clip::PurgeHistory(g.store, clip::RetentionMs(g.cfg.retention)) == 0) return;
+    PruneThumbs();
+    SaveHistoryIfWanted();
+    Layout();
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
 // ---------- Layout Hauptfenster ----------
 int CardWidth() { return g.list.right - g.list.left - S(14); }
 
 bool RowMatches(size_t i) {
-    if (g.tab == T_HISTORY) return clip::Matches(g.store.history[i], g.filter);
-    return clip::Matches(g.store.prompts[i].title + L" " + g.store.prompts[i].text, g.filter);
+    if (g.tab == T_HISTORY) return clip::Matches(g.store.history[i].text, g.filter);
+    const clip::Prompt& p = g.store.prompts[i];
+    if (!g.folderFilter.empty() && p.folder != g.folderFilter) return false;
+    return clip::Matches(p.title + L" " + p.text + L" " + p.folder, g.filter);
 }
 
 void BuildRows() {
@@ -183,7 +265,7 @@ void BuildRows() {
     const size_t n = g.tab == T_HISTORY ? g.store.history.size() : g.store.prompts.size();
     for (size_t i = 0; i < n; ++i) {
         if (!RowMatches(i)) continue;
-        Row r; r.idx = i; r.top = y; r.height = S(66);
+        Row r; r.idx = i; r.top = y; r.height = (g.tab == T_HISTORY && g.store.history[i].IsImage()) ? S(88) : S(66);
         g.rows.push_back(r);
         y += r.height + S(8);
     }
@@ -193,12 +275,14 @@ void BuildRows() {
 void PositionEditControls() {
     const bool open = g.edit.open;
     ShowWindow(g.hEditTitle, open ? SW_SHOW : SW_HIDE);
+    ShowWindow(g.hEditFolder, open ? SW_SHOW : SW_HIDE);
     ShowWindow(g.hEditText, open ? SW_SHOW : SW_HIDE);
     ShowWindow(g.hSearch, open ? SW_HIDE : SW_SHOW);
     if (!open) return;
     const RECT& c = g.editCard;
     SetWindowPos(g.hEditTitle, nullptr, c.left + S(24), c.top + S(86), c.right - c.left - S(48), S(30), SWP_NOZORDER);
-    SetWindowPos(g.hEditText, nullptr, c.left + S(24), c.top + S(150), c.right - c.left - S(48), c.bottom - c.top - S(150) - S(86), SWP_NOZORDER);
+    SetWindowPos(g.hEditFolder, nullptr, c.left + S(24), c.top + S(150), c.right - c.left - S(48), S(30), SWP_NOZORDER);
+    SetWindowPos(g.hEditText, nullptr, c.left + S(24), c.top + S(214), c.right - c.left - S(48), c.bottom - c.top - S(214) - S(86), SWP_NOZORDER);
 }
 
 void Layout() {
@@ -216,11 +300,39 @@ void Layout() {
     g.actionBtn = { right - aw, ty, right, ty + th };
     ReleaseDC(g.hwnd, dc);
     g.searchRc = { m, ty + th + S(14), right, ty + th + S(14) + S(36) };
+    // Ordner-Chips (nur im Reiter Prompts, wenn es Ordner gibt)
+    g.chipRects.clear(); g.chipNames.clear(); g.chipsRc = RECT{};
+    int listTop = g.searchRc.bottom + S(14);
+    if (g.tab == T_PROMPTS) {
+        const std::vector<std::wstring> folders = clip::FolderNames(g.store.prompts);
+        if (!g.folderFilter.empty() && std::find(folders.begin(), folders.end(), g.folderFilter) == folders.end()) g.folderFilter.clear();   // Ordner gibt es nicht mehr
+        if (!folders.empty()) {
+            std::vector<std::wstring> names = { L"" };
+            names.insert(names.end(), folders.begin(), folders.end());
+            const int chH = S(32), chY = g.searchRc.bottom + S(12);
+            int x = m;
+            HDC cdc = GetDC(g.hwnd);
+            for (const std::wstring& n : names) {
+                const std::wstring label = n.empty() ? L"Alle" : n;
+                const int cw = TextWidth(cdc, g.fSmall, label) + S(28);
+                if (x + cw > right) break;
+                g.chipRects.push_back({ x, chY, x + cw, chY + chH });
+                g.chipNames.push_back(n);
+                x += cw + S(8);
+            }
+            ReleaseDC(g.hwnd, cdc);
+            g.chipsRc = { m, chY, right, chY + chH };
+            listTop = chY + chH + S(12);
+        }
+    }
     g.footer = { m, cr.bottom - S(34), right, cr.bottom - S(8) };
-    const int setH = S(40), setTop = g.footer.top - S(10) - setH;
+    const int setH = S(40), setGapY = S(8), row2Top = g.footer.top - S(10) - setH, row1Top = row2Top - setGapY - setH;
     const int gap = S(10), setW = (right - m - 2 * gap) / 3;
-    for (int i = 0; i < 3; ++i) g.set[i] = { m + i * (setW + gap), setTop, m + i * (setW + gap) + setW, setTop + setH };
-    g.list = { m, g.searchRc.bottom + S(14), right, setTop - S(14) };
+    for (int i = 0; i < 6; ++i) {
+        const int top = i < 3 ? row1Top : row2Top, col = i % 3;
+        g.set[i] = { m + col * (setW + gap), top, m + col * (setW + gap) + setW, top + setH };
+    }
+    g.list = { m, listTop, right, row1Top - S(14) };
     // Prompt-Editor (Karte ueber der Liste)
     g.editCard = { m, S(84), right, cr.bottom - S(50) };
     const int bh = S(40), bw = S(130);
@@ -237,6 +349,7 @@ void Layout() {
 void OpenEditor(int index) {
     g.edit.open = true; g.edit.index = index;
     SetWindowTextW(g.hEditTitle, index >= 0 ? g.store.prompts[static_cast<size_t>(index)].title.c_str() : L"");
+    SetWindowTextW(g.hEditFolder, index >= 0 ? g.store.prompts[static_cast<size_t>(index)].folder.c_str() : g.folderFilter.c_str());   // neuer Prompt: aktueller Ordner-Chip vorbelegt
     std::wstring text = index >= 0 ? g.store.prompts[static_cast<size_t>(index)].text : L"";
     std::wstring crlf;                                    // EDIT-Steuerelemente erwarten \r\n
     for (size_t i = 0; i < text.size(); ++i) { if (text[i] == L'\n' && (i == 0 || text[i - 1] != L'\r')) crlf += L'\r'; crlf += text[i]; }
@@ -252,7 +365,11 @@ void CloseEditor(bool save) {
         if (text.find_first_not_of(L" \t\r\n") == std::wstring::npos) { SetStatus(L"Der Prompt braucht einen Text.", kOrange); return; }
         clip::Prompt p = clip::MakePrompt(text);
         if (title.find_first_not_of(L" \t") != std::wstring::npos) p.title = title;
-        if (g.edit.index >= 0) g.store.prompts[static_cast<size_t>(g.edit.index)] = p; else g.store.prompts.push_back(p);
+        std::wstring folder = GetEditText(g.hEditFolder);
+        const size_t fa = folder.find_first_not_of(L" \t"), fb = folder.find_last_not_of(L" \t");
+        p.folder = fa == std::wstring::npos ? L"" : folder.substr(fa, fb - fa + 1);
+        if (g.edit.index >= 0) { p.lastUsed = g.store.prompts[static_cast<size_t>(g.edit.index)].lastUsed; g.store.prompts[static_cast<size_t>(g.edit.index)] = p; }
+        else g.store.prompts.push_back(p);
         SavePromptsNow();
         SetStatus(L"Prompt gespeichert.", kGreen);
     }
@@ -271,6 +388,18 @@ void CopyToClipboard(const std::wstring& text, const std::wstring& okMsg) {
     else SetStatus(L"Die Zwischenablage ist gerade belegt – bitte noch einmal versuchen.", kOrange);
 }
 
+void CopyImageToClipboard(const std::string& png, const std::wstring& okMsg) {
+    g.suppressUntil = GetTickCount() + 1500;
+    if (clip::WriteClipboardImage(png)) SetStatus(okMsg, kGreen);
+    else SetStatus(L"Das Bild konnte nicht in die Zwischenablage gelegt werden.", kOrange);
+}
+
+void MarkUsed(size_t promptIdx) {                    // fuer die Reihenfolge "zuletzt benutzt zuerst" in der Schnellauswahl
+    if (promptIdx >= g.store.prompts.size()) return;
+    g.store.prompts[promptIdx].lastUsed = clip::NowSeconds();
+    clip::SavePrompts(g.store.prompts);
+}
+
 void ToggleAutostart() {
     wchar_t exe[MAX_PATH * 2] = {};
     GetModuleFileNameW(nullptr, exe, MAX_PATH * 2);
@@ -282,8 +411,62 @@ void ToggleAutostart() {
 void ToggleSaveHistory() {
     g.cfg.saveHistory = !g.cfg.saveHistory;
     clip::SaveSettings(g.cfg);
-    if (g.cfg.saveHistory) { clip::SaveHistory(g.store.history); SetStatus(L"Verlauf wird verschlüsselt gespeichert.", kGreen); }
+    if (g.cfg.saveHistory) { SaveHistoryIfWanted(); SetStatus(L"Verlauf wird verschlüsselt gespeichert.", kGreen); }
     else { clip::DeleteHistoryFile(); SetStatus(L"Verlauf bleibt nur im Arbeitsspeicher; die gespeicherte Datei wurde gelöscht.", kGreen); }
+}
+
+void CycleRetention() {
+    g.cfg.retention = (g.cfg.retention + 1) % 3;
+    clip::SaveSettings(g.cfg);
+    PurgeNow();
+    SetStatus(g.cfg.retention == 0 ? L"Der Verlauf wird nicht automatisch gelöscht."
+                                   : std::wstring(L"Einträge im Verlauf werden nach ") + clip::RetentionName(g.cfg.retention) + L" gelöscht.", kGreen);
+}
+
+void ToggleCapture() {
+    g.cfg.captureSelection = !g.cfg.captureSelection;
+    clip::SaveSettings(g.cfg);
+    SetStatus(g.cfg.captureSelection ? L"Markierter Text wird beim Öffnen der Schnellauswahl automatisch übernommen (nicht in Terminals)."
+                                     : L"Markierung wird nicht mehr automatisch übernommen: vorher Strg+C drücken.", kGreen);
+}
+
+void ExportPromptsToFile() {
+    wchar_t file[MAX_PATH] = L"Clip-Prompts.txt";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = g.hwnd;
+    ofn.lpstrFilter = L"Textdatei (*.txt)\0*.txt\0\0"; ofn.lpstrFile = file; ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"txt"; ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    if (!GetSaveFileNameW(&ofn)) return;
+    if (clip::WriteTextFile(file, clip::ExportPrompts(g.store.prompts))) SetStatus(std::to_wstring(g.store.prompts.size()) + L" Prompts exportiert.", kGreen);
+    else SetStatus(L"Die Datei konnte nicht geschrieben werden.", kRed);
+}
+
+void ImportPromptsFromFile() {
+    wchar_t file[MAX_PATH] = L"";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = g.hwnd;
+    ofn.lpstrFilter = L"Textdatei (*.txt)\0*.txt\0Alle Dateien\0*.*\0\0"; ofn.lpstrFile = file; ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn)) return;
+    std::wstring text;
+    if (!clip::ReadTextFile(file, text)) { SetStatus(L"Die Datei konnte nicht gelesen werden.", kRed); return; }
+    const std::vector<clip::Prompt> imported = clip::ImportPrompts(text);
+    if (imported.empty()) { SetStatus(L"In der Datei wurden keine Prompts gefunden.", kOrange); return; }
+    const int added = clip::MergePrompts(g.store.prompts, imported);
+    if (added > 0) SavePromptsNow();
+    Layout();
+    SetStatus(std::to_wstring(added) + L" neue Prompts importiert" + (added < static_cast<int>(imported.size()) ? L" (Doppelte übersprungen)." : L"."), added ? kGreen : kTextDim);
+}
+
+void ExportImportMenu() {
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, 1, L"Prompts exportieren …");
+    AppendMenuW(m, MF_STRING, 2, L"Prompts importieren …");
+    POINT pt{ g.set[5].left, g.set[5].top };
+    ClientToScreen(g.hwnd, &pt);
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_LEFTALIGN, pt.x, pt.y - S(4), 0, g.hwnd, nullptr);
+    DestroyMenu(m);
+    if (cmd == 1) ExportPromptsToFile(); else if (cmd == 2) ImportPromptsFromFile();
 }
 
 bool RegisterHotkeyFor(int index) {
@@ -318,18 +501,19 @@ void ActivateRow(int rowIndex, int part) {
     if (rowIndex < 0 || rowIndex >= static_cast<int>(g.rows.size())) return;
     const size_t i = g.rows[static_cast<size_t>(rowIndex)].idx;
     if (g.tab == T_HISTORY) {
-        if (part == 0) CopyToClipboard(g.store.history[i], L"In die Zwischenablage kopiert.");
-        else if (part == 1) { g.store.prompts.push_back(clip::MakePrompt(g.store.history[i])); SavePromptsNow(); SetStatus(L"Als Prompt gespeichert (Reiter „Prompts“).", kGreen); }
-        else { clip::RemoveHistory(g.store, i); SaveHistoryIfWanted(); Layout(); }
+        const clip::HistoryItem& it = g.store.history[i];
+        if (part == 0) { if (it.IsImage()) CopyImageToClipboard(it.png, L"Bild in die Zwischenablage kopiert."); else CopyToClipboard(it.text, L"In die Zwischenablage kopiert."); }
+        else if (part == 1) { if (!it.IsImage()) { g.store.prompts.push_back(clip::MakePrompt(it.text)); SavePromptsNow(); SetStatus(L"Als Prompt gespeichert (Reiter „Prompts“).", kGreen); } }
+        else { clip::RemoveHistory(g.store, i); PruneThumbs(); SaveHistoryIfWanted(); Layout(); }
     } else {
-        if (part == 0) CopyToClipboard(clip::Expand(g.store.prompts[i].text, CurrentClipText()), L"Prompt kopiert ({clip} ersetzt).");
+        if (part == 0) { CopyToClipboard(clip::Expand(g.store.prompts[i].text, CurrentClipText()), L"Prompt kopiert ({clip}, {datum} … ersetzt)."); MarkUsed(i); }
         else if (part == 1) OpenEditor(static_cast<int>(i));
         else ConfirmDeletePrompt(i);
     }
 }
 
 void SetTab(Tab t) {
-    g.tab = t; g.scroll = 0;
+    g.tab = t; g.scroll = 0; g.folderFilter.clear();
     SetWindowTextW(g.hSearch, L"");
     g.filter.clear();
     Layout();
@@ -347,6 +531,11 @@ void DrawButton(HDC dc, const RECT& r, const std::wstring& text, bool primary, b
                             : (pressed ? Blend(kCard, RGB(0, 0, 0), 18) : hot ? kCardHover : kCard);
     FillRound(dc, r, S(12), fill, primary ? fill : (hot ? kBorderHot : kBorder));
     DrawText2(dc, g.fBold, primary ? RGB(4, 24, 30) : kText, r, text, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+void DrawChip(HDC dc, const RECT& r, const std::wstring& text, bool active, bool hot) {
+    FillRound(dc, r, S(10), active ? Blend(kCard, kClip, 22) : (hot ? kCardHover : kCard), active ? kClip : (hot ? kBorderHot : kBorder));
+    DrawText2(dc, g.fSmall, active || hot ? kText : kTextDim, r, text, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 }
 
 void DrawStar(HDC dc, const RECT& r, COLORREF c, bool filled) {
@@ -402,9 +591,11 @@ void PaintEditor(HDC dc, const RECT& cr) {
     const RECT& c = g.editCard;
     DrawText2(dc, g.fHead, kText, { c.left + S(24), c.top + S(20), c.right - S(24), c.top + S(48) }, g.edit.index >= 0 ? L"Prompt bearbeiten" : L"Neuer Prompt");
     DrawText2(dc, g.fSmall, kTextDim, { c.left + S(24), c.top + S(62), c.right - S(24), c.top + S(84) }, L"Titel");
-    DrawText2(dc, g.fSmall, kTextDim, { c.left + S(24), c.top + S(126), c.right - S(24), c.top + S(148) }, L"Text  –  {clip} wird beim Einfügen durch die Zwischenablage ersetzt");
+    DrawText2(dc, g.fSmall, kTextDim, { c.left + S(24), c.top + S(126), c.right - S(24), c.top + S(148) }, L"Ordner (optional, z. B. „Programmieren“)");
+    DrawText2(dc, g.fSmall, kTextDim, { c.left + S(24), c.top + S(190), c.right - S(24), c.top + S(212) }, L"Text  –  {clip} = Zwischenablage oder Markierung, {datum}, {zeit}, {wochentag}");
     FillRound(dc, { c.left + S(20), c.top + S(82), c.right - S(20), c.top + S(120) }, S(10), Blend(kCard, kBackground, 30), kBorder);
-    FillRound(dc, { c.left + S(20), c.top + S(146), c.right - S(20), c.bottom - S(82) }, S(10), Blend(kCard, kBackground, 30), kBorder);
+    FillRound(dc, { c.left + S(20), c.top + S(146), c.right - S(20), c.top + S(184) }, S(10), Blend(kCard, kBackground, 30), kBorder);
+    FillRound(dc, { c.left + S(20), c.top + S(210), c.right - S(20), c.bottom - S(82) }, S(10), Blend(kCard, kBackground, 30), kBorder);
     DrawButton(dc, g.editCancel, L"Abbrechen", false, g.hover == H_EDIT_CANCEL, g.press == H_EDIT_CANCEL && g.hover == H_EDIT_CANCEL);
     DrawButton(dc, g.editSave, L"Speichern", true, g.hover == H_EDIT_SAVE, g.press == H_EDIT_SAVE && g.hover == H_EDIT_SAVE);
 }
@@ -424,6 +615,8 @@ void Paint(HDC dc, const RECT& cr) {
     // Suchfeld (das EDIT liegt darueber)
     FillRound(dc, g.searchRc, S(12), Blend(kCard, kBackground, 30), kBorder);
     DrawText2(dc, g.fSmall, kTextDim, { g.searchRc.left + S(16), g.searchRc.top, g.searchRc.left + S(80), g.searchRc.bottom }, L"Suchen:", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    for (size_t ci = 0; ci < g.chipRects.size(); ++ci)                                  // Ordner-Chips
+        DrawChip(dc, g.chipRects[ci], g.chipNames[ci].empty() ? L"Alle" : g.chipNames[ci], g.chipNames[ci] == g.folderFilter, g.hover == H_CHIP_BASE + static_cast<int>(ci));
 
     // Liste
     SaveDC(dc);
@@ -448,13 +641,24 @@ void Paint(HDC dc, const RECT& cr) {
         FillRound(dc, card, S(14), (hot || h1 || h2) ? kCardHover : kCard, (hot || h1 || h2) ? kBorderHot : kBorder);
         const int tx = card.left + S(18), tr = b1.left - S(12);
         if (g.tab == T_HISTORY) {
-            DrawText2(dc, g.fBody, kText, { tx, card.top + S(10), tr, card.bottom - S(10) }, clip::Preview(g.store.history[r.idx], 160), DT_LEFT | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
-            FillRound(dc, b1, S(10), h1 ? kCardHover : kCard, h1 ? kBorderHot : kBorder);
-            DrawStar(dc, b1, h1 ? kClip : kTextDim, false);
+            const clip::HistoryItem& hi = g.store.history[r.idx];
+            if (hi.IsImage()) {                                                         // Bild: Vorschau links, Beschriftung rechts daneben, kein Stern
+                const Thumb& t = GetThumb(hi);
+                int textLeft = tx;
+                if (t.bmp) { DrawThumbBitmap(dc, t, tx, card.top + (r.height - t.h) / 2, t.w, t.h); textLeft = tx + t.w + S(16); }
+                DrawText2(dc, g.fBold, kText, { textLeft, card.top + S(20), b2.left - S(12), card.top + S(20) + S(26) }, hi.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                DrawText2(dc, g.fSmall, kTextDim, { textLeft, card.top + S(20) + S(26), b2.left - S(12), card.bottom - S(8) },
+                          (hi.png.size() < 1024 ? std::wstring(L"< 1 KB") : std::to_wstring(hi.png.size() / 1024) + L" KB") + L"  ·  klicken kopiert das Bild", DT_LEFT | DT_TOP | DT_SINGLELINE);
+            } else {
+                DrawText2(dc, g.fBody, kText, { tx, card.top + S(10), tr, card.bottom - S(10) }, clip::Preview(hi.text, 160), DT_LEFT | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
+                FillRound(dc, b1, S(10), h1 ? kCardHover : kCard, h1 ? kBorderHot : kBorder);
+                DrawStar(dc, b1, h1 ? kClip : kTextDim, false);
+            }
         } else {
             const clip::Prompt& p = g.store.prompts[r.idx];
             DrawText2(dc, g.fBold, kText, { tx, card.top + S(10), tr, card.top + S(10) + S(24) }, p.title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            DrawText2(dc, g.fSmall, kTextDim, { tx, card.top + S(10) + S(24), tr, card.bottom - S(8) }, clip::Preview(p.text, 140), DT_LEFT | DT_TOP | DT_WORDBREAK | DT_END_ELLIPSIS);
+            DrawText2(dc, g.fSmall, kTextDim, { tx, card.top + S(10) + S(24), tr, card.bottom - S(8) },
+                      (p.folder.empty() ? L"" : p.folder + L"  ·  ") + clip::Preview(p.text, 140), DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
             FillRound(dc, b1, S(10), h1 ? kCardHover : kCard, h1 ? kBorderHot : kBorder);
             DrawPencil(dc, b1, h1 ? kClip : kTextDim);
         }
@@ -471,10 +675,13 @@ void Paint(HDC dc, const RECT& cr) {
     }
     RestoreDC(dc, -1);
 
-    // Einstellungen als drei Schalter-Pillen
-    DrawPill(dc, g.set[0], std::wstring(L"Mit Windows starten: ") + (g.cfg.autostart ? L"an" : L"aus"), g.cfg.autostart, g.hover == H_SET_AUTOSTART, kClip);
-    DrawPill(dc, g.set[1], std::wstring(L"Verlauf speichern: ") + (g.cfg.saveHistory ? L"an" : L"aus"), g.cfg.saveHistory, g.hover == H_SET_SAVE, kClip);
-    DrawPill(dc, g.set[2], std::wstring(L"Kürzel: ") + clip::HotkeyPreset(g.cfg.hotkey).name, false, g.hover == H_SET_HOTKEY, kClip);
+    // Einstellungen als sechs Schalter-Pillen (zwei Zeilen)
+    DrawPill(dc, g.set[0], std::wstring(L"Mit Windows starten: ") + (g.cfg.autostart ? L"an" : L"aus"), g.cfg.autostart, g.hover == H_SET_BASE, kClip);
+    DrawPill(dc, g.set[1], std::wstring(L"Verlauf speichern: ") + (g.cfg.saveHistory ? L"an" : L"aus"), g.cfg.saveHistory, g.hover == H_SET_BASE + 1, kClip);
+    DrawPill(dc, g.set[2], std::wstring(L"Kürzel: ") + clip::HotkeyPreset(g.cfg.hotkey).name, false, g.hover == H_SET_BASE + 2, kClip);
+    DrawPill(dc, g.set[3], std::wstring(L"Verlauf löschen nach: ") + clip::RetentionName(g.cfg.retention), g.cfg.retention > 0, g.hover == H_SET_BASE + 3, kClip);
+    DrawPill(dc, g.set[4], std::wstring(L"Markierung übernehmen: ") + (g.cfg.captureSelection ? L"an" : L"aus"), g.cfg.captureSelection, g.hover == H_SET_BASE + 4, kClip);
+    DrawPill(dc, g.set[5], L"Prompts: Export / Import", false, g.hover == H_SET_BASE + 5, kClip);
 
     DrawText2(dc, g.fSmall, kTextDim, { g.footer.left, g.footer.top, g.footer.left + S(200), g.footer.bottom }, L"© 2026 Duncan · v" APP_VERSION, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawText2(dc, g.fSmall, g.statusColor, { g.footer.left + S(210), g.footer.top, g.footer.right, g.footer.bottom }, g.status, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -492,7 +699,8 @@ int HitTest(POINT p) {
     if (PtInRect(&g.tabHistory, p)) return H_TAB_HISTORY;
     if (PtInRect(&g.tabPrompts, p)) return H_TAB_PROMPTS;
     if (PtInRect(&g.actionBtn, p)) return H_ACTION;
-    for (int i = 0; i < 3; ++i) if (PtInRect(&g.set[i], p)) return H_SET_AUTOSTART + i;
+    for (size_t i = 0; i < g.chipRects.size(); ++i) if (PtInRect(&g.chipRects[i], p)) return H_CHIP_BASE + static_cast<int>(i);
+    for (int i = 0; i < 6; ++i) if (PtInRect(&g.set[i], p)) return H_SET_BASE + i;
     if (PtInRect(&g.list, p) && p.x < g.list.left + CardWidth()) {
         const int y = static_cast<int>(p.y - g.list.top) + g.scroll;
         for (size_t i = 0; i < g.rows.size(); ++i) {
@@ -502,7 +710,8 @@ int HitTest(POINT p) {
             RECT b1, b2;
             RowButtons(card, b1, b2);
             const int base = H_ROW_BASE + static_cast<int>(i) * 3;
-            if (PtInRect(&b1, p)) return base + 1;
+            const bool image = g.tab == T_HISTORY && g.store.history[r.idx].IsImage();     // Bilder haben keinen Stern
+            if (PtInRect(&b1, p)) return image ? base : base + 1;
             if (PtInRect(&b2, p)) return base + 2;
             return base;
         }
@@ -526,9 +735,20 @@ void Activate(int id) {
         if (g.tab == T_HISTORY) { g.store.history.clear(); SaveHistoryIfWanted(); Layout(); SetStatus(L"Verlauf geleert.", kGreen); }
         else OpenEditor(-1);
     }
-    else if (id == H_SET_AUTOSTART) ToggleAutostart();
-    else if (id == H_SET_SAVE) ToggleSaveHistory();
-    else if (id == H_SET_HOTKEY) CycleHotkey();
+    else if (id >= H_CHIP_BASE && id < H_CHIP_BASE + 50) {
+        const size_t ci = static_cast<size_t>(id - H_CHIP_BASE);
+        if (ci < g.chipNames.size()) { g.folderFilter = g.chipNames[ci]; g.scroll = 0; Layout(); }
+    }
+    else if (id >= H_SET_BASE && id < H_SET_BASE + 6) {
+        switch (id - H_SET_BASE) {
+        case 0: ToggleAutostart(); break;
+        case 1: ToggleSaveHistory(); break;
+        case 2: CycleHotkey(); break;
+        case 3: CycleRetention(); break;
+        case 4: ToggleCapture(); break;
+        default: ExportImportMenu(); break;
+        }
+    }
     else if (id >= H_ROW_BASE) ActivateRow((id - H_ROW_BASE) / 3, (id - H_ROW_BASE) % 3);
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
@@ -549,10 +769,10 @@ int PopHeight() { return PopListTop() + kPopRows * PopRowH() + S(34); }
 
 void PopupRebuild() {
     pop.items.clear();
-    for (size_t i = 0; i < g.store.prompts.size(); ++i)
-        if (clip::Matches(g.store.prompts[i].title + L" " + g.store.prompts[i].text, pop.filter)) pop.items.push_back({ true, i });
+    for (size_t i : clip::PromptOrderByRecent(g.store.prompts))                        // zuletzt benutzte Prompts zuerst
+        if (clip::Matches(g.store.prompts[i].title + L" " + g.store.prompts[i].text + L" " + g.store.prompts[i].folder, pop.filter)) pop.items.push_back({ true, i });
     for (size_t i = 0; i < g.store.history.size(); ++i)
-        if (clip::Matches(g.store.history[i], pop.filter)) pop.items.push_back({ false, i });
+        if (clip::Matches(g.store.history[i].text, pop.filter)) pop.items.push_back({ false, i });
     pop.sel = pop.items.empty() ? 0 : std::clamp(pop.sel, 0, static_cast<int>(pop.items.size()) - 1);
     pop.scroll = std::clamp(pop.scroll, 0, std::max(0, static_cast<int>(pop.items.size()) - kPopRows));
 }
@@ -564,12 +784,13 @@ void PopupEnsureVisible() {
 
 void HidePopup() { if (g.popup) ShowWindow(g.popup, SW_HIDE); }
 
-void DoPaste(const std::wstring& text) {
+void DoPaste(const std::wstring& text, const std::string* png = nullptr) {
     std::wstring prev;
     const bool hadPrev = clip::ReadClipboardText(prev);
     g.suppressUntil = GetTickCount() + 2500;
-    if (!clip::WriteClipboardText(text)) { SetStatus(L"Die Zwischenablage ist gerade belegt – bitte noch einmal versuchen.", kOrange); return; }
-    if (g.prevFg && IsWindow(g.prevFg)) SetForegroundWindow(g.prevFg);
+    const bool written = png ? clip::WriteClipboardImage(*png) : clip::WriteClipboardText(text);
+    if (!written) { SetStatus(L"Die Zwischenablage ist gerade belegt – bitte noch einmal versuchen.", kOrange); return; }
+    if (g.prevFg && IsWindow(g.prevFg)) ForceForeground(g.prevFg);
     if (g.prevElevated) {            // Windows blockiert das automatische Einfuegen in Programme mit hoeheren Rechten
         SetStatus(L"Das Zielprogramm läuft mit Administratorrechten: Der Text liegt in der Zwischenablage, bitte Strg+V drücken.", kOrange);
         if (g.nid.cbSize) {
@@ -587,17 +808,37 @@ void DoPaste(const std::wstring& text) {
     SetTimer(g.hwnd, kTimerPaste, 130, nullptr);
 }
 
-void PopupChoose(int sel) {
+// copyOnly (Umschalt+Enter): nur in die Zwischenablage legen, nicht einfuegen
+void PopupChoose(int sel, bool copyOnly = false) {
     if (sel < 0 || sel >= static_cast<int>(pop.items.size())) return;
     const PopupItem it = pop.items[static_cast<size_t>(sel)];
-    std::wstring text = it.prompt ? clip::Expand(g.store.prompts[it.idx].text, CurrentClipText()) : g.store.history[it.idx];
+    std::wstring text;
+    std::string png;
+    bool isImage = false;
+    if (it.prompt) {
+        const std::wstring clipText = !g.selection.empty() ? g.selection : CurrentClipText();   // Markierung hat Vorrang vor der Zwischenablage
+        text = clip::Expand(g.store.prompts[it.idx].text, clipText);
+        MarkUsed(it.idx);
+    } else if (g.store.history[it.idx].IsImage()) { png = g.store.history[it.idx].png; isImage = true; }
+    else text = g.store.history[it.idx].text;
     HidePopup();
-    DoPaste(text);
+    if (copyOnly) {
+        g.suppressUntil = GetTickCount() + 1500;
+        if (isImage ? clip::WriteClipboardImage(png) : clip::WriteClipboardText(text)) SetStatus(L"In die Zwischenablage kopiert.", kGreen);
+        if (g.prevFg && IsWindow(g.prevFg)) ForceForeground(g.prevFg);
+        return;
+    }
+    DoPaste(text, isImage ? &png : nullptr);
 }
 
 void ShowPopup() {
     g.prevFg = GetForegroundWindow();
     g.prevElevated = g.prevFg && IsElevatedWindow(g.prevFg);
+    g.selection.clear();
+    if (g.cfg.captureSelection && g.prevFg && IsWindow(g.prevFg) && g.prevFg != g.hwnd && g.prevFg != g.popup && !g.prevElevated) {
+        g.suppressUntil = GetTickCount() + 3000;      // das Kopieren der Markierung soll nicht im Verlauf landen
+        clip::CaptureSelection(g.prevFg, g.selection);
+    }
     pop.filter.clear(); pop.sel = 0; pop.scroll = 0;
     SetWindowTextW(g.popupSearch, L"");
     PopupRebuild();
@@ -609,7 +850,7 @@ void ShowPopup() {
     int x = std::min<int>(pt.x, mi.rcWork.right - w - S(8)), y = std::min<int>(pt.y, mi.rcWork.bottom - h - S(8));
     x = std::max<int>(x, mi.rcWork.left + S(8)); y = std::max<int>(y, mi.rcWork.top + S(8));
     SetWindowPos(g.popup, HWND_TOPMOST, x, y, w, h, SWP_SHOWWINDOW);
-    SetForegroundWindow(g.popup);
+    ForceForeground(g.popup);
     SetFocus(g.popupSearch);
     InvalidateRect(g.popup, nullptr, TRUE);
 }
@@ -634,13 +875,28 @@ void PopupPaint(HDC dc, const RECT& cr) {
         if (it.prompt) {
             const clip::Prompt& p = g.store.prompts[it.idx];
             DrawText2(dc, g.fBold, kClip, { r.left + S(12), r.top + S(2), r.left + S(30), r.bottom }, L"★", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-            DrawText2(dc, g.fBold, kText, { r.left + S(32), r.top + S(3), r.right - S(10), r.top + S(23) }, p.title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            DrawText2(dc, g.fSmall, kTextDim, { r.left + S(32), r.top + S(22), r.right - S(10), r.bottom }, clip::Preview(p.text, 90), DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawText2(dc, g.fBold, kText, { r.left + S(32), r.top + S(3), r.right - S(70), r.top + S(23) }, p.title, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawText2(dc, g.fSmall, kTextDim, { r.left + S(32), r.top + S(22), r.right - S(70), r.bottom }, (p.folder.empty() ? L"" : p.folder + L"  ·  ") + clip::Preview(p.text, 90), DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
         } else {
-            DrawText2(dc, g.fBody, kText, { r.left + S(12), r.top, r.right - S(10), r.bottom }, clip::Preview(g.store.history[it.idx], 120), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            const clip::HistoryItem& hi = g.store.history[it.idx];
+            int textLeft = r.left + S(12);
+            if (hi.IsImage()) {
+                const Thumb& t = GetThumb(hi);
+                if (t.bmp) {                                                      // kleine Vorschau, auf Zeilenhoehe verkleinert
+                    const int th = r.bottom - r.top - S(8), tw = std::max(1, t.w * th / std::max(1, t.h));
+                    DrawThumbBitmap(dc, t, textLeft, r.top + S(4), std::min(tw, S(70)), th);
+                    textLeft += std::min(tw, S(70)) + S(12);
+                }
+            }
+            DrawText2(dc, g.fBody, kText, { textLeft, r.top, r.right - S(70), r.bottom }, clip::Preview(hi.text, 120), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         }
+        if (i < 8) DrawText2(dc, g.fSmall, kTextDim, { r.right - S(64), r.top, r.right - S(10), r.bottom }, L"Alt+" + std::to_wstring(i + 1), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
     }
-    DrawText2(dc, g.fSmall, kTextDim, { S(16), cr.bottom - S(28), cr.right - S(16), cr.bottom - S(6) }, L"Tippen zum Suchen  ·  ↑ ↓ wählen  ·  Enter einfügen  ·  Esc schließen", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    if (!g.selection.empty())
+        DrawText2(dc, g.fSmall, kClip, { S(16), cr.bottom - S(28), cr.right - S(16), cr.bottom - S(6) }, L"Markierung übernommen: " + clip::Preview(g.selection, 50), DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    else
+        DrawText2(dc, g.fSmall, kTextDim, { S(16), cr.bottom - S(28), cr.right - S(16), cr.bottom - S(6) },
+                  L"Enter einfügen  ·  Umschalt+Enter kopieren  ·  Alt+1–8  ·  ↑ ↓  ·  Esc", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 }
 
 LRESULT CALLBACK PopupEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
@@ -649,10 +905,11 @@ LRESULT CALLBACK PopupEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == VK_UP) { if (pop.sel > 0) --pop.sel; PopupEnsureVisible(); InvalidateRect(g.popup, nullptr, FALSE); return 0; }
         if (wp == VK_NEXT) { pop.sel = std::min<int>(pop.sel + kPopRows, std::max(0, static_cast<int>(pop.items.size()) - 1)); PopupEnsureVisible(); InvalidateRect(g.popup, nullptr, FALSE); return 0; }
         if (wp == VK_PRIOR) { pop.sel = std::max(0, pop.sel - kPopRows); PopupEnsureVisible(); InvalidateRect(g.popup, nullptr, FALSE); return 0; }
-        if (wp == VK_RETURN) { PopupChoose(pop.sel); return 0; }
-        if (wp == VK_ESCAPE) { HidePopup(); if (g.prevFg && IsWindow(g.prevFg)) SetForegroundWindow(g.prevFg); return 0; }
+        if (wp == VK_RETURN) { PopupChoose(pop.sel, (GetKeyState(VK_SHIFT) & 0x8000) != 0); return 0; }
+        if (wp == VK_ESCAPE) { HidePopup(); if (g.prevFg && IsWindow(g.prevFg)) ForceForeground(g.prevFg); return 0; }
     }
-    if (msg == WM_CHAR && (wp == VK_RETURN || wp == VK_ESCAPE)) return 0;   // kein Piepton
+    if (msg == WM_SYSKEYDOWN && wp >= '1' && wp <= '8') { PopupChoose(pop.scroll + static_cast<int>(wp - '1')); return 0; }   // Alt+1 ... Alt+8
+    if (msg == WM_SYSCHAR || (msg == WM_CHAR && (wp == VK_RETURN || wp == VK_ESCAPE))) return 0;       // kein Piepton
     return CallWindowProcW(g_oldPopupEdit, h, msg, wp, lp);
 }
 
@@ -778,6 +1035,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_DPICHANGED: {
         g.dpi = HIWORD(wp);
         MakeFonts();
+        FreeThumbs();                                       // Vorschaubilder haengen von der DPI ab
         const RECT* r = reinterpret_cast<RECT*>(lp);
         SetWindowPos(hwnd, nullptr, r->left, r->top, r->right - r->left, r->bottom - r->top, SWP_NOZORDER | SWP_NOACTIVATE);
         Layout();
@@ -831,9 +1089,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_TIMER:
         if (wp == kTimerStatus) { KillTimer(hwnd, kTimerStatus); g.status.clear(); InvalidateRect(hwnd, nullptr, FALSE); }
+        else if (wp == kTimerPurge) PurgeNow();
         else if (wp == kTimerPaste) {
             static int tries = 0;                           // erst einfuegen, wenn das Zielfenster wirklich vorn ist (hoechstens ~1,3 s warten)
-            if (g.prevFg && IsWindow(g.prevFg) && GetForegroundWindow() != g.prevFg && tries < 10) { ++tries; SetForegroundWindow(g.prevFg); return 0; }
+            if (g.prevFg && IsWindow(g.prevFg) && GetForegroundWindow() != g.prevFg && tries < 10) { ++tries; ForceForeground(g.prevFg); return 0; }
             tries = 0;
             KillTimer(hwnd, kTimerPaste);
             clip::SendPasteKeys();
@@ -855,6 +1114,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ShowWindow(hwnd, SW_HIDE);                          // im Infobereich weiterlaufen
         return 0;
     case WM_DESTROY:
+        FreeThumbs();
         RemoveClipboardFormatListener(hwnd);
         UnregisterHotKey(hwnd, kHotkeyId);
         Shell_NotifyIconW(NIM_DELETE, &g.nid);
@@ -905,6 +1165,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     g.dpi = GetDpiForWindow(g.hwnd);
     g.hSearch = MakeEdit(g.hwnd, kIdSearch, WS_VISIBLE | ES_AUTOHSCROLL, 200);
     g.hEditTitle = MakeEdit(g.hwnd, kIdEditTitle, ES_AUTOHSCROLL, 80);
+    g.hEditFolder = MakeEdit(g.hwnd, kIdEditFolder, ES_AUTOHSCROLL, 60);
     g.hEditText = MakeEdit(g.hwnd, kIdEditText, ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN, static_cast<int>(clip::kMaxTextLen));
     g.popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kPopupClass, L"", WS_POPUP, 0, 0, 100, 100, nullptr, nullptr, inst, nullptr);
     g.popupSearch = MakeEdit(g.popup, kIdPopupSearch, WS_VISIBLE | ES_AUTOHSCROLL, 200);
@@ -916,7 +1177,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     const bool firstRun = GetFileAttributesW((clip::DataDir() + L"\\settings.ini").c_str()) == INVALID_FILE_ATTRIBUTES;
     g.cfg = clip::LoadSettings();
     g.store.prompts = clip::LoadPrompts();
-    if (g.cfg.saveHistory) g.store.history = clip::LoadHistory();
+    if (g.cfg.saveHistory) {                         // gespeicherte Texte (neueste zuerst) wieder aufnehmen
+        const std::vector<std::wstring> saved = clip::LoadHistory();
+        for (size_t i = saved.size(); i-- > 0;) clip::AddHistory(g.store, saved[i]);
+    }
     if (firstRun && g.store.prompts.empty()) {       // drei Beispiele, damit der Reiter nicht leer startet
         g.store.prompts = {
             { L"Zusammenfassen", L"Fasse den folgenden Text kurz und klar zusammen:\r\n\r\n{clip}" },
@@ -928,6 +1192,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     }
     g.hotkeyOk = RegisterHotkeyFor(g.cfg.hotkey);
     AddClipboardFormatListener(g.hwnd);
+    SetTimer(g.hwnd, kTimerPurge, 60000, nullptr);   // Aufbewahrung: jede Minute alte Eintraege entfernen
     AddTray(inst);
     Layout();
     if (!g.hotkeyOk) SetStatus(L"Das Kürzel ist von einem anderen Programm belegt – unten „Kürzel“ klicken, um ein anderes zu wählen.", kOrange);

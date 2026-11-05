@@ -5,6 +5,14 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansClip.exe]
+## 0.2.0 | 2026-11-05
+- Neu: Schlüssel und Tokens (OpenAI, Anthropic, GitHub, AWS, Slack, Hugging Face, JWT, private Schlüssel u. a.), Zugangsdaten wie „password=…“, Kreditkartennummern und IBANs werden erkannt und nicht im Verlauf gespeichert. Das ist eine Mustererkennung, keine Garantie.
+- Neu: „Verlauf löschen nach“ (nie, 1 Stunde oder 1 Tag).
+- Neu: Markierter Text wird beim Öffnen der Schnellauswahl automatisch übernommen und ersetzt {clip}, ohne vorher Strg+C zu drücken (nicht in Terminals, abschaltbar).
+- Neu: Bilder im Verlauf (z. B. Screenshots) mit Vorschau, nur im Arbeitsspeicher, die letzten 10.
+- Neu: Prompts mit Ordnern (Filter-Chips), Export und Import als Textdatei sowie die Platzhalter {datum}, {zeit} und {wochentag}.
+- Schnellauswahl: zuletzt benutzte Prompts stehen oben, Alt+1 bis Alt+8 wählt direkt, Umschalt+Enter kopiert nur, ohne einzufügen.
+- Behoben: Kopien, die Windows als vertraulich markiert (z. B. aus Passwort-Managern), werden auch dann erkannt, wenn Windows die Markierung erst einen Moment später bereitstellt.
 ## 0.1.0 | 2026-11-05
 - Neu: Duncan's Clip, Zwischenablage-Verlauf und Prompts. Mit Strg+Alt+V (umschaltbar) öffnet sich in jedem Programm die Schnellauswahl: tippen zum Filtern, Enter fügt den Eintrag ein.
 - Prompts und Textbausteine mit Platzhalter {clip}, der beim Einfügen durch den aktuellen Zwischenablage-Text ersetzt wird (z. B. „Fasse zusammen: {clip}“). Drei Beispiele liegen beim ersten Start bereit.
