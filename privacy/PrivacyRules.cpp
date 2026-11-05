@@ -73,6 +73,11 @@ namespace {
             r = RegSetValueExW(k, op.name, 0, REG_SZ, reinterpret_cast<const BYTE*>(v.str.c_str()),
                                static_cast<DWORD>((v.str.size() + 1) * sizeof(wchar_t)));
         RegCloseKey(k);
+        if (r == ERROR_ACCESS_DENIED && op.hive == Hive::Machine) {   // Schluessel laesst sich oeffnen, der Wert aber nicht setzen (z. B. Dsh)
+            const bool ok = SystemWrite(op, v);
+            suite_safety::Log(L"PrivacyShield", std::wstring(L"Schreiben als Systemkonto (Fehler 5 umgangen) ") + OpId(op) + (ok ? L": ok" : L": FEHLER"));
+            if (ok) return true;
+        }
         if (r != ERROR_SUCCESS) {
             error = std::wstring(L"Schreiben nicht möglich (Fehler ") + std::to_wstring(r) + L"): " + OpId(op);
             return false;
@@ -92,6 +97,11 @@ namespace {
         if (r != ERROR_SUCCESS) { error = std::wstring(L"Löschen nicht möglich (Fehler ") + std::to_wstring(r) + L"): " + OpId(op); return false; }
         r = RegDeleteValueW(k, op.name);
         RegCloseKey(k);
+        if (r == ERROR_ACCESS_DENIED && op.hive == Hive::Machine) {
+            const bool ok = SystemDelete(op);
+            suite_safety::Log(L"PrivacyShield", std::wstring(L"Löschen als Systemkonto (Fehler 5 umgangen) ") + OpId(op) + (ok ? L": ok" : L": FEHLER"));
+            if (ok) return true;
+        }
         if (r != ERROR_SUCCESS && r != ERROR_FILE_NOT_FOUND) { error = std::wstring(L"Löschen nicht möglich (Fehler ") + std::to_wstring(r) + L"): " + OpId(op); return false; }
         return true;
     }
