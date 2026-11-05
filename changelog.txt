@@ -171,6 +171,8 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.3.4 | 2026-11-05
+- Neu: Stapelverarbeitung > Nach Aufnahmedatum umbenennen. Die Dateien heißen danach z. B. 2026-11-04_143015.jpg (EXIF-Aufnahmezeit, ohne EXIF das Änderungsdatum). Gilt für die Auswahl oder den ganzen Ordner; bei gleicher Sekunde folgt _2, _3. Vorhandene Dateien werden nie überschrieben, Bewertungen bleiben erhalten, und die letzte Umbenennung lässt sich im selben Menü rückgängig machen.
 ## 0.3.3 | 2026-11-05
 - Neu: Bewertungen mit 1 bis 5 Sternen. Taste 1 bis 5 bewertet die markierten Bilder (0 löscht die Bewertung), im Viewer Strg+1 bis 5. Die Sterne erscheinen auf dem Vorschaubild. Im Zahnrad-Menü filtern drei Einträge nach bewerteten Bildern, ab drei oder nur mit fünf Sternen. Die Bewertungen liegen in ratings.txt neben den Einstellungen, die Bilder bleiben unverändert; wird eine Datei verschoben oder umbenannt, gilt ihre Bewertung nicht mehr.
 ## 0.3.2 | 2026-11-04

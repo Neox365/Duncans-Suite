@@ -67,7 +67,7 @@ enum MenuId {
     MENU_SIZE_S = 100, MENU_SIZE_M, MENU_SIZE_L, MENU_OVERWRITE = 110, MENU_ABOUT = 120,
     MENU_SORT_NAME = 130, MENU_SORT_DATE, MENU_SORT_SIZE, MENU_SORT_TAKEN, MENU_SORT_DESC = 135,
     MENU_B_STRIP_COPY = 140, MENU_B_STRIP_OVERWRITE, MENU_B_RESIZE, MENU_B_ROT_CW, MENU_B_ROT_CCW,
-    MENU_B_DUPES, MENU_B_DUPES_END,
+    MENU_B_DUPES, MENU_B_DUPES_END, MENU_B_RENAME = 147, MENU_B_RENAME_UNDO,
     MENU_FILTER_GPS = 150, MENU_RATING_1 = 155, MENU_RATING_3, MENU_RATING_5,
     MENU_SLIDE_2 = 160, MENU_SLIDE_4, MENU_SLIDE_6, MENU_SLIDE_10,
     MENU_CONV_JPG = 170, MENU_CONV_PNG, MENU_CONV_WEBP, MENU_CONV_BMP,
@@ -488,6 +488,8 @@ private:
     void DeleteSelected();
     void ShowBatchMenu();
     void StartBatch(BatchKind kind);
+    void RenameByDate();                      // Dateien nach Aufnahmedatum benennen (YYYY-MM-DD_HHMMSS), mit Rueckgaengig
+    void UndoRename();
     void FinishBatch();
     void SaveSettingsNow() { SaveSettings(m_settings); }
 
@@ -645,6 +647,7 @@ private:
     std::atomic<bool> m_batchRunning{false};
     std::atomic<bool> m_batchCancel{false};
     BatchKind m_batchKind = BatchKind::StripCopy;
+    std::vector<std::pair<std::wstring, std::wstring>> m_lastRename;   // (alter Pfad, neuer Pfad) der letzten Umbenennung, fuer "Rueckgaengig"
     std::atomic<size_t> m_bDone{0}, m_bTotal{0}, m_bOk{0}, m_bFail{0}, m_bSkip{0}, m_bGps{0};
     std::mutex m_bErrMutex;
     std::wstring m_bErr;
@@ -2457,6 +2460,10 @@ void App::ShowBatchMenu() {
     AppendMenuW(m, MF_STRING, MENU_B_ROT_CW, L"Alle 90° nach rechts drehen");
     AppendMenuW(m, MF_STRING, MENU_B_ROT_CCW, L"Alle 90° nach links drehen");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, MENU_B_RENAME, L"Nach Aufnahmedatum umbenennen (2026-11-04_143015.jpg)");
+    if (!m_lastRename.empty())
+        AppendMenuW(m, MF_STRING, MENU_B_RENAME_UNDO, (L"Letzte Umbenennung rückgängig (" + std::to_wstring(m_lastRename.size()) + L" Dateien)").c_str());
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (m_dupRunning ? MF_GRAYED : 0), MENU_B_DUPES,
                 L"Doppelte und ähnliche Bilder im Ordner suchen");
     if (m_dupMode) AppendMenuW(m, MF_STRING, MENU_B_DUPES_END, L"Duplikatansicht beenden");
@@ -2472,6 +2479,8 @@ void App::ShowBatchMenu() {
         case MENU_B_RESIZE: StartBatch(BatchKind::Resize); break;
         case MENU_B_ROT_CW: StartBatch(BatchKind::RotateCw); break;
         case MENU_B_ROT_CCW: StartBatch(BatchKind::RotateCcw); break;
+        case MENU_B_RENAME: RenameByDate(); break;
+        case MENU_B_RENAME_UNDO: UndoRename(); break;
         case MENU_B_DUPES: StartDupSearch(); break;
         case MENU_B_DUPES_END: EndDupMode(); break;
     }
@@ -2591,6 +2600,80 @@ void App::StartBatch(BatchKind kind) {
         PostMessageW(hwnd, WM_APP_BATCHDONE, 0, 0);
     });
     SetStatus(L"Stapelverarbeitung läuft … (Esc bricht ab)");
+}
+
+// Benennt Bilder nach ihrem Aufnahmedatum um (EXIF, sonst Aenderungsdatum, jeweils in Ortszeit). Gilt fuer die Auswahl (ab 2 Bildern) oder den ganzen Ordner.
+// Zwei Bilder mit gleicher Sekunde bekommen _2, _3 ...; vorhandene Dateien werden nie ueberschrieben. Bewertungen ziehen mit.
+void App::RenameByDate() {
+    if (m_batchRunning || m_items.empty()) return;
+    std::vector<int> idx;
+    if (SelCount() > 1) { for (int i = 0; i < (int)m_items.size(); ++i) if (m_items[i].selected) idx.push_back(i); }
+    else for (int i = 0; i < (int)m_items.size(); ++i) idx.push_back(i);
+    for (int i : idx)
+        if (!m_items[i].metaDone) { SetStatus(L"Die Aufnahmedaten werden noch gelesen – bitte einen Moment warten und es dann noch einmal versuchen."); return; }
+
+    struct Job { std::wstring from, to, name; };
+    std::vector<Job> jobs;
+    std::unordered_map<std::wstring, int> used;   // neue Namen (klein) dieses Laufs
+    std::wstring base = m_folder;
+    if (!base.empty() && base.back() != L'\\') base += L'\\';
+    for (int i : idx) {
+        const Item& it = m_items[i];
+        ULONGLONG t = it.taken ? it.taken : it.mtime;
+        FILETIME ft{(DWORD)(t & 0xFFFFFFFF), (DWORD)(t >> 32)}, lf{};
+        SYSTEMTIME st{};
+        if (!FileTimeToLocalFileTime(&ft, &lf) || !FileTimeToSystemTime(&lf, &st)) continue;
+        wchar_t stamp[32];
+        swprintf_s(stamp, L"%04d-%02d-%02d_%02d%02d%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        const size_t dot = it.name.find_last_of(L'.');
+        const std::wstring ext = dot == std::wstring::npos ? L"" : it.name.substr(dot);
+        std::wstring name = stamp + ext;
+        if (_wcsicmp(name.c_str(), it.name.c_str()) == 0) { used[RatingKey(name)] = 1; continue; }   // heisst schon so
+        bool already = false;   // der Name mit Zaehler ist schon der eigene (zweiter Lauf aendert nichts mehr)
+        for (int n = 2;; ++n) {
+            const std::wstring key = RatingKey(name);
+            const bool own = _wcsicmp(name.c_str(), it.name.c_str()) == 0;
+            if (!used.count(key) && (own || GetFileAttributesW((base + name).c_str()) == INVALID_FILE_ATTRIBUTES)) { used[key] = 1; already = own; break; }
+            name = std::wstring(stamp) + L"_" + std::to_wstring(n) + ext;
+        }
+        if (already) continue;
+        jobs.push_back({it.path, base + name, name});
+    }
+    if (jobs.empty()) { SetStatus(L"Alle Dateien heißen schon nach ihrem Aufnahmedatum."); return; }
+    const std::wstring q = std::to_wstring(jobs.size()) + L" Dateien nach ihrem Aufnahmedatum umbenennen?\n\nBeispiel:\n" +
+                           FileNameOf(jobs[0].from) + L"\n→ " + jobs[0].name +
+                           L"\n\nVorhandene Dateien werden nie überschrieben. Die Umbenennung lässt sich im Stapel-Menü rückgängig machen.";
+    if (MessageBoxW(m_hwnd, q.c_str(), L"Umbenennen", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+
+    m_lastRename.clear();
+    int failed = 0;
+    for (const Job& j : jobs) {
+        if (MoveFileW(j.from.c_str(), j.to.c_str())) {
+            m_lastRename.emplace_back(j.from, j.to);
+            const auto r = m_ratings.find(RatingKey(j.from));   // Bewertung mitnehmen
+            if (r != m_ratings.end()) { const int v = r->second; m_ratings.erase(r); m_ratings[RatingKey(j.to)] = v; }
+        } else {
+            ++failed;
+        }
+    }
+    SaveRatings(m_ratings);
+    m_pendingStatus = std::to_wstring(m_lastRename.size()) + L" Dateien umbenannt" + (failed ? L", " + std::to_wstring(failed) + L" fehlgeschlagen" : L"");
+    OpenFolder(m_folder, L"", true);
+}
+
+void App::UndoRename() {
+    if (m_lastRename.empty()) return;
+    int restored = 0, failed = 0;
+    for (auto it = m_lastRename.rbegin(); it != m_lastRename.rend(); ++it) {
+        if (GetFileAttributesW(it->first.c_str()) != INVALID_FILE_ATTRIBUTES || !MoveFileW(it->second.c_str(), it->first.c_str())) { ++failed; continue; }
+        ++restored;
+        const auto r = m_ratings.find(RatingKey(it->second));
+        if (r != m_ratings.end()) { const int v = r->second; m_ratings.erase(r); m_ratings[RatingKey(it->first)] = v; }
+    }
+    SaveRatings(m_ratings);
+    m_lastRename.clear();
+    m_pendingStatus = std::to_wstring(restored) + L" Dateien zurückbenannt" + (failed ? L", " + std::to_wstring(failed) + L" nicht möglich (Datei fehlt oder Name belegt)" : L"");
+    OpenFolder(m_folder, L"", true);
 }
 
 void App::FinishBatch() {
