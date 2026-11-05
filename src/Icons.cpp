@@ -255,6 +255,15 @@ namespace
             Line(0.2f, 0.68f, 0.36f, 0.52f);
             Line(0.2f, 0.68f, 0.36f, 0.84f);
             break;
+        case CategoryIcon::Boost:
+            // Blitz (Zock-Modus)
+            Line(0.58f, 0.1f, 0.3f, 0.54f);
+            Line(0.3f, 0.54f, 0.5f, 0.54f);
+            Line(0.5f, 0.54f, 0.42f, 0.9f);
+            Line(0.42f, 0.9f, 0.72f, 0.44f);
+            Line(0.72f, 0.44f, 0.52f, 0.44f);
+            Line(0.52f, 0.44f, 0.58f, 0.1f);
+            break;
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);

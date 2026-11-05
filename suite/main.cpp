@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.39"
+#define SUITE_VERSION L"1.1.40"
 #endif
 
 namespace
@@ -849,9 +849,9 @@ namespace
     // aktuelle Fassung aus dem Release "modules". Der Text wird nur angezeigt, nie ausgefuehrt; changelog::Parse begrenzt ihn.
     constexpr const wchar_t* kChangelogUrl = L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/changelog.txt";
     constexpr int kChangelogResource = 101;
-    constexpr int kToolCount = 9;   // Karten: Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Oggys Docs-Files, Duncan's Vault, Duncan's Office, Duncan's QuickConvert
+    constexpr int kToolCount = 10;   // Karten: Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Oggys Docs-Files, Duncan's Vault, Duncan's Office, Duncan's QuickConvert, Duncan's Boost
     // Kennung einer Karte fuer Hover/Klick (0 und 1 historisch direkt, 5/17/22 aus alten Versionen, ab Karte 5 einheitlich 40 + Index;
-    // die Ids 24..33 sind die Info-Reiter, 34 der Schliessen-Knopf des Info-Dialogs)
+    // die Ids 24..34 sind die Info-Reiter, kInfoCloseId der Schliessen-Knopf des Info-Dialogs)
     inline int CardHid(int index) { return index < 2 ? index : (index == 2 ? 5 : (index == 3 ? 17 : (index == 4 ? 22 : 40 + index))); }
     inline int CardFromHid(int hid)
     {
@@ -861,6 +861,7 @@ namespace
         return -1;
     }
     constexpr int kInfoTabs = kToolCount + 1;   // ein Reiter je Programm plus die Suite selbst
+    constexpr int kInfoCloseId = 37;            // Hover-/Klick-Id des Schliessen-Knopfs (24 + kInfoTabs - 1 = 34 ist der letzte Reiter; 35/36 belegt, ab 40 Karten)
 
     std::string EmbeddedChangelog()
     {
@@ -1041,50 +1042,55 @@ private:
 
     Tool m_tools[kToolCount] = {
         { L"DuncansTidy.exe", L"Duncan's Tidy",
-          L"System-Reinigung & Datenmüll-Beseitigung. Räumt Downloads, temporäre Dateien und Browser-Caches auf.",
+          L"System-Reinigung: räumt Downloads, Temp-Dateien und Browser-Caches auf.",
           CategoryIcon::Broom, RGB(251, 191, 36), {}, {}, {},
           L"https://github.com/Neox365/Duncans-Tidy-ToolSet/releases/latest/download/", nullptr,
           L"https://github.com/Neox365/Duncans-Tidy-ToolSet/releases/latest/download/version.txt" },
         { L"DuncansDriverUpdater.exe", L"Duncan's Driver Updater",
-          L"Hardware- & Treiber-Manager. Liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.",
+          L"Treiber-Manager: erkennt veraltete Treiber und installiert Updates.",
           CategoryIcon::Cpu, RGB(64, 156, 255), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansDriverUpdater.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansPdf.exe", L"Duncan's PDF Reader",
-          L"PDF-Betrachter. Öffnet, zoomt, dreht, fügt zusammen und speichert PDF-Dateien.",
+          L"PDFs öffnen, drehen, zusammenfügen und speichern.",
           CategoryIcon::Document, RGB(240, 84, 84), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/DuncansPdf.exe",
           L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/version.txt", {},
           L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/pdfium.dll", L"pdfium.dll" },
         { L"DuncansPrivacy.exe", L"Duncan's Privacy Shield",
-          L"Datenschutz-Manager. Schaltet Tracking, Telemetrie und unnötige Windows-Dienste per Klick ab.",
+          L"Schaltet Tracking, Telemetrie und Werbung in Windows per Klick ab.",
           CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPrivacy.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansPhotoCommander.exe", L"Duncan's Photo Commander",
-          L"Foto-Verwaltung. Vorschaubilder, EXIF-Daten, Bildkorrektur, Diashow und Entfernen von Standortdaten.",
+          L"Fotos verwalten, EXIF lesen, korrigieren, Standortdaten entfernen.",
           CategoryIcon::Image, RGB(52, 199, 120), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPhotoCommander.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"OggysDocsFiles.exe", L"Oggys Docs-Files",
-          L"Rechnungs-Manager. Sortiert Rechnungen nach Jahr und Gläubiger und erstellt eigene Rechnungen als PDF.",
+          L"Rechnungen sortieren und eigene Rechnungen als PDF erstellen.",
           CategoryIcon::Invoice, RGB(255, 150, 50), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/OggysDocsFiles.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansVault.exe", L"Duncan's Vault",
-          L"Lokaler Tresor für Passwörter, Software-Lizenzen, WLAN-Schlüssel und Notizen. AES-256-verschlüsselt.",
+          L"Lokaler Tresor für Passwörter, Lizenzen und Notizen (AES-256).",
           CategoryIcon::Vault, RGB(34, 211, 238), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansVault.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansOffice.exe", L"Duncan's Office",
-          L"Office-Paket mit Writer (Texte, .txt und .rtf, PDF-Export) und Sheets (Tabellen mit Formeln, .csv).",
+          L"Writer und Sheets: Texte, Tabellen mit Formeln, PDF-Export.",
           CategoryIcon::Office, RGB(129, 140, 248), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansOffice.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansQuickConvert.exe", L"Duncan's QuickConvert",
-          L"Lokaler Medien- & Dateikonverter. Wandelt Bilder, Audio- und Videodateien blitzschnell und offline in moderne Formate um.",
+          L"Wandelt Bilder, Audio und Video offline in moderne Formate um.",
           CategoryIcon::Convert, RGB(245, 194, 231), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansQuickConvert.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
+        { L"DuncansBoost.exe", L"Duncan's Boost",
+          L"Zock-Modus: beendet Hintergrundprogramme, stellt Höchstleistung ein.",
+          CategoryIcon::Boost, RGB(250, 112, 76), {}, {}, {},
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansBoost.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
     };
 
@@ -1133,7 +1139,7 @@ private:
     RECT m_btnBackup{}, m_btnLog{}, m_btnCheck{};   // Ids: 18 Wiederherstellungspunkt-Haken, 19 Backup-Ordner, 20 Logdatei, 21 Update-Suche
     bool m_manualCheck = false;                      // Update-Suche per Knopf: Ergebnis als Hinweis melden
 
-    // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..33 Reiter, 34 Schliessen
+    // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..34 Reiter, 37 Schliessen
     bool m_infoOpen = false, m_changesFetched = false, m_changesOnline = false;
     int m_infoTab = 0, m_infoScroll = 0, m_infoMaxScroll = 0;
     RECT m_infoRect{}, m_infoTabs[kInfoTabs]{}, m_infoClose{}, m_infoView{};
@@ -1300,12 +1306,13 @@ void SuiteWindow::Layout()
 
     const int top = m_banner.bottom + S(22), bottom = m_footer.top - S(16), gap = S(20);
     const int width = rc.right - 2 * m;
-    // 3 x 3 Raster: Tidy | Driver Updater | PDF Reader / Privacy Shield | Photo Commander | Oggys Docs-Files / Duncan's Vault | Duncan's Office | Duncan's QuickConvert
-    const int h = (bottom - top - 2 * gap) / 3;
-    const int w = (width - 2 * gap) / 3;
+    // 4 x 3 Raster (10 Karten): Tidy | Driver Updater | PDF Reader | Privacy Shield / Photo Commander | Oggys Docs-Files | Duncan's Vault | Duncan's Office / Duncan's QuickConvert | Duncan's Boost
+    constexpr int kCols = 4, kRows = (kToolCount + kCols - 1) / kCols;
+    const int h = (bottom - top - (kRows - 1) * gap) / kRows;
+    const int w = (width - (kCols - 1) * gap) / kCols;
     for (int i = 0; i < kToolCount; ++i)
     {
-        const int col = i % 3, row = i / 3;
+        const int col = i % kCols, row = i / kCols;
         m_tools[i].rect = { m + col * (w + gap), top + row * (h + gap), m + col * (w + gap) + w, top + row * (h + gap) + h };
     }
 }
@@ -1359,7 +1366,18 @@ void SuiteWindow::DrawCard(HDC dc, int index)
         descTop = textTop + S(32);
     }
 
-    DrawLabel(dc, m_fontCard, kText, { textLeft, textTop, textRight, textTop + S(30) }, t.title);
+    {   // Kartentitel ohne Vorsatz "Duncan's" (bei vier Spalten sonst abgeschnitten); passt er nicht, kommt eine kleinere Schrift
+        std::wstring shown = t.title;
+        if (shown.rfind(L"Duncan's ", 0) == 0)
+            shown = shown.substr(9);
+        HFONT titleFont = m_fontCard;
+        const int avail = textRight - textLeft;
+        if (TextWidth(dc, titleFont, shown) > avail)
+            titleFont = m_fontHeading;
+        if (TextWidth(dc, titleFont, shown) > avail)
+            titleFont = m_fontBody;
+        DrawLabel(dc, titleFont, kText, { textLeft, textTop, textRight, textTop + S(30) }, shown);
+    }
     const int btnH = S(38);
     const int bottomRow = rc.bottom - pad - btnH;
     RECT descRc{ descLeft, descTop, textRight, compact ? bottomRow - S(4) : bottomRow - S(10) };   // Text endet immer ueber Chip und Knopf
@@ -1822,7 +1840,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
 {
     FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
 
-    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo Commander", L"Docs-Files", L"Vault", L"Office", L"QuickConvert", L"Suite" };
+    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo", L"Docs-Files", L"Vault", L"Office", L"QuickConvert", L"Boost", L"Suite" };
     const int pad = S(22), btnH = S(38);
     const int boxW = std::min(S(940), w - S(40)), boxH = std::min(S(700), h - S(50));
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
@@ -1942,7 +1960,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
               m_changesOnline ? L"Quelle: GitHub (aktuell)" : L"Quelle: in der Suite eingebaut");
     const int bw = S(120);
     m_infoClose = { box.right - pad - bw, box.bottom - pad - btnH, box.right - pad, box.bottom - pad };
-    DrawButton(dc, m_infoClose, true, m_hover == 34, m_press == 34 && m_hover == 34, L"Schließen");
+    DrawButton(dc, m_infoClose, true, m_hover == kInfoCloseId, m_press == kInfoCloseId && m_hover == kInfoCloseId, L"Schließen");
 }
 
 void SuiteWindow::AddTrayIcon()
@@ -2483,7 +2501,7 @@ void SuiteWindow::OnMouseMove(int x, int y)
             if (PtInRect(&m_infoTabs[i], pt))
                 hover = 24 + i;
         if (PtInRect(&m_infoClose, pt))
-            hover = 34;
+            hover = kInfoCloseId;
     }
     else if (PtInRect(&m_footLink, pt))
         hover = 35;
@@ -2543,7 +2561,7 @@ void SuiteWindow::OnClick(int, int)
         m_infoTab = pressed - 24;
         m_infoScroll = 0;
     }
-    else if (pressed == 34)
+    else if (pressed == kInfoCloseId)
         CloseInfo();
     else if (pressed == 7)
         m_draft.autoCheck = !m_draft.autoCheck;
@@ -2688,7 +2706,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
     case WM_GETMINMAXINFO:
     {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
-        mmi->ptMinTrackSize.x = S(920);
+        mmi->ptMinTrackSize.x = S(1020);
         mmi->ptMinTrackSize.y = S(860);
         return 0;
     }
