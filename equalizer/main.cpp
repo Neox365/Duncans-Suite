@@ -26,7 +26,7 @@ using std::min;
 #include "EqLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.1.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.1.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER

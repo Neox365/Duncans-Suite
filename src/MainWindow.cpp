@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "DeviceRepair.h"
+#include "DriverHistory.h"
 #include "Icons.h"
 #include "SuiteSafety.h"
 #include "Utils.h"
@@ -320,7 +321,7 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
                 return TRUE;
             }
             bool clickable = (m_buttonHover && !Busy()) || m_installHover || m_gearHover || m_aboutHover || m_dragThumb ||
-                             PtInRect(&m_sortRect, cur) || PtInRect(&m_exportRect, cur) || m_hoverAction != 0 || m_hoverHeader != -1;
+                             PtInRect(&m_sortRect, cur) || PtInRect(&m_exportRect, cur) || PtInRect(&m_historyRect, cur) || m_hoverAction != 0 || m_hoverHeader != -1;
             for (int i = 0; i < 3; ++i)
                 clickable = clickable || PtInRect(&m_chipRect[i], cur);
             if (!clickable)
@@ -418,6 +419,26 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         m_installing = false;
         KillTimer(m_hwnd, 1);
         const InstallResult r = m_installer.GetResult();
+
+        if (r.error.empty() && !m_pending.empty())
+        {
+            std::vector<drvhistory::Entry> entries;
+            for (const PendingInstall& p : m_pending)
+            {
+                drvhistory::Entry e;
+                e.when = drvhistory::NowText();
+                e.device = p.device;
+                e.title = p.title;
+                e.oldVersion = p.oldVersion;
+                e.newDate = p.newDate;
+                e.restorePoint = r.restorePointCreated;
+                e.ok = std::find(r.installedTitles.begin(), r.installedTitles.end(), p.title) != r.installedTitles.end();
+                entries.push_back(std::move(e));
+            }
+            drvhistory::Append(drvhistory::FilePath(), entries);
+            RefreshHistoryCache();
+        }
+        m_pending.clear();
 
         std::wstring text;
         if (!r.error.empty())
@@ -551,6 +572,7 @@ void MainWindow::OnCreate()
         }
     }
     CreateFonts();
+    RefreshHistoryCache();
 }
 
 // Animationen zeichnen nur ihren kleinen Bereich direkt in den Puffer und auf den Bildschirm. Ueber
@@ -1243,6 +1265,8 @@ void MainWindow::OnLButtonDown(int x, int y)
     }
     else if (PtInRect(&m_exportRect, pt))
         ExportCsv();
+    else if (PtInRect(&m_historyRect, pt))
+        ShowHistory();
     else if (PtInRect(&m_buttonRect, pt))
         StartScan();
     else if (ShowInstallButton() && PtInRect(&m_installRect, pt))
@@ -1422,6 +1446,15 @@ void MainWindow::StartInstall(std::vector<std::wstring> ids)
     if (ids.empty())
         return;
 
+    m_pending.clear();
+    for (const std::wstring& id : ids)
+        for (const auto& d : m_drivers)
+            if (d.updateId == id)
+            {
+                m_pending.push_back({ d.deviceName, d.updateTitle, d.driverVersion, d.updateDate });
+                break;
+            }
+
     m_installStage = StageRestorePoint;
     m_installing = m_installer.StartAsync(m_hwnd, std::move(ids));
     if (m_installing)
@@ -1431,6 +1464,57 @@ void MainWindow::StartInstall(std::vector<std::wstring> ids)
     }
     m_installHover = false;
     InvalidateRect(m_hwnd, nullptr, FALSE);
+}
+
+void MainWindow::RefreshHistoryCache()
+{
+    m_lastUpdateText.clear();
+    const std::vector<drvhistory::Entry> list = drvhistory::Load(drvhistory::FilePath());
+    for (auto it = list.rbegin(); it != list.rend(); ++it)
+        if (it->ok)
+        {
+            m_lastUpdateText = it->when.substr(0, 10);
+            break;
+        }
+}
+
+void MainWindow::ShowHistory()
+{
+    const std::vector<drvhistory::Entry> list = drvhistory::Load(drvhistory::FilePath());
+    std::vector<ModalRow> rows;
+    for (auto it = list.rbegin(); it != list.rend() && rows.size() < 40; ++it)      // neueste zuerst
+    {
+        ModalRow row;
+        row.label = it->when;
+        std::wstring v = it->device;
+        if (!it->title.empty() && it->title != it->device)
+            v += L"\n" + it->title;
+        if (it->ok)
+        {
+            v += L"\nvorher Version " + (it->oldVersion.empty() ? std::wstring(L"unbekannt") : it->oldVersion);
+            if (!it->newDate.empty())
+                v += L", neuer Treiber vom " + it->newDate;
+            v += it->restorePoint ? L"  ·  mit Wiederherstellungspunkt" : L"";
+        }
+        else
+            v += L"\nnicht installiert";
+        row.value = v;
+        row.color = it->ok ? kGreen : kAmber;
+        row.hasColor = true;
+        rows.push_back(std::move(row));
+    }
+    std::wstring text;
+    if (rows.empty())
+        text = L"Noch keine Treiber über den Driver Updater installiert. Installierte Updates erscheinen hier.\n\n";
+    text += L"Zurücksetzen geht über Windows: Vor jeder Installation legt das Programm einen Wiederherstellungspunkt an. "
+            L"Ein einzelner Treiber lässt sich im Geräte-Manager unter Eigenschaften › Treiber › „Vorheriger Treiber“ zurücksetzen.";
+    ShowModal(L"Verlauf", text, std::move(rows), { L"Wiederherstellungspunkt öffnen", L"Geräte-Manager öffnen", L"Schließen" }, 0, [this](int button)
+    {
+        if (button == 0)
+            ShellExecuteW(m_hwnd, L"open", L"rstrui.exe", nullptr, nullptr, SW_SHOWNORMAL);
+        else if (button == 1)
+            ShellExecuteW(m_hwnd, L"open", L"devmgmt.msc", nullptr, nullptr, SW_SHOWNORMAL);
+    });
 }
 
 void MainWindow::ExportCsv()
@@ -1608,6 +1692,7 @@ void MainWindow::Layout()
         const int top = m_statusRect.top + S(12);
         m_exportRect = { m_statusRect.right - pad - S(170), top, m_statusRect.right - pad, top + S(30) };
         m_sortRect = { m_exportRect.left - S(10) - S(250), top, m_exportRect.left - S(10), top + S(30) };
+        m_historyRect = { m_sortRect.left - S(10) - S(96), top, m_sortRect.left - S(10), top + S(30) };
     }
     m_searchRect = { rc.right - m - S(240), m_listTitleRect.top, rc.right - m, m_listTitleRect.bottom };
     {
@@ -1920,11 +2005,53 @@ void MainWindow::DrawStatusCard(HDC dc)
     {
     DrawLabel(dc, m_fontHeading, kText, { r.left + pad, r.top + S(16), r.right - pad, r.top + S(40) }, L"System Status");
 
+    // Urteil auf einen Blick (Pille neben der Ueberschrift)
+    {
+        int problemsNow = 0;
+        for (const auto& d : m_drivers)
+            if (d.status == DriverStatus::Problem)
+                ++problemsNow;
+        std::wstring text;
+        COLORREF color = kTextDim;
+        if (m_scanning)                { text = L"Scan läuft …";                color = kAccent; }
+        else if (m_installing)         { text = L"Installation läuft …";        color = kAccent; }
+        else if (m_checkingUpdates)    { text = L"Suche nach Updates …";        color = kAccent; }
+        else if (!m_scannedOnce)       { text = L"Noch nicht gescannt";         color = kTextDim; }
+        else if (problemsNow > 0 && m_updateCount > 0)
+        {
+            text = std::to_wstring(problemsNow) + (problemsNow == 1 ? L" Problem" : L" Probleme") + L" · " + std::to_wstring(m_updateCount) +
+                   (m_updateCount == 1 ? L" Update" : L" Updates");
+            color = kRed;
+        }
+        else if (problemsNow > 0)      { text = std::to_wstring(problemsNow) + (problemsNow == 1 ? L" Problem" : L" Probleme"); color = kRed; }
+        else if (m_updateCount > 0)    { text = std::to_wstring(m_updateCount) + (m_updateCount == 1 ? L" Update verfügbar" : L" Updates verfügbar"); color = kAccent; }
+        else if (!m_updateError.empty()) { text = L"Update-Abgleich nicht möglich"; color = kAmber; }
+        else if (m_updatesChecked)     { text = L"Alles aktuell";               color = kGreen; }
+        else                           { text = L"Keine Probleme";              color = kGreen; }
+
+        SIZE head{}, tw{};
+        HGDIOBJ old = SelectObject(dc, m_fontHeading);
+        GetTextExtentPoint32W(dc, L"System Status", 13, &head);
+        SelectObject(dc, m_fontSmall);
+        GetTextExtentPoint32W(dc, text.c_str(), static_cast<int>(text.size()), &tw);
+        SelectObject(dc, old);
+        RECT pill{ r.left + pad + head.cx + S(14), r.top + S(15), r.left + pad + head.cx + S(14) + tw.cx + S(30), r.top + S(41) };
+        if (pill.right < m_historyRect.left - S(10))
+        {
+            FillRound(dc, pill, S(26), Blend(kCard, color, 20), Blend(kCard, color, 70));
+            RECT dot{ pill.left + S(11), pill.top + S(9), pill.left + S(19), pill.top + S(17) };
+            FillRound(dc, dot, S(8), color, color);
+            DrawLabel(dc, m_fontSmall, color, { pill.left + S(24), pill.top + S(4), pill.right, pill.bottom }, text);
+        }
+    }
+
     {
         static const wchar_t* const kSortNames[4] = { L"Kategorie", L"Name", L"Datum (neueste zuerst)", L"Status" };
         FillRound(dc, m_sortRect, S(30), kBackground, kCardBorder);
         DrawLabel(dc, m_fontSmall, kTextDim, { m_sortRect.left, m_sortRect.top + S(6), m_sortRect.right, m_sortRect.bottom },
                   std::wstring(L"Sortierung: ") + kSortNames[m_sortMode], DT_CENTER);
+        FillRound(dc, m_historyRect, S(30), kBackground, kCardBorder);
+        DrawLabel(dc, m_fontSmall, kTextDim, { m_historyRect.left, m_historyRect.top + S(6), m_historyRect.right, m_historyRect.bottom }, L"Verlauf", DT_CENTER);
         const bool canExport = !m_visible.empty();
         FillRound(dc, m_exportRect, S(30), kBackground, canExport ? kCardBorder : kBackground);
         DrawLabel(dc, m_fontSmall, canExport ? kTextDim : kDisabled,
@@ -1933,24 +2060,25 @@ void MainWindow::DrawStatusCard(HDC dc)
     }
 
     // Kennzahlen
-    std::set<std::wstring> categories;
-    int problems = 0;
+    int problems = 0, oldDrivers = 0;
+    const int today = drvhistory::TodayKey();
     for (const auto& d : m_drivers)
     {
-        categories.insert(d.category);
         if (d.status == DriverStatus::Problem)
             ++problems;
+        if (drvhistory::IsOlderThan(d.driverDateKey, today, 2))
+            ++oldDrivers;
     }
 
     struct Stat { std::wstring value; std::wstring label; COLORREF color; };
     const bool known = m_scannedOnce;
     const Stat stats[] = {
         { known ? std::to_wstring(m_drivers.size()) : L"–",    L"Geräte mit Treiber", kText },
-        { known ? std::to_wstring(categories.size()) : L"–",   L"Kategorien",         kText },
-        { known ? std::to_wstring(problems) : L"–",            L"Probleme",           problems > 0 ? kRed : kGreen },
         { (m_updatesChecked || m_vendorCount > 0) ? std::to_wstring(m_updateCount) : (m_checkingUpdates ? L"…" : L"–"),
                                                                L"Updates",            m_updateCount > 0 ? kAccent : kText },
-        { m_isAdmin ? L"Ja" : L"Nein",                         L"Administrator",      m_isAdmin ? kGreen : kAmber },
+        { known ? std::to_wstring(problems) : L"–",            L"Probleme",           problems > 0 ? kRed : kGreen },
+        { known ? std::to_wstring(oldDrivers) : L"–",          L"Treiber über 2 Jahre", kText },
+        { m_lastUpdateText.empty() ? std::wstring(L"–") : m_lastUpdateText, L"Letztes Update hier", kText },
     };
 
     const int innerW = (r.right - r.left) - 2 * pad;
@@ -1994,6 +2122,8 @@ void MainWindow::DrawStatusCard(HDC dc)
     else if (m_scannedOnce)
     {
         message = L"Letzter Scan: " + m_lastScanTime;
+        if (!m_isAdmin)
+            message += L"  ·  ohne Administratorrechte (Installieren nicht möglich)";
         if (!m_updateError.empty())
             message += L"  ·  Update-Abgleich nicht möglich: " + m_updateError;
         else if (m_updatesChecked)

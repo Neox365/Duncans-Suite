@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "DriverHistory.h"
 #include "DriverInfo.h"
 #include "HardwareScanner.h"
 #include "UpdateChecker.h"
@@ -124,6 +125,8 @@ private:
     void OnModalKey(WPARAM key);
     RECT ScrollThumbRect() const;   // leer, wenn nichts zu scrollen ist
     void ExportCsv();
+    void ShowHistory();                  // Verlauf der installierten Updates + Hinweis zum Zuruecksetzen
+    void RefreshHistoryCache();          // letzte Installation fuer die Kennzahlen
     void DrawScrollbar(HDC dc);
     void DrawFilterBar(HDC dc);
     void RebuildVisible();
@@ -184,6 +187,10 @@ private:
     int  m_sortMode = 0;            // 0 = Kategorie, 1 = Name, 2 = Datum, 3 = Status
     RECT m_sortRect{};
     RECT m_exportRect{};
+    RECT m_historyRect{};
+    struct PendingInstall { std::wstring device, title, oldVersion, newDate; };
+    std::vector<PendingInstall> m_pending;      // Updates der laufenden Installation (fuer den Verlauf)
+    std::wstring m_lastUpdateText;              // Datum der letzten erfolgreichen Installation oder leer
     int  m_hoverAction = 0;         // Quick-Action unter der Maus (siehe HitAction)
     int  m_pressCard = -1;          // gedrueckter Quick-Action-Button
     int  m_pressAction = 0;
