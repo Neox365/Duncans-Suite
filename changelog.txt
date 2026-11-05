@@ -171,6 +171,8 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.3.3 | 2026-11-05
+- Neu: Bewertungen mit 1 bis 5 Sternen. Taste 1 bis 5 bewertet die markierten Bilder (0 löscht die Bewertung), im Viewer Strg+1 bis 5. Die Sterne erscheinen auf dem Vorschaubild. Im Zahnrad-Menü filtern drei Einträge nach bewerteten Bildern, ab drei oder nur mit fünf Sternen. Die Bewertungen liegen in ratings.txt neben den Einstellungen, die Bilder bleiben unverändert; wird eine Datei verschoben oder umbenannt, gilt ihre Bewertung nicht mehr.
 ## 0.3.2 | 2026-11-04
 - Neu: Startbildschirm statt leerer Fläche. Ein Ordner ohne Bilder zeigt seine Unterordner als Kacheln, dazu die zuletzt geöffneten Ordner und einen Schnellzugriff auf Bilder, Desktop, Downloads und Dokumente. Ein Klick öffnet den Ordner.
 ## 0.3.1 | 2026-10-27
