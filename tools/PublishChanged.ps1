@@ -23,6 +23,7 @@ $modules = @(
     [pscustomobject]@{ Name = 'Vault';         Exe = 'DuncansVault.exe';         Target = 'DuncansVault' }
     [pscustomobject]@{ Name = 'Office';        Exe = 'DuncansOffice.exe';        Target = 'DuncansOffice' }
     [pscustomobject]@{ Name = 'QuickConvert';  Exe = 'DuncansQuickConvert.exe';  Target = 'DuncansQuickConvert' }
+    [pscustomobject]@{ Name = 'Boost';         Exe = 'DuncansBoost.exe';         Target = 'DuncansBoost' }
     [pscustomobject]@{ Name = 'Pdf';           Exe = 'DuncansPdf.exe';           Target = 'DuncansPdfReader' }
 )
 $Only = @($Only | ForEach-Object { $_ -split '[,;]' } | Where-Object { $_ })   # per "powershell -File" kommt "Vault,Pdf" als ein Text an

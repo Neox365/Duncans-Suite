@@ -4,6 +4,11 @@
 # Die Suite bringt eine Kopie mit und lädt die aktuelle Fassung aus dem Release "modules"
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
+[DuncansBoost.exe]
+## 0.1.0 | 2026-11-05
+- Neu: Duncan's Boost, der Zock-Modus. Ein Klick beendet gewählte Hintergrundprogramme (erst freundlich, nach 8 Sekunden hart), stellt den Energiesparplan auf Höchstleistung und schaltet optional Benachrichtigungen aus. Beim Beenden wird alles wiederhergestellt und auf Wunsch werden die Programme wieder gestartet.
+- Spiel-Erkennung: Auf Wunsch startet der Zock-Modus automatisch, wenn ein gewähltes Spiel läuft, und endet danach. Systemprozesse und die Suite werden nie beendet.
+
 [DuncansTidy.exe]
 ## 1.3.0 | 2026-11-02
 - Neu: Die Rückfrage von „Optimieren“ zeigt jetzt vorab die größten Einträge jeder Kategorie (Downloads, Temp, Systemdateien) mit Name und Größe und die Zahl der übrigen – so siehst du, was gelöscht wird, bevor du bestätigst. Downloads landen weiterhin im Papierkorb.
