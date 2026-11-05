@@ -171,6 +171,8 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.3.5 | 2026-11-05
+- Neu: Zeitleiste. Im Sortier-Menü springt Zeitleiste: zu Monat springen direkt zu einem Monat, gruppiert nach Jahr und mit der Anzahl der Bilder. Es gilt das Aufnahmedatum (ohne EXIF das Änderungsdatum); die Sortierung wechselt dafür automatisch auf Aufnahmedatum.
 ## 0.3.4 | 2026-11-05
 - Neu: Stapelverarbeitung > Nach Aufnahmedatum umbenennen. Die Dateien heißen danach z. B. 2026-11-04_143015.jpg (EXIF-Aufnahmezeit, ohne EXIF das Änderungsdatum). Gilt für die Auswahl oder den ganzen Ordner; bei gleicher Sekunde folgt _2, _3. Vorhandene Dateien werden nie überschrieben, Bewertungen bleiben erhalten, und die letzte Umbenennung lässt sich im selben Menü rückgängig machen.
 ## 0.3.3 | 2026-11-05

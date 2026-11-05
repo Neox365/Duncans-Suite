@@ -20,6 +20,7 @@
 #include <atomic>
 #include <cmath>
 #include <memory>
+#include <map>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -68,6 +69,7 @@ enum MenuId {
     MENU_SORT_NAME = 130, MENU_SORT_DATE, MENU_SORT_SIZE, MENU_SORT_TAKEN, MENU_SORT_DESC = 135,
     MENU_B_STRIP_COPY = 140, MENU_B_STRIP_OVERWRITE, MENU_B_RESIZE, MENU_B_ROT_CW, MENU_B_ROT_CCW,
     MENU_B_DUPES, MENU_B_DUPES_END, MENU_B_RENAME = 147, MENU_B_RENAME_UNDO,
+    MENU_JUMP = 1000,   // Zeitleiste: 1000 + laufende Nummer des Monats
     MENU_FILTER_GPS = 150, MENU_RATING_1 = 155, MENU_RATING_3, MENU_RATING_5,
     MENU_SLIDE_2 = 160, MENU_SLIDE_4, MENU_SLIDE_6, MENU_SLIDE_10,
     MENU_CONV_JPG = 170, MENU_CONV_PNG, MENU_CONV_WEBP, MENU_CONV_BMP,
@@ -2158,11 +2160,69 @@ void App::ShowSortMenu() {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (!m_settings.sortDesc ? MF_CHECKED : 0), MENU_SORT_DESC + 1, L"Aufsteigend");
     AppendMenuW(m, MF_STRING | (m_settings.sortDesc ? MF_CHECKED : 0), MENU_SORT_DESC, L"Absteigend");
+
+    // Zeitleiste: Springen zu einem Monat (Aufnahmedatum, ohne EXIF das Aenderungsdatum, in Ortszeit), gruppiert nach Jahr
+    struct MonthKey { int year, month; };
+    auto monthOf = [](const Item& it) {
+        const ULONGLONG t = it.taken ? it.taken : it.mtime;
+        FILETIME ft{(DWORD)(t & 0xFFFFFFFF), (DWORD)(t >> 32)}, lf{};
+        SYSTEMTIME st{};
+        if (!FileTimeToLocalFileTime(&ft, &lf) || !FileTimeToSystemTime(&lf, &st)) return MonthKey{0, 0};
+        return MonthKey{st.wYear, st.wMonth};
+    };
+    std::vector<MonthKey> jump;                // Menue-Id MENU_JUMP + Index
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    bool metaReady = !m_items.empty();
+    for (const Item& it : m_items) if (!it.metaDone) { metaReady = false; break; }
+    if (m_items.empty()) {
+        AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"Zeitleiste (keine Bilder)");
+    } else if (!metaReady) {
+        AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"Zeitleiste (Aufnahmedaten werden noch gelesen …)");
+    } else {
+        std::map<std::pair<int, int>, int> counts;   // (Jahr, Monat) -> Anzahl, aufsteigend
+        for (const Item& it : m_items) { const MonthKey mk = monthOf(it); if (mk.year) ++counts[{mk.year, mk.month}]; }
+        static const wchar_t* names[] = {L"Januar", L"Februar", L"März", L"April", L"Mai", L"Juni", L"Juli", L"August", L"September", L"Oktober", L"November", L"Dezember"};
+        HMENU top = CreatePopupMenu();
+        int lastYear = -1, yearTotal = 0;
+        HMENU yearMenu = nullptr;
+        std::vector<std::pair<HMENU, std::pair<int, int>>> years;   // Untermenue, (Jahr, Summe)
+        for (auto it = counts.rbegin(); it != counts.rend(); ++it) {   // neuestes Jahr/Monat zuerst
+            const int y = it->first.first, mo = it->first.second;
+            if (y != lastYear) {
+                if (yearMenu) years.back().second.second = yearTotal;
+                yearMenu = CreatePopupMenu();
+                years.push_back({yearMenu, {y, 0}});
+                lastYear = y;
+                yearTotal = 0;
+            }
+            yearTotal += it->second;
+            jump.push_back({y, mo});
+            AppendMenuW(yearMenu, MF_STRING, MENU_JUMP + (UINT)jump.size() - 1,
+                        (std::wstring(names[std::clamp(mo, 1, 12) - 1]) + L" " + std::to_wstring(y) + L"  (" + std::to_wstring(it->second) + L")").c_str());
+        }
+        if (yearMenu) years.back().second.second = yearTotal;
+        for (auto& ym : years)
+            AppendMenuW(top, MF_POPUP | MF_STRING, (UINT_PTR)ym.first, (std::to_wstring(ym.second.first) + L"  (" + std::to_wstring(ym.second.second) + L" Bilder)").c_str());
+        AppendMenuW(m, MF_POPUP | MF_STRING, (UINT_PTR)top, L"Zeitleiste: zu Monat springen");
+    }
     POINT pt{(LONG)rcSort.left, (LONG)rcSort.bottom};
     ClientToScreen(m_hwnd, &pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
-    DestroyMenu(m);
-    if (cmd >= MENU_SORT_NAME && cmd <= MENU_SORT_TAKEN) ApplySort(cmd - MENU_SORT_NAME, false);
+    DestroyMenu(m);   // zerstoert die angehaengten Untermenues mit
+    if (cmd >= (int)MENU_JUMP && cmd < (int)MENU_JUMP + (int)jump.size()) {
+        const MonthKey target = jump[cmd - MENU_JUMP];
+        if (m_settings.sortBy != 3) ApplySort(3, false);   // die Zeitleiste gilt nur in der Sortierung nach Aufnahmedatum
+        for (int i = 0; i < (int)m_items.size(); ++i) {
+            const MonthKey mk = monthOf(m_items[i]);
+            if (mk.year == target.year && mk.month == target.month) {
+                Select(i);
+                const GridM g = Metrics();
+                SetGridScroll((float)(i / g.cols) * g.cellH);   // Zeile des Monats nach oben
+                break;
+            }
+        }
+    }
+    else if (cmd >= MENU_SORT_NAME && cmd <= MENU_SORT_TAKEN) ApplySort(cmd - MENU_SORT_NAME, false);
     else if (cmd == MENU_SORT_DESC) { if (!m_settings.sortDesc) ApplySort(0, true); }
     else if (cmd == MENU_SORT_DESC + 1) { if (m_settings.sortDesc) ApplySort(0, true); }
 }
