@@ -304,6 +304,9 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.3.4 | 2026-11-05
+- Sheets: neue Funktion SVERWEIS (englisch VLOOKUP): sucht in der ersten Spalte einer Tabelle und liefert den Wert aus einer anderen Spalte, auch Text: =SVERWEIS(A1;E1:G20;2;FALSCH). FALSCH sucht genau (bei Text mit * und ? als Platzhalter), WAHR oder weggelassen sucht ungefähr in einer aufsteigend sortierten Spalte. Nicht gefunden ergibt #NV.
+- Sheets: neue Rechenfunktionen RUNDEN (ROUND), ABS, WURZEL (SQRT) und GANZZAHL (INT).
 ## 0.3.3 | 2026-11-04
 - Sheets: neue Funktion SUMMEWENN (englisch SUMIF) mit Kriterium wie bei ZÄHLENWENN, auch mit Platzhaltern, und optionalem Summenbereich: =SUMMEWENN(A1:A9;">5") oder =SUMMEWENN(B1:B9;"Miete";C1:C9).
 ## 0.3.2 | 2026-10-28

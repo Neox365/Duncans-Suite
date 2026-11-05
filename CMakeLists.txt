@@ -6,7 +6,7 @@ set(PDF_VER "1.4.0")
 set(PHOTO_VER "0.3.5")
 set(DOCS_VER "0.5.0")
 set(VAULT_VER "0.6.1")
-set(OFFICE_VER "0.3.3")
+set(OFFICE_VER "0.3.4")
 set(QUICKCONVERT_VER "0.3.1")
 
 set(CMAKE_CXX_STANDARD 17)
