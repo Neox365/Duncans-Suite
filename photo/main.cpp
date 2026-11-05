@@ -68,7 +68,7 @@ enum MenuId {
     MENU_SORT_NAME = 130, MENU_SORT_DATE, MENU_SORT_SIZE, MENU_SORT_TAKEN, MENU_SORT_DESC = 135,
     MENU_B_STRIP_COPY = 140, MENU_B_STRIP_OVERWRITE, MENU_B_RESIZE, MENU_B_ROT_CW, MENU_B_ROT_CCW,
     MENU_B_DUPES, MENU_B_DUPES_END,
-    MENU_FILTER_GPS = 150,
+    MENU_FILTER_GPS = 150, MENU_RATING_1 = 155, MENU_RATING_3, MENU_RATING_5,
     MENU_SLIDE_2 = 160, MENU_SLIDE_4, MENU_SLIDE_6, MENU_SLIDE_10,
     MENU_CONV_JPG = 170, MENU_CONV_PNG, MENU_CONV_WEBP, MENU_CONV_BMP,
     MENU_C_OPEN = 180, MENU_C_ROT_L, MENU_C_ROT_R, MENU_C_STRIP, MENU_C_EXPLORER
@@ -258,6 +258,73 @@ void SaveSettings(const Settings& st) {
     }
 }
 
+// ---- Bewertungen (1-5 Sterne): eigene Datei ratings.txt neben den Einstellungen, "Sterne<Tab>Pfad" je Zeile (UTF-8) ----
+// Die Bilder selbst bleiben unveraendert. Wird eine Datei verschoben oder umbenannt, gilt ihre Bewertung nicht mehr.
+std::wstring RatingKey(const std::wstring& path) {   // ohne Beachtung der Gross-/Kleinschreibung (Windows-Pfade)
+    std::wstring s = path;
+    if (!s.empty()) CharLowerBuffW(s.data(), (DWORD)s.size());
+    return s;
+}
+
+std::wstring RatingsPath() {
+    const std::wstring ini = SettingsPath();
+    const size_t cut = ini.find_last_of(L'\\');
+    return cut == std::wstring::npos ? L"" : ini.substr(0, cut + 1) + L"ratings.txt";
+}
+
+void LoadRatings(std::unordered_map<std::wstring, int>& out) {
+    out.clear();
+    const std::wstring file = RatingsPath();
+    const HANDLE f = file.empty() ? INVALID_HANDLE_VALUE
+                                  : CreateFileW(file.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+    std::string data;
+    char buf[8192];
+    DWORD n = 0;
+    while (ReadFile(f, buf, sizeof(buf), &n, nullptr) && n > 0) data.append(buf, n);
+    CloseHandle(f);
+    size_t pos = 0;
+    while (pos < data.size()) {
+        size_t eol = data.find('\n', pos);
+        if (eol == std::string::npos) eol = data.size();
+        std::string line = data.substr(pos, eol - pos);
+        pos = eol + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.size() < 3 || line[1] != '\t' || line[0] < '1' || line[0] > '5') continue;
+        const int w = MultiByteToWideChar(CP_UTF8, 0, line.c_str() + 2, (int)line.size() - 2, nullptr, 0);
+        if (w <= 0) continue;
+        std::wstring path(w, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, line.c_str() + 2, (int)line.size() - 2, path.data(), w);
+        out[RatingKey(path)] = line[0] - '0';
+    }
+}
+
+void SaveRatings(const std::unordered_map<std::wstring, int>& in) {
+    const std::wstring file = RatingsPath();
+    if (file.empty()) return;
+    std::string data;
+    for (const auto& kv : in) {
+        if (kv.second < 1 || kv.second > 5) continue;
+        const int n = WideCharToMultiByte(CP_UTF8, 0, kv.first.c_str(), (int)kv.first.size(), nullptr, 0, nullptr, nullptr);
+        if (n <= 0) continue;
+        std::string u(n, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, kv.first.c_str(), (int)kv.first.size(), u.data(), n, nullptr, nullptr);
+        data += char('0' + kv.second);
+        data += '\t';
+        data += u;
+        data += '\n';
+    }
+    const std::wstring tmp = file + L".tmp";   // erst daneben schreiben, dann ersetzen (kein halbes File bei Absturz)
+    const HANDLE f = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f != INVALID_HANDLE_VALUE) {
+        DWORD written = 0;
+        const bool ok = WriteFile(f, data.data(), (DWORD)data.size(), &written, nullptr) && written == data.size();
+        CloseHandle(f);
+        if (ok) MoveFileExW(tmp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING);
+        else DeleteFileW(tmp.c_str());
+    }
+}
+
 // Zielname fuer eine Konvertierung: gleicher Ordner und Name mit neuer Endung; gibt es sie schon, wird " (2)", " (3)" ... angehaengt
 std::wstring UniqueTarget(const std::wstring& src, const wchar_t* ext) {
     const size_t slash = src.find_last_of(L"\\/");
@@ -375,6 +442,8 @@ private:
     void ClearDupMarks();
     void BrowseForFolder();
     GridM Metrics() const;
+    int RatingOf(const std::wstring& path) const;   // 0 = unbewertet
+    void SetRating(int stars);                      // markierte Bilder (oder das angezeigte) bewerten, 0 = Bewertung loeschen
     int HitGrid(float x, float y) const;
     int HitTile(float x, float y) const;     // Kachel im Startbildschirm (leerer Ordner), -1 = keine
     void DrawWelcome();                      // Unterordner, zuletzt geoeffnet und Schnellzugriff statt einer leeren Flaeche
@@ -512,6 +581,8 @@ private:
     std::vector<Item> m_items;
     std::vector<Item> m_hidden;                  // durch Filter ausgeblendete Bilder des Ordners
     bool m_gpsOnly = false;                      // Filter: nur Bilder mit Standortdaten
+    std::unordered_map<std::wstring, int> m_ratings;   // RatingKey(Pfad) -> 1..5 Sterne
+    int m_minRating = 0;                         // Filter: mindestens so viele Sterne (0 = aus)
     bool m_dupMode = false, m_dupRunning = false;
     bool m_resortPending = false;                // Neusortieren/Filtern wartet, bis der Betrachter schliesst
     std::shared_ptr<MetaState> m_meta;
@@ -585,6 +656,7 @@ private:
 
 bool App::Create(HINSTANCE hi, int show, const std::wstring& startArg) {
     LoadSettings(m_settings);
+    LoadRatings(m_ratings);
     WNDCLASSEXW wc{sizeof(wc)};
     wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = WndProc;
@@ -919,6 +991,7 @@ void App::DrawWelcome() {
     const std::wstring head = m_folder.empty()          ? L"Ordner öffnen, um Bilder anzuzeigen"
                               : !m_search.empty() && filtered ? L"Keine Bilder passend zur Suche"
                               : m_gpsOnly && filtered   ? L"Keine Bilder mit Standortdaten in diesem Ordner (Filter aktiv)"
+                              : m_minRating > 0 && filtered ? L"Keine Bilder mit dieser Bewertung in diesem Ordner (Filter aktiv)"
                               : m_subDirs.empty()       ? L"Keine Bilder in diesem Ordner"
                                                         : L"Keine Bilder direkt in diesem Ordner – wähle einen Unterordner";
     const float pad = 28 * k, tw = 240 * k, th = 54 * k, gap = 12 * k;
@@ -1011,6 +1084,12 @@ void App::DrawGrid() {
                 D2D1_RECT_F tag{x + g.thumb - 38 * k, y + 6 * k, x + g.thumb - 6 * k, y + 22 * k};
                 FillRR(tag, 4 * k, Theme::Danger);
                 Txt(L"GPS", tag, fTag.Get(), 0xFFFFFF);
+            }
+            if (const int stars = RatingOf(it.path); stars > 0) {   // Sterne unten links, auf dunklem Grund lesbar
+                D2D1_RECT_F tag{x + 6 * k, y + g.thumb - 24 * k, x + 6 * k + (10 + 12 * stars) * k, y + g.thumb - 6 * k};
+                if (m_dupMode && it.dupGroup > 0) tag = {tag.left, tag.top - 22 * k, tag.right, tag.bottom - 22 * k};   // nicht ueber dem Duplikat-Etikett
+                FillRR(tag, 4 * k, 0x000000, 0.6f);
+                Txt(std::wstring(stars, L'★'), tag, fTag.Get(), 0xF5C518);
             }
             if (m_dupMode && it.dupGroup > 0) {
                 const bool keep = it.dupRank == 0;
@@ -1442,7 +1521,32 @@ void App::OnScanDone() {
     Invalidate();
 }
 
+int App::RatingOf(const std::wstring& path) const {
+    const auto f = m_ratings.find(RatingKey(path));
+    return f == m_ratings.end() ? 0 : f->second;
+}
+
+void App::SetRating(int stars) {
+    std::vector<int> targets;
+    for (int i = 0; i < (int)m_items.size(); ++i)
+        if (m_items[i].selected) targets.push_back(i);
+    if (targets.empty() && m_sel >= 0 && m_sel < (int)m_items.size()) targets.push_back(m_sel);
+    if (targets.empty()) return;
+    for (int i : targets) {
+        const std::wstring key = RatingKey(m_items[i].path);
+        if (stars <= 0) m_ratings.erase(key);
+        else m_ratings[key] = stars;
+    }
+    SaveRatings(m_ratings);
+    std::wstring msg = stars > 0 ? std::wstring(stars, L'★') + L" für " : L"Bewertung gelöscht für ";
+    msg += targets.size() == 1 ? m_items[targets[0]].name : std::to_wstring(targets.size()) + L" Bilder";
+    if (m_minRating > 0) ApplyFilter();   // Bild kann dadurch aus der gefilterten Ansicht fallen
+    SetStatus(msg);
+    Invalidate();
+}
+
 bool App::Visible(const Item& it) const {
+    if (m_minRating > 0 && RatingOf(it.path) < m_minRating) return false;
     if (m_gpsOnly && it.metaDone && !it.hasGps) return false;
     if (m_dupMode && it.dupGroup == 0) return false;
     if (!m_search.empty() && !NameMatches(it.name, m_search)) return false;
@@ -1453,6 +1557,7 @@ std::wstring App::FolderStatus() const {
     std::wstring s = m_folder + L"  ·  " + std::to_wstring(m_items.size()) + L" Bilder";
     if (m_dupMode) s += L"  ·  Duplikatansicht (Esc beendet)";
     else if (m_gpsOnly) s += L"  ·  nur mit Standortdaten (" + std::to_wstring(m_hidden.size()) + L" ausgeblendet)";
+    if (m_minRating > 0 && !m_dupMode) s += L"  ·  ab " + std::to_wstring(m_minRating) + L" Sternen (" + std::to_wstring(m_hidden.size()) + L" ausgeblendet)";
     if (!m_search.empty() && !m_dupMode) s += L"  ·  Suche „" + m_search + L"“ (" + std::to_wstring(m_hidden.size()) + L" ausgeblendet)";
     return s;
 }
@@ -2170,6 +2275,10 @@ void App::ShowSettings() {
     AppendMenuW(m, MF_STRING | (m_settings.sortDesc ? MF_CHECKED : 0), MENU_SORT_DESC, L"Absteigend sortieren");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (m_gpsOnly ? MF_CHECKED : 0), MENU_FILTER_GPS, L"Nur Bilder mit Standortdaten zeigen");
+    AppendMenuW(m, MF_STRING | (m_minRating == 1 ? MF_CHECKED : 0), MENU_RATING_1, L"Nur bewertete Bilder zeigen (ab ★)");
+    AppendMenuW(m, MF_STRING | (m_minRating == 3 ? MF_CHECKED : 0), MENU_RATING_3, L"Nur Bilder ab ★★★ zeigen");
+    AppendMenuW(m, MF_STRING | (m_minRating == 5 ? MF_CHECKED : 0), MENU_RATING_5, L"Nur Bilder mit ★★★★★ zeigen");
+    AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"Bewerten: Taste 1–5 (0 löscht), im Viewer Strg+1–5");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (m_settings.overwriteOriginals ? MF_CHECKED : 0), MENU_OVERWRITE,
                 L"EXIF entfernen / Zuschneiden: Original überschreiben");
@@ -2204,6 +2313,12 @@ void App::ShowSettings() {
                 if (m_sel >= 0) EnsureVisible(m_sel);
             } else if (cmd == MENU_FILTER_GPS) {
                 m_gpsOnly = !m_gpsOnly;
+                ApplyFilter();
+                if (m_sel >= 0) EnsureVisible(m_sel);
+                SetStatus(FolderStatus());
+            } else if (cmd == MENU_RATING_1 || cmd == MENU_RATING_3 || cmd == MENU_RATING_5) {
+                const int v = cmd == MENU_RATING_1 ? 1 : cmd == MENU_RATING_3 ? 3 : 5;
+                m_minRating = m_minRating == v ? 0 : v;
                 ApplyFilter();
                 if (m_sel >= 0) EnsureVisible(m_sel);
                 SetStatus(FolderStatus());
@@ -2761,6 +2876,11 @@ void App::OnViewerKey(WPARAM vk) {
     if (m_editing) {  // Bearbeiten-Modus: nur Speichern/Abbrechen (Blaettern, Drehen, Loeschen waeren hier verwirrend)
         if (vk == VK_ESCAPE) EndEdit();
         else if (vk == VK_RETURN) SaveEdit(false);
+        Invalidate();
+        return;
+    }
+    if (GetKeyState(VK_CONTROL) < 0 && ((vk >= '0' && vk <= '5') || (vk >= VK_NUMPAD0 && vk <= VK_NUMPAD5))) {   // Strg+0..5 bewertet das angezeigte Bild
+        SetRating((int)(vk >= VK_NUMPAD0 ? vk - VK_NUMPAD0 : vk - '0'));
         Invalidate();
         return;
     }
@@ -3610,6 +3730,10 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             if (wp == VK_F5 || (wp == 'F' && !ctrl)) { StartSlideshow(); return 0; }
             int n = (int)m_items.size();
             if (n == 0) return 0;
+            if (!ctrl && ((wp >= '0' && wp <= '5') || (wp >= VK_NUMPAD0 && wp <= VK_NUMPAD5))) {   // Bewerten
+                SetRating((int)(wp >= VK_NUMPAD0 ? wp - VK_NUMPAD0 : wp - '0'));
+                return 0;
+            }
             if (ctrl && wp == 'A') { SelectAll(); return 0; }
             if (wp == VK_RETURN) { if (m_sel >= 0) EnterViewer(false); return 0; }
             if (wp == VK_DELETE) { DeleteSelected(); return 0; }
