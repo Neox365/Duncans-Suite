@@ -1,7 +1,7 @@
 # Setzt die Version eines Programms an ALLEN Stellen (CMake, .rc numerisch + Text, main.cpp, installer.iss) und prueft danach mit CheckVersions.ps1.
 # Aufruf:  .\tools\Versions.ps1 -Module Office -Set 0.3.3   (changelog.txt weiter von Hand ergaenzen)
-# Module: DriverUpdater, Suite, Pdf, Photo, Docs, Vault, Office, QuickConvert, Privacy
-param([Parameter(Mandatory)][ValidateSet('DriverUpdater', 'Suite', 'Pdf', 'Photo', 'Docs', 'Vault', 'Office', 'QuickConvert', 'Privacy')][string]$Module, [Parameter(Mandatory)][string]$Set)
+# Module: DriverUpdater, Suite, Pdf, Photo, Docs, Vault, Office, QuickConvert, Privacy, Boost
+param([Parameter(Mandatory)][ValidateSet('DriverUpdater', 'Suite', 'Pdf', 'Photo', 'Docs', 'Vault', 'Office', 'QuickConvert', 'Privacy', 'Boost')][string]$Module, [Parameter(Mandatory)][string]$Set)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 $enc = [Text.Encoding]::GetEncoding('iso-8859-1')   # byteweise erhalten, egal ob UTF-8 oder ANSI
@@ -16,6 +16,7 @@ $map = [ordered]@{
     Vault         = @{ rc = 'vault.rc';      refs = @(,@('CMakeLists.txt', 'set\(VAULT_VER "([\d.]+)"\)')) }
     Office        = @{ rc = 'office.rc';     refs = @(,@('CMakeLists.txt', 'set\(OFFICE_VER "([\d.]+)"\)')) }
     QuickConvert  = @{ rc = 'quickconvert.rc'; refs = @(,@('CMakeLists.txt', 'set\(QUICKCONVERT_VER "([\d.]+)"\)')) }
+    Boost         = @{ rc = 'boost.rc';      refs = @(,@('CMakeLists.txt', 'set\(BOOST_VER "([\d.]+)"\)')) }
     Privacy       = @{ rc = 'privacy.rc';    refs = @(@('privacy\main.cpp', '#define APP_VERSION L"([\d.]+)"'), @('CMakeLists.txt', 'APP_VERSION=L\\"([\d.]+)\\"\)\s*$')) }
 }
 

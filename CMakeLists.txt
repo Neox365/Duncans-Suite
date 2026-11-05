@@ -8,6 +8,7 @@ set(DOCS_VER "0.5.0")
 set(VAULT_VER "0.6.1")
 set(OFFICE_VER "0.3.6")
 set(QUICKCONVERT_VER "0.3.2")
+set(BOOST_VER "0.1.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -216,3 +217,22 @@ else()
     target_link_options(DuncansQuickConvert PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
 target_link_libraries(DuncansQuickConvert PRIVATE gdiplus windowscodecs mfplat mfreadwrite mfuuid ole32 oleaut32 shell32 uuid dwmapi user32 gdi32 propsys)
+
+# ---- Duncan's Boost: Zock-Modus (Win32 + GDI, keine Administratorrechte; Logik in boost/BoostLogic) ----
+add_executable(DuncansBoost WIN32
+    boost/main.cpp
+    boost/BoostLogic.cpp
+    src/Icons.cpp
+    resources/boost.rc
+)
+target_compile_definitions(DuncansBoost PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"${BOOST_VER}\")
+if(MSVC)
+    target_compile_options(DuncansBoost PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET DuncansBoost PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(DuncansBoost PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(DuncansBoost PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
+    target_link_options(DuncansBoost PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
+endif()
+target_link_libraries(DuncansBoost PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 powrprof psapi)
