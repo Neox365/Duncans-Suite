@@ -149,6 +149,8 @@
 - Der PDF Reader kommt als Programm in die Suite.
 
 [DuncansPrivacy.exe]
+## 0.10.0 | 2026-11-05
+- Neu: Übersichtlichere Liste. Die Schalter sind in einklappbare Gruppen sortiert, jede Gruppe zeigt, wie viele ihrer Schalter aktiv sind („4 von 6 aktiv“). Beim Start ist nur die erste Gruppe offen, ein Klick auf die Gruppenleiste klappt sie auf oder zu. Weniger Scrollen.
 ## 0.9.1 | 2026-11-05
 - Geändert: Verweigert Windows den Zugriff auf einen Wert (Fehler 5, z. B. bei „Widgets & News-Feed aus“ auf neueren Windows-11-Versionen, die den Schlüssel auch Administratoren und dem Systemkonto sperren), meldet das Programm das jetzt verständlich. Der Hinweis am Schalter erklärt, wie du die Widgets von Hand abschaltest.
 ## 0.9.0 | 2026-11-05

@@ -32,7 +32,7 @@ using std::min;
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.9.1"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.10.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -53,10 +53,11 @@ const wchar_t* kTitle = L"Duncan's Privacy Shield";
 const UINT WM_RP_DONE = WM_APP + 1;     // Wiederherstellungspunkt fertig (wp = Erfolg)
 const UINT WM_JOB_DONE = WM_APP + 2;    // Hintergrund-Auftrag fertig (lp = JobResult*)
 
-enum HitId { H_NONE = -1, H_ALL = 1000, H_RESTORE = 1001, H_RP = 1002, H_FOLDER = 1003, H_ABOUT = 1004, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_INFO_BASE = 3000 };
+enum HitId { H_NONE = -1, H_ALL = 1000, H_RESTORE = 1001, H_RP = 1002, H_FOLDER = 1003, H_ABOUT = 1004, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_INFO_BASE = 3000, H_GROUP_BASE = 5000 };
 
 struct Row {
     bool group = false;
+    int groupIdx = -1;         // laufende Nummer der Gruppe (nur bei group = true)
     int setting = -1;          // Index in AllSettings()
     std::wstring text;
     int top = 0, height = 0;   // in Inhaltskoordinaten
@@ -76,6 +77,7 @@ struct App {
     HFONT fTitle = nullptr, fHead = nullptr, fBody = nullptr, fSmall = nullptr, fBold = nullptr;
     std::vector<bool> applied;
     std::vector<Row> rows;
+    std::vector<std::wstring> collapsed;   // Namen der eingeklappten Gruppen
     int scroll = 0, contentH = 0;
     RECT list{}, btnAll{}, btnRestore{}, btnRp{}, folderLink{}, toolbar{}, footer{}, aboutLink{};
     aboutgdi::State about;             // "Ueber"-Kachelansicht im Fenster
@@ -169,19 +171,32 @@ const Meta* MetaFor(int settingId) {
     return nullptr;
 }
 
+bool IsCollapsed(const std::wstring& group) { return std::find(g.collapsed.begin(), g.collapsed.end(), group) != g.collapsed.end(); }
+
+// Beim Start ist nur die erste Gruppe offen, alle anderen sind eingeklappt (kurze Liste statt langem Scrollen)
+void InitCollapsed() {
+    g.collapsed.clear();
+    const auto& all = privacy::AllSettings();
+    for (size_t i = 0; i < all.size(); ++i)
+        if (wcscmp(all[i].group, all[0].group) != 0 && !IsCollapsed(all[i].group)) g.collapsed.push_back(all[i].group);
+}
+
 void BuildRows(HDC dc) {
     g.rows.clear();
     const auto& all = privacy::AllSettings();
     const wchar_t* lastGroup = nullptr;
-    int y = 0;
+    int y = 0, groupCount = 0;
+    bool hide = false;
     const int textW = CardWidth() - S(18) * 2 - S(64) - S(16);
     for (size_t i = 0; i < all.size(); ++i) {
         if (!lastGroup || wcscmp(lastGroup, all[i].group) != 0) {
-            Row gr; gr.group = true; gr.text = all[i].group; gr.top = y; gr.height = S(36);
+            Row gr; gr.group = true; gr.groupIdx = groupCount++; gr.text = all[i].group; gr.top = y; gr.height = S(46);
             g.rows.push_back(gr);
-            y += gr.height;
+            y += gr.height + S(8);
             lastGroup = all[i].group;
+            hide = IsCollapsed(gr.text);
         }
+        if (hide) continue;
         Row r; r.setting = static_cast<int>(i); r.top = y;
         r.descH = WrappedHeight(dc, g.fSmall, all[i].description, textW);
         r.titleW = TextWidth(dc, g.fBold, all[i].title);
@@ -505,8 +520,28 @@ void Paint(HDC dc, RECT cr) {
     for (const Row& r : g.rows) {
         const int top = g.list.top + r.top - g.scroll;
         if (top + r.height < g.list.top || top > g.list.bottom) continue;
-        if (r.group) {
-            DrawText2(dc, g.fHead, kTextDim, { g.list.left + S(4), top + S(8), g.list.left + cardW, top + r.height }, r.text);
+        if (r.group) {   // klickbare Gruppenleiste: Pfeil, Name, "n von m aktiv"
+            int on = 0, tot = 0;
+            for (size_t i = 0; i < all.size(); ++i)
+                if (r.text == all[i].group) { ++tot; if (g.applied[i]) ++on; }
+            const bool open = !IsCollapsed(r.text);
+            const bool hot = !busy && g.hover == H_GROUP_BASE + r.groupIdx;
+            RECT bar{ g.list.left, top, g.list.left + cardW, top + r.height };
+            FillRound(dc, bar, S(12), hot ? kCardHover : Blend(kCard, kBackground, 40), hot ? kBorderHot : kBorder);
+            {   // Pfeil: rechts = zu, unten = offen
+                Gdiplus::Graphics gr(dc);
+                gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+                Gdiplus::Pen pen(Gdiplus::Color(255, 167, 139, 250), static_cast<float>(S(2)));
+                pen.SetStartCap(Gdiplus::LineCapRound); pen.SetEndCap(Gdiplus::LineCapRound); pen.SetLineJoin(Gdiplus::LineJoinRound);
+                const int cx = bar.left + S(26), cy = (bar.top + bar.bottom) / 2, a = S(4);
+                Gdiplus::Point pts[3];
+                if (open) { pts[0] = { cx - a, cy - a / 2 }; pts[1] = { cx, cy + a / 2 + 1 }; pts[2] = { cx + a, cy - a / 2 }; }
+                else      { pts[0] = { cx - a / 2, cy - a }; pts[1] = { cx + a / 2 + 1, cy }; pts[2] = { cx - a / 2, cy + a }; }
+                gr.DrawLines(&pen, pts, 3);
+            }
+            const std::wstring cnt = std::to_wstring(on) + L" von " + std::to_wstring(tot) + L" aktiv";
+            DrawText2(dc, g.fHead, kText, { bar.left + S(48), bar.top, bar.right - S(160), bar.bottom }, r.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawText2(dc, g.fSmall, on == tot ? kGreen : kTextDim, { bar.right - S(150), bar.top, bar.right - S(18), bar.bottom }, cnt, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
         const bool on = g.applied[r.setting];
@@ -630,6 +665,8 @@ int HitTest(POINT p) {
         }
         const int y = p.y - g.list.top + g.scroll;
         for (const Row& r : g.rows)
+            if (r.group && y >= r.top && y < r.top + r.height && p.x < g.list.left + CardWidth()) return H_GROUP_BASE + r.groupIdx;
+        for (const Row& r : g.rows)
             if (!r.group && y >= r.top && y < r.top + r.height && p.x < g.list.left + CardWidth()) return r.setting;
     }
     return H_NONE;
@@ -644,7 +681,20 @@ void Scroll(int delta) {
 void Activate(int id) {
     if (id == H_MODAL_OK) CloseModal(true);
     else if (id == H_MODAL_CANCEL) CloseModal(false);
-    else if (g.busy || g.modal.open) return;
+    else if (g.modal.open) return;
+    else if (id >= H_GROUP_BASE) {                     // Gruppe auf-/zuklappen
+        for (const Row& r : g.rows)
+            if (r.group && r.groupIdx == id - H_GROUP_BASE) {
+                const std::wstring name = r.text;
+                auto it = std::find(g.collapsed.begin(), g.collapsed.end(), name);
+                if (it != g.collapsed.end()) g.collapsed.erase(it); else g.collapsed.push_back(name);
+                break;
+            }
+        g.hover = H_NONE;
+        Layout();
+        InvalidateRect(g.hwnd, nullptr, FALSE);
+    }
+    else if (g.busy) return;
     else if (id == H_ALL) ProtectAll();
     else if (id == H_RESTORE) RestoreDefaults();
     else if (id == H_RP) CreateRestorePointNow();
@@ -767,6 +817,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     MakeFonts();
     gfx::EnableDarkTitleBar(g.hwnd);
     RefreshApplied();
+    InitCollapsed();
     Layout();
     SetStatus(g.hasBackup ? L"" : L"Vor der ersten Änderung wird ein Wiederherstellungspunkt erstellt.", kTextDim);
     ShowWindow(g.hwnd, show);
