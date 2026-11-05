@@ -2066,7 +2066,8 @@ void MainWindow::DrawStatusCard(HDC dc)
     {
         if (d.status == DriverStatus::Problem)
             ++problems;
-        if (drvhistory::IsOlderThan(d.driverDateKey, today, 2))
+        // nur Herstellertreiber: Windows-Standardtreiber (Anbieter Microsoft) sind oft jahrealt und gehoeren nicht dazu
+        if (!ContainsNoCase(d.provider, L"microsoft") && drvhistory::IsOlderThan(d.driverDateKey, today, 2))
             ++oldDrivers;
     }
 
@@ -2077,7 +2078,7 @@ void MainWindow::DrawStatusCard(HDC dc)
         { (m_updatesChecked || m_vendorCount > 0) ? std::to_wstring(m_updateCount) : (m_checkingUpdates ? L"…" : L"–"),
                                                                L"Updates",            m_updateCount > 0 ? kAccent : kText },
         { known ? std::to_wstring(problems) : L"–",            L"Probleme",           problems > 0 ? kRed : kGreen },
-        { known ? std::to_wstring(oldDrivers) : L"–",          L"Treiber über 2 Jahre", kText },
+        { known ? std::to_wstring(oldDrivers) : L"–",          L"Herstellertreiber über 2 J.", kText },
         { m_lastUpdateText.empty() ? std::wstring(L"–") : m_lastUpdateText, L"Letztes Update hier", kText },
     };
 
