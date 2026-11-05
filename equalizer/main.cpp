@@ -28,7 +28,7 @@ using std::min;
 #include "EqLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.2.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -398,7 +398,7 @@ void Layout() {
     g.btnImport = { g.btnBind.right + S(8), row2, g.btnBind.right + S(8) + bw2, row2 + h2 };
     g.btnDel = { ir - bw3, row2, ir, row2 + h2 };
     y = g.profCard.bottom + S(14);
-    const int cw = std::max(S(200), TextWidth(dc, g.fBold, L"Configurator öffnen") + S(40));
+    const int cw = std::max(S(200), TextWidth(dc, g.fBold, L"Geräte auswählen") + S(40));
     g.confBtn = { m, y, m + cw, y + S(36) };
     ReleaseDC(g.hwnd, dc);
 }
@@ -568,7 +568,7 @@ void Paint(HDC dc, const RECT& cr) {
         smallBtn(g.btnBind, g.profiles[static_cast<size_t>(g.active)].device.empty() ? L"An aktuelles Gerät binden" : L"Gerät lösen", H_BIND, false);
         smallBtn(g.btnImport, g.cfg.extra.empty() ? L"Kopfhörer-Korrektur laden …" : L"Korrektur entfernen", H_IMPORT, false);
         smallBtn(g.btnDel, g.delArmed ? L"Wirklich löschen?" : L"Löschen", H_PROFDEL, g.delArmed);
-        DrawButton(dc, g.confBtn, L"Configurator öffnen", false, g.hover == H_CONFIGURATOR, g.press == H_CONFIGURATOR && g.hover == H_CONFIGURATOR);
+        DrawButton(dc, g.confBtn, L"Geräte auswählen", false, g.hover == H_CONFIGURATOR, g.press == H_CONFIGURATOR && g.hover == H_CONFIGURATOR);
         DrawText2(dc, g.fSmall, kTextDim, { g.confBtn.right + S(14), g.confBtn.top, g.footer.right, g.confBtn.bottom },
                   L"Dort stellst du ein, auf welchen Geräten der Equalizer wirkt.", DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     }
@@ -626,9 +626,18 @@ void Activate(int id) {
     else if (id == H_RECHECK) { Recheck(); Layout(); }
     else if (id == H_ADMIN) { ApplyAsAdmin(); Layout(); }
     else if (id == H_CONFIGURATOR) {
-        const std::wstring exe = g.installDir + L"\\Configurator.exe";
-        if (GetFileAttributesW(exe.c_str()) == INVALID_FILE_ATTRIBUTES) SetStatus(L"Configurator.exe nicht gefunden", kRed);
-        else ShellExecuteW(g.hwnd, L"open", exe.c_str(), nullptr, g.installDir.c_str(), SW_SHOWNORMAL);
+        // Das Programm zur Geraeteauswahl heisst je nach Version DeviceSelector.exe (ab 1.3) oder Configurator.exe (aelter)
+        std::wstring exe;
+        for (const wchar_t* name : { L"DeviceSelector.exe", L"Configurator.exe" }) {
+            const std::wstring cand = g.installDir + L"\\" + name;
+            if (GetFileAttributesW(cand.c_str()) != INVALID_FILE_ATTRIBUTES) { exe = cand; break; }
+        }
+        if (exe.empty()) SetStatus(L"Die Geräteauswahl von Equalizer APO wurde nicht gefunden (DeviceSelector.exe)", kRed);
+        else {
+            const HINSTANCE r = ShellExecuteW(g.hwnd, L"open", exe.c_str(), nullptr, g.installDir.c_str(), SW_SHOWNORMAL);
+            if (reinterpret_cast<INT_PTR>(r) <= 32) SetStatus(L"Die Geräteauswahl konnte nicht gestartet werden (Administrator-Abfrage abgebrochen?)", kOrange);
+            else SetStatus(L"Geräteauswahl geöffnet – dort die Geräte anhaken, auf denen der Equalizer wirken soll", kTextDim);
+        }
     }
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
