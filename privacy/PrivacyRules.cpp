@@ -50,9 +50,19 @@ namespace {
         return v;
     }
 
+    // Manche HKLM-Schluessel (z. B. Policies\Microsoft\Dsh fuer Widgets) lassen auch Administratoren nicht schreiben (Fehler 5);
+    // Windows erlaubt sie nur dem Systemkonto. Fallback: eine einmalige geplante Aufgabe schreibt den Wert als SYSTEM.
+    bool SystemWrite(const RegOp& op, const Value& v);
+    bool SystemDelete(const RegOp& op);
+
     bool WriteValue(const RegOp& op, const Value& v, std::wstring& error) {
         HKEY k = nullptr;
         LONG r = RegCreateKeyExW(Root(op.hive), op.key, 0, nullptr, 0, KEY_SET_VALUE | KEY_WOW64_64KEY, nullptr, &k, nullptr);
+        if (r == ERROR_ACCESS_DENIED && op.hive == Hive::Machine) {
+            const bool ok = SystemWrite(op, v);
+            suite_safety::Log(L"PrivacyShield", std::wstring(L"Schreiben als Systemkonto (Fehler 5 umgangen) ") + OpId(op) + (ok ? L": ok" : L": FEHLER"));
+            if (ok) return true;
+        }
         if (r != ERROR_SUCCESS) {
             error = std::wstring(L"Schreiben nicht möglich (Fehler ") + std::to_wstring(r) + L"): " + OpId(op);
             return false;
@@ -74,6 +84,11 @@ namespace {
         HKEY k = nullptr;
         LONG r = RegOpenKeyExW(Root(op.hive), op.key, 0, KEY_SET_VALUE | KEY_WOW64_64KEY, &k);
         if (r == ERROR_FILE_NOT_FOUND || r == ERROR_PATH_NOT_FOUND) return true;     // Schluessel gibt es nicht: nichts zu loeschen
+        if (r == ERROR_ACCESS_DENIED && op.hive == Hive::Machine) {
+            const bool ok = SystemDelete(op);
+            suite_safety::Log(L"PrivacyShield", std::wstring(L"Löschen als Systemkonto (Fehler 5 umgangen) ") + OpId(op) + (ok ? L": ok" : L": FEHLER"));
+            if (ok) return true;
+        }
         if (r != ERROR_SUCCESS) { error = std::wstring(L"Löschen nicht möglich (Fehler ") + std::to_wstring(r) + L"): " + OpId(op); return false; }
         r = RegDeleteValueW(k, op.name);
         RegCloseKey(k);
@@ -123,6 +138,52 @@ namespace {
         if (!a.exists) return true;
         if (a.type != b.type) return false;
         return a.type == ValType::Dword ? a.dword == b.dword : _wcsicmp(a.str.c_str(), b.str.c_str()) == 0;
+    }
+
+    // Startet eine Kommandozeile ohne Fenster und wartet; false bei Startfehler/Zeitueberschreitung.
+    bool RunHidden(std::wstring cmd, DWORD timeoutMs, DWORD& exitCode) {
+        STARTUPINFOW si{}; si.cb = sizeof si;
+        PROCESS_INFORMATION pi{};
+        if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return false;
+        const bool done = WaitForSingleObject(pi.hProcess, timeoutMs) == WAIT_OBJECT_0;
+        exitCode = 1;
+        if (done) GetExitCodeProcess(pi.hProcess, &exitCode); else TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+        return done;
+    }
+
+    // Fuehrt "reg.exe <args>" einmalig als SYSTEM aus (geplante Aufgabe, wird sofort gestartet und danach geloescht).
+    // Schluessel, Name und Wert stammen ausschliesslich aus der festen Tabelle in AllSettings().
+    bool RunRegAsSystem(const std::wstring& regArgs, const RegOp& op, bool wantExists, const Value& target) {
+        wchar_t sys[MAX_PATH] = {};
+        if (!GetSystemDirectoryW(sys, MAX_PATH)) return false;
+        const std::wstring dir = sys;
+        const wchar_t* task = L"DuncansPrivacyShieldTmp";
+        const std::wstring tr = L"\\\"" + dir + L"\\reg.exe\\\" " + regArgs;
+        DWORD code = 0;
+        bool ok = RunHidden(L"\"" + dir + L"\\schtasks.exe\" /Create /TN " + task + L" /TR \"" + tr + L"\" /SC ONCE /ST 00:00 /RU SYSTEM /RL HIGHEST /F", 20000, code) && code == 0;
+        if (ok) ok = RunHidden(L"\"" + dir + L"\\schtasks.exe\" /Run /TN " + task, 20000, code) && code == 0;
+        if (ok) {
+            ok = false;
+            for (int i = 0; i < 40 && !ok; ++i) {     // bis zu 10 s auf das Ergebnis warten
+                Sleep(250);
+                const Value now = ReadValue(op);
+                ok = wantExists ? Equal(now, target) : !now.exists;
+            }
+        }
+        RunHidden(L"\"" + dir + L"\\schtasks.exe\" /Delete /TN " + task + L" /F", 20000, code);
+        return ok;
+    }
+
+    bool SystemWrite(const RegOp& op, const Value& v) {
+        std::wstring a = L"add \\\"HKLM\\" + std::wstring(op.key) + L"\\\" /v " + op.name + L" /f /reg:64 ";
+        a += v.type == ValType::Dword ? L"/t REG_DWORD /d " + std::to_wstring(v.dword) : L"/t REG_SZ /d \\\"" + v.str + L"\\\"";
+        return RunRegAsSystem(a, op, true, v);
+    }
+
+    bool SystemDelete(const RegOp& op) {
+        const std::wstring a = L"delete \\\"HKLM\\" + std::wstring(op.key) + L"\\\" /v " + op.name + L" /f /reg:64";
+        return RunRegAsSystem(a, op, false, Value{});
     }
 
     // Beendet einen Dienst; laufende abhaengige Dienste werden zuerst beendet (sonst lehnt Windows das Beenden ab)
