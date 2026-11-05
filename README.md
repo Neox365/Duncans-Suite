@@ -92,6 +92,7 @@ aus, gruppiert sie, erkennt Updates und kann Treiber-Updates über Windows Updat
   - **Hersteller-Abgleich** für Grafikkarten (NVIDIA `VEN_10DE`, AMD `VEN_1002`, Intel `VEN_8086`) anhand von `vendor_releases.json`
 - **Aktualisieren-Button** pro Karte: Windows-Update-Treiber werden mit Wiederherstellungspunkt installiert, bei Hersteller-Treibern öffnet sich die offizielle Download-Seite
 - Suche, Filter (Alle / Updates / Probleme), Sortierung, CSV-Export, Treiber sichern (`pnputil /export-driver`), Hardware-ID kopieren
+- **Übersicht** oben: Urteil auf einen Blick, Kennzahlen (Geräte, Updates, Probleme, Treiber über 2 Jahre, letztes Update) und **Verlauf** der über das Programm installierten Updates (Textdatei `history.txt` neben `settings.ini`, die letzten 200); Zurücksetzen über Windows-Wiederherstellung bzw. Geräte-Manager
 - Eigene Dark-Dialoge und Toasts, Banner mit Start-Animation
 
 Die App benötigt Administratorrechte (UAC-Abfrage beim Start), weil Treiber-Operationen sie erfordern.

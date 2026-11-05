@@ -235,7 +235,10 @@ namespace
             const long code = ur ? GetLong(ur.p, L"ResultCode") : 0;
             const long hr = ur ? GetLong(ur.p, L"HResult") : GetLong(result.p, L"HResult");
             if (code == 2 || code == 3)
+            {
                 ++r.installed;
+                r.installedTitles.push_back(title);
+            }
             else
             {
                 ++r.failed;
