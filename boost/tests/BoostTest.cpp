@@ -71,6 +71,13 @@ int main() {
     CHECK(!IsProtectedExe(L"spotify.exe"));
     CHECK(Lower(L"DisCord.EXE") == L"discord.exe");
     CHECK(Split(L"a.exe||b.exe|").size() == 2);
+    {   // Vorschlagsliste: klein geschrieben, nie gesperrt, und keine Launcher/Chat/Musik, die beim Spielen gebraucht werden
+        const std::vector<std::wstring> sug = SuggestedHelpers();
+        CHECK(!sug.empty());
+        for (const std::wstring& e : sug) { CHECK(e == Lower(e)); CHECK(!IsProtectedExe(e)); }
+        CHECK(!Contains(sug, L"steam.exe") && !Contains(sug, L"epicgameslauncher.exe") && !Contains(sug, L"battle.net.exe"));
+        CHECK(!Contains(sug, L"discord.exe") && !Contains(sug, L"spotify.exe") && !Contains(sug, L"brave.exe"));
+    }
     CHECK(Join({ L"a", L"b" }) == L"a|b");
     GUID g{}, g2{};
     CHECK(GetActiveScheme(g));
@@ -81,7 +88,9 @@ int main() {
     s.closeApps = { L"spotify.exe", L"überwacher.exe" };
     s.gameApps = { L"game.exe" };
     s.optPower = false; s.optToast = true; s.optAuto = true; s.optRestart = false;
+    CHECK(!SettingsFileExists());
     CHECK(SaveSettings(s));
+    CHECK(SettingsFileExists());
     Settings s2 = LoadSettings();
     CHECK(s2.closeApps == s.closeApps && s2.gameApps == s.gameApps);
     CHECK(!s2.optPower && s2.optToast && s2.optAuto && !s2.optRestart);

@@ -317,6 +317,12 @@ std::wstring GuidToString(const GUID& g) {
 
 bool GuidFromString(const std::wstring& s, GUID& g) { return !s.empty() && CLSIDFromString(s.c_str(), &g) == S_OK; }
 
+bool SettingsFileExists() { return GetFileAttributesW(IniPath(L"settings.ini").c_str()) != INVALID_FILE_ATTRIBUTES; }
+
+std::vector<std::wstring> SuggestedHelpers() {
+    return { L"onedrive.exe", L"dropbox.exe", L"googledrivefs.exe", L"teams.exe", L"ms-teams.exe", L"skype.exe", L"slack.exe" };
+}
+
 Settings LoadSettings() {
     Settings s;
     const std::wstring f = IniPath(L"settings.ini");

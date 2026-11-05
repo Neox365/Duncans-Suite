@@ -6,8 +6,9 @@
 
 [DuncansBoost.exe]
 ## 0.1.0 | 2026-11-05
-- Neu: Duncan's Boost, der Zock-Modus. Ein Klick beendet gewählte Hintergrundprogramme (erst freundlich, nach 8 Sekunden hart), stellt den Energiesparplan auf Höchstleistung und schaltet optional Benachrichtigungen aus. Beim Beenden wird alles wiederhergestellt und auf Wunsch werden die Programme wieder gestartet.
-- Spiel-Erkennung: Auf Wunsch startet der Zock-Modus automatisch, wenn ein gewähltes Spiel läuft, und endet danach. Systemprozesse und die Suite werden nie beendet.
+- Neu: Duncan's Boost, der Zock-Modus mit einem Schalter. Beim Einschalten beendet er die angehakten Hintergrundprogramme (erst freundlich, nach 8 Sekunden hart) und stellt den Energiesparplan auf Höchstleistung. Beim Ausschalten wird alles wiederhergestellt und die Programme starten wieder.
+- Beim ersten Start sind unkritische Hintergrundhelfer (z. B. OneDrive, Dropbox, Teams) vorgehakt, wenn sie laufen. Spiele-Launcher, Discord, Spotify und Browser bleiben aus, damit nichts beendet wird, was du beim Spielen brauchst.
+- Optional: Die Automatik startet den Zock-Modus von selbst, wenn ein angehaktes Spiel läuft, und beendet ihn danach. Systemprozesse und die Suite werden nie beendet.
 
 [DuncansTidy.exe]
 ## 1.3.0 | 2026-11-02

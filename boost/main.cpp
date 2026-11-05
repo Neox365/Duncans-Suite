@@ -1,6 +1,7 @@
 // Duncan's Boost - Zock-Modus (Win32 + GDI/GDI+, dunkle Oberflaeche).
-// Ein Klick beendet gewaehlte Hintergrundprogramme, stellt den Energiesparplan auf Hoechstleistung und schaltet optional
-// Benachrichtigungen aus; beim Beenden wird alles wiederhergestellt. Laeuft ohne Administratorrechte.
+// Ein Schalter: Beim Einschalten werden die gewaehlten Hintergrundprogramme beendet und der Energiesparplan auf
+// Hoechstleistung gestellt; beim Ausschalten wird alles wiederhergestellt und die Programme starten wieder.
+// Laeuft ohne Administratorrechte. Die Spiel-Automatik ist ein eingeklappter, optionaler Bereich.
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -47,15 +48,14 @@ const COLORREF kBoost = RGB(255, 150, 50);          // Akzent dieses Programms (
 
 const wchar_t* kTitle = L"Duncan's Boost";
 const UINT WM_JOB_DONE = WM_APP + 1;                // lp = JobResult*
-const UINT_PTR kTimerSpin = 2, kTimerAuto = 3;
+const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4;
 
-enum HitId { H_NONE = -1, H_HERO = 1000, H_REFRESH = 1001, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP_BASE = 5000 };
-enum RowType { R_GROUP, R_APP_CLOSE, R_APP_GAME, R_OPT, R_HINT };
-enum Opt { O_POWER, O_TOAST, O_RESTART, O_AUTO };
+enum HitId { H_NONE = -1, H_HERO = 1000, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP = 5000 };
+enum RowType { R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_GROUP, R_HINT };
 
 struct Row {
     RowType type = R_HINT;
-    int idx = 0;                // App-Index, Option oder Gruppennummer
+    int idx = 0;                // App-Index
     std::wstring text;
     int top = 0, height = 0;
 };
@@ -76,9 +76,9 @@ struct App {
     boostmode::State state;                       // zuletzt gelesener Zustand (state.active = Zock-Modus laeuft)
     std::vector<boostmode::AppInfo> apps;         // laufende Programme + gespeicherte, aktuell nicht laufende
     std::vector<Row> rows;
-    bool collapsed[3] = { false, false, true };
+    bool autoCollapsed = true;                    // "Automatik (optional)" ist beim Start eingeklappt
     int scroll = 0, contentH = 0;
-    RECT hero{}, heroToggle{}, btnRefresh{}, list{}, footer{};
+    RECT hero{}, heroToggle{}, list{}, footer{};
     int hover = H_NONE, press = H_NONE;
     bool tracking = false, busy = false;
     int spin = 0;
@@ -130,23 +130,8 @@ void Toggle(std::vector<std::wstring>& v, const std::wstring& s) {
     if (it != v.end()) v.erase(it); else v.push_back(s);
 }
 
-bool OptValue(int o) { return o == O_POWER ? g.cfg.optPower : o == O_TOAST ? g.cfg.optToast : o == O_RESTART ? g.cfg.optRestart : g.cfg.optAuto; }
-const wchar_t* OptTitle(int o) {
-    switch (o) {
-    case O_POWER: return L"Energiesparplan auf Höchstleistung";
-    case O_TOAST: return L"Benachrichtigungen ausschalten";
-    case O_RESTART: return L"Beendete Programme danach wieder starten";
-    default: return L"Zock-Modus automatisch starten, wenn ein gewähltes Spiel läuft";
-    }
-}
-const wchar_t* OptDesc(int o) {
-    switch (o) {
-    case O_POWER: return L"Stellt vorübergehend „Höchstleistung“ ein (falls dein PC den Plan hat) und danach deinen alten Plan wieder her.";
-    case O_TOAST: return L"Keine Windows-Pop-ups während des Spiels. Wirkt teils erst nach einem Moment; der alte Zustand wird wiederhergestellt.";
-    case O_RESTART: return L"Nach dem Zock-Modus werden die beendeten Programme minimiert wieder gestartet.";
-    default: return L"Aus der Liste unten „Spiel“ anhaken. Beim Start des Spiels beginnt der Modus ohne Rückfrage, nach dem Spiel endet er.";
-    }
-}
+const wchar_t* kAutoTitle = L"Automatisch starten, wenn ich ein Spiel starte";
+const wchar_t* kAutoDesc = L"Hake unten dein Spiel an. Sobald es läuft, schaltet sich der Zock-Modus ohne Rückfrage ein, nach dem Spiel wieder aus.";
 
 // ---------- Zustand ----------
 void SetStatus(const std::wstring& t, COLORREF c = kTextDim) { g.status = t; g.statusColor = c; InvalidateRect(g.hwnd, nullptr, FALSE); }
@@ -161,7 +146,7 @@ void RefreshApps() {
     };
     addMissing(g.cfg.closeApps);
     addMissing(g.cfg.gameApps);
-    std::stable_sort(g.apps.begin(), g.apps.end(), [](const boostmode::AppInfo& x, const boostmode::AppInfo& y) { return x.ramBytes > y.ramBytes; });
+    std::stable_sort(g.apps.begin(), g.apps.end(), [](const boostmode::AppInfo& x, const boostmode::AppInfo& y) { return x.exe < y.exe; });   // alphabetisch: die Zeilen springen nicht herum
 }
 
 void SaveCfg() { boostmode::SaveSettings(g.cfg); }
@@ -174,22 +159,17 @@ void BuildRows(HDC dc) {
     int y = 0;
     const int textW = CardWidth() - S(18) * 2 - S(64) - S(16);
     auto add = [&](Row r, int h) { r.top = y; r.height = h; g.rows.push_back(r); y += h + S(8); };
-    auto group = [&](int n, const std::wstring& name) { Row r; r.type = R_GROUP; r.idx = n; r.text = name; add(r, S(46)); };
     auto appRow = [&](RowType t, int i) { Row r; r.type = t; r.idx = i; add(r, S(58)); };
-    auto optRow = [&](int o) { Row r; r.type = R_OPT; r.idx = o; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, OptDesc(o), textW) + S(14)); };
     auto hint = [&](const std::wstring& t) { Row r; r.type = R_HINT; r.text = t; add(r, S(40)); };
 
-    group(0, L"Programme beenden");
-    if (!g.collapsed[0]) {
-        if (g.apps.empty()) hint(L"Keine Programme mit Fenster gefunden. Starte die Programme und klicke auf „Liste aktualisieren“.");
-        for (size_t i = 0; i < g.apps.size(); ++i) appRow(R_APP_CLOSE, static_cast<int>(i));
-    }
-    group(1, L"Windows umstellen");
-    if (!g.collapsed[1]) { optRow(O_POWER); optRow(O_TOAST); optRow(O_RESTART); }
-    group(2, L"Spiel-Erkennung");
-    if (!g.collapsed[2]) {
-        optRow(O_AUTO);
-        if (g.apps.empty()) hint(L"Starte dein Spiel einmal und klicke auf „Liste aktualisieren“, dann kannst du es hier anhaken.");
+    { Row r; r.type = R_HEAD; r.text = L"Diese Programme beenden"; add(r, S(54)); }
+    if (g.apps.empty()) hint(L"Keine Programme mit Fenster gefunden. Starte die Programme, die du später beenden willst; die Liste füllt sich von selbst.");
+    for (size_t i = 0; i < g.apps.size(); ++i) appRow(R_APP_CLOSE, static_cast<int>(i));
+
+    { Row r; r.type = R_GROUP; r.text = L"Automatik (optional)"; add(r, S(46)); }
+    if (!g.autoCollapsed) {
+        Row r; r.type = R_AUTO; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kAutoDesc, textW) + S(14));
+        if (g.apps.empty()) hint(L"Starte dein Spiel einmal, dann kannst du es hier anhaken.");
         for (size_t i = 0; i < g.apps.size(); ++i) appRow(R_APP_GAME, static_cast<int>(i));
     }
     g.contentH = y;
@@ -202,12 +182,8 @@ void Layout() {
     g.hero = { m, S(84), hr, S(84) + S(96) };
     g.heroToggle = { g.hero.right - S(18) - S(64), g.hero.top + (S(96) - S(34)) / 2, g.hero.right - S(18), g.hero.top + (S(96) - S(34)) / 2 + S(34) };
     g.footer = { m, cr.bottom - S(34), cr.right - m, cr.bottom - S(8) };
+    g.list = { m, g.hero.bottom + S(18), cr.right - m, g.footer.top - S(6) };
     HDC dc = GetDC(g.hwnd);
-    const int bh = S(36);
-    const std::wstring label = L"Liste aktualisieren";
-    const int bw = TextWidth(dc, g.fBold, label) + S(36);
-    g.btnRefresh = { m, g.hero.bottom + S(14), m + bw, g.hero.bottom + S(14) + bh };
-    g.list = { m, g.btnRefresh.bottom + S(12), cr.right - m, g.footer.top - S(6) };
     BuildRows(dc);
     ReleaseDC(g.hwnd, dc);
     const int view = static_cast<int>(g.list.bottom - g.list.top);
@@ -268,7 +244,7 @@ void ToggleMode() {
     if (running.size() > 8) list += L"… und " + std::to_wstring(running.size() - 8) + L" weitere\n";
     ShowModal(L"Programme beenden?",
               L"Diese Programme werden jetzt beendet:\n\n" + list +
-              L"\nZuerst bekommen sie die Chance, sich selbst zu schließen. Was nach etwa 8 Sekunden noch läuft, wird hart beendet; nicht gespeicherte Daten gehen dann verloren. Bitte speichere vorher deine Arbeit.",
+              L"\nZuerst bekommen sie die Chance, sich selbst zu schließen. Was nach etwa 8 Sekunden noch läuft, wird hart beendet; nicht gespeicherte Daten gehen dann verloren. Bitte speichere vorher deine Arbeit.\n\nNach dem Zock-Modus starten sie wieder.",
               L"Zock-Modus starten", L"Abbrechen", [](bool go) { if (go) StartJob(true, false); });
 }
 
@@ -283,15 +259,17 @@ void AutoPoll() {
     }
 }
 
+void ListPoll() {                                  // Liste von selbst aktuell halten (nur, wenn gerade nichts passiert)
+    if (g.busy || g.modal.open || IsIconic(g.hwnd) || g.press != H_NONE) return;
+    RefreshApps();
+    Layout();
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
 void ActivateRow(const Row& r) {
     if (r.type == R_APP_CLOSE) { Toggle(g.cfg.closeApps, g.apps[r.idx].exe); SaveCfg(); }
     else if (r.type == R_APP_GAME) { Toggle(g.cfg.gameApps, g.apps[r.idx].exe); SaveCfg(); }
-    else if (r.type == R_OPT) {
-        bool* p = r.idx == O_POWER ? &g.cfg.optPower : r.idx == O_TOAST ? &g.cfg.optToast : r.idx == O_RESTART ? &g.cfg.optRestart : &g.cfg.optAuto;
-        *p = !*p;
-        SaveCfg();
-        if (r.idx == O_AUTO) g.missPolls = 0;
-    }
+    else if (r.type == R_AUTO) { g.cfg.optAuto = !g.cfg.optAuto; g.missPolls = 0; SaveCfg(); }
 }
 
 // ---------- Zeichnen ----------
@@ -358,32 +336,31 @@ void Paint(HDC dc, const RECT& cr) {
     DeleteObject(bg);
 
     DrawText2(dc, g.fTitle, kText, { S(28), S(18), cr.right - S(28), S(56) }, kTitle);
-    DrawText2(dc, g.fBody, kTextDim, { S(28), S(54), cr.right - S(28), S(78) }, L"Zock-Modus: mehr Leistung für Spiele, ein Klick zurück");
+    DrawText2(dc, g.fBody, kTextDim, { S(28), S(54), cr.right - S(28), S(78) }, L"Mehr Leistung zum Zocken – ein Schalter, ein Klick zurück");
 
     // Hero-Karte mit grossem Schalter
     const bool on = g.state.active;
     const bool heroHot = !busy && g.hover == H_HERO;
     FillRound(dc, g.hero, S(16), heroHot ? kCardHover : kCard, on ? Blend(kBorder, kBoost, 70) : (heroHot ? kBorderHot : kBorder));
-    DrawText2(dc, g.fHead, kText, { g.hero.left + S(22), g.hero.top + S(18), g.heroToggle.left - S(16), g.hero.top + S(46) },
+    DrawText2(dc, g.fHead, kText, { g.hero.left + S(22), g.hero.top + S(18), g.heroToggle.left - S(60), g.hero.top + S(46) },
               on ? L"Zock-Modus ist an" : L"Zock-Modus ist aus");
     std::wstring sub = g.state.active && g.state.auto_ ? L"Automatisch gestartet (Spiel erkannt)." : L"";
     if (sub.empty()) {
         const int n = static_cast<int>(g.cfg.closeApps.size());
-        sub = on ? L"Alles ist umgestellt. Zum Beenden schalten." : (n ? std::to_wstring(n) + (n == 1 ? L" Programm wird beim Start beendet." : L" Programme werden beim Start beendet.")
-                                                                      : L"Wähle unten Programme, die beim Start beendet werden sollen.");
+        sub = on ? L"Alles ist umgestellt. Zum Beenden den Schalter ausschalten."
+                 : (n ? std::to_wstring(n) + (n == 1 ? L" Programm wird beim Einschalten beendet." : L" Programme werden beim Einschalten beendet.")
+                      : L"Hake unten Programme an, die beim Einschalten beendet werden sollen.");
     }
-    DrawText2(dc, g.fSmall, kTextDim, { g.hero.left + S(22), g.hero.top + S(48), g.heroToggle.left - S(16), g.hero.bottom - S(10) }, sub, DT_LEFT | DT_TOP | DT_WORDBREAK);
+    DrawText2(dc, g.fSmall, kTextDim, { g.hero.left + S(22), g.hero.top + S(48), g.heroToggle.left - S(60), g.hero.bottom - S(10) }, sub, DT_LEFT | DT_TOP | DT_WORDBREAK);
     DrawToggle(dc, g.heroToggle, on, heroHot, kBoost);
 
-    DrawButton(dc, g.btnRefresh, L"Liste aktualisieren", false, !busy && g.hover == H_REFRESH, g.press == H_REFRESH && g.hover == H_REFRESH, !g.busy);
-
-    if (g.busy) {                                      // Ladekreis rechts neben der Liste-aktualisieren-Zeile
+    if (g.busy) {                                      // Ladekreis links neben dem Schalter
         Gdiplus::Graphics gr(dc);
         gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
         Gdiplus::Pen track(Gdiplus::Color(60, 255, 150, 50), static_cast<float>(S(3)));
         Gdiplus::Pen arc(Gdiplus::Color(255, 255, 150, 50), static_cast<float>(S(3)));
         arc.SetStartCap(Gdiplus::LineCapRound); arc.SetEndCap(Gdiplus::LineCapRound);
-        const int d = S(24), cx = g.hero.right - d, cy = (g.btnRefresh.top + g.btnRefresh.bottom) / 2;
+        const int d = S(24), cx = g.heroToggle.left - S(30), cy = (g.heroToggle.top + g.heroToggle.bottom) / 2;
         gr.DrawEllipse(&track, cx - d / 2, cy - d / 2, d, d);
         gr.DrawArc(&arc, cx - d / 2, cy - d / 2, d, d, static_cast<float>(g.spin), 100.0f);
     }
@@ -397,13 +374,15 @@ void Paint(HDC dc, const RECT& cr) {
         const int top = g.list.top + r.top - g.scroll;
         if (top + r.height < g.list.top || top > g.list.bottom) continue;
         RECT card{ g.list.left, top, g.list.left + cardW, top + r.height };
-        const int hid = r.type == R_GROUP ? H_GROUP_BASE + r.idx : H_ROW_BASE + static_cast<int>(ri);
+        const int hid = r.type == R_GROUP ? H_GROUP : H_ROW_BASE + static_cast<int>(ri);
         const bool hot = !busy && g.hover == hid;
         const int pad = S(18);
+        if (r.type == R_HEAD) {
+            DrawText2(dc, g.fHead, kText, { card.left + S(4), card.top + S(2), card.right, card.top + S(28) }, r.text);
+            DrawText2(dc, g.fSmall, kTextDim, { card.left + S(4), card.top + S(28), card.right, card.bottom }, L"Beim Ausschalten starten sie wieder von selbst.");
+            continue;
+        }
         if (r.type == R_GROUP) {
-            int selected = 0;
-            if (r.idx == 0) selected = static_cast<int>(g.cfg.closeApps.size());
-            else if (r.idx == 2) selected = static_cast<int>(g.cfg.gameApps.size());
             FillRound(dc, card, S(12), hot ? kCardHover : Blend(kCard, kBackground, 40), hot ? kBorderHot : kBorder);
             {
                 Gdiplus::Graphics gr(dc);
@@ -412,26 +391,25 @@ void Paint(HDC dc, const RECT& cr) {
                 pen.SetStartCap(Gdiplus::LineCapRound); pen.SetEndCap(Gdiplus::LineCapRound); pen.SetLineJoin(Gdiplus::LineJoinRound);
                 const int cx = card.left + S(26), cy = (card.top + card.bottom) / 2, a = S(4);
                 Gdiplus::Point pts[3];
-                if (!g.collapsed[r.idx]) { pts[0] = { cx - a, cy - a / 2 }; pts[1] = { cx, cy + a / 2 + 1 }; pts[2] = { cx + a, cy - a / 2 }; }
-                else                     { pts[0] = { cx - a / 2, cy - a }; pts[1] = { cx + a / 2 + 1, cy }; pts[2] = { cx - a / 2, cy + a }; }
+                if (!g.autoCollapsed) { pts[0] = { cx - a, cy - a / 2 }; pts[1] = { cx, cy + a / 2 + 1 }; pts[2] = { cx + a, cy - a / 2 }; }
+                else                  { pts[0] = { cx - a / 2, cy - a }; pts[1] = { cx + a / 2 + 1, cy }; pts[2] = { cx - a / 2, cy + a }; }
                 gr.DrawLines(&pen, pts, 3);
             }
             DrawText2(dc, g.fHead, kText, { card.left + S(48), card.top, card.right - S(180), card.bottom }, r.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            if (r.idx != 1)
-                DrawText2(dc, g.fSmall, selected ? kBoost : kTextDim, { card.right - S(170), card.top, card.right - S(18), card.bottom },
-                          std::to_wstring(selected) + L" gewählt", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fSmall, g.cfg.optAuto ? kBoost : kTextDim, { card.right - S(170), card.top, card.right - S(18), card.bottom },
+                      g.cfg.optAuto ? L"an" : L"aus", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
         if (r.type == R_HINT) {
             DrawText2(dc, g.fSmall, kTextDim, { card.left + S(6), card.top + S(6), card.right - S(6), card.bottom }, r.text, DT_LEFT | DT_TOP | DT_WORDBREAK);
             continue;
         }
-        if (r.type == R_OPT) {
-            const bool v = OptValue(r.idx);
+        if (r.type == R_AUTO) {
+            const bool v = g.cfg.optAuto;
             const int textW = cardW - pad * 2 - S(64) - S(16);
             FillRound(dc, card, S(14), hot ? kCardHover : kCard, v ? Blend(kBorder, kBoost, 55) : (hot ? kBorderHot : kBorder));
-            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(14), card.left + pad + textW, card.top + S(14) + S(24) }, OptTitle(r.idx));
-            DrawText2(dc, g.fSmall, kTextDim, { card.left + pad, card.top + S(14) + S(24), card.left + pad + textW, card.bottom - S(8) }, OptDesc(r.idx), DT_LEFT | DT_TOP | DT_WORDBREAK);
+            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(14), card.left + pad + textW, card.top + S(14) + S(24) }, kAutoTitle);
+            DrawText2(dc, g.fSmall, kTextDim, { card.left + pad, card.top + S(14) + S(24), card.left + pad + textW, card.bottom - S(8) }, kAutoDesc, DT_LEFT | DT_TOP | DT_WORDBREAK);
             RECT tg{ card.right - pad - S(52), card.top + (r.height - S(28)) / 2, card.right - pad, card.top + (r.height - S(28)) / 2 + S(28) };
             DrawToggle(dc, tg, v, hot, kBoost);
             continue;
@@ -451,7 +429,7 @@ void Paint(HDC dc, const RECT& cr) {
                 DrawText2(dc, g.fSmall, kTextDim, { card.right - S(120), card.top + S(9) + S(24), card.right - pad, card.bottom - S(4) }, std::to_wstring(a.procCount) + L" Prozesse", DT_RIGHT | DT_TOP | DT_SINGLELINE);
         }
     }
-    const int view = g.list.bottom - g.list.top;
+    const int view = static_cast<int>(g.list.bottom - g.list.top);
     if (g.contentH > view) {
         const int trackH = view - S(4);
         const int thumbH = std::max(S(36), trackH * view / g.contentH);
@@ -476,14 +454,13 @@ int HitTest(POINT p) {
         return H_NONE;
     }
     if (PtInRect(&g.hero, p)) return H_HERO;
-    if (PtInRect(&g.btnRefresh, p)) return H_REFRESH;
     if (PtInRect(&g.list, p) && p.x < g.list.left + CardWidth()) {
-        const int y = p.y - g.list.top + g.scroll;
+        const int y = static_cast<int>(p.y - g.list.top) + g.scroll;
         for (size_t i = 0; i < g.rows.size(); ++i) {
             const Row& r = g.rows[i];
             if (y < r.top || y >= r.top + r.height) continue;
-            if (r.type == R_GROUP) return H_GROUP_BASE + r.idx;
-            if (r.type != R_HINT) return H_ROW_BASE + static_cast<int>(i);
+            if (r.type == R_GROUP) return H_GROUP;
+            if (r.type != R_HINT && r.type != R_HEAD) return H_ROW_BASE + static_cast<int>(i);
         }
     }
     return H_NONE;
@@ -499,17 +476,16 @@ void Activate(int id) {
     if (id == H_MODAL_OK) { CloseModal(true); return; }
     if (id == H_MODAL_CANCEL) { CloseModal(false); return; }
     if (g.modal.open) return;
-    if (id >= H_GROUP_BASE) {
-        const int n = id - H_GROUP_BASE;
-        if (n >= 0 && n < 3) g.collapsed[n] = !g.collapsed[n];
+    if (id == H_GROUP) {
+        g.autoCollapsed = !g.autoCollapsed;
         g.hover = H_NONE;
         Layout();
+        if (!g.autoCollapsed) Scroll(g.contentH);      // aufgeklappt: nach unten scrollen, damit der neue Bereich sichtbar ist
         InvalidateRect(g.hwnd, nullptr, FALSE);
         return;
     }
     if (g.busy) return;
     if (id == H_HERO) ToggleMode();
-    else if (id == H_REFRESH) { RefreshApps(); Layout(); SetStatus(L"Liste aktualisiert.", kTextDim); }
     else if (id >= H_ROW_BASE && id - H_ROW_BASE < static_cast<int>(g.rows.size())) {
         ActivateRow(g.rows[id - H_ROW_BASE]);
         Layout();
@@ -536,8 +512,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SIZE: if (g.hwnd) { Layout(); InvalidateRect(hwnd, nullptr, FALSE); } return 0;
     case WM_GETMINMAXINFO: {
         auto* mmi = reinterpret_cast<MINMAXINFO*>(lp);
-        mmi->ptMinTrackSize.x = S(680);
-        mmi->ptMinTrackSize.y = S(520);
+        mmi->ptMinTrackSize.x = S(560);
+        mmi->ptMinTrackSize.y = S(480);
         return 0;
     }
     case WM_DPICHANGED: {
@@ -576,13 +552,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN:
         if (g.modal.open) { if (wp == VK_ESCAPE) CloseModal(false); else if (wp == VK_RETURN) CloseModal(true); return 0; }
         if (wp == VK_DOWN) Scroll(S(60)); else if (wp == VK_UP) Scroll(-S(60));
-        else if (wp == VK_NEXT) Scroll(g.list.bottom - g.list.top); else if (wp == VK_PRIOR) Scroll(-(g.list.bottom - g.list.top));
+        else if (wp == VK_NEXT) Scroll(static_cast<int>(g.list.bottom - g.list.top)); else if (wp == VK_PRIOR) Scroll(-static_cast<int>(g.list.bottom - g.list.top));
         else if (wp == VK_HOME) Scroll(-g.contentH); else if (wp == VK_END) Scroll(g.contentH);
         return 0;
     case WM_JOB_DONE: OnJobDone(reinterpret_cast<JobResult*>(lp)); return 0;
     case WM_TIMER:
-        if (wp == kTimerSpin) { g.spin = (g.spin + 30) % 360; InvalidateRect(hwnd, &g.btnRefresh, FALSE); InvalidateRect(hwnd, &g.hero, FALSE); }
+        if (wp == kTimerSpin) { g.spin = (g.spin + 30) % 360; InvalidateRect(hwnd, &g.hero, FALSE); }
         else if (wp == kTimerAuto) AutoPoll();
+        else if (wp == kTimerList) ListPoll();
         return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     }
@@ -609,17 +586,28 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
 
     g.dpi = GetDpiForSystem();
     MakeFonts();
-    g.hwnd = CreateWindowExW(0, wc.lpszClassName, kTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, S(760), S(700), nullptr, nullptr, inst, nullptr);
+    g.hwnd = CreateWindowExW(0, wc.lpszClassName, kTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, S(640), S(700), nullptr, nullptr, inst, nullptr);
     if (!g.hwnd) return 1;
     g.dpi = GetDpiForWindow(g.hwnd);
     MakeFonts();
     gfx::EnableDarkTitleBar(g.hwnd);
+
+    const bool firstRun = !boostmode::SettingsFileExists();
     g.cfg = boostmode::LoadSettings();
+    g.cfg.optPower = true;          // einfach halten: Hoechstleistung und Neustart der Programme sind immer an,
+    g.cfg.optRestart = true;        // Benachrichtigungen werden nicht angefasst
+    g.cfg.optToast = false;
     g.state = boostmode::LoadState();
     RefreshApps();
+    if (firstRun) {                 // erster Start: laufende, unkritische Hintergrundhelfer (Cloud-Sync, Firmenchat) vorhaken
+        for (const std::wstring& e : boostmode::SuggestedHelpers())
+            if (std::any_of(g.apps.begin(), g.apps.end(), [&](const boostmode::AppInfo& a) { return a.exe == e && a.procCount > 0; })) g.cfg.closeApps.push_back(e);
+        SaveCfg();
+    }
     Layout();
     if (g.state.active) SetStatus(L"Der Zock-Modus war noch aktiv (frühere Sitzung). Zum Wiederherstellen ausschalten.", kOrange);
     SetTimer(g.hwnd, kTimerAuto, 3000, nullptr);
+    SetTimer(g.hwnd, kTimerList, 5000, nullptr);
     ShowWindow(g.hwnd, show);
     UpdateWindow(g.hwnd);
 
