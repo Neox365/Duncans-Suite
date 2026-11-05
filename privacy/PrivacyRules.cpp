@@ -54,7 +54,8 @@ namespace {
         HKEY k = nullptr;
         LONG r = RegCreateKeyExW(Root(op.hive), op.key, 0, nullptr, 0, KEY_SET_VALUE | KEY_WOW64_64KEY, nullptr, &k, nullptr);
         if (r != ERROR_SUCCESS) {
-            error = std::wstring(L"Schreiben nicht möglich (Fehler ") + std::to_wstring(r) + L"): " + OpId(op);
+            error = (r == ERROR_ACCESS_DENIED ? std::wstring(L"Windows schützt diesen Wert vor Änderungen (Zugriff verweigert, auch für Administratoren; Fehler 5): ")
+                                              : std::wstring(L"Schreiben nicht möglich (Fehler ") + std::to_wstring(r) + L"): ") + OpId(op);
             return false;
         }
         if (v.type == ValType::Dword)
@@ -64,7 +65,8 @@ namespace {
                                static_cast<DWORD>((v.str.size() + 1) * sizeof(wchar_t)));
         RegCloseKey(k);
         if (r != ERROR_SUCCESS) {
-            error = std::wstring(L"Schreiben nicht möglich (Fehler ") + std::to_wstring(r) + L"): " + OpId(op);
+            error = (r == ERROR_ACCESS_DENIED ? std::wstring(L"Windows schützt diesen Wert vor Änderungen (Zugriff verweigert, auch für Administratoren; Fehler 5): ")
+                                              : std::wstring(L"Schreiben nicht möglich (Fehler ") + std::to_wstring(r) + L"): ") + OpId(op);
             return false;
         }
         return true;
