@@ -116,6 +116,7 @@ struct Settings {
     int hotkey = 0;                                          // Index in HotkeyPreset
     int retention = 0;                                       // 0 = nie loeschen, 1 = nach 1 Stunde, 2 = nach 1 Tag
     bool captureSelection = true;                            // Markierung beim Oeffnen der Schnellauswahl automatisch uebernehmen
+    bool hideIntro = false;                                  // Anleitungskarte "Was ist Clip?" ausgeblendet
 };
 
 unsigned long long RetentionMs(int retention);               // 0 = unbegrenzt

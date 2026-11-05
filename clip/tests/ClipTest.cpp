@@ -225,10 +225,10 @@ int main() {
         DWORD w; WriteFile(h, "muell", 5, &w, nullptr); CloseHandle(h);
         CHECK(LoadPrompts().empty());
     }
-    Settings st; st.saveHistory = true; st.hotkey = 2; st.retention = 1; st.captureSelection = false;
+    Settings st; st.saveHistory = true; st.hotkey = 2; st.retention = 1; st.captureSelection = false; st.hideIntro = true;
     CHECK(SaveSettings(st));
     Settings st2 = LoadSettings();
-    CHECK(st2.saveHistory && st2.hotkey == 2 && st2.retention == 1 && !st2.captureSelection);
+    CHECK(st2.saveHistory && st2.hotkey == 2 && st2.retention == 1 && !st2.captureSelection && st2.hideIntro);
     CHECK(HotkeyPreset(-5).vk == 'V' && HotkeyPreset(99).vk == 'C' && HotkeyCount() == 3);
     CHECK(LoadSettings().captureSelection == false);
 

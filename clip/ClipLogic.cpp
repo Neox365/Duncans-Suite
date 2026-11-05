@@ -877,6 +877,7 @@ Settings LoadSettings() {
     s.hotkey = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Settings", L"Hotkey", 0, f.c_str())), 0, HotkeyCount() - 1);
     s.retention = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Settings", L"Retention", 0, f.c_str())), 0, 2);
     s.captureSelection = GetPrivateProfileIntW(L"Settings", L"CaptureSelection", 1, f.c_str()) != 0;
+    s.hideIntro = GetPrivateProfileIntW(L"Settings", L"HideIntro", 0, f.c_str()) != 0;
     s.autostart = GetAutostart();
     return s;
 }
@@ -887,6 +888,7 @@ bool SaveSettings(const Settings& s) {
     ok &= WritePrivateProfileStringW(L"Settings", L"Hotkey", std::to_wstring(s.hotkey).c_str(), f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"Retention", std::to_wstring(s.retention).c_str(), f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"CaptureSelection", s.captureSelection ? L"1" : L"0", f.c_str()) != 0;
+    ok &= WritePrivateProfileStringW(L"Settings", L"HideIntro", s.hideIntro ? L"1" : L"0", f.c_str()) != 0;
     return ok;
 }
 
