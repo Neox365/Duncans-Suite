@@ -159,6 +159,11 @@ int PreampDb(const Settings& s)
     return -std::min(peak, 18);
 }
 
+int TotalPreampDb(const Settings& s)
+{
+    return std::clamp(PreampDb(s) + std::clamp(s.preamp, -kMaxGain, kMaxGain), -30, 12);
+}
+
 std::string BuildConfig(const Settings& s)
 {
     std::string t = "# Duncan's Equalizer - wird automatisch erzeugt, bitte nicht von Hand aendern\r\n";
@@ -168,10 +173,10 @@ std::string BuildConfig(const Settings& s)
     for (int b = 0; b < kBands; ++b)
         if (s.gains[b] != 0)
             anyBand = true;
-    if (!anyBand && !s.bass && !s.voice && s.extra.empty())
+    if (!anyBand && !s.bass && !s.voice && s.extra.empty() && s.preamp == 0)
         return t + "# Alle Regler stehen auf 0\r\n";
-    if (PreampDb(s) != 0)
-        t += "Preamp: " + Num(PreampDb(s)) + " dB\r\n";
+    if (TotalPreampDb(s) != 0)
+        t += "Preamp: " + Num(TotalPreampDb(s)) + " dB\r\n";
     if (anyBand)
     {
         t += "GraphicEQ: ";
@@ -378,7 +383,7 @@ bool SaveProfiles(const std::vector<Profile>& list, int active, const std::wstri
     for (const Profile& p : list)
     {
         t += "[profile]\r\nname=" + ToUtf8(p.name) + "\r\ndevice=" + ToUtf8(p.device) + "\r\nbass=" + (p.s.bass ? "1" : "0") +
-             "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\ngains=";
+             "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\npreamp=" + Num(std::clamp(p.s.preamp, -kMaxGain, kMaxGain)) + "\r\ngains=";
         for (int b = 0; b < kBands; ++b)
             t += (b ? "," : "") + Num(ClampGain(p.s.gains[b]));
         t += "\r\n";
@@ -432,6 +437,7 @@ bool LoadProfiles(std::vector<Profile>& list, int& active, const std::wstring& p
         else if (key == "device") p.device = ToWide(val);
         else if (key == "bass") p.s.bass = val == "1";
         else if (key == "voice") p.s.voice = val == "1";
+        else if (key == "preamp") p.s.preamp = std::clamp(std::atoi(val.c_str()), -kMaxGain, kMaxGain);
         else if (key == "extra") { if (p.s.extra.size() < kMaxExtraLines && IsSafeFilterLine(val)) p.s.extra.push_back(val); }
         else if (key == "gains")
         {
