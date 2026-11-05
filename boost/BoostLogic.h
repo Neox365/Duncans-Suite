@@ -76,6 +76,10 @@ struct State {
 };
 
 std::wstring DataDir();                   // %LOCALAPPDATA%\DuncansBoost (wird angelegt)
+bool SettingsFileExists();                // false beim allerersten Start (dann Vorauswahl vorschlagen)
+// Vorschlag fuer die Vorauswahl beim ersten Start: nur Hintergrundhelfer, die man beim Spielen nicht braucht (Cloud-Sync, Firmenchat).
+// Bewusst NICHT dabei: Spiele-Launcher (Steam, Epic, EA, Battle.net: Spiele brauchen sie), Discord/Spotify (laufen oft beim Spielen), Browser.
+std::vector<std::wstring> SuggestedHelpers();
 void SetDataDirForTest(const std::wstring& dir);
 
 Settings LoadSettings();
