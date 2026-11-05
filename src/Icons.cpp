@@ -272,6 +272,15 @@ namespace
             Line(0.32f, 0.56f, 0.68f, 0.56f);
             Line(0.32f, 0.7f, 0.52f, 0.7f);
             break;
+        case CategoryIcon::Equalizer:
+            // Drei Schieberegler (Klang)
+            Line(0.26f, 0.16f, 0.26f, 0.84f);
+            Line(0.5f, 0.16f, 0.5f, 0.84f);
+            Line(0.74f, 0.16f, 0.74f, 0.84f);
+            RRect(0.18f, 0.5f, 0.16f, 0.1f, 0.04f);
+            RRect(0.42f, 0.28f, 0.16f, 0.1f, 0.04f);
+            RRect(0.66f, 0.62f, 0.16f, 0.1f, 0.04f);
+            break;
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);

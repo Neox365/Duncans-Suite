@@ -3,7 +3,7 @@
 ; Komplett-Installer (alle Programme enthalten):                                    ISCC.exe /DFull=1 installer\installer.iss
 
 #define MyAppName      "Duncan's Driver Updater"
-#define MyAppVersion   "1.1.41"
+#define MyAppVersion   "1.1.42"
 #define MyAppPublisher "Duncan"
 #define MyAppExeName   "DuncansDriverUpdater.exe"
 ; Duncan's Suite: zentraler Launcher (Haupt-Startverknuepfung fuer Desktop und Startmenue)
@@ -70,6 +70,8 @@ Source: "..\release\DuncansQuickConvert.exe"; DestDir: "{app}"; Flags: ignorever
 Source: "..\release\DuncansBoost.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Duncan's Clip (Zwischenablage-Verlauf und Prompts)
 Source: "..\release\DuncansClip.exe"; DestDir: "{app}"; Flags: ignoreversion
+; Duncan's Equalizer (Klang-Regler, bedient Equalizer APO)
+Source: "..\release\DuncansEqualizer.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Duncan's Privacy Shield (Administratorrechte, Registry-Einstellungen mit Sicherung)
 Source: "..\release\DuncansPrivacy.exe"; DestDir: "{app}"; Flags: ignoreversion
 ; Hersteller-Tabelle fuer den Grafiktreiber-Abgleich (vom Nutzer editierbar)
@@ -88,6 +90,7 @@ Name: "{group}\Duncan's Office"; Filename: "{app}\DuncansOffice.exe"
 Name: "{group}\Duncan's QuickConvert"; Filename: "{app}\DuncansQuickConvert.exe"
 Name: "{group}\Duncan's Boost"; Filename: "{app}\DuncansBoost.exe"
 Name: "{group}\Duncan's Clip"; Filename: "{app}\DuncansClip.exe"
+Name: "{group}\Duncan's Equalizer"; Filename: "{app}\DuncansEqualizer.exe"
 Name: "{group}\Duncan's Privacy Shield"; Filename: "{app}\DuncansPrivacy.exe"
 #endif
 Name: "{group}\{cm:UninstallProgram,{#SuiteName}}"; Filename: "{uninstallexe}"
@@ -106,6 +109,7 @@ Type: files; Name: "{localappdata}\DuncansOffice\DuncansOffice.exe*"
 Type: files; Name: "{localappdata}\DuncansQuickConvert\DuncansQuickConvert.exe*"
 Type: files; Name: "{localappdata}\DuncansBoost\DuncansBoost.exe*"
 Type: files; Name: "{localappdata}\DuncansClip\DuncansClip.exe*"
+Type: files; Name: "{localappdata}\DuncansEqualizer\DuncansEqualizer.exe*"
 Type: dirifempty; Name: "{localappdata}\DuncansDriverUpdater"
 Type: dirifempty; Name: "{localappdata}\DuncansPdf"
 Type: dirifempty; Name: "{localappdata}\DuncansPrivacy"

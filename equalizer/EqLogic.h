@@ -1,0 +1,53 @@
+#pragma once
+// Duncan's Equalizer - Logik: Regler/Voreinstellungen, Konfigurationstext fuer Equalizer APO, Speichern/Laden und
+// Eintragen in den Equalizer-APO-Ordner. Keine Oberflaeche. Der Ton selbst wird von Equalizer APO (frei, eigener Audio-Filter)
+// verarbeitet; dieses Programm schreibt nur dessen Konfiguration.
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#include <windows.h>
+
+#include <string>
+
+namespace eq {
+
+constexpr int kBands = 10;      // 31 Hz ... 16 kHz
+constexpr int kMaxGain = 12;    // Regler: -12 ... +12 dB
+extern const int kFreqs[kBands];
+
+struct Settings {
+    bool enabled = false;       // Equalizer an/aus
+    int  gains[kBands] = {};    // dB je Band
+    bool bass = false;          // zusaetzlicher Bass-Schub
+    bool voice = false;         // Sprache klarer
+};
+
+struct Preset {
+    const wchar_t* name;
+    int gains[kBands];
+};
+
+int PresetCount();
+const Preset& PresetAt(int index);
+int MatchPreset(const Settings& s);          // Index der Voreinstellung, die zu den Reglern passt, sonst -1
+int ClampGain(int db);
+
+// Vorverstaerkung (<= 0 dB), damit die Lautstaerke durch Anhebungen nicht uebersteuert
+int PreampDb(const Settings& s);
+
+// Text der Konfigurationsdatei fuer Equalizer APO (ASCII, Zeilenende CRLF)
+std::string BuildConfig(const Settings& s);
+
+// Eigene Einstellungen (%LOCALAPPDATA%\DuncansEqualizer\settings.txt)
+std::wstring SettingsPath();
+bool LoadSettings(Settings& s, const std::wstring& path);   // false: Datei fehlt/unlesbar (s bleibt Standard)
+bool SaveSettings(const Settings& s, const std::wstring& path);
+
+// Equalizer APO
+extern const wchar_t* const kConfigFile;     // "duncans-equalizer.txt" im config-Ordner von Equalizer APO
+std::wstring FindInstallDir();               // leer, wenn Equalizer APO nicht installiert ist
+enum class ApplyResult { Applied = 0, NotInstalled = 1, AccessDenied = 2, Failed = 3 };
+// Schreibt <installDir>\config\duncans-equalizer.txt und sorgt fuer die Include-Zeile in config.txt
+ApplyResult ApplyToDir(const std::wstring& installDir, const Settings& s);
+
+}  // namespace eq

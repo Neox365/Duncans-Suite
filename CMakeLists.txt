@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 project(DuncansDriverUpdater VERSION 1.2.0 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
-set(SUITE_VER "1.1.41")
+set(SUITE_VER "1.1.42")
 set(PDF_VER "1.4.0")
 set(PHOTO_VER "0.3.5")
 set(DOCS_VER "0.5.0")
@@ -10,6 +10,7 @@ set(OFFICE_VER "0.3.6")
 set(QUICKCONVERT_VER "0.3.2")
 set(BOOST_VER "0.2.0")
 set(CLIP_VER "0.2.0")
+set(EQUALIZER_VER "0.1.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -256,3 +257,22 @@ else()
     target_link_options(DuncansClip PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
 target_link_libraries(DuncansClip PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 crypt32 comdlg32)
+
+# ---- Duncan's Equalizer: Klang-Regler fuer den ganzen PC, bedient Equalizer APO (Win32 + GDI, keine Administratorrechte; Logik in equalizer/EqLogic) ----
+add_executable(DuncansEqualizer WIN32
+    equalizer/main.cpp
+    equalizer/EqLogic.cpp
+    src/Icons.cpp
+    resources/equalizer.rc
+)
+target_compile_definitions(DuncansEqualizer PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
+                           APP_VERSION=L\"${EQUALIZER_VER}\")
+if(MSVC)
+    target_compile_options(DuncansEqualizer PRIVATE /utf-8 /W4 /permissive-)
+    set_property(TARGET DuncansEqualizer PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    target_link_options(DuncansEqualizer PRIVATE /MANIFEST:NO)
+else()
+    target_compile_options(DuncansEqualizer PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
+    target_link_options(DuncansEqualizer PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
+endif()
+target_link_libraries(DuncansEqualizer PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32)
