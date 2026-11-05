@@ -357,9 +357,9 @@ struct Parser {
         while (j < s.size() && s[j] == L' ') ++j;
         if (letterEnd == i) {
             if (j < s.size() && s[j] == L'(') {
-                if (IsIfName(tok)) {   // WENN auch mitten in einer Rechnung, aber nur mit Zahlen als Ergebnis
+                if (IsIfName(tok) || IsLookupName(tok)) {   // WENN/SVERWEIS auch mitten in einer Rechnung, aber nur mit Zahlen als Ergebnis
                     i = st;
-                    const Operand o = WennOp();
+                    const Operand o = IsIfName(tok) ? WennOp() : LookupOp();
                     if (o.text) Throw(L"#WERT!");
                     return o.n;
                 }
@@ -437,6 +437,12 @@ struct Parser {
         for (wchar_t ch : tok) n.push_back(UpperName(ch));
         return n == L"WENN" || n == L"IF";
     }
+    static bool IsLookupName(const std::wstring& tok)
+    {
+        std::wstring n;
+        for (wchar_t ch : tok) n.push_back(UpperName(ch));
+        return n == L"SVERWEIS" || n == L"VLOOKUP";
+    }
     static bool IsCountIfName(const std::wstring& n)
     {
         return n == L"Z\u00C4HLENWENN" || n == L"ZAEHLENWENN" || n == L"COUNTIF";
@@ -468,6 +474,17 @@ struct Parser {
         return p < s.size() && s[p] == L'(';
     }
 
+    // Steht hier "SVERWEIS(" (mit Leerzeichen vor der Klammer erlaubt)?
+    bool PeekLookup() const
+    {
+        size_t p = i;
+        std::wstring tok;
+        while (p < s.size() && (IsLetter(s[p]) || IsUmlaut(s[p]))) tok.push_back(s[p++]);
+        if (!IsLookupName(tok)) return false;
+        while (p < s.size() && s[p] == L' ') ++p;
+        return p < s.size() && s[p] == L'(';
+    }
+
     Operand Opnd()
     {
         Ws();
@@ -477,9 +494,9 @@ struct Parser {
             o.s = StringLit();
             return o;
         }
-        if (PeekIf()) {   // WENN liefert Zahl oder Text; folgt danach noch eine Rechenoperation, gilt das Ergebnis als Zahl innerhalb des Ausdrucks
+        if (PeekIf() || PeekLookup()) {   // WENN und SVERWEIS liefern Zahl oder Text; folgt danach noch eine Rechenoperation, gilt das Ergebnis als Zahl innerhalb des Ausdrucks
             const size_t save = i;
-            o = WennOp();
+            o = PeekIf() ? WennOp() : LookupOp();
             Ws();
             if (i < s.size() && (s[i] == L'+' || s[i] == L'-' || s[i] == L'*' || s[i] == L'/' || s[i] == L'^')) {
                 if (o.text) Throw(L"#WERT!");
@@ -620,6 +637,56 @@ struct Parser {
         return b;
     }
 
+    // SVERWEIS(Suchkriterium; Matrix; Spaltenindex; [Bereich_Verweis]): sucht in der ersten Spalte der Matrix und liefert den Wert aus Spalte Spaltenindex.
+    // Bereich_Verweis FALSCH/0 = genau (Text mit * und ? als Platzhalter); WAHR/1 oder weggelassen = ungefaehr (erste Spalte aufsteigend sortiert, wie in Excel).
+    Operand LookupOp()
+    {
+        while (i < s.size() && (IsLetter(s[i]) || IsUmlaut(s[i]))) ++i;   // Name
+        if (!Eat(L'(')) Throw(L"#SYNTAX!");
+        const Operand key = Opnd();
+        if (!(Eat(L';') || Eat(L','))) Throw(L"#SYNTAX!");
+        int r1 = 0, c1 = 0, r2 = 0, c2 = 0;
+        Ws();
+        if (!RangeCoords(r1, c1, r2, c2)) Throw(L"#SYNTAX!");
+        if (!(Eat(L';') || Eat(L','))) Throw(L"#SYNTAX!");
+        const double idxD = Expr();
+        bool exact = false;
+        if (Eat(L';') || Eat(L',')) {
+            Ws();
+            size_t p = i;
+            std::wstring word;
+            while (p < s.size() && IsLetter(s[p])) word.push_back(UpperName(s[p++]));
+            if (word == L"FALSCH" || word == L"FALSE") { exact = true; i = p; }
+            else if (word == L"WAHR" || word == L"TRUE") { exact = false; i = p; }
+            else exact = Expr() == 0;
+        }
+        if (!Eat(L')')) Throw(L"#SYNTAX!");
+        const int top = r1 < r2 ? r1 : r2, bottom = r1 < r2 ? r2 : r1, left = c1 < c2 ? c1 : c2, right = c1 < c2 ? c2 : c1;
+        const int idx = static_cast<int>(idxD);
+        if (idxD < 1 || idx > right - left + 1) Throw(L"#BEZUG!");
+        int hit = -1;
+        for (int r = top; r <= bottom; ++r) {
+            const Value& v = sh.Get(r, left);
+            if (v.kind == Value::Error) throw Fail{ v.text };
+            if (v.kind == Value::Empty) continue;
+            const bool keyText = key.text;
+            if ((v.kind == Value::Text) != keyText) continue;   // Zahl gegen Text wird nie verglichen
+            int cmp = 0;
+            if (keyText) cmp = exact ? (WildMatch(key.s, 0, v.text, 0) ? 0 : 1) : CompareText(v.text, key.s);
+            else cmp = v.num < key.n ? -1 : (v.num > key.n ? 1 : 0);
+            if (exact) { if (cmp == 0) { hit = r; break; } }
+            else if (cmp <= 0) hit = r;   // letzter Wert, der nicht groesser als das Suchkriterium ist
+            else break;
+        }
+        if (hit < 0) Throw(L"#NV");
+        const Value& res = sh.Get(hit, left + idx - 1);
+        Operand o;
+        if (res.kind == Value::Error) throw Fail{ res.text };
+        if (res.kind == Value::Text) { o.text = true; o.s = res.text; }
+        else if (res.kind == Value::Number) o.n = res.num;
+        return o;
+    }
+
     static bool CriterionMatches(const Value& v, const Operand& crit)
     {
         if (v.kind == Value::Error) return false;
@@ -659,7 +726,7 @@ struct Parser {
     {
         std::wstring name;
         for (wchar_t ch : nameIn) name.push_back(UpperName(ch));
-        enum { Sum, Avg, Min, Max, Count, CountIf, SumIf } fn;
+        enum { Sum, Avg, Min, Max, Count, CountIf, SumIf, Round, Abs, Sqrt, Int } fn;
         if (name == L"SUMME" || name == L"SUM") fn = Sum;
         else if (name == L"MITTELWERT" || name == L"AVERAGE") fn = Avg;
         else if (name == L"MIN") fn = Min;
@@ -667,8 +734,26 @@ struct Parser {
         else if (name == L"ANZAHL" || name == L"COUNT") fn = Count;
         else if (IsCountIfName(name)) fn = CountIf;
         else if (name == L"SUMMEWENN" || name == L"SUMIF") fn = SumIf;
+        else if (name == L"RUNDEN" || name == L"ROUND") fn = Round;
+        else if (name == L"ABS") fn = Abs;
+        else if (name == L"WURZEL" || name == L"SQRT") fn = Sqrt;
+        else if (name == L"GANZZAHL" || name == L"INT") fn = Int;
         else Throw(L"#NAME?");
         if (!Eat(L'(')) Throw(L"#SYNTAX!");
+        if (fn == Round || fn == Abs || fn == Sqrt || fn == Int) {   // Funktionen mit einer Zahl (RUNDEN mit Stellen)
+            const double x = Expr();
+            double digits = 0;
+            if (fn == Round) {
+                if (!(Eat(L';') || Eat(L','))) Throw(L"#SYNTAX!");
+                digits = Expr();
+            }
+            if (!Eat(L')')) Throw(L"#SYNTAX!");
+            if (fn == Abs) return Check(std::fabs(x));
+            if (fn == Int) return Check(std::floor(x));
+            if (fn == Sqrt) { if (x < 0) Throw(L"#ZAHL!"); return Check(std::sqrt(x)); }
+            const double f = std::pow(10.0, std::floor(digits));   // RUNDEN: kaufmaennisch, .5 weg von null
+            return Check(std::round(x * f) / f);
+        }
         if (fn == CountIf) {   // ZAEHLENWENN(Bereich; Kriterium)
             int r1 = 0, c1 = 0, r2 = 0, c2 = 0;
             Ws();
@@ -739,6 +824,10 @@ struct Parser {
                 break;
             case CountIf:
             case SumIf:
+            case Round:
+            case Abs:
+            case Sqrt:
+            case Int:
                 break;   // oben behandelt
         }
         return Check(r);

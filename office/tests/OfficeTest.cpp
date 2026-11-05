@@ -230,7 +230,33 @@ int main()
     CHECK(Show(s, L"E4", L"=summewenn(C1:C5;\"n*\";A1:A5)") == L"2");      // Platzhalter, Kleinschreibung
     CHECK(Show(s, L"E5", L"=SUMMEWENN(A1:A5;\"<=2\")+1") == L"4");
     CHECK(Show(s, L"E6", L"=SUMMEWENN(A1:A5;\">2\"") == L"#SYNTAX!");
-    // Zahlenformate und Hintergrundfarbe
+
+    // SVERWEIS und Rechenfunktionen
+    s.Clear();
+    s.Set(0, 0, L"Apfel"); s.Set(0, 1, L"1,5"); s.Set(0, 2, L"rot");
+    s.Set(1, 0, L"Birne"); s.Set(1, 1, L"2");   s.Set(1, 2, L"gelb");
+    s.Set(2, 0, L"Kiwi");  s.Set(2, 1, L"3");   s.Set(2, 2, L"gr\u00FCn");
+    s.Set(0, 4, L"1");  s.Set(0, 5, L"eins");
+    s.Set(1, 4, L"5");  s.Set(1, 5, L"f\u00FCnf");
+    s.Set(2, 4, L"10"); s.Set(2, 5, L"zehn");
+    CHECK(Show(s, L"H1", L"=SVERWEIS(\"Birne\";A1:C3;2;FALSCH)") == L"2");
+    CHECK(Show(s, L"H2", L"=SVERWEIS(\"kiwi\";A1:C3;3;0)") == L"gr\u00FCn");             // ohne Beachtung der Gross-/Kleinschreibung, Text als Ergebnis
+    CHECK(Show(s, L"H3", L"=VLOOKUP(\"Ki*\";A1:C3;2;FALSE)") == L"3");                  // Platzhalter
+    CHECK(Show(s, L"H4", L"=SVERWEIS(\"Zitrone\";A1:C3;2;FALSCH)") == L"#NV");
+    CHECK(Show(s, L"H5", L"=SVERWEIS(\"Birne\";A1:C3;4;FALSCH)") == L"#BEZUG!");
+    CHECK(Show(s, L"H6", L"=SVERWEIS(\"Birne\";A1:C3;2;FALSCH)*2") == L"4");              // mitten in einer Rechnung
+    CHECK(Show(s, L"H7", L"=SVERWEIS(7;E1:F3;2)") == L"f\u00FCnf");                       // ungefaehr: groesster Wert <= 7
+    CHECK(Show(s, L"H8", L"=SVERWEIS(0;E1:F3;2)") == L"#NV");
+    CHECK(Show(s, L"H9", L"=SVERWEIS(10;E1:F3;2;WAHR)") == L"zehn");
+    CHECK(Show(s, L"H10", L"=WENN(SVERWEIS(\"Kiwi\";A1:C3;2;0)>2;\"teuer\";\"billig\")") == L"teuer");
+    CHECK(Show(s, L"H11", L"=SVERWEIS(B2;E1:F3;2;0)") == L"#NV");                         // 2 kommt in E nicht vor
+    CHECK(Show(s, L"J1", L"=RUNDEN(1234,5678;-2)") == L"1200");
+    CHECK(Show(s, L"J2", L"=ROUND(2,5;0)") == L"3");
+    CHECK(Show(s, L"J3", L"=ABS(-3)") == L"3");
+    CHECK(Show(s, L"J4", L"=WURZEL(16)+1") == L"5");
+    CHECK(Show(s, L"J5", L"=GANZZAHL(-2,5)") == L"-3");
+    CHECK(Show(s, L"J6", L"=WURZEL(-1)") == L"#ZAHL!");
+    CHECK(Show(s, L"J7", L"=RUNDEN(2)") == L"#SYNTAX!");    // Zahlenformate und Hintergrundfarbe
     CHECK(FormatCurrency(1234.5) == L"1.234,50 \u20AC");
     CHECK(FormatCurrency(-0.5) == L"-0,50 \u20AC");
     CHECK(FormatCurrency(1234567.891) == L"1.234.567,89 \u20AC");
