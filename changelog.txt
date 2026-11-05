@@ -5,6 +5,11 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.2.0 | 2026-11-05
+- Neu: Profile. Du kannst mehrere Einstellungen speichern (zum Beispiel „Kopfhörer“ und „Boxen“, bis zu sechs) und mit einem Klick wechseln. Regler, Bass-Schub, „Sprache klarer“ und Korrektur werden im gewählten Profil gespeichert.
+- Neu: Profil an ein Ausgabegerät binden. Wird ein Gerät zum Standardgerät, an das ein Profil gebunden ist, wählt der Equalizer dieses Profil automatisch (solange das Programm läuft).
+- Neu: Kopfhörer-Korrektur laden. Eine Parametric-EQ-Datei (zum Beispiel von AutoEq) lässt sich in ein Profil einlesen; übernommen werden nur „Preamp:“- und „Filter:“-Zeilen, alles andere wird ignoriert.
+- Geändert: „Bass verstärken“ und „Sprache klarer“ stehen nebeneinander. Bei allen Reglern auf 0 wird keine Vorverstärkung mehr geschrieben.
 ## 0.1.1 | 2026-11-05
 - Neu: Unter jedem Regler steht jetzt ein Wort (Tiefbass, Bass, Druck, Wärme, Körper, Mitten, Stimme, Klarheit, Zischen, Glanz). Fährt man mit der Maus über einen Regler, erklärt eine Zeile, was er macht und was zu viel oder zu wenig bewirkt.
 ## 0.1.0 | 2026-11-05

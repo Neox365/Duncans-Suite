@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <string>
+#include <vector>
 
 namespace eq {
 
@@ -22,7 +23,19 @@ struct Settings {
     int  gains[kBands] = {};    // dB je Band
     bool bass = false;          // zusaetzlicher Bass-Schub
     bool voice = false;         // Sprache klarer
+    std::vector<std::string> extra;   // eingelesene Filterzeilen (z. B. AutoEq-Kopfhoerer-Korrektur), nur "Preamp:"/"Filter:"
 };
+
+// Ein Profil = ein Satz Einstellungen (Regler, Schalter, Korrektur) mit Namen und optional einem Ausgabegeraet,
+// bei dem es automatisch gewaehlt wird. "enabled" in s wird nicht benutzt (Ein/Aus gilt global).
+struct Profile {
+    std::wstring name;
+    std::wstring device;        // Anzeigename des Ausgabegeraets oder leer
+    Settings s;
+};
+constexpr int kMaxProfiles = 6;
+constexpr size_t kMaxNameLen = 24;
+constexpr size_t kMaxExtraLines = 40;
 
 struct Preset {
     const wchar_t* name;
@@ -39,6 +52,21 @@ int PreampDb(const Settings& s);
 
 // Text der Konfigurationsdatei fuer Equalizer APO (ASCII, Zeilenende CRLF)
 std::string BuildConfig(const Settings& s);
+
+// Profile (%LOCALAPPDATA%\DuncansEqualizer\profiles.txt)
+std::wstring ProfilesPath();
+bool LoadProfiles(std::vector<Profile>& list, int& active, const std::wstring& path);   // false: Datei fehlt (list bleibt leer, active = 0)
+bool SaveProfiles(const std::vector<Profile>& list, int active, const std::wstring& path);
+std::wstring CleanName(std::wstring name);                                  // gekuerzt, ohne Steuer-/Sonderzeichen; leer = ungueltig
+int FindProfile(const std::vector<Profile>& list, const std::wstring& name);   // ohne Gross-/Kleinschreibung, -1 wenn nicht da
+int ProfileForDevice(const std::vector<Profile>& list, const std::wstring& device);   // -1 wenn keines gebunden
+
+// Liest eine Parametric-EQ-Datei (z. B. von AutoEq): nur "Preamp:" und "Filter:"-Zeilen mit harmlosen Zeichen werden uebernommen
+// ("Filter 3:" wird zu "Filter:"). ignored = Anzahl nicht uebernommener Zeilen.
+std::vector<std::string> ParseFilterFile(const std::string& text, int& ignored);
+
+// Anzeigename des Standard-Ausgabegeraets (leer, wenn nicht ermittelbar)
+std::wstring DefaultOutputName();
 
 // Eigene Einstellungen (%LOCALAPPDATA%\DuncansEqualizer\settings.txt)
 std::wstring SettingsPath();

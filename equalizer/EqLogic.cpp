@@ -1,8 +1,12 @@
 #include "EqLogic.h"
 
+#include <initguid.h>
+#include <mmdeviceapi.h>
+#include <functiondiscoverykeys_devpkey.h>
 #include <shlobj.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <vector>
 
@@ -65,6 +69,45 @@ std::string Trim(const std::string& s)
     return s.substr(a, b - a);
 }
 
+bool IsSafeFilterLine(const std::string& l)
+{
+    if (l.empty() || l.size() > 160)
+        return false;
+    if (l.compare(0, 7, "Preamp:") != 0 && l.compare(0, 7, "Filter:") != 0)
+        return false;
+    for (unsigned char ch : l)
+        if (!(std::isalnum(ch) || ch == ' ' || ch == '.' || ch == ',' || ch == '+' || ch == '-' || ch == '_' || ch == ':'))
+            return false;
+    return true;
+}
+
+std::wstring ToWide(const std::string& s)
+{
+    if (s.empty())
+        return std::wstring();
+    const int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), nullptr, 0);
+    std::wstring w(static_cast<size_t>(n), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()), &w[0], n);
+    return w;
+}
+
+std::string ToUtf8(const std::wstring& w)
+{
+    if (w.empty())
+        return std::string();
+    const int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), nullptr, 0, nullptr, nullptr);
+    std::string s(static_cast<size_t>(n), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()), &s[0], n, nullptr, nullptr);
+    return s;
+}
+
+std::wstring LowerW(std::wstring s)
+{
+    if (!s.empty())
+        CharLowerBuffW(&s[0], static_cast<DWORD>(s.size()));
+    return s;
+}
+
 }  // namespace
 
 namespace {
@@ -125,9 +168,10 @@ std::string BuildConfig(const Settings& s)
     for (int b = 0; b < kBands; ++b)
         if (s.gains[b] != 0)
             anyBand = true;
-    if (!anyBand && !s.bass && !s.voice)
+    if (!anyBand && !s.bass && !s.voice && s.extra.empty())
         return t + "# Alle Regler stehen auf 0\r\n";
-    t += "Preamp: " + Num(PreampDb(s)) + " dB\r\n";
+    if (PreampDb(s) != 0)
+        t += "Preamp: " + Num(PreampDb(s)) + " dB\r\n";
     if (anyBand)
     {
         t += "GraphicEQ: ";
@@ -145,6 +189,13 @@ std::string BuildConfig(const Settings& s)
     {
         t += "Filter: ON PK Fc 250 Hz Gain -2 dB Q 1.0\r\n";
         t += "Filter: ON PK Fc 3000 Hz Gain 3 dB Q 1.0\r\n";
+    }
+    size_t n = 0;
+    for (const std::string& line : s.extra)      // nur Zeilen, die wie eingelesene Filterzeilen aussehen (Schutz vor "Include:", "VSTPlugin:" usw.)
+    {
+        if (n++ >= kMaxExtraLines || !IsSafeFilterLine(line))
+            continue;
+        t += line + "\r\n";
     }
     return t;
 }
@@ -273,6 +324,203 @@ ApplyResult ApplyToDir(const std::wstring& installDir, const Settings& s)
             return ApplyResult::Failed;
     }
     return ApplyResult::Applied;
+}
+
+std::wstring CleanName(std::wstring name)
+{
+    std::wstring out;
+    for (wchar_t c : name)
+    {
+        if (c < 32 || c == L'=' || c == L'[' || c == L']' || c == L'\t')
+            continue;
+        out += c;
+    }
+    while (!out.empty() && out.front() == L' ') out.erase(out.begin());
+    while (!out.empty() && out.back() == L' ') out.pop_back();
+    if (out.size() > kMaxNameLen)
+        out.resize(kMaxNameLen);
+    while (!out.empty() && out.back() == L' ') out.pop_back();
+    return out;
+}
+
+int FindProfile(const std::vector<Profile>& list, const std::wstring& name)
+{
+    const std::wstring key = LowerW(name);
+    for (size_t i = 0; i < list.size(); ++i)
+        if (LowerW(list[i].name) == key)
+            return static_cast<int>(i);
+    return -1;
+}
+
+int ProfileForDevice(const std::vector<Profile>& list, const std::wstring& device)
+{
+    if (device.empty())
+        return -1;
+    const std::wstring key = LowerW(device);
+    for (size_t i = 0; i < list.size(); ++i)
+        if (!list[i].device.empty() && LowerW(list[i].device) == key)
+            return static_cast<int>(i);
+    return -1;
+}
+
+std::wstring ProfilesPath()
+{
+    const std::wstring p = SettingsPath();
+    const size_t s = p.find_last_of(L'\\');
+    return s == std::wstring::npos ? L"" : p.substr(0, s) + L"\\profiles.txt";
+}
+
+bool SaveProfiles(const std::vector<Profile>& list, int active, const std::wstring& path)
+{
+    std::string t;
+    if (active >= 0 && active < static_cast<int>(list.size()))
+        t += "active=" + ToUtf8(list[static_cast<size_t>(active)].name) + "\r\n";
+    for (const Profile& p : list)
+    {
+        t += "[profile]\r\nname=" + ToUtf8(p.name) + "\r\ndevice=" + ToUtf8(p.device) + "\r\nbass=" + (p.s.bass ? "1" : "0") +
+             "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\ngains=";
+        for (int b = 0; b < kBands; ++b)
+            t += (b ? "," : "") + Num(ClampGain(p.s.gains[b]));
+        t += "\r\n";
+        size_t n = 0;
+        for (const std::string& l : p.s.extra)
+            if (n < kMaxExtraLines && IsSafeFilterLine(l))
+            {
+                t += "extra=" + l + "\r\n";
+                ++n;
+            }
+    }
+    return WriteFileBytes(path, t) == 0;
+}
+
+bool LoadProfiles(std::vector<Profile>& list, int& active, const std::wstring& path)
+{
+    list.clear();
+    active = 0;
+    std::string data;
+    if (!ReadFileBytes(path, data))
+        return false;
+    std::wstring activeName;
+    size_t pos = 0;
+    while (pos < data.size())
+    {
+        size_t e = data.find('\n', pos);
+        if (e == std::string::npos)
+            e = data.size();
+        const std::string line = Trim(data.substr(pos, e - pos));
+        pos = e + 1;
+        if (line == "[profile]")
+        {
+            if (list.size() < static_cast<size_t>(kMaxProfiles))
+                list.emplace_back();
+            else
+                break;
+            continue;
+        }
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos)
+            continue;
+        const std::string key = line.substr(0, eq), val = line.substr(eq + 1);
+        if (list.empty())
+        {
+            if (key == "active")
+                activeName = ToWide(val);
+            continue;
+        }
+        Profile& p = list.back();
+        if (key == "name") p.name = CleanName(ToWide(val));
+        else if (key == "device") p.device = ToWide(val);
+        else if (key == "bass") p.s.bass = val == "1";
+        else if (key == "voice") p.s.voice = val == "1";
+        else if (key == "extra") { if (p.s.extra.size() < kMaxExtraLines && IsSafeFilterLine(val)) p.s.extra.push_back(val); }
+        else if (key == "gains")
+        {
+            size_t q = 0;
+            for (int b = 0; b < kBands && q <= val.size(); ++b)
+            {
+                size_t c = val.find(',', q);
+                if (c == std::string::npos)
+                    c = val.size();
+                p.s.gains[b] = ClampGain(std::atoi(val.substr(q, c - q).c_str()));
+                q = c + 1;
+            }
+        }
+    }
+    // Profile ohne Namen oder mit doppeltem Namen entfernen
+    std::vector<Profile> clean;
+    for (const Profile& p : list)
+        if (!p.name.empty() && FindProfile(clean, p.name) < 0)
+            clean.push_back(p);
+    list.swap(clean);
+    if (list.empty())
+        return false;
+    const int idx = FindProfile(list, activeName);
+    active = idx >= 0 ? idx : 0;
+    return true;
+}
+
+std::vector<std::string> ParseFilterFile(const std::string& text, int& ignored)
+{
+    std::vector<std::string> out;
+    ignored = 0;
+    size_t pos = 0;
+    while (pos < text.size())
+    {
+        size_t e = text.find('\n', pos);
+        if (e == std::string::npos)
+            e = text.size();
+        std::string line = Trim(text.substr(pos, e - pos));
+        pos = e + 1;
+        if (line.empty() || line[0] == '#')
+            continue;
+        std::string norm;
+        if (line.compare(0, 7, "Preamp:") == 0)
+            norm = line;
+        else if (line.compare(0, 6, "Filter") == 0)
+        {
+            const size_t colon = line.find(':');
+            bool ok = colon != std::string::npos;
+            for (size_t i = 6; ok && i < colon; ++i)
+                if (!(line[i] == ' ' || (line[i] >= '0' && line[i] <= '9')))
+                    ok = false;
+            if (ok)
+                norm = "Filter:" + line.substr(colon + 1);
+        }
+        if (!norm.empty() && IsSafeFilterLine(norm) && out.size() < kMaxExtraLines)
+            out.push_back(norm);
+        else
+            ++ignored;
+    }
+    return out;
+}
+
+std::wstring DefaultOutputName()
+{
+    std::wstring name;
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IMMDeviceEnumerator* en = nullptr;
+    if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&en))) && en)
+    {
+        IMMDevice* dev = nullptr;
+        if (SUCCEEDED(en->GetDefaultAudioEndpoint(eRender, eMultimedia, &dev)) && dev)
+        {
+            IPropertyStore* store = nullptr;
+            if (SUCCEEDED(dev->OpenPropertyStore(STGM_READ, &store)) && store)
+            {
+                PROPVARIANT v;
+                PropVariantInit(&v);
+                if (SUCCEEDED(store->GetValue(PKEY_Device_FriendlyName, &v)) && v.vt == VT_LPWSTR && v.pwszVal)
+                    name = v.pwszVal;
+                PropVariantClear(&v);
+                store->Release();
+            }
+            dev->Release();
+        }
+        en->Release();
+    }
+    if (SUCCEEDED(init))
+        CoUninitialize();
+    return name;
 }
 
 }  // namespace eq
