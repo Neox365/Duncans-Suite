@@ -44,13 +44,13 @@ Step 'Bauen (Release, x64)'
 $buildDir = Join-Path $root 'build-release'   # eigener Ordner, damit eine andere Konfiguration in 'build' nicht stoert
 Run 'cmake' @('-S', $root, '-B', $buildDir, '-A', 'x64')
 Run 'cmake' @('--build', $buildDir, '--config', 'Release')
-foreach ($f in 'DuncansSuite.exe', 'DuncansDriverUpdater.exe', 'DuncansPdf.exe', 'DuncansPrivacy.exe', 'DuncansPhotoCommander.exe', 'OggysDocsFiles.exe', 'DuncansVault.exe', 'DuncansOffice.exe', 'DuncansQuickConvert.exe', 'DuncansBoost.exe', 'DuncansClip.exe', 'pdfium.dll') {
+foreach ($f in 'DuncansSuite.exe', 'DuncansDriverUpdater.exe', 'DuncansPdf.exe', 'DuncansPrivacy.exe', 'DuncansPhotoCommander.exe', 'OggysDocsFiles.exe', 'DuncansVault.exe', 'DuncansOffice.exe', 'DuncansQuickConvert.exe', 'DuncansBoost.exe', 'DuncansClip.exe', 'DuncansEqualizer.exe', 'pdfium.dll') {
     if (-not (Test-Path (Join-Path $rel $f))) { throw "release\$f fehlt nach dem Build" }
 }
 
 Step 'Module signieren'
 & (Join-Path $tools 'ModuleAssets.ps1')
-& (Join-Path $tools 'SignRelease.ps1') (Join-Path $rel 'DuncansSuite.exe') (Join-Path $rel 'DuncansPhotoCommander.exe') (Join-Path $rel 'OggysDocsFiles.exe') (Join-Path $rel 'DuncansVault.exe') (Join-Path $rel 'DuncansOffice.exe') (Join-Path $rel 'DuncansQuickConvert.exe') (Join-Path $rel 'DuncansBoost.exe') (Join-Path $rel 'DuncansClip.exe')
+& (Join-Path $tools 'SignRelease.ps1') (Join-Path $rel 'DuncansSuite.exe') (Join-Path $rel 'DuncansPhotoCommander.exe') (Join-Path $rel 'OggysDocsFiles.exe') (Join-Path $rel 'DuncansVault.exe') (Join-Path $rel 'DuncansOffice.exe') (Join-Path $rel 'DuncansQuickConvert.exe') (Join-Path $rel 'DuncansBoost.exe') (Join-Path $rel 'DuncansClip.exe') (Join-Path $rel 'DuncansEqualizer.exe')
 
 Step 'Installer bauen und signieren'
 Run $iscc @((Join-Path $root 'installer\installer.iss'))

@@ -33,6 +33,7 @@ $items = @(
     @{ N = 'Office';        Exe = 'DuncansOffice.exe';         Main = Get-CMakeVar 'OFFICE_VER';       Rc = 'resources/office.rc';       Def = @('office/main.cpp', 'APP_VERSION') }
     @{ N = 'QuickConvert';  Exe = 'DuncansQuickConvert.exe';   Main = Get-CMakeVar 'QUICKCONVERT_VER'; Rc = 'resources/quickconvert.rc'; Def = @('quickconvert/main.cpp', 'APP_VERSION') }
     @{ N = 'Clip';          Exe = 'DuncansClip.exe';           Main = Get-CMakeVar 'CLIP_VER';         Rc = 'resources/clip.rc';         Def = @('clip/main.cpp', 'APP_VERSION') }
+    @{ N = 'Equalizer';     Exe = 'DuncansEqualizer.exe';      Main = Get-CMakeVar 'EQUALIZER_VER';    Rc = 'resources/equalizer.rc';    Def = @('equalizer/main.cpp', 'APP_VERSION') }
     @{ N = 'Boost';         Exe = 'DuncansBoost.exe';          Main = Get-CMakeVar 'BOOST_VER';        Rc = 'resources/boost.rc';        Def = @('boost/main.cpp', 'APP_VERSION') }
     @{ N = 'Driver Updater'; Exe = 'DuncansDriverUpdater.exe'; Main = $(if ($cmake -match 'project\(DuncansDriverUpdater VERSION ([0-9.]+)') { $Matches[1] }); Rc = 'resources/app.rc'; Def = $null }
     @{ N = 'Privacy';       Exe = 'DuncansPrivacy.exe';        Main = $(if ($cmake -match 'DuncansPrivacyShield PRIVATE[^)]*APP_VERSION=L\\"([0-9.]+)\\"') { $Matches[1] }); Rc = 'resources/privacy.rc'; Def = @('privacy/main.cpp', 'APP_VERSION') }
