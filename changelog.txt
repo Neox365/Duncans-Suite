@@ -4,6 +4,13 @@
 # Die Suite bringt eine Kopie mit und lädt die aktuelle Fassung aus dem Release "modules"
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
+[DuncansClip.exe]
+## 0.1.0 | 2026-11-05
+- Neu: Duncan's Clip, Zwischenablage-Verlauf und Prompts. Mit Strg+Alt+V (umschaltbar) öffnet sich in jedem Programm die Schnellauswahl: tippen zum Filtern, Enter fügt den Eintrag ein.
+- Prompts und Textbausteine mit Platzhalter {clip}, der beim Einfügen durch den aktuellen Zwischenablage-Text ersetzt wird (z. B. „Fasse zusammen: {clip}“). Drei Beispiele liegen beim ersten Start bereit.
+- Datenschutz: Der Verlauf bleibt nur im Arbeitsspeicher, auf Wunsch wird er verschlüsselt (Windows-Schlüssel) gespeichert. Kopien aus Passwort-Managern und alles, was Windows als vertraulich markiert, wird nie aufgenommen.
+- Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
+
 [DuncansBoost.exe]
 ## 0.2.0 | 2026-11-05
 - Einfacher: ein Schalter und eine Liste „Diese Programme beenden“. Höchstleistung und das Wiederstarten der Programme sind immer an, die Benachrichtigungen werden nicht mehr angefasst. Die Liste aktualisiert sich von selbst.

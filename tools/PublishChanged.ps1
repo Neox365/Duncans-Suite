@@ -23,6 +23,7 @@ $modules = @(
     [pscustomobject]@{ Name = 'Vault';         Exe = 'DuncansVault.exe';         Target = 'DuncansVault' }
     [pscustomobject]@{ Name = 'Office';        Exe = 'DuncansOffice.exe';        Target = 'DuncansOffice' }
     [pscustomobject]@{ Name = 'QuickConvert';  Exe = 'DuncansQuickConvert.exe';  Target = 'DuncansQuickConvert' }
+    [pscustomobject]@{ Name = 'Clip';          Exe = 'DuncansClip.exe';          Target = 'DuncansClip' }
     [pscustomobject]@{ Name = 'Boost';         Exe = 'DuncansBoost.exe';         Target = 'DuncansBoost' }
     [pscustomobject]@{ Name = 'Pdf';           Exe = 'DuncansPdf.exe';           Target = 'DuncansPdfReader' }
 )
