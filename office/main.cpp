@@ -8,6 +8,9 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <commdlg.h>
+#ifndef _RICHEDIT_VER
+#define _RICHEDIT_VER 0x0800   // Tabellen (EM_INSERTTABLE, TABLEROWPARMS) gibt es erst ab der Rich-Edit-Version 8
+#endif
 #include <richedit.h>
 #include <dwmapi.h>
 #include <shellapi.h>
@@ -54,7 +57,7 @@ enum Cmd : int {
     C_WRITER = 101, C_SHEETS, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_PDF, C_PRINT,
     C_BOLD, C_ITALIC, C_UNDER, C_SMALLER, C_BIGGER, C_SIZE, C_LEFT, C_CENTER, C_RIGHT,
     C_PICK_WRITER, C_PICK_SHEETS,
-    C_STRIKE, C_FONT, C_COLOR, C_BULLET, C_FIND, C_FINDNEXT,
+    C_STRIKE, C_FONT, C_COLOR, C_BULLET, C_FIND, C_FINDNEXT, C_TABLE,
     C_FMT_EUR, C_FMT_PCT, C_FILL,
     ID_RICH = 201, ID_FORMULA = 202,
     C_SIZE_BASE = 300,
@@ -63,6 +66,7 @@ enum Cmd : int {
     C_COLOR_BASE = 700,     // bis 700 + Zahl der Farben
     C_COLOR_MORE = 730,
     C_FILL_BASE = 740,      // bis 740 + Zahl der Fuellfarben
+    C_TABLE_BASE = 800,     // bis 800 + Zahl der Tabellengroessen
     // Dialog "Suchen und Ersetzen"
     ID_F_FIND = 501, ID_F_REPL, ID_F_CASE, ID_F_WORD, ID_F_NEXT, ID_F_REPLACE, ID_F_ALL, ID_F_CLOSE, ID_F_STATUS
 };
@@ -80,6 +84,8 @@ const ColorPreset kFills[] = {
     { L"Blau", RGB(0x27, 0x45, 0x7A) }, { L"Rot", RGB(0x7A, 0x28, 0x28) },     { L"Orange", RGB(0x7A, 0x45, 0x1C) },
     { L"Violett", RGB(0x50, 0x2A, 0x7A) }, { L"Grau", RGB(0x44, 0x44, 0x58) } };
 constexpr int kFillCount = static_cast<int>(sizeof kFills / sizeof kFills[0]);
+constexpr int kTableSizes[][2] = { {2, 2}, {3, 2}, {3, 3}, {4, 3}, {4, 5}, {5, 5}, {6, 8} };   // Spalten, Zeilen
+constexpr int kTableSizeCount = static_cast<int>(sizeof kTableSizes / sizeof kTableSizes[0]);
 constexpr ULONG_PTR kFillItemBase = 100;   // itemData der Fuellfarben-Menueeintraege (die Textfarben nutzen 0..9)
 const wchar_t* const kFontCandidates[] = { L"Segoe UI", L"Arial", L"Calibri", L"Cambria", L"Candara", L"Consolas", L"Courier New", L"Georgia",
                                            L"Palatino Linotype", L"Tahoma", L"Times New Roman", L"Trebuchet MS", L"Verdana", L"Comic Sans MS" };
@@ -250,6 +256,8 @@ private:
     void ShowSizeMenu();
     void ShowFontMenu();
     void ShowColorMenu();
+    void ShowTableMenu();                          // Auswahl der Tabellengroesse unter dem Tabellen-Knopf
+    void InsertTable(int cols, int rows);          // Tabelle an der Schreibmarke einfuegen (Rich-Edit-Tabelle, wird in .rtf gespeichert)
     void SetFontName(const std::wstring& name);
     void SetTextColorRef(COLORREF c);
     void ToggleBullet();
@@ -534,6 +542,8 @@ void App::Layout()
         add(C_COLOR, { bx, by, bx + S(48), by + bh }, L"");
         bx += S(50);
         add(C_BULLET, { bx, by, bx + S(40), by + bh }, L"");
+        bx += S(42);
+        add(C_TABLE, { bx, by, bx + S(40), by + bh }, L"");
         bx += S(42) + S(14);
         for (int id : { C_LEFT, C_CENTER, C_RIGHT }) { add(id, { bx, by, bx + S(40), by + bh }, L""); bx += S(42); }
     }
@@ -703,6 +713,18 @@ void App::DrawBtn(HDC dc, int index)
             HBRUSH cb = CreateSolidBrush(m_color);
             FillRect(dc, &bar, cb);
             DeleteObject(cb);
+            break;
+        }
+        case C_TABLE: {   // kleines Raster 3 x 3
+            const int cell = S(6), x0 = (b.rc.left + b.rc.right - 3 * cell) / 2, y0 = b.rc.top + (b.rc.bottom - b.rc.top - 3 * cell) / 2;
+            HPEN pen = CreatePen(PS_SOLID, std::max(1, S(1)), kText);
+            HGDIOBJ op = SelectObject(dc, pen), ob = SelectObject(dc, GetStockObject(NULL_BRUSH));
+            for (int r = 0; r < 3; ++r)
+                for (int c = 0; c < 3; ++c)
+                    Rectangle(dc, x0 + c * cell, y0 + r * cell, x0 + (c + 1) * cell + 1, y0 + (r + 1) * cell + 1);
+            SelectObject(dc, ob);
+            SelectObject(dc, op);
+            DeleteObject(pen);
             break;
         }
         case C_BULLET: {   // drei Zeilen mit Aufzaehlungspunkt
@@ -892,6 +914,10 @@ void App::Command(int id)
         SetFill(id - C_FILL_BASE);
         return;
     }
+    if (id >= C_TABLE_BASE && id < C_TABLE_BASE + kTableSizeCount) {
+        InsertTable(kTableSizes[id - C_TABLE_BASE][0], kTableSizes[id - C_TABLE_BASE][1]);
+        return;
+    }
     if (id == C_COLOR_MORE) {
         static COLORREF custom[16];
         CHOOSECOLORW cc{ sizeof cc };
@@ -924,6 +950,7 @@ void App::Command(int id)
         case C_FONT: if (writer) ShowFontMenu(); break;
         case C_COLOR: if (writer) ShowColorMenu(); break;
         case C_BULLET: if (writer) ToggleBullet(); break;
+        case C_TABLE: if (writer) ShowTableMenu(); break;
         case C_FIND: if (writer) ShowFindDialog(); break;
         case C_FINDNEXT: if (writer) { if (m_findText.empty()) ShowFindDialog(); else FindNext(); } break;
         case C_FMT_EUR: if (sheets) ToggleFormat(sheet::FmtCurrency); break;
@@ -2306,6 +2333,48 @@ void App::ShowColorMenu()
             TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
         }
     DestroyMenu(menu);
+}
+
+void App::ShowTableMenu()
+{
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"Tabelle einfügen");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    for (int i = 0; i < kTableSizeCount; ++i) {
+        const std::wstring label = std::to_wstring(kTableSizes[i][0]) + L" Spalten × " + std::to_wstring(kTableSizes[i][1]) + L" Zeilen";
+        AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(C_TABLE_BASE + i), label.c_str());
+    }
+    for (const Btn& b : m_btns)
+        if (b.id == C_TABLE) {
+            POINT pt{ b.rc.left, b.rc.bottom };
+            ClientToScreen(m_hwnd, &pt);
+            TrackPopupMenu(menu, TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+        }
+    DestroyMenu(menu);
+}
+
+void App::InsertTable(int cols, int rows)
+{
+    TABLEROWPARMS row{};
+    row.cbRow = sizeof row;
+    row.cbCell = sizeof(TABLECELLPARMS);
+    row.cCell = static_cast<BYTE>(cols);
+    row.cRow = static_cast<BYTE>(rows);
+    row.dxCellMargin = 108;   // twips (ca. 0,19 cm Innenabstand)
+    std::vector<TABLECELLPARMS> cells(static_cast<size_t>(cols));
+    const LONG total = 9000;   // Gesamtbreite in twips (ca. 15,9 cm, passt auf eine A4-Seite)
+    for (TABLECELLPARMS& c : cells) {
+        c.dxWidth = total / cols;
+        c.dxBrdrLeft = c.dyBrdrTop = c.dxBrdrRight = c.dyBrdrBottom = 1;   // duenne Rahmenlinien (Einheit ist hier nicht twips: 10 war schon fast schwarz)
+        c.crBrdrLeft = c.crBrdrTop = c.crBrdrRight = c.crBrdrBottom = RGB(0, 0, 0);
+        c.crBackPat = c.crForePat = kPaper;   // Zellhintergrund wie die Seite (sonst schwarz)
+    }
+    CHARRANGE sel{};
+    SendMessageW(m_rich, EM_EXGETSEL, 0, reinterpret_cast<LPARAM>(&sel));
+    SendMessageW(m_rich, EM_INSERTTABLE, reinterpret_cast<WPARAM>(&row), reinterpret_cast<LPARAM>(cells.data()));
+    CHARRANGE first{ sel.cpMin, sel.cpMin };   // Schreibmarke in die erste Zelle (sonst steht sie hinter der Tabelle)
+    SendMessageW(m_rich, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&first));
+    SetFocus(m_rich);
 }
 
 void App::SetFontName(const std::wstring& name)

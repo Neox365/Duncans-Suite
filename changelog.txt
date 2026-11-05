@@ -304,6 +304,8 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.3.5 | 2026-11-05
+- Writer: Tabellen. Der neue Knopf mit dem Gitter in der Werkzeugleiste fügt eine Tabelle an der Schreibmarke ein (von 2 × 2 bis 6 Spalten × 8 Zeilen). Die Tab-Taste springt von Zelle zu Zelle und legt am Ende eine neue Zeile an. Tabellen werden in .rtf gespeichert und gedruckt; beim Speichern als .txt bleibt nur der Text. Der PDF-Export gibt Tabellen noch nicht wieder.
 ## 0.3.4 | 2026-11-05
 - Sheets: neue Funktion SVERWEIS (englisch VLOOKUP): sucht in der ersten Spalte einer Tabelle und liefert den Wert aus einer anderen Spalte, auch Text: =SVERWEIS(A1;E1:G20;2;FALSCH). FALSCH sucht genau (bei Text mit * und ? als Platzhalter), WAHR oder weggelassen sucht ungefähr in einer aufsteigend sortierten Spalte. Nicht gefunden ergibt #NV.
 - Sheets: neue Rechenfunktionen RUNDEN (ROUND), ABS, WURZEL (SQRT) und GANZZAHL (INT).
