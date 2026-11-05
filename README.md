@@ -196,6 +196,12 @@ Jede Einstellung ist ein Schalter und besteht aus klar benannten Registry-Werten
 | Windows-Dienste | Spooler, SysMain (nur SSD), RemoteRegistry, WerSvc | Starttyp „Deaktiviert“ per `ChangeServiceConfig`, Originalstarttyp gesichert (nur einzeln) |
 | KI & Sprache | Recall / Bildschirm-Analyse aus | `Policies\...\WindowsAI\DisableAIDataAnalysis = 1` |
 | | Online-Spracherkennung aus | `Speech_OneCore\Settings\OnlineSpeechPrivacy\HasAccepted = 0` |
+| Werbung & Vorschläge | Vorinstallierte Werbe-Apps verhindern | `Policies\...\CloudContent\DisableWindowsConsumerFeatures = 1`, `ContentDeliveryManager\SilentInstalledAppsEnabled`, `PreInstalledAppsEnabled`, `OemPreInstalledAppsEnabled`, `ContentDeliveryAllowed = 0` |
+| | Copilot-Schaltfläche & Richtlinie (HKLM) | `Policies\...\WindowsCopilot\TurnOffWindowsCopilot = 1`, `ShowCopilotButton = 0` (optional) |
+| | Werbung auf Sperrbildschirm & Startmenü aus | `ContentDeliveryManager\RotatingLockScreenOverlayEnabled`, `SubscribedContent-338387/338389/88000326Enabled`, `Explorer\Advanced\Start_IrisRecommendations`, `Start_AccountNotifications = 0` |
+| | Vorschläge in Einstellungen aus | `SubscribedContent-338393/353694/353696Enabled`, `SystemPaneSuggestionsEnabled`, `SoftLandingEnabled`, `UserProfileEngagement\ScoobeSystemSettingEnabled = 0` |
+| | Werbung im Datei-Explorer aus | `Explorer\Advanced\ShowSyncProviderNotifications = 0` |
+| | Edge: Shopping, Seitenleiste, Rewards aus | `HKCU\...\Policies\Microsoft\Edge`: `EdgeShoppingAssistantEnabled`, `HubsSidebarEnabled`, `ShowMicrosoftRewards`, `EdgeFollowEnabled`, `PersonalizationReportingEnabled = 0` |
 
 **Sicherheit:** Vor der ersten Änderung wird ein Windows-Wiederherstellungspunkt erstellt (im Hintergrund; ist der Systemschutz aus, fragt das Programm nach, ob es trotzdem weitermachen soll).
 Zusätzlich sichert das Programm vor dem Schreiben den Originalzustand jedes Wertes (vorhanden + Wert oder „nicht vorhanden“) in `%ProgramData%\DuncansSuite\Backups\privacy_backup.ini` (eine ältere Sicherung unter `%LOCALAPPDATA%\DuncansPrivacyShield` wird beim ersten Start übernommen).
