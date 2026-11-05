@@ -4,6 +4,7 @@
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -146,6 +147,37 @@ int main() {
     CHECK(conv::ConvertImage(bmp, Tmp(L"s0.bmp"), conv::ImageFmt::Bmp, 80, &err, 0));       // 0 = Original
     bmpDims(Tmp(L"s0.bmp"), bw, bh);
     CHECK(bw == 64 && bh == 48);
+    // GIF: Kopf "GIF8", Rueckweg ueber den Decoder
+    CHECK(conv::ConvertImage(bmp, Tmp(L"out.gif"), conv::ImageFmt::Gif, 80, &err));
+    {
+        std::string gif; HANDLE f = CreateFileW(Tmp(L"out.gif").c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        char hd[6] = {}; DWORD rd = 0; if (f != INVALID_HANDLE_VALUE) { ReadFile(f, hd, 6, &rd, nullptr); CloseHandle(f); }
+        CHECK(rd == 6 && std::string(hd, 4) == "GIF8");
+    }
+    CHECK(conv::ConvertImage(Tmp(L"out.gif"), Tmp(L"gif_back.png"), conv::ImageFmt::Png, 100, &err));
+    // PDF: zwei Bilder (eines hochkant, eines quer) in ein PDF; Kopf, Seitenzahl, Ende pruefen
+    {
+        const std::wstring wide = Tmp(L"wide.bmp"), tall = Tmp(L"tall.bmp"), pdf = Tmp(L"multi.pdf");
+        WriteBmp(wide, 80, 40); WriteBmp(tall, 40, 80);
+        std::atomic<bool> noCancel{false};
+        int lastP = -1;
+        CHECK(conv::ConvertImagesToPdf({wide, tall}, pdf, 80, 0, noCancel, [&](int pct) { lastP = pct; }, &err));
+        CHECK(lastP == 100);
+        std::string d; HANDLE f = CreateFileW(pdf.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        char buf[65536]; DWORD rd = 0;
+        if (f != INVALID_HANDLE_VALUE) { while (ReadFile(f, buf, sizeof buf, &rd, nullptr) && rd > 0) d.append(buf, rd); CloseHandle(f); }
+        CHECK(d.compare(0, 5, "%PDF-") == 0);
+        CHECK(d.find("/Count 2") != std::string::npos);
+        CHECK(d.find("/DCTDecode") != std::string::npos);
+        CHECK(d.find("[0 0 841.89 595.28]") != std::string::npos);   // das breite Bild: Querformat
+        CHECK(d.find("[0 0 595.28 841.89]") != std::string::npos);   // das hohe Bild: Hochformat
+        CHECK(d.size() > 8 && d.compare(d.size() - 6, 5, "%%EOF") == 0);
+        CHECK(Size(pdf + L".tmp0.jpg") < 0);                         // keine Hilfsdateien uebrig
+        CHECK(!conv::ConvertImagesToPdf({Tmp(L"in.wav")}, Tmp(L"bad.pdf"), 80, 0, noCancel, nullptr, &err));   // kein Bild: Fehler mit Dateiname, keine Datei
+        CHECK(err.find(L"qc_in.wav") != std::wstring::npos && Size(Tmp(L"bad.pdf")) < 0);
+        std::atomic<bool> stop{true};
+        CHECK(!conv::ConvertImagesToPdf({wide}, Tmp(L"stop.pdf"), 80, 0, stop, nullptr, &err) && err == L"Abgebrochen" && Size(Tmp(L"stop.pdf")) < 0);
+    }
     // jpg -> png (Rueckweg ueber den Decoder)
     CHECK(conv::ConvertImage(hi, Tmp(L"back.png"), conv::ImageFmt::Png, 100, &err));
 

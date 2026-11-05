@@ -287,6 +287,9 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansQuickConvert.exe]
+## 0.3.2 | 2026-11-05
+- Neu: Zielformat PDF für Bilder. Alle Bilder in der Liste landen in einem PDF mit einer A4-Seite je Bild (Hoch- oder Querformat nach dem Bild, eingepasst und zentriert, nie vergrößert). Die Qualität und die neue Bildgröße gelten für die eingebetteten Bilder; die Datei heißt nach dem ersten Bild, z. B. scan1 (3 Bilder).pdf.
+- Neu: Zielformat GIF für einzelne Bilder (256 Farben, Transparenz bleibt erhalten).
 ## 0.3.1 | 2026-11-05
 - Neu: Bildgröße. Eine neue Zeile unter den Formaten verkleinert Bilder beim Konvertieren auf eine längste Kante von 2560, 1920, 1280 oder 800 Pixeln. Das Seitenverhältnis bleibt, kleinere Bilder werden nicht vergrößert, Original lässt alles unverändert. Die Wahl wird gemerkt.
 ## 0.3.0 | 2026-11-02

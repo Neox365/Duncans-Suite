@@ -41,20 +41,20 @@ constexpr COLORREF kOnAccent = RGB(0x1E, 0x1E, 0x2E);
 
 enum : int {
     IDC_ADD = 100, IDC_OUT = 101, IDC_CLEAR = 102, IDC_GO = 103, IDC_OPEN = 104,
-    IDC_IMG0 = 110,   // 110..114: PNG, JPG, WEBP, BMP, HEIC
+    IDC_IMG0 = 110,   // 110..116: PNG, JPG, WEBP, BMP, HEIC, GIF, PDF
     IDC_AUD0 = 120,   // 120..124: MP3, M4A, WAV, MP4, MKV
     IDC_SZ0 = 130,    // 130..134: Bildgroesse Original, 2560, 1920, 1280, 800
     IDM_OUT_PICK = 200, IDM_OUT_SAME = 201, IDM_OUT_SHOW = 202,
     IDM_OUT_RECENT0 = 210,   // 210..214: zuletzt benutzte Zielordner
 };
-constexpr int kAudCount = 5, kMaxRecent = 5, kSizeCount = 5;
+constexpr int kImgCount = 7, kAudCount = 5, kMaxRecent = 5, kSizeCount = 5;
 constexpr int kSizeVals[kSizeCount] = {0, 2560, 1920, 1280, 800};   // laengste Kante in Pixel, 0 = Original
 constexpr const wchar_t* kSizeNames[kSizeCount] = {L"Original", L"2560", L"1920", L"1280", L"800"};
 constexpr UINT WM_APP_UPDATE = WM_APP + 1;   // ein Eintrag hat sich geaendert
 constexpr UINT WM_APP_DONE = WM_APP + 2;     // alle Worker sind fertig
 
-constexpr conv::ImageFmt kImgFmts[] = {conv::ImageFmt::Png, conv::ImageFmt::Jpeg, conv::ImageFmt::Webp, conv::ImageFmt::Bmp, conv::ImageFmt::Heic};
-constexpr const wchar_t* kImgNames[] = {L"PNG", L"JPG", L"WEBP", L"BMP", L"HEIC"};
+constexpr conv::ImageFmt kImgFmts[kImgCount] = {conv::ImageFmt::Png, conv::ImageFmt::Jpeg, conv::ImageFmt::Webp, conv::ImageFmt::Bmp, conv::ImageFmt::Heic, conv::ImageFmt::Gif, conv::ImageFmt::Pdf};
+constexpr const wchar_t* kImgNames[kImgCount] = {L"PNG", L"JPG", L"WEBP", L"BMP", L"HEIC", L"GIF", L"PDF"};
 constexpr conv::AudioFmt kAudFmts[kAudCount] = {conv::AudioFmt::Mp3, conv::AudioFmt::M4a, conv::AudioFmt::Wav, conv::AudioFmt::Mp4, conv::AudioFmt::Mkv};
 constexpr const wchar_t* kAudNames[kAudCount] = {L"MP3", L"M4A", L"WAV", L"MP4", L"MKV"};
 
@@ -107,7 +107,8 @@ struct App {
     int scroll = 0;
     bool dragSlider = false;
     HWND btnAdd = nullptr, btnOut = nullptr, btnClear = nullptr, btnGo = nullptr, btnOpen = nullptr;
-    HWND chipImg[5]{}, chipAud[kAudCount]{}, chipSize[kSizeCount]{};
+    HWND chipImg[kImgCount]{}, chipAud[kAudCount]{}, chipSize[kSizeCount]{};
+    std::atomic<bool> pdfClaimed{false};   // Format PDF: ein Worker uebernimmt alle Bilder zusammen
 
     int S(int v) const { return MulDiv(v, static_cast<int>(dpi), 96); }
 } g;
@@ -133,7 +134,7 @@ void LoadSettings() {
         GetPrivateProfileStringW(sec, key, L"", buf, 1024, ini.c_str());
         return std::wstring(buf);
     };
-    g.imgSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"BildFormat", g.imgSel, ini.c_str())), 0, 4);
+    g.imgSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"BildFormat", g.imgSel, ini.c_str())), 0, kImgCount - 1);
     g.audSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"AudioFormat", g.audSel, ini.c_str())), 0, kAudCount - 1);
     g.sizeSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"BildGroesse", g.sizeSel, ini.c_str())), 0, kSizeCount - 1);
     g.quality = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"Qualitaet", g.quality, ini.c_str())), 0, 100);
@@ -242,7 +243,7 @@ void UseOutDir(const std::wstring& dir) {
 }
 
 std::wstring QualityDetail() {
-    std::wstring s = L"Bilder (JPG, WEBP, HEIC): " + std::to_wstring(g.quality) + L" %   ·   ";
+    std::wstring s = L"Bilder (JPG, WEBP, HEIC, PDF): " + std::to_wstring(g.quality) + L" %   ·   ";
     const int kb = conv::BitrateKbps(kAudFmts[g.audSel], g.quality);
     if (kAudFmts[g.audSel] == conv::AudioFmt::Mp4 || kAudFmts[g.audSel] == conv::AudioFmt::Mkv) s += std::wstring(kAudNames[g.audSel]) + L": H.264 nach Auflösung, Ton " + std::to_wstring(kb) + L" kbit/s";
     else s += kb ? std::wstring(kAudNames[g.audSel]) + L": " + std::to_wstring(kb) + L" kbit/s" : L"WAV: verlustfrei";
@@ -267,10 +268,18 @@ void Worker(HWND hwnd, std::shared_ptr<Settings> s) {
         const size_t i = g.nextJob.fetch_add(1);
         std::wstring src, target;
         conv::Kind kind;
+        bool pdfJob = false;
+        std::vector<size_t> pdfIdx;           // PDF-Auftrag: Listenplaetze aller Bilder
+        std::vector<std::wstring> pdfSrc;     // und ihre Pfade
         {
             std::lock_guard<std::mutex> lk(g.mu);
             if (i >= g.items.size()) break;
             Item& it = g.items[i];
+            if (s->img == conv::ImageFmt::Pdf && it.kind == conv::Kind::Image && !g.cancel.load()) {
+                // Format PDF: das erste Bild, das ein Worker zieht, erledigt alle Bilder der Liste in einem PDF; die anderen Bilder werden uebersprungen
+                if (g.pdfClaimed.exchange(true)) continue;
+                pdfJob = true;
+            }
             if (g.cancel.load()) { it.state = State::Failed; it.text = L"Abgebrochen"; PostMessageW(hwnd, WM_APP_UPDATE, i, 0); continue; }
             src = it.path;
             kind = it.kind;
@@ -279,11 +288,46 @@ void Worker(HWND hwnd, std::shared_ptr<Settings> s) {
             it.state = State::Running;
             it.pct = 0;
             it.text.clear();
+            if (pdfJob) {   // alle Bilder der Liste in Reihenfolge; Dateiname nach dem ersten Bild
+                for (size_t k = 0; k < g.items.size(); ++k)
+                    if (g.items[k].kind == conv::Kind::Image) {
+                        pdfIdx.push_back(k);
+                        pdfSrc.push_back(g.items[k].path);
+                        g.items[k].state = State::Running;
+                        g.items[k].pct = 0;
+                        g.items[k].text.clear();
+                    }
+                const std::wstring stem = StemOf(FileName(pdfSrc[0])) + (pdfSrc.size() > 1 ? L" (" + std::to_wstring(pdfSrc.size()) + L" Bilder)" : L"");
+                g.reserved.erase(Lower(target));   // der vorlaeufige Name aus dem Einzelbild gilt nicht
+                target = UniqueTarget(s->outDir.empty() ? DirOf(pdfSrc[0]) : s->outDir, stem, L"pdf", pdfSrc[0]);
+            }
         }
         PostMessageW(hwnd, WM_APP_UPDATE, i, 0);
+        for (size_t k : pdfIdx) PostMessageW(hwnd, WM_APP_UPDATE, k, 0);
 
         std::wstring err;
         bool ok = false;
+        if (pdfJob) {
+            ok = conv::ConvertImagesToPdf(pdfSrc, target, s->quality, s->maxEdge, g.cancel, [hwnd, &pdfIdx](int pct) {
+                {
+                    std::lock_guard<std::mutex> lk(g.mu);
+                    for (size_t k : pdfIdx) g.items[k].pct = pct;
+                }
+                for (size_t k : pdfIdx) PostMessageW(hwnd, WM_APP_UPDATE, k, 0);
+            }, &err);
+            {
+                std::lock_guard<std::mutex> lk(g.mu);
+                for (size_t k : pdfIdx) {
+                    Item& pi = g.items[k];
+                    pi.state = ok ? State::Done : State::Failed;
+                    pi.pct = ok ? 100 : pi.pct;
+                    pi.text = ok ? FileName(target) : err;
+                    pi.outPath = ok ? target : std::wstring();
+                }
+            }
+            for (size_t k : pdfIdx) PostMessageW(hwnd, WM_APP_UPDATE, k, 0);
+            continue;
+        }
         if (kind == conv::Kind::Image) {
             ok = conv::ConvertImage(src, target, s->img, s->quality, &err, s->maxEdge);
         } else {
@@ -326,6 +370,7 @@ void StartBatch() {
     }
     auto s = std::make_shared<Settings>(Settings{kImgFmts[g.imgSel], kAudFmts[g.audSel], g.quality, g.outDir, kSizeVals[g.sizeSel]});
     g.cancel = false;
+    g.pdfClaimed = false;
     g.nextJob = 0;
     // Bilder sind CPU-bound, Medien-Encoder laufen teils selbst mehrfaedig: Threads begrenzen
     const unsigned hw = std::max(1u, std::thread::hardware_concurrency());
@@ -421,7 +466,7 @@ void Relayout() {
     const int colW = g.S(190), colX = w - m - colW;
 
     int x = m + g.S(120);
-    for (int i = 0; i < 5; ++i, x += g.S(72)) MoveWindow(g.chipImg[i], x, y0, g.S(64), g.S(30), TRUE);
+    for (int i = 0; i < kImgCount; ++i, x += g.S(60)) MoveWindow(g.chipImg[i], x, y0, g.S(54), g.S(30), TRUE);   // sieben Chips, schmaler als die anderen Zeilen
     x = m + g.S(120);
     for (int i = 0; i < kAudCount; ++i, x += g.S(72)) MoveWindow(g.chipAud[i], x, y0 + g.S(40), g.S(64), g.S(30), TRUE);
     x = m + g.S(120);
@@ -601,7 +646,7 @@ void SetRunning(bool run) {
 }
 
 bool IsChipSelected(int id) {
-    if (id >= IDC_IMG0 && id < IDC_IMG0 + 5) return g.imgSel == id - IDC_IMG0;
+    if (id >= IDC_IMG0 && id < IDC_IMG0 + kImgCount) return g.imgSel == id - IDC_IMG0;
     if (id >= IDC_AUD0 && id < IDC_AUD0 + kAudCount) return g.audSel == id - IDC_AUD0;
     if (id >= IDC_SZ0 && id < IDC_SZ0 + kSizeCount) return g.sizeSel == id - IDC_SZ0;
     return false;
@@ -709,7 +754,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             return CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW, 0, 0, 10, 10, hwnd,
                                    reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), GetModuleHandleW(nullptr), nullptr);
         };
-        for (int i = 0; i < 5; ++i) g.chipImg[i] = btn(kImgNames[i], IDC_IMG0 + i);
+        for (int i = 0; i < kImgCount; ++i) g.chipImg[i] = btn(kImgNames[i], IDC_IMG0 + i);
         for (int i = 0; i < kAudCount; ++i) g.chipAud[i] = btn(kAudNames[i], IDC_AUD0 + i);
         for (int i = 0; i < kSizeCount; ++i) g.chipSize[i] = btn(kSizeNames[i], IDC_SZ0 + i);
         g.btnGo = btn(L"Konvertieren", IDC_GO);
@@ -801,7 +846,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_COMMAND: {
         const int id = LOWORD(wp);
-        if (id >= IDC_IMG0 && id < IDC_IMG0 + 5) { g.imgSel = id - IDC_IMG0; }
+        if (id >= IDC_IMG0 && id < IDC_IMG0 + kImgCount) { g.imgSel = id - IDC_IMG0; }
         else if (id >= IDC_AUD0 && id < IDC_AUD0 + kAudCount) { g.audSel = id - IDC_AUD0; }
         else if (id >= IDC_SZ0 && id < IDC_SZ0 + kSizeCount) { g.sizeSel = id - IDC_SZ0; }
         else if (id >= IDM_OUT_RECENT0 && id < IDM_OUT_RECENT0 + kMaxRecent) {
