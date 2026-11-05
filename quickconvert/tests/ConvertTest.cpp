@@ -6,6 +6,7 @@
 #include <mfreadwrite.h>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -126,6 +127,25 @@ int main() {
     CHECK(conv::ConvertImage(bmp, lo, conv::ImageFmt::Jpeg, 10, &err));
     CHECK(conv::ConvertImage(bmp, hi, conv::ImageFmt::Jpeg, 100, &err));
     CHECK(Size(lo) < Size(hi));
+    // Verkleinern: laengste Kante auf maxEdge (Seitenverhaeltnis bleibt, nie vergroessern); Groesse aus dem BMP-Kopf lesen
+    auto bmpDims = [](const std::wstring& path, int& w, int& h) {
+        w = h = 0;
+        HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (f == INVALID_HANDLE_VALUE) return;
+        BYTE hd[26] = {}; DWORD rd = 0;
+        ReadFile(f, hd, sizeof(hd), &rd, nullptr); CloseHandle(f);
+        if (rd == sizeof(hd)) { w = *(int*)&hd[18]; h = std::abs(*(int*)&hd[22]); }
+    };
+    int bw = 0, bh = 0;
+    CHECK(conv::ConvertImage(bmp, Tmp(L"s32.bmp"), conv::ImageFmt::Bmp, 80, &err, 32));
+    bmpDims(Tmp(L"s32.bmp"), bw, bh);
+    CHECK(bw == 32 && bh == 24);
+    CHECK(conv::ConvertImage(bmp, Tmp(L"s200.bmp"), conv::ImageFmt::Bmp, 80, &err, 200));   // groesser als das Bild: unveraendert
+    bmpDims(Tmp(L"s200.bmp"), bw, bh);
+    CHECK(bw == 64 && bh == 48);
+    CHECK(conv::ConvertImage(bmp, Tmp(L"s0.bmp"), conv::ImageFmt::Bmp, 80, &err, 0));       // 0 = Original
+    bmpDims(Tmp(L"s0.bmp"), bw, bh);
+    CHECK(bw == 64 && bh == 48);
     // jpg -> png (Rueckweg ueber den Decoder)
     CHECK(conv::ConvertImage(hi, Tmp(L"back.png"), conv::ImageFmt::Png, 100, &err));
 

@@ -168,7 +168,7 @@ void MediaShutdown() { MFShutdown(); }
 // Bilder
 // ---------------------------------------------------------------------------------------------------------------------
 
-bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt, int quality, std::wstring* err) {
+bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt, int quality, std::wstring* err, int maxEdge) {
     Com<IWICImagingFactory> factory;
     HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
     if (FAILED(hr)) { SetErr(err, L"WIC nicht verfügbar (" + Hex(hr) + L")"); return false; }
@@ -216,9 +216,23 @@ bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt
     UINT w = 0, h = 0;
     cur->GetSize(&w, &h);
     if (w == 0 || h == 0) { SetErr(err, L"Bild ist leer"); return false; }
+    // Verkleinern (hochwertig, nie vergroessern): laengste Kante auf maxEdge
+    Com<IWICBitmapScaler> scaler;
+    IWICBitmapSource* pixSrc = cur.Get();
+    if (maxEdge > 0 && std::max(w, h) > static_cast<UINT>(maxEdge)) {
+        const double f = static_cast<double>(maxEdge) / std::max(w, h);
+        const UINT nw = std::max<UINT>(1, static_cast<UINT>(w * f + 0.5)), nh = std::max<UINT>(1, static_cast<UINT>(h * f + 0.5));
+        if (FAILED(factory->CreateBitmapScaler(&scaler)) || FAILED(scaler->Initialize(cur.Get(), nw, nh, WICBitmapInterpolationModeHighQualityCubic))) {
+            SetErr(err, L"Bild lässt sich nicht verkleinern");
+            return false;
+        }
+        pixSrc = scaler.Get();
+        w = nw;
+        h = nh;
+    }
     const UINT stride = w * 4;
     std::vector<BYTE> px(static_cast<size_t>(stride) * h);
-    if (FAILED(cur->CopyPixels(nullptr, stride, static_cast<UINT>(px.size()), px.data()))) { SetErr(err, L"Bild kann nicht gelesen werden"); return false; }
+    if (FAILED(pixSrc->CopyPixels(nullptr, stride, static_cast<UINT>(px.size()), px.data()))) { SetErr(err, L"Bild kann nicht gelesen werden"); return false; }
 
     // Formate ohne Transparenz: auf Weiss setzen
     if (!HasAlpha(fmt)) {
