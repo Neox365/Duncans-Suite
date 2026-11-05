@@ -361,6 +361,8 @@
 - Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
 
 [DuncansSuite.exe]
+## 1.1.41 | 2026-11-05
+- Neu: Karte für Duncan's Clip (Zwischenablage-Verlauf und Prompts). Das Kartenraster hat vier Spalten und Platz für zwölf Karten; der Link „GitHub“ in der Fußzeile und der Info-Dialog haben dafür neue interne Kennungen.
 ## 1.1.40 | 2026-11-05
 - Neu: Karte für Duncan's Boost, den Zock-Modus (beendet Hintergrundprogramme, stellt Höchstleistung ein). Das Kartenraster hat jetzt vier Spalten; das Fenster ist mindestens etwas breiter.
 ## 1.1.39 | 2026-11-04
