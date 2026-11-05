@@ -264,6 +264,14 @@ namespace
             Line(0.72f, 0.44f, 0.52f, 0.44f);
             Line(0.52f, 0.44f, 0.58f, 0.1f);
             break;
+        case CategoryIcon::Clip:
+            // Klemmbrett: Brett mit Klammer oben und Textzeilen (Zwischenablage)
+            RRect(0.2f, 0.16f, 0.6f, 0.72f, 0.08f);
+            RRect(0.36f, 0.08f, 0.28f, 0.14f, 0.05f);
+            Line(0.32f, 0.42f, 0.68f, 0.42f);
+            Line(0.32f, 0.56f, 0.68f, 0.56f);
+            Line(0.32f, 0.7f, 0.52f, 0.7f);
+            break;
         case CategoryIcon::Other:
         default:
             RRect(0.18f, 0.18f, 0.64f, 0.64f, 0.14f);

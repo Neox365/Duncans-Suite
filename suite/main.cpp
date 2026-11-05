@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.40"
+#define SUITE_VERSION L"1.1.41"
 #endif
 
 namespace
@@ -849,9 +849,9 @@ namespace
     // aktuelle Fassung aus dem Release "modules". Der Text wird nur angezeigt, nie ausgefuehrt; changelog::Parse begrenzt ihn.
     constexpr const wchar_t* kChangelogUrl = L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/changelog.txt";
     constexpr int kChangelogResource = 101;
-    constexpr int kToolCount = 10;   // Karten: Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Oggys Docs-Files, Duncan's Vault, Duncan's Office, Duncan's QuickConvert, Duncan's Boost
+    constexpr int kToolCount = 11;   // Karten: Tidy, Driver Updater, PDF Reader, Privacy Shield, Photo Commander, Oggys Docs-Files, Duncan's Vault, Duncan's Office, Duncan's QuickConvert, Duncan's Boost, Duncan's Clip
     // Kennung einer Karte fuer Hover/Klick (0 und 1 historisch direkt, 5/17/22 aus alten Versionen, ab Karte 5 einheitlich 40 + Index;
-    // die Ids 24..34 sind die Info-Reiter, kInfoCloseId der Schliessen-Knopf des Info-Dialogs)
+    // die Ids 24..35 sind die Info-Reiter, kInfoCloseId der Schliessen-Knopf des Info-Dialogs)
     inline int CardHid(int index) { return index < 2 ? index : (index == 2 ? 5 : (index == 3 ? 17 : (index == 4 ? 22 : 40 + index))); }
     inline int CardFromHid(int hid)
     {
@@ -861,7 +861,9 @@ namespace
         return -1;
     }
     constexpr int kInfoTabs = kToolCount + 1;   // ein Reiter je Programm plus die Suite selbst
-    constexpr int kInfoCloseId = 37;            // Hover-/Klick-Id des Schliessen-Knopfs (24 + kInfoTabs - 1 = 34 ist der letzte Reiter; 35/36 belegt, ab 40 Karten)
+    constexpr int kInfoCloseId = 37;            // Hover-/Klick-Id des Schliessen-Knopfs
+    constexpr int kFootLinkId = 38;             // Hover-/Klick-Id des GitHub-Links in der Fusszeile (frueher 35, jetzt Reiter)
+    static_assert(24 + kInfoTabs <= 36, "Info-Reiter (Ids ab 24) duerfen nicht in die Ids 36 (Alle aktualisieren), 37 (Schliessen), 38 (Fusszeile) und ab 40 (Karten) reichen");
 
     std::string EmbeddedChangelog()
     {
@@ -1092,6 +1094,11 @@ private:
           CategoryIcon::Boost, RGB(250, 112, 76), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansBoost.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
+        { L"DuncansClip.exe", L"Duncan's Clip",
+          L"Zwischenablage-Verlauf und Prompts, per Tastenkürzel in jedes Programm.",
+          CategoryIcon::Clip, RGB(190, 242, 100), {}, {}, {},
+          nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansClip.exe",
+          L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
     };
 
     RECT m_banner{}, m_footer{}, m_footLink{};   // m_footLink: "GitHub" in der Fusszeile (Klick oeffnet das Repository)
@@ -1139,7 +1146,7 @@ private:
     RECT m_btnBackup{}, m_btnLog{}, m_btnCheck{};   // Ids: 18 Wiederherstellungspunkt-Haken, 19 Backup-Ordner, 20 Logdatei, 21 Update-Suche
     bool m_manualCheck = false;                      // Update-Suche per Knopf: Ergebnis als Hinweis melden
 
-    // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..34 Reiter, 37 Schliessen
+    // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..35 Reiter, 37 Schliessen
     bool m_infoOpen = false, m_changesFetched = false, m_changesOnline = false;
     int m_infoTab = 0, m_infoScroll = 0, m_infoMaxScroll = 0;
     RECT m_infoRect{}, m_infoTabs[kInfoTabs]{}, m_infoClose{}, m_infoView{};
@@ -1306,7 +1313,7 @@ void SuiteWindow::Layout()
 
     const int top = m_banner.bottom + S(22), bottom = m_footer.top - S(16), gap = S(20);
     const int width = rc.right - 2 * m;
-    // 4 x 3 Raster (10 Karten): Tidy | Driver Updater | PDF Reader | Privacy Shield / Photo Commander | Oggys Docs-Files | Duncan's Vault | Duncan's Office / Duncan's QuickConvert | Duncan's Boost
+    // 4 x 3 Raster (bis 12 Karten): Tidy | Driver Updater | PDF Reader | Privacy Shield / Photo Commander | Oggys Docs-Files | Duncan's Vault | Duncan's Office / Duncan's QuickConvert | Duncan's Boost | Duncan's Clip
     constexpr int kCols = 4, kRows = (kToolCount + kCols - 1) / kCols;
     const int h = (bottom - top - (kRows - 1) * gap) / kRows;
     const int w = (width - (kCols - 1) * gap) / kCols;
@@ -1575,7 +1582,7 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         const int bw = TextWidth(dc, m_fontSmall, base), lw = TextWidth(dc, m_fontSmall, L"GitHub");
         DrawLabel(dc, m_fontSmall, kTextDim, { m_footer.left + S(4), m_footer.top + S(13), m_footer.left + S(4) + bw, m_footer.bottom }, base);
         m_footLink = { m_footer.left + S(4) + bw, m_footer.top + S(9), m_footer.left + S(4) + bw + lw + S(2), m_footer.bottom - S(4) };
-        const bool linkHover = m_hover == 35 && !m_modal && !m_settingsOpen && !m_infoOpen;
+        const bool linkHover = m_hover == kFootLinkId && !m_modal && !m_settingsOpen && !m_infoOpen;
         DrawLabel(dc, m_fontSmall, linkHover ? kAccent : kText, { m_footLink.left, m_footer.top + S(13), m_footLink.right + S(8), m_footer.bottom }, L"GitHub");
     }
     const int noteLeft = m_footLink.right + S(24);
@@ -1840,7 +1847,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
 {
     FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
 
-    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo", L"Docs-Files", L"Vault", L"Office", L"QuickConvert", L"Boost", L"Suite" };
+    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo", L"Docs-Files", L"Vault", L"Office", L"QuickConvert", L"Boost", L"Clip", L"Suite" };
     const int pad = S(22), btnH = S(38);
     const int boxW = std::min(S(940), w - S(40)), boxH = std::min(S(700), h - S(50));
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
@@ -2504,7 +2511,7 @@ void SuiteWindow::OnMouseMove(int x, int y)
             hover = kInfoCloseId;
     }
     else if (PtInRect(&m_footLink, pt))
-        hover = 35;
+        hover = kFootLinkId;
     else if (PtInRect(&m_gearRect, pt))
         hover = 6;
     else if (PtInRect(&m_infoRect, pt))
@@ -2550,7 +2557,7 @@ void SuiteWindow::OnClick(int, int)
     }
     else if (pressed == 36)
         StartUpdateAll();
-    else if (pressed == 35)
+    else if (pressed == kFootLinkId)
         ShellExecuteW(m_hwnd, L"open", L"https://github.com/Neox365/Duncans-Suite", nullptr, nullptr, SW_SHOWNORMAL);
     else if (pressed == 6)
         OpenSettings();
