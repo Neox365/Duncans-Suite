@@ -2,7 +2,10 @@
 #include <cstdio>
 #include <string>
 
+#include <vector>
+
 #include "../Codec.h"
+#include "../Docx.h"
 #include "../Sheet.h"
 
 namespace {
@@ -27,8 +30,158 @@ std::wstring Show(sheet::Sheet& s, const wchar_t* cell, const wchar_t* raw)
 }
 }  // namespace
 
+// ---- DOCX ----------------------------------------------------------------------------------------------------------------------
+static bool Contains(const std::string& hay, const std::string& needle) { return hay.find(needle) != std::string::npos; }
+
+// Ist das XML wohlgeformt (Start-/End-Tags passen zusammen)?
+static bool WellFormed(const std::string& xmlText)
+{
+    docx::xml::Tokenizer tk(xmlText);
+    docx::xml::Tag t;
+    std::vector<std::string> stack;
+    while (tk.Next(t)) {
+        if (t.kind == docx::xml::Tag::Start) stack.push_back(t.name);
+        else if (t.kind == docx::xml::Tag::End) { if (stack.empty() || stack.back() != t.name) return false; stack.pop_back(); }
+    }
+    return stack.empty();
+}
+
+static std::string MakeDocx(const std::string& body, const std::string& styles = "", const std::string& numbering = "")
+{
+    const std::string ns = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
+    std::vector<std::pair<std::string, std::string>> f = {
+        { "[Content_Types].xml", "<Types/>" },
+        { "word/document.xml", "<?xml version=\"1.0\"?><w:document " + ns + "><w:body>" + body + "</w:body></w:document>" } };
+    if (!styles.empty()) f.push_back({ "word/styles.xml", "<w:styles " + ns + ">" + styles + "</w:styles>" });
+    if (!numbering.empty()) f.push_back({ "word/numbering.xml", "<w:numbering " + ns + ">" + numbering + "</w:numbering>" });
+    return zip::Write(f);
+}
+
+static void DocxTests()
+{
+    const std::string styles = R"(<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Cambria" w:hAnsi="Cambria"/><w:sz w:val="22"/></w:rPr></w:rPrDefault></w:docDefaults>
+<w:style w:type="paragraph" w:styleId="berschrift1"><w:name w:val="heading 1"/><w:rPr><w:b/><w:sz w:val="32"/><w:color w:val="1F3864"/></w:rPr></w:style>
+<w:style w:type="paragraph" w:styleId="Untertitel"><w:name w:val="Sub"/><w:basedOn w:val="berschrift1"/><w:rPr><w:i/></w:rPr></w:style>)";
+    const std::string numbering = R"(<w:abstractNum w:abstractNumId="0"><w:lvl w:ilvl="0"><w:numFmt w:val="bullet"/></w:lvl></w:abstractNum>
+<w:abstractNum w:abstractNumId="1"><w:lvl w:ilvl="0"><w:numFmt w:val="decimal"/></w:lvl></w:abstractNum>
+<w:num w:numId="5"><w:abstractNumId w:val="0"/></w:num><w:num w:numId="6"><w:abstractNumId w:val="1"/></w:num>)";
+    const std::string body = R"(
+<w:p><w:pPr><w:pStyle w:val="berschrift1"/></w:pPr><w:r><w:t>Titel</w:t></w:r></w:p>
+<w:p><w:pPr><w:jc w:val="center"/><w:tabs><w:tab w:val="left" w:pos="1000"/></w:tabs><w:rPr><w:b/></w:rPr></w:pPr>
+  <w:r><w:rPr><w:b/><w:i/></w:rPr><w:t>Fett &amp; kursiv</w:t></w:r>
+  <w:r><w:rPr><w:color w:val="FF0000"/><w:sz w:val="28"/><w:u w:val="single"/><w:strike/></w:rPr><w:t xml:space="preserve"> rot Gr&#246;&#223;e {x}\</w:t></w:r></w:p>
+<w:p><w:r><w:t>a</w:t></w:r><w:r><w:tab/></w:r><w:r><w:t>b</w:t><w:br/><w:t>c</w:t></w:r><w:r><w:br w:type="page"/></w:r></w:p>
+<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="5"/></w:numPr></w:pPr><w:r><w:t>Punkt</w:t></w:r></w:p>
+<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="6"/></w:numPr></w:pPr><w:r><w:t>eins</w:t></w:r></w:p>
+<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="6"/></w:numPr></w:pPr><w:r><w:t>zwei</w:t></w:r></w:p>
+<w:tbl><w:tblGrid><w:gridCol w:w="2000"/><w:gridCol w:w="3000"/></w:tblGrid>
+  <w:tr><w:tc><w:p><w:r><w:t>A1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>B1</w:t></w:r></w:p><w:p><w:r><w:t>B1 zweiter</w:t></w:r></w:p></w:tc></w:tr>
+  <w:tr><w:tc><w:p/></w:tc><w:tc><w:p><w:r><w:t>B2</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
+<w:p><w:r><w:drawing/></w:r><w:r><w:fldChar/><w:instrText>PAGE</w:instrText></w:r><w:r><w:t>Ende</w:t></w:r></w:p>
+<w:p/>)";
+    docx::ReadResult r = docx::DocxToRtf(MakeDocx(body, styles, numbering));
+    CHECK(r.ok && r.images == 1);
+    const std::string& rtf = r.rtf;
+    CHECK(rtf.compare(0, 6, "{\\rtf1") == 0 && rtf.back() == '}');
+    CHECK(Contains(rtf, "{\\f0\\fnil\\fcharset0 Cambria;}"));                                  // Standardschrift aus den Dokumentvorgaben
+    CHECK(Contains(rtf, "\\b ") && Contains(rtf, "\\i") && Contains(rtf, "\\ul") && Contains(rtf, "\\strike"));
+    CHECK(Contains(rtf, "Titel") && Contains(rtf, "\\fs32"));                                 // Ueberschrift: Groesse und fett aus der Formatvorlage
+    CHECK(Contains(rtf, "\\red31\\green56\\blue100;") && Contains(rtf, "\\red255\\green0\\blue0;"));
+    CHECK(Contains(rtf, "\\qc") && Contains(rtf, "\\fs28"));
+    CHECK(Contains(rtf, "Fett & kursiv"));
+    CHECK(Contains(rtf, "Gr\\u246?\\u223?e \\{x\\}\\\\"));                                      // Umlaute als \uN, {, }, \ maskiert
+    CHECK(Contains(rtf, "a}") && Contains(rtf, "\\tab ") && Contains(rtf, "\\line ") && Contains(rtf, "\\page "));
+    CHECK(Contains(rtf, "\\pnlvlblt") && Contains(rtf, "Punkt"));                              // echte Aufzaehlung
+    CHECK(Contains(rtf, "1.\\tab}") && Contains(rtf, "2.\\tab}") && Contains(rtf, "eins") && Contains(rtf, "zwei"));
+    CHECK(Contains(rtf, "\\trowd") && Contains(rtf, "\\cellx2000") && Contains(rtf, "\\cellx5000") && Contains(rtf, "\\cell") && Contains(rtf, "\\row"));
+    CHECK(Contains(rtf, "A1") && Contains(rtf, "B1 zweiter") && Contains(rtf, "B2"));
+    CHECK(Contains(rtf, "B1}") && Contains(rtf, "\\par B1 zweiter") == false);                // Absatz in der Zelle mit \par getrennt
+    CHECK(Contains(rtf, "Ende") && !Contains(rtf, "PAGE"));                                    // Feldanweisung wird nicht als Text uebernommen
+
+    CHECK(r.lossy == L"Bilder und Zeichnungen");                                                // das <w:drawing/> im Beispiel
+    {
+        const std::string ns = "xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"";
+        const std::string withParts = zip::Write({ { "word/document.xml", "<w:document " + ns + "><w:body><w:p><w:r><w:footnoteReference w:id=\"2\"/></w:r></w:p></w:body></w:document>" },
+                                                   { "word/header1.xml", "<w:hdr/>" }, { "word/media/image1.png", "x" }, { "word/comments.xml", "<w:comments/>" } });
+        const docx::ReadResult lr = docx::DocxToRtf(withParts);
+        CHECK(lr.ok && lr.lossy == L"Bilder und Zeichnungen, Kopf- und Fu\u00DFzeilen, Fu\u00DFnoten, Kommentare");
+        CHECK(docx::DocxToRtf(MakeDocx("<w:p/>")).lossy.empty());
+    }
+    CHECK(!docx::DocxToRtf("kein zip").ok && !docx::DocxToRtf("").ok);
+    CHECK(!docx::DocxToRtf(zip::Write({ { "a.txt", "x" } })).ok);                              // ZIP ohne word/document.xml
+    const docx::ReadResult e = docx::DocxToRtf("nope");
+    CHECK(!e.error.empty());
+    const std::string good = MakeDocx("<w:p><w:r><w:t>x</w:t></w:r></w:p>");
+    std::string cut = good.substr(0, good.size() - 30);                                        // abgeschnitten
+    CHECK(!docx::DocxToRtf(cut).ok);
+
+    // RTF -> DOCX
+    const std::string rtfIn = R"({\rtf1\ansi\ansicpg1252\deff0\uc1{\fonttbl{\f0\fnil\fcharset0 Segoe UI;}{\f1\fnil\fcharset2 Symbol;}{\f2\fswiss\fcharset0 Arial;}}
+{\colortbl ;\red255\green0\blue0;\red0\green0\blue255;}
+\viewkind4\pard\ql\f0\fs24 Hallo {\b Welt}\par
+\pard\qc{\i\ul schief} und {\cf1\fs36\strike rot}{\super 2}{\sub 3}\par
+\pard\qr\f2 rechts: Gr\'fc\'dfe )" "\\" R"(u8364?\u233? {\\ \{ \} \~ \_}\tab Tab\line Zeile\par
+\pard\qj Blocksatz\par
+\pard{\pntext\f1\'B7\tab}{\*\pn\pnlvlblt\pnf1\pnindent0{\pntxtb\'B7}}\fi-360\li720 Punkt eins\par
+{\pntext\f1\'B7\tab}Punkt zwei\par
+\pard Normal danach\par
+\trowd\trgaph108\trleft-108\cellx2000\cellx5000
+\pard\intbl Z1\cell
+\pard\intbl Z2a\par Z2b\cell
+\row
+\pard\intbl\row
+\pard Schluss\par
+})";
+    // (der Tabellenrest "\pard\intbl\row" ohne Zellen darf nichts kaputt machen)
+    const docx::WriteResult w = docx::RtfToDocx(rtfIn);
+    CHECK(w.ok && !w.bytes.empty());
+    std::vector<zip::Entry> es;
+    CHECK(zip::ReadDirectory(w.bytes, es) && es.size() == 6);
+    std::string doc, sty, num, ct, rel;
+    CHECK(zip::ReadEntry(w.bytes, es, "word/document.xml", doc) && zip::ReadEntry(w.bytes, es, "word/styles.xml", sty) && zip::ReadEntry(w.bytes, es, "word/numbering.xml", num) &&
+          zip::ReadEntry(w.bytes, es, "[Content_Types].xml", ct) && zip::ReadEntry(w.bytes, es, "_rels/.rels", rel) && zip::ReadEntry(w.bytes, es, "word/_rels/document.xml.rels", rel));
+    CHECK(WellFormed(doc) && WellFormed(sty) && WellFormed(num) && WellFormed(ct));
+    CHECK(Contains(doc, "<w:b/>") && Contains(doc, ">Welt<") && Contains(doc, "Hallo "));
+    CHECK(Contains(doc, "<w:jc w:val=\"center\"/>") && Contains(doc, "<w:jc w:val=\"right\"/>") && Contains(doc, "<w:jc w:val=\"both\"/>"));
+    CHECK(Contains(doc, "<w:i/>") && Contains(doc, "<w:u w:val=\"single\"/>") && Contains(doc, "<w:strike/>") && Contains(doc, "<w:color w:val=\"FF0000\"/>") && Contains(doc, "<w:sz w:val=\"36\"/>"));
+    CHECK(Contains(doc, "w:val=\"superscript\"") && Contains(doc, "w:val=\"subscript\""));
+    CHECK(Contains(doc, "Gr\xC3\xBC\xC3\x9F" "e \xE2\x82\xAC\xC3\xA9 \\ { } \xC2\xA0 \xE2\x80\x91"));                  // ue, ss, Euro, e-akut, maskierte Zeichen, geschuetztes Leerzeichen
+    CHECK(Contains(doc, "<w:tab/>") && Contains(doc, "<w:br/>"));
+    CHECK(Contains(doc, "<w:rFonts w:ascii=\"Arial\"") && !Contains(doc, "Symbol"));
+    CHECK(Contains(doc, "<w:numPr><w:ilvl w:val=\"0\"/><w:numId w:val=\"1\"/></w:numPr>") && Contains(doc, "Punkt eins") && Contains(doc, "Punkt zwei"));
+    CHECK(!Contains(doc, "\xC2\xB7"));                                                                                      // das Aufzaehlungszeichen steckt nicht im Text
+    {
+        size_t first = doc.find("w:numId w:val=\"1\""), second = doc.find("w:numId w:val=\"1\"", first + 1);
+        CHECK(first != std::string::npos && second != std::string::npos);                                                    // beide Punkte sind Aufzaehlung (Fortsetzung ohne \pard)
+    }
+    CHECK(Contains(doc, "<w:tbl>") && Contains(doc, "<w:gridCol w:w=\"2000\"/>") && Contains(doc, "<w:gridCol w:w=\"3000\"/>") && Contains(doc, ">Z1<") && Contains(doc, ">Z2a<") && Contains(doc, ">Z2b<"));
+    CHECK(Contains(doc, "Schluss") && Contains(doc, "Normal danach") && Contains(doc, "<w:sectPr>"));
+    CHECK(Contains(num, "w:numFmt w:val=\"bullet\"") && Contains(sty, "Normal") && Contains(ct, "numbering+xml"));
+
+    // Rundlauf: DOCX (von uns) -> RTF -> Inhalt bleibt erhalten
+    const docx::ReadResult back = docx::DocxToRtf(w.bytes);
+    CHECK(back.ok && Contains(back.rtf, "Welt") && Contains(back.rtf, "Punkt eins") && Contains(back.rtf, "\\pnlvlblt") && Contains(back.rtf, "Z2a") && Contains(back.rtf, "\\trowd") &&
+          Contains(back.rtf, "Gr\\u252?\\u223?e"));
+
+    // Fehlerfaelle
+    CHECK(!docx::RtfToDocx("kein rtf").ok && !docx::RtfToDocx("").ok);
+    const docx::WriteResult empty = docx::RtfToDocx("{\\rtf1\\ansi }");
+    CHECK(empty.ok);
+    std::vector<zip::Entry> es2;
+    std::string doc2;
+    CHECK(zip::ReadDirectory(empty.bytes, es2) && zip::ReadEntry(empty.bytes, es2, "word/document.xml", doc2) && Contains(doc2, "<w:p/>") && WellFormed(doc2));
+    const docx::WriteResult trunc = docx::RtfToDocx("{\\rtf1\\ansi {\\b unvollstaendig");    // abgeschnittene Datei: keine Endlosschleife, nimmt was da ist
+    CHECK(trunc.ok);
+    // XML-Sonderzeichen im Text werden maskiert
+    const docx::WriteResult sp = docx::RtfToDocx("{\\rtf1\\ansi <a> & \"b\"\\par}");
+    std::vector<zip::Entry> es3;
+    std::string doc3;
+    CHECK(sp.ok && zip::ReadDirectory(sp.bytes, es3) && zip::ReadEntry(sp.bytes, es3, "word/document.xml", doc3) && Contains(doc3, "&lt;a&gt; &amp; &quot;b&quot;") && WellFormed(doc3));
+}
+
 int main()
 {
+    DocxTests();
     using namespace sheet;
 
     // Zellbezuege

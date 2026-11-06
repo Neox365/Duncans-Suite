@@ -27,12 +27,13 @@
 
 #include "../docs/PdfWriter.h"
 #include "Codec.h"
+#include "Docx.h"
 #include "Sheet.h"
 #include <gdiplus.h>
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.3.2"
+#define APP_VERSION L"0.4.0"
 #endif
 
 namespace {
@@ -348,6 +349,7 @@ private:
 
     // Writer
     std::wstring m_wPath;
+    std::wstring m_docxLossy;                      // beim Oeffnen einer DOCX: Teile, die der Writer nicht kennt (gehen beim Speichern verloren)
     bool m_bold = false, m_italic = false, m_under = false, m_strike = false, m_bullet = false;
     std::wstring m_fontName;
     std::vector<std::wstring> m_fontList;
@@ -802,7 +804,7 @@ void App::DrawStart(HDC dc)
         RECT t1{ b.rc.left + S(28), b.rc.top + S(104), b.rc.right - S(20), b.rc.top + S(138) };
         Text(dc, m_fTitle, kText, t1, writer ? L"Duncan's Writer" : L"Duncan's Sheets");
         RECT t2{ b.rc.left + S(28), b.rc.top + S(140), b.rc.right - S(20), b.rc.bottom - S(16) };
-        Text(dc, m_fUi, kDim, t2, writer ? L"Texte schreiben und formatieren. Öffnen und Speichern als .txt oder .rtf, Export als PDF, Drucken." : L"Tabellen mit Formeln (SUMME, MITTELWERT, MIN, MAX). Öffnen und Speichern als .csv.",
+        Text(dc, m_fUi, kDim, t2, writer ? L"Texte schreiben und formatieren. Öffnen und Speichern als .docx, .rtf oder .txt, Export als PDF, Drucken." : L"Tabellen mit Formeln (SUMME, MITTELWERT, MIN, MAX). Öffnen und Speichern als .csv.",
              DT_WORDBREAK | DT_NOPREFIX);
     }
 }
@@ -936,7 +938,7 @@ void App::Command(int id)
         case C_SHEETS: SwitchMode(Mode::Sheets); break;
         case C_NEW: if (writer) WriterNew(); else if (sheets) SheetsNew(); break;
         case C_OPEN:
-            if (writer) { if (ConfirmWriter()) { const std::wstring p = PickOpen(L"Textdokumente (*.rtf;*.txt)\0*.rtf;*.txt\0Alle Dateien (*.*)\0*.*\0"); if (!p.empty()) WriterOpen(p); } }
+            if (writer) { if (ConfirmWriter()) { const std::wstring p = PickOpen(L"Textdokumente (*.docx;*.rtf;*.txt)\0*.docx;*.rtf;*.txt\0Alle Dateien (*.*)\0*.*\0"); if (!p.empty()) WriterOpen(p); } }
             else if (sheets) SheetsOpen();
             break;
         case C_SAVE: if (writer) WriterSave(false); else if (sheets) SheetsSave(false); break;
@@ -1044,7 +1046,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
                 sp.tiles = {
                     {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
                     {L"Quellcode", L"github.com/Neox365/Duncans-Suite"}, {L"Teil von", L"Duncan's Suite"},
-                    {L"Funktionen", L"Writer (Texte, .txt und .rtf, PDF-Export, Drucken) und Sheets (Tabellen mit Formeln, .csv) in einem Programm.", true},
+                    {L"Funktionen", L"Writer (Texte, .docx, .rtf und .txt, PDF-Export, Drucken) und Sheets (Tabellen mit Formeln, .csv) in einem Programm.", true},
                     {L"Datenschutz", L"Deine Dokumente bleiben auf diesem Gerät. Das Programm überträgt nichts.", true},
                 };
                 aboutgdi::Draw(mem, rc, static_cast<int>(m_dpi), sp, m_about);
@@ -1371,6 +1373,7 @@ bool App::WriterNew()
     SendMessageW(m_rich, EM_EMPTYUNDOBUFFER, 0, 0);
     SendMessageW(m_rich, EM_SETMODIFY, FALSE, 0);
     m_wPath.clear();
+    m_docxLossy.clear();
     m_wasDirty = false;
     RefreshFmt();
     UpdateCounts();
@@ -1386,7 +1389,17 @@ bool App::WriterOpen(const std::wstring& path)
         MessageBoxW(m_hwnd, (L"Die Datei konnte nicht gelesen werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
         return false;
     }
-    const bool rtf = ExtOf(path) == L".rtf" || bytes.compare(0, 5, "{\\rtf") == 0;
+    std::wstring lossy;
+    if (ExtOf(path) == L".docx" || bytes.compare(0, 4, "PK\x03\x04") == 0) {          // Word-Dokument: erst in RTF umwandeln, das Rich Edit laden kann
+        const docx::ReadResult dr = docx::DocxToRtf(bytes);
+        if (!dr.ok) {
+            MessageBoxW(m_hwnd, (dr.error + L"\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
+            return false;
+        }
+        bytes = dr.rtf;
+        lossy = dr.lossy;
+    }
+    const bool rtf = ExtOf(path) == L".rtf" || ExtOf(path) == L".docx" || bytes.compare(0, 5, "{\\rtf") == 0;
     if (rtf) {
         StreamIn ctx{ &bytes, 0 };
         EDITSTREAM es{};
@@ -1407,11 +1420,15 @@ bool App::WriterOpen(const std::wstring& path)
     SendMessageW(m_rich, EM_EMPTYUNDOBUFFER, 0, 0);
     SendMessageW(m_rich, EM_SETMODIFY, FALSE, 0);
     m_wPath = path;
+    m_docxLossy = lossy;
     m_wasDirty = false;
     RefreshFmt();
     UpdateCounts();
     UpdateTitle();
     SetFocus(m_rich);
+    if (!lossy.empty())
+        MessageBoxW(m_hwnd, (L"Dieses Word-Dokument enthält " + lossy + L", die der Writer nicht anzeigen kann.\n\nBeim Speichern als .docx gehen diese Teile verloren. "
+                             L"Speichere am besten unter einem neuen Namen, damit das Original unverändert bleibt.").c_str(), L"Duncan's Office", MB_ICONINFORMATION);
     return true;
 }
 
@@ -1419,8 +1436,21 @@ bool App::WriterSave(bool saveAs)
 {
     std::wstring path = m_wPath;
     if (saveAs || path.empty()) {
-        path = PickSave(L"Rich-Text-Dokument (*.rtf)\0*.rtf\0Nur Text (*.txt, ohne Formatierung)\0*.txt\0", L"rtf", m_wPath.empty() ? L"Unbenannt" : FileNameOf(m_wPath));
+        const bool wantDocx = m_wPath.empty() || ExtOf(m_wPath) == L".docx";      // neue Dokumente und Word-Dokumente: .docx zuerst anbieten
+        std::wstring suggest = m_wPath.empty() ? L"Unbenannt" : FileNameOf(m_wPath);
+        if (!m_docxLossy.empty()) {                                                // Original mit Bildern o. ae.: anderer Vorschlagsname
+            const size_t dot = suggest.find_last_of(L'.');
+            suggest = (dot == std::wstring::npos ? suggest : suggest.substr(0, dot)) + L" (bearbeitet).docx";
+        }
+        path = wantDocx ? PickSave(L"Word-Dokument (*.docx)\0*.docx\0Rich-Text-Dokument (*.rtf)\0*.rtf\0Nur Text (*.txt, ohne Formatierung)\0*.txt\0", L"docx", suggest)
+                        : PickSave(L"Rich-Text-Dokument (*.rtf)\0*.rtf\0Word-Dokument (*.docx)\0*.docx\0Nur Text (*.txt, ohne Formatierung)\0*.txt\0", L"rtf", suggest);
         if (path.empty()) return false;
+    }
+    else if (ExtOf(path) == L".docx" && !m_docxLossy.empty()) {                   // Strg+S auf ein Word-Dokument, dessen Bilder o. ae. verloren gingen
+        if (MessageBoxW(m_hwnd, (L"Beim Speichern gehen " + m_docxLossy + L" dieses Dokuments verloren, weil der Writer sie nicht kennt.\n\nDas Original wirklich überschreiben?").c_str(),
+                        L"Duncan's Office", MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
+            return WriterSave(true);
+        m_docxLossy.clear();
     }
     std::string data;
     if (ExtOf(path) == L".txt") {
@@ -1441,11 +1471,20 @@ bool App::WriterSave(bool saveAs)
             MessageBoxW(m_hwnd, L"Das Dokument konnte nicht als RTF erzeugt werden.", L"Duncan's Office", MB_ICONWARNING);
             return false;
         }
+        if (ExtOf(path) == L".docx") {                                             // RTF -> DOCX
+            const docx::WriteResult wr = docx::RtfToDocx(data);
+            if (!wr.ok) {
+                MessageBoxW(m_hwnd, (L"Das Dokument konnte nicht als Word-Dokument erzeugt werden.\n" + wr.error).c_str(), L"Duncan's Office", MB_ICONWARNING);
+                return false;
+            }
+            data = wr.bytes;
+        }
     }
     if (!WriteAtomic(path, data)) {
         MessageBoxW(m_hwnd, (L"Die Datei konnte nicht gespeichert werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
         return false;
     }
+    if (path != m_wPath) m_docxLossy.clear();
     m_wPath = path;
     SendMessageW(m_rich, EM_SETMODIFY, FALSE, 0);
     m_wasDirty = false;
