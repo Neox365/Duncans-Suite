@@ -5,8 +5,10 @@
 
 #include "../src/SuiteSafety.h"
 
+#include <algorithm>
 #include <cwchar>
 #include <map>
+#include <sstream>
 
 namespace privacy {
 
@@ -532,5 +534,207 @@ const std::vector<Setting>& AllSettings() {
     };
     return all;
 }
+
+// ---------- Schutz erneuern ----------
+namespace {
+    std::wstring g_wantedPath;
+
+    std::wstring WantedPath() {
+        if (!g_wantedPath.empty()) return g_wantedPath;
+        const std::wstring dir = suite_safety::DataDir();     // "" bei nicht vertrauenswuerdigem Ordner
+        if (dir.empty()) return L"";
+        const std::wstring path = dir + L"\\privacy_wanted.ini";
+        if (!suite_safety::EnsureTrustedFile(path)) return L"";
+        g_wantedPath = path;
+        return path;
+    }
+
+    const wchar_t* const kTaskName = L"Duncans Privacy Shield - Schutz erneuern";
+
+    std::wstring XmlEscape(const std::wstring& s) {
+        std::wstring o;
+        for (wchar_t c : s) {
+            if (c == L'&') o += L"&amp;"; else if (c == L'<') o += L"&lt;"; else if (c == L'>') o += L"&gt;";
+            else if (c == L'"') o += L"&quot;"; else o += c;
+        }
+        return o;
+    }
+
+    // Startet ein Programm ohne Fenster und wartet; false, wenn es nicht gestartet werden konnte
+    bool RunHidden(const std::wstring& cmdLine, DWORD timeoutMs, DWORD& exitCode) {
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        std::wstring cmd = cmdLine;
+        if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return false;
+        const DWORD w = WaitForSingleObject(pi.hProcess, timeoutMs);
+        exitCode = 1;
+        if (w == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &exitCode);
+        else TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        return w == WAIT_OBJECT_0;
+    }
+
+    std::wstring SchtasksPath() {
+        wchar_t sys[MAX_PATH] = {};
+        GetSystemDirectoryW(sys, MAX_PATH);
+        return std::wstring(L"\"") + sys + L"\\schtasks.exe\"";
+    }
+}
+
+void SetWantedPathForTest(const std::wstring& path) { g_wantedPath = path; }
+
+bool HasBackupFor(const Setting& s) {
+    std::wstring ignore;
+    for (const RegOp& op : s.ops) if (ReadBackup(OpId(op), ignore)) return true;
+    for (const ServiceOp& so : s.services) if (ReadBackup(SvcId(so), ignore)) return true;
+    return false;
+}
+
+bool HasWantedFile() {
+    const std::wstring p = WantedPath();
+    return !p.empty() && GetFileAttributesW(p.c_str()) != INVALID_FILE_ATTRIBUTES;
+}
+
+std::vector<int> LoadWanted() {
+    std::vector<int> ids;
+    const std::wstring p = WantedPath();
+    if (p.empty()) return ids;
+    wchar_t buf[2048] = {};
+    GetPrivateProfileStringW(L"Wanted", L"Ids", L"", buf, 2048, p.c_str());
+    std::wstringstream ss(buf);
+    std::wstring tok;
+    while (std::getline(ss, tok, L',')) {
+        const int v = _wtoi(tok.c_str());
+        if (v > 0 && std::find(ids.begin(), ids.end(), v) == ids.end()) ids.push_back(v);
+    }
+    return ids;
+}
+
+bool SaveWanted(const std::vector<int>& ids) {
+    const std::wstring p = WantedPath();
+    if (p.empty()) return false;
+    std::wstring v;
+    for (int id : ids) v += (v.empty() ? L"" : L",") + std::to_wstring(id);
+    return WritePrivateProfileStringW(L"Wanted", L"Ids", v.c_str(), p.c_str()) != FALSE;
+}
+
+void MarkWanted(int settingId, bool on) {
+    std::vector<int> ids = LoadWanted();
+    const auto it = std::find(ids.begin(), ids.end(), settingId);
+    if (on && it == ids.end()) ids.push_back(settingId);
+    else if (!on && it != ids.end()) ids.erase(it);
+    else return;
+    SaveWanted(ids);
+}
+
+void SeedWantedFromBackup() {
+    if (HasWantedFile()) return;
+    std::vector<int> ids;
+    for (const Setting& s : AllSettings()) if (HasBackupFor(s)) ids.push_back(s.id);
+    SaveWanted(ids);
+}
+
+std::vector<int> MissingWanted() {
+    std::vector<int> missing;
+    for (int id : LoadWanted())
+        for (const Setting& s : AllSettings())
+            if (s.id == id) { if (!IsApplied(s)) missing.push_back(id); break; }
+    return missing;
+}
+
+int ReapplyMissing(std::vector<std::wstring>& titles, std::vector<std::wstring>& errors) {
+    int done = 0;
+    for (int id : MissingWanted())
+        for (const Setting& s : AllSettings())
+            if (s.id == id) {
+                std::wstring err;
+                if (Apply(s, err)) { ++done; titles.push_back(s.title); }
+                else errors.push_back(std::wstring(s.title) + L": " + err);
+                break;
+            }
+    return done;
+}
+
+std::wstring WatchExePath() {
+    const std::wstring dir = suite_safety::DataDir();
+    return dir.empty() ? std::wstring() : dir + L"\\watch\\DuncansPrivacy.exe";
+}
+
+std::wstring WatchTaskXml(const std::wstring& exePath, const std::wstring& user) {
+    const std::wstring u = XmlEscape(user);
+    return std::wstring(L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n")
+        + L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\r\n"
+        + L"  <RegistrationInfo><Description>Duncan's Privacy Shield: stellt Datenschutz-Einstellungen wieder her, die Windows zurueckgesetzt hat.</Description></RegistrationInfo>\r\n"
+        + L"  <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>" + u + L"</UserId><Delay>PT30S</Delay></LogonTrigger></Triggers>\r\n"
+        + L"  <Principals><Principal id=\"Author\"><UserId>" + u + L"</UserId><LogonType>InteractiveToken</LogonType><RunLevel>HighestAvailable</RunLevel></Principal></Principals>\r\n"
+        + L"  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
+        + L"<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><ExecutionTimeLimit>PT5M</ExecutionTimeLimit><Enabled>true</Enabled></Settings>\r\n"
+        + L"  <Actions Context=\"Author\"><Exec><Command>" + XmlEscape(exePath) + L"</Command><Arguments>--reapply</Arguments></Exec></Actions>\r\n"
+        + L"</Task>\r\n";
+}
+
+bool WatchTaskExists() {
+    DWORD code = 1;
+    return RunHidden(SchtasksPath() + L" /Query /TN \"" + kTaskName + L"\"", 15000, code) && code == 0;
+}
+
+bool EnableWatchTask(const std::wstring& currentExe, std::wstring& error) {
+    const std::wstring dir = suite_safety::DataDir();
+    if (dir.empty()) { error = L"Der Datenordner unter %ProgramData% ist nicht vertrauenswürdig."; return false; }
+    const std::wstring watchDir = dir + L"\\watch";
+    CreateDirectoryW(watchDir.c_str(), nullptr);
+    const std::wstring target = WatchExePath();
+    if (!suite_safety::EnsureTrustedFile(target)) { error = L"Die Programmkopie im Datenordner ist nicht vertrauenswürdig."; return false; }
+    if (_wcsicmp(currentExe.c_str(), target.c_str()) != 0 && !CopyFileW(currentExe.c_str(), target.c_str(), FALSE)) {
+        error = L"Die Programmkopie konnte nicht angelegt werden (Fehler " + std::to_wstring(GetLastError()) + L").";
+        return false;
+    }
+    wchar_t user[256] = {}, domain[256] = {};
+    GetEnvironmentVariableW(L"USERNAME", user, 256);
+    GetEnvironmentVariableW(L"USERDOMAIN", domain, 256);
+    const std::wstring who = std::wstring(domain) + L"\\" + user;
+    const std::wstring xmlPath = watchDir + L"\\task.xml";
+    {
+        const std::wstring xml = WatchTaskXml(target, who);
+        HANDLE h = CreateFileW(xmlPath.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+        if (h == INVALID_HANDLE_VALUE) { error = L"Die Aufgabenbeschreibung konnte nicht geschrieben werden."; return false; }
+        const WORD bom = 0xFEFF;
+        DWORD n = 0;
+        const BOOL ok = WriteFile(h, &bom, 2, &n, nullptr) && WriteFile(h, xml.data(), static_cast<DWORD>(xml.size() * sizeof(wchar_t)), &n, nullptr);
+        CloseHandle(h);
+        if (!ok) { error = L"Die Aufgabenbeschreibung konnte nicht geschrieben werden."; return false; }
+    }
+    DWORD code = 1;
+    const bool ran = RunHidden(SchtasksPath() + L" /Create /TN \"" + kTaskName + L"\" /XML \"" + xmlPath + L"\" /F", 30000, code);
+    DeleteFileW(xmlPath.c_str());
+    if (!ran || code != 0) { error = L"Die geplante Aufgabe konnte nicht angelegt werden (Code " + std::to_wstring(code) + L")."; return false; }
+    suite_safety::Log(L"PrivacyShield", L"Geplante Aufgabe angelegt: " + std::wstring(kTaskName) + L" -> " + target);
+    return true;
+}
+
+bool DisableWatchTask(std::wstring& error) {
+    if (!WatchTaskExists()) return true;
+    DWORD code = 1;
+    if (!RunHidden(SchtasksPath() + L" /Delete /TN \"" + kTaskName + L"\" /F", 30000, code) || code != 0) {
+        error = L"Die geplante Aufgabe konnte nicht entfernt werden (Code " + std::to_wstring(code) + L").";
+        return false;
+    }
+    suite_safety::Log(L"PrivacyShield", L"Geplante Aufgabe entfernt: " + std::wstring(kTaskName));
+    return true;
+}
+
+void RefreshWatchCopy(const std::wstring& currentExe) {
+    const std::wstring target = WatchExePath();
+    if (target.empty() || _wcsicmp(currentExe.c_str(), target.c_str()) == 0) return;
+    WIN32_FILE_ATTRIBUTE_DATA a{}, b{};
+    if (!GetFileAttributesExW(target.c_str(), GetFileExInfoStandard, &a)) return;       // keine Kopie: Aufgabe ist nicht eingerichtet
+    if (!GetFileAttributesExW(currentExe.c_str(), GetFileExInfoStandard, &b)) return;
+    if (a.nFileSizeLow == b.nFileSizeLow && a.nFileSizeHigh == b.nFileSizeHigh) return;
+    if (!suite_safety::EnsureTrustedFile(target)) return;
+    CopyFileW(currentExe.c_str(), target.c_str(), FALSE);
+}
+
 
 }  // namespace privacy

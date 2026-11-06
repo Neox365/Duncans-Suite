@@ -208,6 +208,11 @@
 - Der PDF Reader kommt als Programm in die Suite.
 
 [DuncansPrivacy.exe]
+## 0.11.0 | 2026-11-06
+- Neu: „Empfohlen anwenden“ schaltet nur die mit „Empfohlen“ gekennzeichneten Einstellungen ein (ohne die „Erweiterten“ mit Nebenwirkungen). „Alle schützen“ bleibt für die strenge Variante.
+- Neu: Hinweis „Windows hat n Einstellungen zurückgesetzt“ mit Knopf „Erneut anwenden“. Das Programm merkt sich, welche Einstellungen du eingeschaltet hast, und vergleicht beim Start.
+- Neu: Schalter „Schutz automatisch erneuern“. Eine geplante Aufgabe stellt bei jedem Anmelden zurückgesetzte Einstellungen still wieder her (ohne Fenster, mit den Rechten des Programms). Dafür liegt eine Kopie des Programms im geschützten Ordner unter %ProgramData%\DuncansSuite\watch, damit kein normaler Benutzer sie austauschen kann.
+- Der Knopf „Wiederherstellungspunkt erstellen“ heißt kürzer „Wiederherstellungspunkt“; das Fenster ist beim ersten Öffnen etwas größer.
 ## 0.10.0 | 2026-11-05
 - Neu: Übersichtlichere Liste. Die Schalter sind in einklappbare Gruppen sortiert, jede Gruppe zeigt, wie viele ihrer Schalter aktiv sind („4 von 6 aktiv“). Beim Start ist nur die erste Gruppe offen, ein Klick auf die Gruppenleiste klappt sie auf oder zu. Weniger Scrollen.
 ## 0.9.1 | 2026-11-05

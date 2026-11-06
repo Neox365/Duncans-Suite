@@ -62,4 +62,25 @@ bool SystemDriveIsSsd(bool& known);
 // Rueckgabe false: error enthaelt den Grund (z. B. Systemschutz deaktiviert).
 bool CreateRestorePoint(const std::wstring& description, std::wstring& error);
 
+// ---- Schutz erneuern: Windows setzt Einstellungen nach grossen Updates manchmal zurueck ----
+// Der gewuenschte Schutz (Setting.id) steht in %ProgramData%\DuncansSuite\privacy_wanted.ini (nur Administratoren duerfen schreiben).
+bool HasBackupFor(const Setting& s);                       // diese Einstellung wurde vom Programm geaendert (Sicherungseintrag vorhanden)
+std::vector<int> LoadWanted();                             // gewuenschte Einstellungen (Setting.id)
+bool HasWantedFile();
+bool SaveWanted(const std::vector<int>& ids);
+void MarkWanted(int settingId, bool on);                   // beim Anwenden/Zuruecknehmen nachfuehren
+void SeedWantedFromBackup();                               // einmalig: alle Einstellungen mit Sicherungseintrag uebernehmen
+std::vector<int> MissingWanted();                          // gewuenscht, aber nicht mehr angewendet (Setting.id)
+int ReapplyMissing(std::vector<std::wstring>& titles, std::vector<std::wstring>& errors);   // wendet fehlende erneut an
+void SetWantedPathForTest(const std::wstring& path);
+
+// Geplante Aufgabe "bei jedem Anmelden erneuern": startet eine Kopie des Programms (unter %ProgramData%\DuncansSuite\watch,
+// nur fuer Administratoren beschreibbar) mit --reapply, mit hoechsten Rechten, ohne Fenster.
+std::wstring WatchExePath();
+std::wstring WatchTaskXml(const std::wstring& exePath, const std::wstring& user);   // Aufgabenbeschreibung (XML)
+bool WatchTaskExists();
+bool EnableWatchTask(const std::wstring& currentExe, std::wstring& error);
+bool DisableWatchTask(std::wstring& error);
+void RefreshWatchCopy(const std::wstring& currentExe);    // haelt die Kopie auf dem Stand des laufenden Programms
+
 }  // namespace privacy
