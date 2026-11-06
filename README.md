@@ -96,6 +96,8 @@ aus, gruppiert sie, erkennt Updates und kann Treiber-Updates über Windows Updat
 - **Aktualisieren-Button** pro Karte: Windows-Update-Treiber werden mit Wiederherstellungspunkt installiert, bei Hersteller-Treibern öffnet sich die offizielle Download-Seite
 - Suche, Filter (Alle / Updates / Probleme), Sortierung, CSV-Export, Treiber sichern (`pnputil /export-driver`), Hardware-ID kopieren
 - **Übersicht** oben: Urteil auf einen Blick, Kennzahlen (Geräte, Updates, Probleme, Herstellertreiber über 2 Jahre, letztes Update) und **Verlauf** der über das Programm installierten Updates (Textdatei `history.txt` neben `settings.ini`, die letzten 200); Zurücksetzen über Windows-Wiederherstellung bzw. Geräte-Manager
+- **Wöchentliche Hintergrund-Prüfung:** Zahnrad → „Wöchentlich im Hintergrund nach Updates suchen“ legt die geplante Aufgabe „Duncans Driver Updater - Treiber pruefen“ an (montags 12:00, `StartWhenAvailable`, nur mit Netz, hoechste Rechte, interaktiv). Sie startet eine Kopie des Programms aus `%ProgramData%\DuncansSuite\watch` mit `--check`: Scan, Windows Update und Hersteller-Tabelle, ohne Fenster; nur bei Treffern erscheint eine Benachrichtigung (Klick öffnet das Programm), das Ergebnis steht im Log, `LetztePruefung` in `settings.ini`. Tests: `src/tests/CheckTest.cpp`.
+- **Beim Hersteller suchen:** Kartenmenü, öffnet die Download-Seite des Herstellers (nach PCI-Hersteller-ID: Intel, NVIDIA, AMD, Realtek, Broadcom) oder eine Websuche. Der automatische Versionsvergleich der Hersteller-Tabelle bleibt auf Grafikkarten beschränkt; alle anderen Geräte prüft Windows Update.
 - Eigene Dark-Dialoge und Toasts, Banner mit Start-Animation
 
 Die App benötigt Administratorrechte (UAC-Abfrage beim Start), weil Treiber-Operationen sie erfordern.

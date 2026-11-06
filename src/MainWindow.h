@@ -219,14 +219,16 @@ private:
     {
         bool autoScan = false;   // beim Start automatisch scannen
         bool splash = true;      // Start-Animation zeigen
+        bool weekly = false;     // geplante Aufgabe: woechentlich im Hintergrund nach Updates suchen (Wahrheit: die Aufgabe selbst)
     };
     Settings m_settings, m_draft;
     bool m_settingsOpen = false;
     bool m_gearHover = false;
     bool m_gearPress = false;
-    int  m_setHover = 0;         // 1 Scan-Haken, 2 Splash-Haken, 3 Speichern, 4 Abbrechen
+    int  m_setHover = 0;         // 1 Scan-Haken, 2 Splash-Haken, 3 Speichern, 4 Abbrechen, 5 woechentliche Pruefung
     int  m_setPress = 0;
-    RECT m_gearRect{}, m_chkScan{}, m_chkSplash{}, m_btnSave{}, m_btnCancel{};
+    RECT m_gearRect{}, m_chkScan{}, m_chkSplash{}, m_chkWeekly{}, m_btnSave{}, m_btnCancel{};
+    std::wstring m_weeklyHint;
     void OpenSettings();
     void CloseSettings(bool save);
     void DrawSettings(HDC dc, int width, int height);
