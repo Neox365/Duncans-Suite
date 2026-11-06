@@ -63,6 +63,8 @@
 
 
 [DuncansTidy.exe]
+## 1.5.0 | 2026-11-06
+- Neu: Die Ultra-Tiefenreinigung räumt mehr App-Caches auf: Slack, Signal, Notion, Obsidian, Cursor, GitHub Desktop, Claude, Steam (Web-Cache), Epic Games Launcher (Web-Cache) und das neue Teams, zusätzlich zu Discord, VS Code, Spotify und dem alten Teams. Es werden nur Cache-Ordner (Cache, Code Cache, GPUCache, Shader-Caches) geleert, nie Anmeldung, Einstellungen, Nachrichten oder Spielstände; die Programme bauen den Cache beim nächsten Start neu auf. Vorher zeigt Tidy wie immer die Vorschau.
 ## 1.4.0 | 2026-11-06
 - Neu: Doppelte Dateien. Auf der Seite Downloads erscheint die neue Gruppe „Doppelte Dateien“: Dateien mit gleichem Inhalt (nicht nur gleichem Namen, geprüft mit SHA-256) werden erkannt. Die älteste Kopie bleibt immer unberührt, die übrigen landen wie alle Downloads im Papierkorb. Ordner und Verknüpfungen werden nie als doppelt gewertet. Die Gruppe lässt sich wie jede andere an- und abwählen.
 - Neu: In den Einstellungen schaltet „Doppelte Downloads erkennen“ die Suche ein oder aus (Standard: an). Das automatische Aufräumen ist davon nicht betroffen.

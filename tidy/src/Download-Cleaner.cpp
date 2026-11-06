@@ -375,7 +375,7 @@ static std::wstring ItemLabel(int cat, const fs::path& p) {
 constexpr int kMaxGroups = 12;
 enum { GRP_SHADER = 5, GRP_WUPDATE = 6, GRP_DRIVER = 7, GRP_SETUP = 8, GRP_APPCACHE = 9, GRP_STORE = 10, GRP_ETL = 11 };
 static bool DeepOn() { return GetFlag(L"DeepClean", false); }
-// Ultra-Tiefenreinigung (Tidy 1.2.1): baut auf der Ultra-Tiefenreinigung auf. Dateigruppen: App-Caches (Discord, Spotify, VS Code, Teams), Store-Reste,
+// Ultra-Tiefenreinigung (Tidy 1.2.1): baut auf der Ultra-Tiefenreinigung auf. Dateigruppen: App-Caches (Discord, Slack, Steam, VS Code …), Store-Reste,
 // ETL-Protokolle. Dazu drei Aktionen, die Windows selbst ausfuehrt (DISM, Schattenkopien, Ereignisprotokolle) und die immer einzeln bestaetigt werden.
 static bool UltraOn() { return DeepOn(); }   // seit 1.2.3 gibt es nur noch Standard und Ultra: Ultra enthaelt alle Tiefen-Gruppen und die Windows-Aktionen
 
@@ -431,33 +431,44 @@ static void AddDeepItems(std::vector<fs::path>& v) {
 }
 // Ultra-Tiefenreinigung: Cache-Ordner der Electron-/CEF-Apps. Nur diese Unterordner, nie Cookies, Anmeldung, Einstellungen oder Offline-Medien.
 static const wchar_t* const kAppCacheSubs[] = {L"Cache", L"Code Cache", L"GPUCache", L"DawnGraphiteCache", L"DawnWebGPUCache", L"GrShaderCache", L"ShaderCache"};
-static std::vector<fs::path> AppCacheBases() {
-    std::vector<fs::path> b;
+struct AppBase { fs::path path; const wchar_t* label; };
+static std::vector<AppBase> AppCacheBases() {
+    std::vector<AppBase> b;
     const fs::path ra = KnownFolder(FOLDERID_RoamingAppData), lad = KnownFolder(FOLDERID_LocalAppData);
     if (!ra.empty()) {
-        for (const wchar_t* n : {L"discord", L"discordcanary", L"discordptb", L"Code", L"Code - Insiders"}) b.push_back(ra / n);
-        b.push_back(ra / L"Microsoft" / L"Teams");
+        struct R { const wchar_t* dir; const wchar_t* label; };
+        static const R kRoaming[] = {{L"discord", L"Discord"}, {L"discordcanary", L"Discord Canary"}, {L"discordptb", L"Discord PTB"},
+                                     {L"Code", L"VS Code"}, {L"Code - Insiders", L"VS Code Insiders"}, {L"Cursor", L"Cursor"},
+                                     {L"Slack", L"Slack"}, {L"Signal", L"Signal"}, {L"Notion", L"Notion"}, {L"obsidian", L"Obsidian"},
+                                     {L"GitHub Desktop", L"GitHub Desktop"}, {L"Claude", L"Claude"}};
+        for (const R& r : kRoaming) b.push_back({ra / r.dir, r.label});
+        b.push_back({ra / L"Microsoft" / L"Teams", L"Teams"});
     }
-    if (!lad.empty()) b.push_back(lad / L"Spotify" / L"Browser");
+    if (!lad.empty()) {
+        b.push_back({lad / L"Spotify" / L"Browser", L"Spotify"});
+        b.push_back({lad / L"Steam" / L"htmlcache", L"Steam"});
+        b.push_back({lad / L"Steam" / L"htmlcache" / L"Default", L"Steam"});
+        b.push_back({lad / L"Packages" / L"MSTeams_8wekyb3d8bbwe" / L"LocalCache" / L"Microsoft" / L"MSTeams" / L"EBWebView" / L"Default", L"Teams"});
+        std::error_code ec;  // Epic Games Launcher: Web-Caches heissen webcache, webcache_4430 usw.
+        for (const auto& e : fs::directory_iterator(lad / L"EpicGamesLauncher" / L"Saved", fs::directory_options::skip_permission_denied, ec)) {
+            std::error_code e2;
+            if (e.is_directory(e2) && LowerPath(e.path().filename()).rfind(L"webcache", 0) == 0) b.push_back({e.path(), L"Epic Games"});
+        }
+    }
     return b;
 }
 static std::wstring AppCacheLabel(const fs::path& p) {
     if (!UltraOn()) return L"";
     const std::wstring lp = LowerPath(p);
-    for (const fs::path& base : AppCacheBases()) {
-        if (!UnderDir(lp, base)) continue;
-        std::wstring n = LowerPath(base.filename());
-        const wchar_t* app = n == L"discord" ? L"Discord" : n == L"discordcanary" ? L"Discord Canary" : n == L"discordptb" ? L"Discord PTB"
-                           : n == L"code" ? L"VS Code" : n == L"code - insiders" ? L"VS Code Insiders" : n == L"teams" ? L"Teams" : L"Spotify";
-        return std::wstring(app) + L"  ·  " + p.filename().wstring();
-    }
+    for (const AppBase& ab : AppCacheBases())
+        if (UnderDir(lp, ab.path)) return std::wstring(ab.label) + L"  ·  " + p.filename().wstring();
     return L"";
 }
 static void AddUltraItems(std::vector<fs::path>& v) {
     std::error_code ec;
-    for (const fs::path& base : AppCacheBases())
+    for (const AppBase& ab : AppCacheBases())
         for (const wchar_t* sub : kAppCacheSubs) {
-            const fs::path c = base / sub;
+            const fs::path c = ab.path / sub;
             if (fs::is_directory(c, ec)) v.push_back(c);
             ec.clear();
         }
@@ -497,8 +508,8 @@ static int DeepGroupOf(const fs::path& p) {
     if (UnderDir(lp, root / L"NVIDIA") || UnderDir(lp, root / L"AMD")) return GRP_DRIVER;
     if (lp.find(L"\\microsoft.windowsstore_") != std::wstring::npos) return GRP_STORE;
     if (UnderDir(lp, win / L"System32" / L"LogFiles" / L"WMI") || lp.find(L"\\diagnosis\\etllogs\\") != std::wstring::npos) return GRP_ETL;
-    for (const fs::path& base : AppCacheBases())
-        if (UnderDir(lp, base)) return GRP_APPCACHE;
+    for (const AppBase& ab : AppCacheBases())
+        if (UnderDir(lp, ab.path)) return GRP_APPCACHE;
     if (UnderDir(lp, win / L"SoftwareDistribution") || UnderDir(lp, win / L"Logs") || lp.find(L"\\deliveryoptimization\\") != std::wstring::npos) return GRP_WUPDATE;
     if (UnderDir(lp, win / L"Temp")) return GRP_SETUP;
     static const wchar_t* kShader[] = {L"\\d3dscache\\", L"\\dxcache\\", L"\\glcache\\", L"\\vkcache\\", L"\\dxccache\\", L"\\computecache\\", L"\\nv_cache\\"};
@@ -805,7 +816,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.4.0";
+constexpr wchar_t kVersion[] = L"1.5.0";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -2317,7 +2328,7 @@ static const wchar_t* GroupName(int cat, int g) {
                                  L"Installationsdateien", L"Sonstige Dateien"};
     static const wchar_t* s[] = {L"Vorschaubilder", L"Symbol-Cache", L"Absturzabbilder", L"Windows-Fehlerberichte", L"Sonstiges",
                                  L"Shader-Caches (DirectX, NVIDIA, AMD)", L"Windows-Update-Reste", L"Treiber-Installer-Reste", L"Setup-Reste (Windows-Temp)",
-                                 L"App-Caches (Discord, Spotify, VS Code, Teams)", L"Microsoft-Store-Reste", L"Diagnose- und ETL-Protokolle"};
+                                 L"App-Caches (Discord, Slack, Steam, VS Code …)", L"Microsoft-Store-Reste", L"Diagnose- und ETL-Protokolle"};
     static const wchar_t* d[] = {L"Dokumente", L"Bilder", L"Videos", L"Musik", L"Archive", L"Programme und Installer", L"Ordner", L"Sonstiges", L"Doppelte Dateien"};
     return Tr(cat == CAT_TEMP ? t[g] : cat == CAT_SYS ? s[g] : d[g]);
 }
@@ -2338,7 +2349,7 @@ static const wchar_t* GroupNote(int cat, int g) {
                                  L"Heruntergeladene Update-Pakete, Übermittlungsoptimierung und Update-Protokolle. Gesperrtes bleibt (ohne Administratorrechte)",
                                  L"Entpackte Grafiktreiber-Installer in C:\\NVIDIA und C:\\AMD – der installierte Treiber bleibt unberührt",
                                  L"Temporäre Setup-Dateien des Systems. Gesperrtes bleibt (ohne Administratorrechte)",
-                                 L"Zwischenspeicher der Programme Discord, Spotify, VS Code und Teams – Anmeldung und Einstellungen bleiben, die Programme bauen den Cache neu auf",
+                                 L"Zwischenspeicher von Discord, Slack, Steam, VS Code, Teams, Spotify und weiteren Programmen – Anmeldung und Einstellungen bleiben, die Programme bauen den Cache neu auf",
                                  L"Zwischengespeicherte und vorübergehende Downloads des Microsoft Store",
                                  L"Ablaufverfolgungs-Protokolle (.etl) von Windows. Von Windows benutzte Dateien bleiben (ohne Administratorrechte)"};
     static const wchar_t* d[] = {L"PDF, Word, Excel, PowerPoint, Text …", L"JPG, PNG, GIF, WebP …", L"MP4, MKV, AVI, MOV …", L"MP3, WAV, FLAC, M4A …",
@@ -5959,6 +5970,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
     if (autoMode && !dryRun && !permanent && ok > 0) AskEmptyRecycleBin(nullptr);
     return failed ? 2 : 0;
 }
+
 
 
 

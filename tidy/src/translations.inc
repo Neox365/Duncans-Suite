@@ -9,8 +9,8 @@ static const Translation kTranslations[] = {
     // Ultra-Tiefenreinigung (1.2.1)
     {L"Ultra-Tiefenreinigung",
      {L"Ultra deep clean", L"Nettoyage ultra-approfondi", L"Limpieza ultra profunda", L"Czyszczenie ultra-głębokie", L"Limpeza ultraprofunda", L"ウルトラ・ディープクリーン", L"超深度清理"}},
-    {L"App-Caches (Discord, Spotify, VS Code, Teams)",
-     {L"App caches (Discord, Spotify, VS Code, Teams)", L"Caches d'applications (Discord, Spotify, VS Code, Teams)", L"Cachés de aplicaciones (Discord, Spotify, VS Code, Teams)", L"Pamięci podręczne aplikacji (Discord, Spotify, VS Code, Teams)", L"Caches de aplicativos (Discord, Spotify, VS Code, Teams)", L"アプリのキャッシュ（Discord、Spotify、VS Code、Teams）", L"應用程式快取（Discord、Spotify、VS Code、Teams）"}},
+    {L"App-Caches (Discord, Slack, Steam, VS Code …)",
+     {L"App caches (Discord, Slack, Steam, VS Code …)", L"Caches d'applications (Discord, Slack, Steam, VS Code …)", L"Cachés de aplicaciones (Discord, Slack, Steam, VS Code …)", L"Pamięci podręczne aplikacji (Discord, Slack, Steam, VS Code …)", L"Caches de aplicativos (Discord, Slack, Steam, VS Code …)", L"アプリのキャッシュ（Discord、Spotify、VS Code、Teams）", L"應用程式快取（Discord、Spotify、VS Code、Teams）"}},
     {L"Microsoft-Store-Reste",
      {L"Microsoft Store leftovers", L"Restes du Microsoft Store", L"Restos de Microsoft Store", L"Pozostałości Microsoft Store", L"Restos da Microsoft Store", L"Microsoft Store の残り", L"Microsoft Store 殘留檔案"}},
     {L"Diagnose- und ETL-Protokolle",
@@ -780,6 +780,9 @@ static const Translation kTranslations[] = {
      {L"The uninstaller could not be started.", L"Impossible de lancer le programme de désinstallation.", L"No se pudo iniciar el desinstalador.", L"Nie udało się uruchomić deinstalatora.", L"Não foi possível iniciar o desinstalador.", L"アンインストーラーを起動できませんでした。", L"無法啟動解除安裝程式。"}},
     {L"Installierte Programme. Deinstallieren startet den Uninstaller des Programms.\nKlick für die genaue Übersicht.",
      {L"Installed programs. Uninstall starts the program’s own uninstaller.\nClick for details.", L"Programmes installés. « Désinstaller » lance le désinstallateur du programme.\nClic pour l’aperçu détaillé.", L"Programas instalados. Desinstalar inicia el desinstalador del programa.\nClic para ver el detalle.", L"Zainstalowane programy. Odinstaluj uruchamia deinstalator programu.\nKliknij, aby zobaczyć szczegóły.", L"Programas instalados. Desinstalar inicia o desinstalador do programa.\nClique para ver os detalhes.", L"インストール済みのプログラムです。「アンインストール」でプログラム自身のアンインストーラーを起動します。\nクリックで詳細を表示。", L"已安裝的程式。「解除安裝」會啟動該程式自己的解除安裝程式。\n點一下可查看詳細資訊。"}},
+    // Mehr App-Caches (1.5.0)
+    {L"Zwischenspeicher von Discord, Slack, Steam, VS Code, Teams, Spotify und weiteren Programmen – Anmeldung und Einstellungen bleiben, die Programme bauen den Cache neu auf",
+     {L"Caches of Discord, Slack, Steam, VS Code, Teams, Spotify and other programs – sign-in and settings stay, the programs rebuild the cache", L"Caches de Discord, Slack, Steam, VS Code, Teams, Spotify et d’autres programmes – connexion et paramètres sont conservés, les programmes reconstruisent le cache", L"Cachés de Discord, Slack, Steam, VS Code, Teams, Spotify y otros programas: el inicio de sesión y los ajustes se conservan, los programas reconstruyen la caché", L"Pamięci podręczne Discord, Slack, Steam, VS Code, Teams, Spotify i innych programów – logowanie i ustawienia zostają, programy odbudowują pamięć podręczną", L"Caches de Discord, Slack, Steam, VS Code, Teams, Spotify e outros programas – login e configurações permanecem, os programas recriam o cache", L"Discord、Slack、Steam、VS Code、Teams、Spotify などのキャッシュ – サインインと設定は残り、各プログラムがキャッシュを再作成します", L"Discord、Slack、Steam、VS Code、Teams、Spotify 等程式的快取 – 登入與設定會保留，程式會重新建立快取"}},
     // Doppelte Dateien (1.4.0)
     {L"Doppelte Dateien",
      {L"Duplicate files", L"Fichiers en double", L"Archivos duplicados", L"Zduplikowane pliki", L"Arquivos duplicados", L"重複ファイル", L"重複檔案"}},
