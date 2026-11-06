@@ -28,9 +28,10 @@ using std::min;
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "BoostLogic.h"
+#include "LiveStats.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.2.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.3.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -48,7 +49,7 @@ const COLORREF kBoost = RGB(255, 150, 50);          // Akzent dieses Programms (
 
 const wchar_t* kTitle = L"Duncan's Boost";
 const UINT WM_JOB_DONE = WM_APP + 1;                // lp = JobResult*
-const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4;
+const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5;
 
 enum HitId { H_NONE = -1, H_HERO = 1000, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP = 5000 };
 enum RowType { R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_GROUP, R_HINT };
@@ -78,7 +79,9 @@ struct App {
     std::vector<Row> rows;
     bool autoCollapsed = true;                    // "Automatik (optional)" ist beim Start eingeklappt
     int scroll = 0, contentH = 0;
-    RECT hero{}, heroToggle{}, list{}, footer{};
+    RECT hero{}, heroToggle{}, liveRc{}, list{}, footer{};
+    std::unique_ptr<boostmode::LiveStats> live;   // CPU-/RAM-/GPU-Werte fuer die Anzeige unter dem Schalter
+    boostmode::Live cur;
     int hover = H_NONE, press = H_NONE;
     bool tracking = false, busy = false;
     int spin = 0;
@@ -182,7 +185,8 @@ void Layout() {
     g.hero = { m, S(84), hr, S(84) + S(96) };
     g.heroToggle = { g.hero.right - S(18) - S(64), g.hero.top + (S(96) - S(34)) / 2, g.hero.right - S(18), g.hero.top + (S(96) - S(34)) / 2 + S(34) };
     g.footer = { m, cr.bottom - S(34), cr.right - m, cr.bottom - S(8) };
-    g.list = { m, g.hero.bottom + S(18), cr.right - m, g.footer.top - S(6) };
+    g.liveRc = { m, g.hero.bottom + S(10), hr, g.hero.bottom + S(10) + S(88) };
+    g.list = { m, g.liveRc.bottom + S(16), cr.right - m, g.footer.top - S(6) };
     HDC dc = GetDC(g.hwnd);
     BuildRows(dc);
     ReleaseDC(g.hwnd, dc);
@@ -257,6 +261,12 @@ void AutoPoll() {
     } else if (g.state.active && g.state.auto_) {
         if (++g.missPolls >= 2) { g.missPolls = 0; StartJob(false, true); }     // erst nach zwei Pruefungen ohne Spiel (kurze Neustarts des Spiels)
     }
+}
+
+void LiveTick() {                                  // alle Sekunde neue Werte, nur solange das Fenster zu sehen ist
+    if (!g.live || IsIconic(g.hwnd) || !IsWindowVisible(g.hwnd)) return;
+    g.cur = g.live->Sample();
+    InvalidateRect(g.hwnd, &g.liveRc, FALSE);
 }
 
 void ListPoll() {                                  // Liste von selbst aktuell halten (nur, wenn gerade nichts passiert)
@@ -363,6 +373,34 @@ void Paint(HDC dc, const RECT& cr) {
         const int d = S(24), cx = g.heroToggle.left - S(30), cy = (g.heroToggle.top + g.heroToggle.bottom) / 2;
         gr.DrawEllipse(&track, cx - d / 2, cy - d / 2, d, d);
         gr.DrawArc(&arc, cx - d / 2, cy - d / 2, d, d, static_cast<float>(g.spin), 100.0f);
+    }
+
+    // Live-Werte: vier Kacheln (CPU, Arbeitsspeicher, GPU, GPU-Temperatur)
+    {
+        FillRound(dc, g.liveRc, S(14), kCard, kBorder);
+        const boostmode::Live& l = g.cur;
+        struct Tile { std::wstring label, value, extra; COLORREF color; };
+        auto pct = [](int v) { return v < 0 ? std::wstring(L"–") : std::to_wstring(v) + L" %"; };
+        auto colorFor = [](int level) { return level >= 2 ? kRed : (level == 1 ? kBoost : kText); };
+        std::wstring gpuShort = l.gpuName;
+        if (gpuShort.rfind(L"NVIDIA GeForce ", 0) == 0) gpuShort = gpuShort.substr(15);
+        auto gb = [](unsigned long long mb) { const unsigned long long t = (mb * 10 + 512) / 1024; return std::to_wstring(t / 10) + L"," + std::to_wstring(t % 10); };
+        const Tile tiles[4] = {
+            { L"CPU-Auslastung", pct(l.cpu), L"", l.cpu < 0 ? kTextDim : colorFor(boostmode::LoadLevel(l.cpu)) },
+            { L"Arbeitsspeicher", pct(l.ram), l.ramTotalMb ? gb(l.ramUsedMb) + L" von " + gb(l.ramTotalMb) + L" GB" : L"", l.ram < 0 ? kTextDim : colorFor(boostmode::LoadLevel(l.ram)) },
+            { L"GPU-Auslastung", pct(l.gpu), L"", l.gpu < 0 ? kTextDim : colorFor(boostmode::LoadLevel(l.gpu)) },
+            { l.gpuTemp < 0 ? L"GPU-Temperatur (nur NVIDIA)" : L"GPU-Temperatur", l.gpuTemp < 0 ? std::wstring(L"–") : std::to_wstring(l.gpuTemp) + L" °C", gpuShort,
+              l.gpuTemp < 0 ? kTextDim : colorFor(boostmode::TempLevel(l.gpuTemp)) },
+        };
+        const int w = (g.liveRc.right - g.liveRc.left) / 4;
+        for (int i = 0; i < 4; ++i) {
+            const int x = g.liveRc.left + i * w;
+            if (i > 0) { RECT sep{ x, g.liveRc.top + S(14), x + 1, g.liveRc.bottom - S(14) }; FillRound(dc, sep, 0, kBorder, kBorder); }
+            DrawText2(dc, g.fSmall, kTextDim, { x + S(16), g.liveRc.top + S(10), x + w - S(8), g.liveRc.top + S(30) }, tiles[i].label, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawText2(dc, g.fTitle, tiles[i].color, { x + S(16), g.liveRc.top + S(28), x + w - S(8), g.liveRc.top + S(62) }, tiles[i].value, DT_LEFT | DT_TOP | DT_SINGLELINE);
+            if (!tiles[i].extra.empty())
+                DrawText2(dc, g.fSmall, kTextDim, { x + S(16), g.liveRc.top + S(62), x + w - S(8), g.liveRc.bottom - S(4) }, tiles[i].extra, DT_LEFT | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
     }
 
     // Liste
@@ -560,6 +598,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == kTimerSpin) { g.spin = (g.spin + 30) % 360; InvalidateRect(hwnd, &g.hero, FALSE); }
         else if (wp == kTimerAuto) AutoPoll();
         else if (wp == kTimerList) ListPoll();
+        else if (wp == kTimerLive) LiveTick();
         return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     }
@@ -608,6 +647,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     if (g.state.active) SetStatus(L"Der Zock-Modus war noch aktiv (frühere Sitzung). Zum Wiederherstellen ausschalten.", kOrange);
     SetTimer(g.hwnd, kTimerAuto, 3000, nullptr);
     SetTimer(g.hwnd, kTimerList, 5000, nullptr);
+    g.live = std::make_unique<boostmode::LiveStats>();
+    g.cur = g.live->Sample();
+    SetTimer(g.hwnd, kTimerLive, 1000, nullptr);
     ShowWindow(g.hwnd, show);
     UpdateWindow(g.hwnd);
 

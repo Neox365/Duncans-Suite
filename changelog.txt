@@ -48,6 +48,9 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.3.0 | 2026-11-06
+- Neu: Live-Werte im Fenster, direkt unter dem Schalter: CPU-Auslastung, Arbeitsspeicher (Prozent und GB), GPU-Auslastung und GPU-Temperatur. Die Zahlen werden orange (ab 70 % bzw. 75 °C) und rot (ab 90 % bzw. 85 °C), und sie aktualisieren sich jede Sekunde, solange das Fenster zu sehen ist.
+- Die GPU-Auslastung kommt von Windows (alle Hersteller), die GPU-Temperatur nur bei NVIDIA-Grafikkarten (über die NVIDIA-Treiberbibliothek in System32). Bei anderen Herstellern bleibt sie leer. Eine CPU-Temperatur gibt es nicht, weil Windows sie ohne Zusatztreiber nicht verlässlich liefert.
 ## 0.2.0 | 2026-11-05
 - Einfacher: ein Schalter und eine Liste „Diese Programme beenden“. Höchstleistung und das Wiederstarten der Programme sind immer an, die Benachrichtigungen werden nicht mehr angefasst. Die Liste aktualisiert sich von selbst.
 - Beim ersten Start sind nur unkritische Hintergrundhelfer (z. B. OneDrive, Dropbox, Teams) vorgehakt, wenn sie laufen. Spiele-Launcher, Discord, Spotify und Browser bleiben aus.
