@@ -28,7 +28,7 @@ using std::min;
 #include "EqLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.3.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.4.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -47,10 +47,13 @@ const COLORREF kOnEq = RGB(8, 24, 34);              // Schrift auf dem Akzent
 
 const wchar_t* kTitle = L"Duncan's Equalizer";
 const UINT_PTR kTimerApply = 1, kTimerDevice = 2, kTimerDisarm = 3;
+const UINT WM_TRAY = WM_APP + 2;                // Symbol im Infobereich
+const UINT WM_SHOWMAIN = WM_APP + 3;            // zweiter Start: bestehendes Fenster zeigen
 const UINT WM_NAME_DONE = WM_APP + 1;      // wParam = 1: Name uebernehmen, 0: abbrechen
 
 enum HitId {
     H_NONE = -1, H_HERO = 1, H_BASS = 2, H_VOICE = 3, H_DOWNLOAD = 4, H_RECHECK = 5, H_CONFIGURATOR = 6, H_ADMIN = 7,
+    H_AUTOSTART = 220, H_KEEP = 221,
     H_PRESET = 10,      // 10 .. 10 + Anzahl Voreinstellungen
     H_PROFILE = 200,    // 200 .. 205: Profil waehlen
     H_PROFNEW = 210, H_BIND = 211, H_IMPORT = 212, H_PROFDEL = 213,
@@ -75,6 +78,9 @@ struct App {
     RECT profCard{}, profChip[eq::kMaxProfiles]{}, profNew{}, btnBind{}, btnImport{}, btnDel{}, nameRect{};
     HWND nameEdit = nullptr;                       // Eingabefeld fuer den Namen eines neuen Profils
     WNDPROC nameOldProc = nullptr;
+    RECT btnAuto{}, btnKeep{};
+    NOTIFYICONDATAW nid{};
+    bool autostartOn = false, quitting = false, balloonShown = false;
     bool delArmed = false;                         // "Loeschen" wurde einmal geklickt, zweiter Klick loescht
     int hover = H_NONE, press = H_NONE, drag = -1;
     bool tracking = false;
@@ -159,9 +165,11 @@ void ApplyNow() {
 }
 
 void Layout();
+void UpdateTray();
 void Changed() {                                    // speichern, kurz warten (Regler ziehen), dann uebernehmen
     SaveCfg();
     Layout();
+    UpdateTray();
     SetTimer(g.hwnd, kTimerApply, 350, nullptr);
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
@@ -195,6 +203,59 @@ void Recheck() {
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
 
+// ---------- Infobereich ----------
+UINT g_taskbarCreated = 0;
+
+void ShowMain() {
+    ShowWindow(g.hwnd, SW_SHOW);
+    ShowWindow(g.hwnd, SW_RESTORE);
+    SetForegroundWindow(g.hwnd);
+}
+
+void UpdateTray() {
+    if (!g.nid.hWnd) return;
+    std::wstring tip = L"Duncan's Equalizer – " + g.profiles[static_cast<size_t>(g.active)].name + (g.cfg.enabled ? L" (an)" : L" (aus)");
+    wcsncpy_s(g.nid.szTip, tip.c_str(), _TRUNCATE);
+    g.nid.uFlags = NIF_TIP;
+    Shell_NotifyIconW(NIM_MODIFY, &g.nid);
+}
+
+void AddTray(HINSTANCE inst) {
+    g.nid = NOTIFYICONDATAW{};
+    g.nid.cbSize = sizeof(g.nid);
+    g.nid.hWnd = g.hwnd;
+    g.nid.uID = 1;
+    g.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
+    g.nid.uCallbackMessage = WM_TRAY;
+    g.nid.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
+    wcscpy_s(g.nid.szTip, L"Duncan's Equalizer");
+    Shell_NotifyIconW(NIM_ADD, &g.nid);
+    UpdateTray();
+}
+
+void Changed();
+void SwitchProfile(int i, const std::wstring& why);
+
+void TrayMenu() {
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, 1, L"Öffnen");
+    AppendMenuW(menu, MF_STRING | (g.cfg.enabled ? MF_CHECKED : 0), 2, L"Equalizer an");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    for (size_t i = 0; i < g.profiles.size(); ++i)
+        AppendMenuW(menu, MF_STRING | (static_cast<int>(i) == g.active ? MF_CHECKED : 0), static_cast<UINT_PTR>(100 + i), (L"Profil: " + g.profiles[i].name).c_str());
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, 3, L"Beenden");
+    POINT pt; GetCursorPos(&pt);
+    SetForegroundWindow(g.hwnd);
+    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, g.hwnd, nullptr);
+    PostMessageW(g.hwnd, WM_NULL, 0, 0);
+    DestroyMenu(menu);
+    if (cmd == 1) ShowMain();
+    else if (cmd == 2) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
+    else if (cmd >= 100 && cmd < 100 + static_cast<int>(g.profiles.size())) SwitchProfile(cmd - 100, L"");
+    else if (cmd == 3) { g.quitting = true; DestroyWindow(g.hwnd); }
+}
+
 // ---------- Profile ----------
 void StopNameEdit() {
     if (!g.nameEdit) return;
@@ -212,6 +273,7 @@ void SwitchProfile(int i, const std::wstring& why = L"") {
     LoadActive();
     g.delArmed = false;
     SaveCfg();
+    UpdateTray();
     SetTimer(g.hwnd, kTimerApply, 150, nullptr);
     if (!why.empty()) SetStatus(why, kGreen);
     InvalidateRect(g.hwnd, nullptr, FALSE);
@@ -402,8 +464,12 @@ void Layout() {
     g.btnImport = { g.btnBind.right + S(8), row2, g.btnBind.right + S(8) + bw2, row2 + h2 };
     g.btnDel = { ir - bw3, row2, ir, row2 + h2 };
     y = g.profCard.bottom + S(14);
-    const int cw = std::max(S(200), TextWidth(dc, g.fBold, L"Geräte auswählen") + S(40));
+    const int cw = TextWidth(dc, g.fBold, L"Geräte auswählen") + S(36);
     g.confBtn = { m, y, m + cw, y + S(36) };
+    const std::wstring autoLabel = std::wstring(L"Mit Windows starten: ") + (g.autostartOn ? L"an" : L"aus");
+    const std::wstring keepLabel = std::wstring(L"Im Hintergrund: ") + (g.cfg.keepRunning ? L"an" : L"aus");
+    g.btnAuto = { g.confBtn.right + S(10), y, g.confBtn.right + S(10) + TextWidth(dc, g.fBold, autoLabel) + S(28), y + S(36) };
+    g.btnKeep = { g.btnAuto.right + S(10), y, g.btnAuto.right + S(10) + TextWidth(dc, g.fBold, keepLabel) + S(28), y + S(36) };
     ReleaseDC(g.hwnd, dc);
 }
 
@@ -585,8 +651,15 @@ void Paint(HDC dc, const RECT& cr) {
         smallBtn(g.btnImport, g.cfg.extra.empty() ? L"Kopfhörer-Korrektur laden …" : L"Korrektur entfernen", H_IMPORT, false);
         smallBtn(g.btnDel, g.delArmed ? L"Wirklich löschen?" : L"Löschen", H_PROFDEL, g.delArmed);
         DrawButton(dc, g.confBtn, L"Geräte auswählen", false, g.hover == H_CONFIGURATOR, g.press == H_CONFIGURATOR && g.hover == H_CONFIGURATOR);
-        DrawText2(dc, g.fSmall, kTextDim, { g.confBtn.right + S(14), g.confBtn.top, g.footer.right, g.confBtn.bottom },
-                  L"Dort stellst du ein, auf welchen Geräten der Equalizer wirkt.", DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        {
+            auto pill = [&](const RECT& r, const std::wstring& t, bool on2, int id) {
+                const bool hot = g.hover == id;
+                FillRound(dc, r, S(12), on2 ? Blend(kCard, kEq, 22) : (hot ? kCardHover : Blend(kCard, kBackground, 25)), on2 ? kEq : (hot ? kBorderHot : kBorder));
+                DrawText2(dc, g.fBold, on2 || hot ? kText : kTextDim, r, t, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            };
+            pill(g.btnAuto, std::wstring(L"Mit Windows starten: ") + (g.autostartOn ? L"an" : L"aus"), g.autostartOn, H_AUTOSTART);
+            pill(g.btnKeep, std::wstring(L"Im Hintergrund: ") + (g.cfg.keepRunning ? L"an" : L"aus"), g.cfg.keepRunning, H_KEEP);
+        }
     }
 
     const std::wstring base = L"© 2026 Duncan · v" APP_VERSION;
@@ -609,6 +682,8 @@ int HitTest(POINT p) {
     if (PtInRect(&g.cardBass, p)) return H_BASS;
     if (PtInRect(&g.cardVoice, p)) return H_VOICE;
     if (PtInRect(&g.confBtn, p)) return H_CONFIGURATOR;
+    if (PtInRect(&g.btnAuto, p)) return H_AUTOSTART;
+    if (PtInRect(&g.btnKeep, p)) return H_KEEP;
     if (!g.nameEdit) {
         for (int i = 0; i < static_cast<int>(g.profiles.size()) && i < eq::kMaxProfiles; ++i) if (PtInRect(&g.profChip[i], p)) return H_PROFILE + i;
         if (g.profNew.right > g.profNew.left && PtInRect(&g.profNew, p)) return H_PROFNEW;
@@ -637,6 +712,21 @@ void Activate(int id) {
         Changed();
     }
     else if (id >= H_PROFILE && id < H_PROFILE + eq::kMaxProfiles) SwitchProfile(id - H_PROFILE);
+    else if (id == H_AUTOSTART) {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        if (eq::SetAutostart(!g.autostartOn, exe)) g.autostartOn = !g.autostartOn;
+        else SetStatus(L"Der Autostart konnte nicht geändert werden", kRed);
+        if (g.autostartOn) SetStatus(L"Startet mit Windows im Hintergrund (Infobereich)", kGreen);
+        else SetStatus(L"Startet nicht mehr mit Windows", kTextDim);
+        Layout();
+    }
+    else if (id == H_KEEP) {
+        g.cfg.keepRunning = !g.cfg.keepRunning;
+        SaveCfg();
+        SetStatus(g.cfg.keepRunning ? L"Schließen des Fensters lässt den Equalizer im Infobereich weiterlaufen" : L"Schließen des Fensters beendet den Equalizer", kTextDim);
+        Layout();
+    }
     else if (id == H_PROFNEW) BeginNewProfile();
     else if (id == H_BIND) BindDevice();
     else if (id == H_IMPORT) ImportFilters();
@@ -738,7 +828,31 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == kTimerDisarm) { KillTimer(hwnd, kTimerDisarm); g.delArmed = false; Layout(); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     case WM_NAME_DONE: FinishNewProfile(wp == 1); return 0;
-    case WM_DESTROY: if (!g.installDir.empty()) ApplyNow(); PostQuitMessage(0); return 0;
+    case WM_TRAY:
+        if (LOWORD(lp) == WM_LBUTTONUP || LOWORD(lp) == NIN_SELECT) ShowMain();
+        else if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU) TrayMenu();
+        return 0;
+    case WM_SHOWMAIN: ShowMain(); return 0;
+    case WM_CLOSE:
+        if (g.quitting || !g.cfg.keepRunning) { DestroyWindow(hwnd); return 0; }
+        ShowWindow(hwnd, SW_HIDE);                          // im Infobereich weiterlaufen
+        if (!g.balloonShown) {
+            g.balloonShown = true;
+            g.nid.uFlags = NIF_INFO;
+            wcscpy_s(g.nid.szInfoTitle, L"Duncan's Equalizer");
+            wcscpy_s(g.nid.szInfo, L"Läuft im Infobereich weiter. Rechtsklick auf das Symbol zum Beenden.");
+            g.nid.dwInfoFlags = NIIF_INFO;
+            Shell_NotifyIconW(NIM_MODIFY, &g.nid);
+        }
+        return 0;
+    case WM_DESTROY:
+        if (!g.installDir.empty()) ApplyNow();
+        Shell_NotifyIconW(NIM_DELETE, &g.nid);
+        PostQuitMessage(0);
+        return 0;
+    default:
+        if (msg == g_taskbarCreated && g_taskbarCreated) { Shell_NotifyIconW(NIM_ADD, &g.nid); UpdateTray(); return 0; }
+        break;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -760,13 +874,15 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         LocalFree(argv);
         return code;
     }
+    const bool background = argv && argc >= 2 && std::wstring(argv[1]) == L"--background";
     if (argv) LocalFree(argv);
 
     HANDLE single = CreateMutexW(nullptr, TRUE, L"DuncansEqualizer.Single");
     if (single && GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (HWND other = FindWindowW(L"DuncansEqualizer", nullptr)) { ShowWindow(other, SW_RESTORE); SetForegroundWindow(other); }
+        if (HWND other = FindWindowW(L"DuncansEqualizer", nullptr)) if (!background) PostMessageW(other, WM_SHOWMAIN, 0, 0);
         return 0;
     }
+    g_taskbarCreated = RegisterWindowMessageW(L"TaskbarCreated");
     IconsInit();
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -814,7 +930,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     Layout();
     SetTimer(g.hwnd, kTimerDevice, 2500, nullptr);
     if (!g.installDir.empty()) ApplyNow();      // beim Start die gespeicherten Einstellungen (neu) eintragen
-    ShowWindow(g.hwnd, show);
+    g.autostartOn = eq::GetAutostart();
+    AddTray(inst);
+    ShowWindow(g.hwnd, background ? SW_HIDE : show);
     UpdateWindow(g.hwnd);
 
     MSG m;
