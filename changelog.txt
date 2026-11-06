@@ -257,6 +257,8 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.4.0 | 2026-11-06
+- Neu: Kopieren mit Strg+C (auch im Rechtsklick-Menü). Die markierten Bilder landen als Dateien in der Zwischenablage und lassen sich im Explorer, in Chat-Programmen (WhatsApp, Discord) oder in Mails mit Strg+V einfügen. Bei genau einem Bild liegt es zusätzlich als Bild bereit, damit es auch in Paint, Word oder Bildbearbeitung einfügbar ist (Transparenz wird weiß). Im Viewer kopiert Strg+C das angezeigte Bild.
 ## 0.3.5 | 2026-11-05
 - Neu: Zeitleiste. Im Sortier-Menü springt Zeitleiste: zu Monat springen direkt zu einem Monat, gruppiert nach Jahr und mit der Anzahl der Bilder. Es gilt das Aufnahmedatum (ohne EXIF das Änderungsdatum); die Sortierung wechselt dafür automatisch auf Aufnahmedatum.
 ## 0.3.4 | 2026-11-05

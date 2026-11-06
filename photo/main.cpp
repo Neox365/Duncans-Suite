@@ -27,6 +27,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "ClipboardCopy.h"
 #include "Duplicates.h"
 #include "ImageOps.h"
 #include "Theme.h"
@@ -34,7 +35,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.3.1"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.4.0"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -73,7 +74,7 @@ enum MenuId {
     MENU_FILTER_GPS = 150, MENU_RATING_1 = 155, MENU_RATING_3, MENU_RATING_5,
     MENU_SLIDE_2 = 160, MENU_SLIDE_4, MENU_SLIDE_6, MENU_SLIDE_10,
     MENU_CONV_JPG = 170, MENU_CONV_PNG, MENU_CONV_WEBP, MENU_CONV_BMP,
-    MENU_C_OPEN = 180, MENU_C_ROT_L, MENU_C_ROT_R, MENU_C_STRIP, MENU_C_EXPLORER
+    MENU_C_OPEN = 180, MENU_C_ROT_L, MENU_C_ROT_R, MENU_C_STRIP, MENU_C_EXPLORER, MENU_C_COPY
 };
 
 enum class BatchKind { StripCopy, StripOverwrite, Resize, RotateCw, RotateCcw, ConvertJpg, ConvertPng, ConvertWebp, ConvertBmp };
@@ -487,6 +488,7 @@ private:
     void FinishWrite(const std::wstring& src, const std::wstring& dst, const std::wstring& doneInPlace,
                      const std::wstring& doneCopy);
     void RotateSelected(bool cw);
+    void CopySelected();
     void DeleteSelected();
     void ShowBatchMenu();
     void StartBatch(BatchKind kind);
@@ -2306,6 +2308,7 @@ void App::ShowGridContext(POINT pt) {
     AppendMenuW(m, MF_STRING, MENU_C_ROT_L, L"90° nach links drehen");
     AppendMenuW(m, MF_STRING, MENU_C_ROT_R, L"90° nach rechts drehen");
     AppendMenuW(m, MF_STRING, MENU_C_STRIP, L"EXIF/GPS entfernen");
+    AppendMenuW(m, MF_STRING, MENU_C_COPY, L"Kopieren (Strg+C)");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, MENU_C_EXPLORER, L"Im Explorer anzeigen");
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
@@ -2319,6 +2322,7 @@ void App::ShowGridContext(POINT pt) {
     else if (cmd == MENU_C_ROT_L) RotateSelected(false);
     else if (cmd == MENU_C_ROT_R) RotateSelected(true);
     else if (cmd == MENU_C_STRIP) StripSelected();
+    else if (cmd == MENU_C_COPY) CopySelected();
     else if (cmd == MENU_C_EXPLORER && m_sel >= 0 && m_sel < (int)m_items.size()) {
         const std::wstring arg = L"/select,\"" + m_items[m_sel].path + L"\"";
         ShellExecuteW(m_hwnd, L"open", L"explorer.exe", arg.c_str(), nullptr, SW_SHOWNORMAL);
@@ -2455,6 +2459,23 @@ void App::RotateSelected(bool cw) {
     }
     ReloadItem(m_sel);
     SetStatus(cw ? L"90° rechts gedreht" : L"90° links gedreht");
+}
+
+// Strg+C: markierte Dateien als Dateiliste in die Zwischenablage (Einfuegen im Explorer, Chat, Mail ...); bei einem Bild zusaetzlich als Bitmap
+void App::CopySelected() {
+    std::vector<int> idx = m_viewer ? std::vector<int>{m_sel} : SelectedIdx();
+    std::vector<std::wstring> files;
+    for (int i : idx)
+        if (i >= 0 && i < (int)m_items.size()) files.push_back(m_items[i].path);
+    if (files.empty()) return;
+    std::vector<BYTE> px;
+    UINT w = 0, h = 0;
+    bool haveBitmap = false;
+    if (files.size() == 1) haveBitmap = imgops::LoadPixels(files[0], 4096, px, w, h);   // Bild fuer Paint, Word & Co. (hoechstens 4096 Pixel lange Kante)
+    if (photoclip::CopyToClipboard(m_hwnd, files, haveBitmap ? px.data() : nullptr, w, h))
+        SetStatus(files.size() == 1 ? L"Bild kopiert – jetzt einfügen (Strg+V)" : std::to_wstring(files.size()) + L" Dateien kopiert – jetzt einfügen (Strg+V)");
+    else
+        SetStatus(L"Kopieren nicht möglich – die Zwischenablage ist gerade gesperrt");
 }
 
 void App::DeleteSelected() {
@@ -3027,6 +3048,7 @@ void App::OnViewerKey(WPARAM vk) {
         Invalidate();
         return;
     }
+    if (GetKeyState(VK_CONTROL) < 0 && vk == 'C') { CopySelected(); Invalidate(); return; }   // Strg+C kopiert das angezeigte Bild
     switch (vk) {
         case 'E': Command(BTN_EDIT); break;
         case VK_F5: StartSlideshow(); break;
@@ -3878,6 +3900,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 return 0;
             }
             if (ctrl && wp == 'A') { SelectAll(); return 0; }
+            if (ctrl && wp == 'C') { CopySelected(); return 0; }
             if (wp == VK_RETURN) { if (m_sel >= 0) EnterViewer(false); return 0; }
             if (wp == VK_DELETE) { DeleteSelected(); return 0; }
             int cols = Metrics().cols, s = m_sel < 0 ? 0 : m_sel, t = s;
