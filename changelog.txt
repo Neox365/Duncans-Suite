@@ -386,6 +386,10 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.4.0 | 2026-11-06
+- Neu: Der Writer öffnet und speichert Word-Dokumente (.docx). Übernommen werden Absätze, Überschriften, Fett, Kursiv, Unterstrichen, Durchgestrichen, Schriftart, -größe und -farbe, hoch- und tiefgestellter Text, Ausrichtung, Tabulatoren, Zeilen- und Seitenumbrüche, Aufzählungen, nummerierte Listen und einfache Tabellen.
+- Der Writer zeigt keine Bilder, Zeichnungen, Kopf- und Fußzeilen, Fußnoten und Kommentare. Enthält ein Word-Dokument so etwas, weist das Programm beim Öffnen darauf hin, schlägt beim Speichern einen neuen Namen vor und fragt, bevor das Original überschrieben wird.
+- Beim Speichern ist „Word-Dokument (*.docx)“ jetzt die erste Auswahl für neue Dokumente. Nummerierte Listen aus Word erscheinen im Writer als Text („1.“); beim Speichern bleiben sie Text, Aufzählungen werden wieder zu echten Aufzählungen.
 ## 0.3.6 | 2026-11-05
 - Verbessert: Der PDF-Export des Writers übernimmt jetzt Schriften, Fettdruck, Farben, Aufzählungen und Tabellen wie im Ausdruck. Dafür nutzt er den Windows-Drucker Microsoft Print to PDF; fehlt dieser, wird wie bisher nur der Text als PDF gespeichert.
 - Behoben: Eine Tabelle wurde immer am Anfang des Dokuments eingefügt statt an der Schreibmarke. Außerdem steht die Schreibmarke danach in der ersten Zelle.
