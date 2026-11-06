@@ -188,6 +188,9 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.5.0 | 2026-11-06
+- Neu: Weiterlesen. Das Programm merkt sich pro Datei die zuletzt gelesene Seite und springt beim nächsten Öffnen dorthin (kurzer Hinweis „Weiter bei Seite …“, Pos1 springt zum Anfang). Gemerkt werden die letzten 200 Dateien, nur als Hash des Dateipfads in positions.txt.
+- Neu: Nachtmodus. Der Knopf „Nacht“ (oder Strg+D) zeigt die Seiten mit umgekehrten Farben – schonender bei Dunkelheit. Die Datei selbst bleibt unverändert; die Wahl wird gemerkt. Bei schmalem Fenster steckt der Knopf im Menü „⋯“.
 ## 1.4.0 | 2026-11-02
 - Neu: Rückgängig (Strg+Z) und Wiederholen (Strg+Y) für Stempel, Unterschrift, Schwärzen, Markierungen, Notizen, Zuschnitt, Drehen, Seiten löschen, verschieben und anhängen. Bis zu 12 Schritte; auch Schwärzen lässt sich vor dem Speichern zurücknehmen.
 ## 1.3.0 | 2026-11-02

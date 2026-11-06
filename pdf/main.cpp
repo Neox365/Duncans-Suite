@@ -22,12 +22,13 @@ using std::min;
 #include <gdiplus.h>
 
 #include "PdfDocument.h"
+#include "Positions.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.4.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.5.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -50,7 +51,7 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
     C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS, C_CROP, C_UNCROP,
-    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE, C_STAMP, C_REDACT, C_SPLIT, C_EXTRACT, C_MORE, C_UNDO, C_REDO   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
+    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE, C_STAMP, C_REDACT, C_SPLIT, C_EXTRACT, C_MORE, C_UNDO, C_REDO, C_NIGHT   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
 };
 
 struct Item {
@@ -260,6 +261,7 @@ void BuildItems() {
     add(C_ACTUAL, L"100 %", 64, true);
     add(C_ZOOMIN, L"+", 40, true);
     add(C_FITW, L"Breite", 0, true, false, false, 7);
+    add(C_NIGHT, L"Nacht", 0, true, false, false, 10);   // Nachtmodus: Seiten invertiert (Strg+D)
     add(C_NONE, L"", 0, false);
     add(C_ROTL, L"↺", 40, true, false, false, 9);
     add(C_ROTR, L"↻", 40, true, false, false, 8);
@@ -307,6 +309,7 @@ struct Prefs {
     bool bakeRot = true;        // Drehung beim Speichern in die Datei schreiben
     bool lastFit = true;
     double lastZoom = 1.0;
+    bool night = false;         // Nachtmodus: Seiten invertiert anzeigen
     // Belegung der aenderbaren Tastenkuerzel (Reihenfolge = Anzeige im Einstellungsdialog)
     struct Bind { UINT vk; bool ctrl; };
     Bind bind[kNHot]{};
@@ -364,6 +367,7 @@ void LoadPrefs() {
         cfg.singleKeys = GetPrivateProfileIntW(L"Allgemein", L"EinzelbuchstabenHotkeys", 1, ini.c_str()) != 0;
         cfg.zoomMode = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"StandardZoom", 0, ini.c_str())), 0, 2);
         cfg.bakeRot = GetPrivateProfileIntW(L"Allgemein", L"DrehungSpeichern", 1, ini.c_str()) != 0;
+        cfg.night = GetPrivateProfileIntW(L"Allgemein", L"Nachtmodus", 0, ini.c_str()) != 0;
         cfg.lastFit = GetPrivateProfileIntW(L"Allgemein", L"LetzterZoomBreite", 1, ini.c_str()) != 0;
         cfg.lastZoom = std::clamp(GetPrivateProfileIntW(L"Allgemein", L"LetzterZoom", 1000, ini.c_str()) / 1000.0, 0.1, 8.0);
         for (int i = 0; i < kNHot; ++i) {                                          // eigene Tastenbelegung: "Aktion<i>=<vk>,<strg>"
@@ -388,6 +392,7 @@ void SavePrefs() {
     put(L"StandardZoom", cfg.zoomMode);
     put(L"DrehungSpeichern", cfg.bakeRot ? 1 : 0);
     put(L"LetzterZoomBreite", cfg.lastFit ? 1 : 0);
+    put(L"Nachtmodus", cfg.night ? 1 : 0);
     put(L"LetzterZoom", std::lround(cfg.lastZoom * 1000));
     for (int i = 0; i < kNHot; ++i) {
         wchar_t key[24];
@@ -663,7 +668,7 @@ void PaintSide(HDC dc, RECT cr) {
         if (g.thumbs[i]) {
             HDC mem = CreateCompatibleDC(dc);
             HGDIOBJ old = SelectObject(mem, g.thumbs[i]);
-            BitBlt(dc, pad, top, g.thumbW, h, mem, 0, 0, SRCCOPY);
+            BitBlt(dc, pad, top, g.thumbW, h, mem, 0, 0, cfg.night ? NOTSRCCOPY : SRCCOPY);
             SelectObject(mem, old); DeleteDC(mem);
         }
         wchar_t b[16]; swprintf(b, 16, L"%d", i + 1);
@@ -976,7 +981,7 @@ void PaintCanvas(HDC dc, RECT cr) {
         if (g.pageBmp) {
             HDC mem = CreateCompatibleDC(dc);
             HGDIOBJ old = SelectObject(mem, g.pageBmp);
-            BitBlt(dc, x, y, g.pageW, g.pageH, mem, 0, 0, SRCCOPY);
+            BitBlt(dc, x, y, g.pageW, g.pageH, mem, 0, 0, cfg.night ? NOTSRCCOPY : SRCCOPY);   // Nachtmodus: Farben umkehren
             SelectObject(mem, old); DeleteDC(mem);
         } else {
             RECT t{ x, y, x + g.pageW, y + g.pageH };
@@ -2123,9 +2128,31 @@ void UpdateTitle() {
     SetWindowTextW(g.main, t.c_str());
 }
 
+std::wstring PositionsPath() {
+    std::wstring p = SettingsPath();
+    const size_t cut = p.find_last_of(L'\\');
+    return p.empty() || cut == std::wstring::npos ? L"" : p.substr(0, cut + 1) + L"positions.txt";
+}
+
+// Letzte gelesene Seite der offenen Datei merken (beim Oeffnen einer anderen Datei und beim Beenden)
+void RememberPosition() {
+    if (!g.doc.IsOpen() || g.doc.Path().empty()) return;
+    const std::wstring file = PositionsPath();
+    if (file.empty()) return;
+    pdfpos::List l = pdfpos::Load(file);
+    pdfpos::Set(l, pdfpos::KeyFor(g.doc.Path()), g.page);
+    pdfpos::Save(file, l);
+}
+
 void OpenPath(const std::wstring& path) {
+    RememberPosition();   // die bisher offene Datei: Seite merken
     if (!g.doc.Open(path)) { ShowToast(PdfDocument::LastError(), true); return; }
     g.page = 0;
+    int resumed = -1;
+    if (const std::wstring pf = PositionsPath(); !pf.empty()) {
+        const int saved = pdfpos::Get(pdfpos::Load(pf), pdfpos::KeyFor(g.doc.Path()));
+        if (saved > 0 && saved < g.doc.PageCount()) { g.page = saved; resumed = saved; }
+    }
     if (cfg.zoomMode == 1) { g.zoom = 1.0; g.fitWidth = false; }                       // Standard-Zoom aus den Einstellungen
     else if (cfg.zoomMode == 2) { g.zoom = cfg.lastZoom; g.fitWidth = cfg.lastFit; }
     else { g.zoom = 1.0; g.fitWidth = true; }
@@ -2139,6 +2166,7 @@ void OpenPath(const std::wstring& path) {
     UpdateTitle();
     g.toast.clear();
     g.formFocus = g.formMouse = false;
+    if (resumed > 0) ShowToast(L"Weiter bei Seite " + std::to_wstring(resumed + 1) + L" – Pos1 springt zum Anfang");
     if (g.doc.HasForms()) ShowToast(L"Formular erkannt – Felder zum Ausfüllen einfach anklicken");
 }
 
@@ -2160,6 +2188,14 @@ void RunCommand(int cmd) {
     if (cmd != C_NONE && g.about.open) aboutgdi::Close(g.about, g.canvas);
     if (cmd != C_NONE) ResetFormFocus();       // Feldinhalt uebernehmen, bevor etwas anderes passiert
     switch (cmd) {
+    case C_NIGHT:
+        cfg.night = !cfg.night;
+        SavePrefs();
+        InvalidateRect(g.canvas, nullptr, FALSE);
+        InvalidateRect(g.side, nullptr, FALSE);
+        InvalidateToolbar();
+        ShowToast(cfg.night ? L"Nachtmodus an – Strg+D schaltet zurück" : L"Nachtmodus aus");
+        break;
     case C_CROP: {
         if (!g.doc.IsOpen()) break;
         g.tool = g.tool == 3 ? 0 : 3;
@@ -2187,6 +2223,7 @@ void RunCommand(int cmd) {
             case C_ROTL: name = L"Seite nach links drehen"; break;
             case C_ROTR: name = L"Seite nach rechts drehen"; break;
             case C_FITW: name = L"Auf Seitenbreite einpassen"; break;
+            case C_NIGHT: name = L"Nachtmodus (Strg+D)"; break;
             case C_NOTE: name = L"Notiz hinzufügen"; break;
             case C_ERASE: name = L"Markierung entfernen (Radierer)"; break;
             case C_CROP: name = L"Zuschnitt"; break;
@@ -2371,6 +2408,7 @@ void HandleKey(UINT vk) {
     if (ctrl) {
         switch (vk) {
         case 'M': RunCommand(C_MERGE); return;
+        case 'D': RunCommand(C_NIGHT); return;
         case 'Z': RunCommand(C_UNDO); return;
         case 'Y': RunCommand(C_REDO); return;
         case 'A':
@@ -3181,6 +3219,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        RememberPosition();
         if (g.doc.IsOpen()) { cfg.lastFit = g.fitWidth; cfg.lastZoom = g.zoom; SavePrefs(); }   // "Letzten Zoom merken"
         PostQuitMessage(0);
         return 0;
