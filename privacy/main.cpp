@@ -32,7 +32,7 @@ using std::min;
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.10.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.11.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -53,7 +53,7 @@ const wchar_t* kTitle = L"Duncan's Privacy Shield";
 const UINT WM_RP_DONE = WM_APP + 1;     // Wiederherstellungspunkt fertig (wp = Erfolg)
 const UINT WM_JOB_DONE = WM_APP + 2;    // Hintergrund-Auftrag fertig (lp = JobResult*)
 
-enum HitId { H_NONE = -1, H_ALL = 1000, H_RESTORE = 1001, H_RP = 1002, H_FOLDER = 1003, H_ABOUT = 1004, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_INFO_BASE = 3000, H_GROUP_BASE = 5000 };
+enum HitId { H_NONE = -1, H_ALL = 1000, H_RESTORE = 1001, H_RP = 1002, H_FOLDER = 1003, H_ABOUT = 1004, H_REC = 1005, H_REAPPLY = 1006, H_WATCH = 1007, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_INFO_BASE = 3000, H_GROUP_BASE = 5000 };
 
 struct Row {
     bool group = false;
@@ -80,6 +80,9 @@ struct App {
     std::vector<std::wstring> collapsed;   // Namen der eingeklappten Gruppen
     int scroll = 0, contentH = 0;
     RECT list{}, btnAll{}, btnRestore{}, btnRp{}, folderLink{}, toolbar{}, footer{}, aboutLink{};
+    RECT btnRec{}, banner{}, btnReapply{}, watchRc{}, watchToggle{};
+    std::vector<int> missing;          // Indizes in AllSettings(): gewuenscht, aber von Windows zurueckgesetzt
+    bool watchOn = false;              // geplante Aufgabe "Schutz erneuern" ist eingerichtet
     aboutgdi::State about;             // "Ueber"-Kachelansicht im Fenster
     bool hasBackup = false;
     int hover = H_NONE, press = H_NONE;
@@ -222,13 +225,25 @@ void Layout() {
     const int m = S(28);
     g.toolbar = { m, S(104), cr.right - m, S(104) + S(44) };
     g.footer = { m, cr.bottom - S(34), cr.right - m, cr.bottom - S(8) };
-    g.list = { m, g.toolbar.bottom + S(14), cr.right - m, g.footer.top - S(6) };
     HDC dc = GetDC(g.hwnd);
     const int bh = S(40), top = g.toolbar.top + (S(44) - bh) / 2, gap = S(10);
     auto w = [&](const wchar_t* t) { return TextWidth(dc, g.fBold, t) + S(36); };
-    g.btnAll = { g.toolbar.left, top, g.toolbar.left + w(L"Alle schützen"), top + bh };
+    g.btnRec = { g.toolbar.left, top, g.toolbar.left + w(L"Empfohlen anwenden"), top + bh };
+    g.btnAll = { g.btnRec.right + gap, top, g.btnRec.right + gap + w(L"Alle schützen"), top + bh };
     g.btnRestore = { g.btnAll.right + gap, top, g.btnAll.right + gap + w(L"Standard wiederherstellen"), top + bh };
-    g.btnRp = { g.btnRestore.right + gap, top, g.btnRestore.right + gap + w(L"Wiederherstellungspunkt erstellen"), top + bh };
+    g.btnRp = { g.btnRestore.right + gap, top, g.btnRestore.right + gap + w(L"Wiederherstellungspunkt"), top + bh };
+    // Zeile "Schutz erneuern" (und bei Bedarf ein Hinweis, dass Windows etwas zurueckgesetzt hat)
+    int y = g.toolbar.bottom + S(12);
+    g.banner = g.btnReapply = RECT{};
+    if (!g.missing.empty()) {
+        g.banner = { m, y, cr.right - m, y + S(58) };
+        const int bw = TextWidth(dc, g.fBold, L"Erneut anwenden") + S(36);
+        g.btnReapply = { g.banner.right - S(12) - bw, g.banner.top + S(9), g.banner.right - S(12), g.banner.bottom - S(9) };
+        y = g.banner.bottom + S(10);
+    }
+    g.watchRc = { m, y, cr.right - m, y + S(58) };
+    g.watchToggle = { g.watchRc.right - S(18) - S(52), g.watchRc.top + (S(58) - S(28)) / 2, g.watchRc.right - S(18), g.watchRc.top + (S(58) - S(28)) / 2 + S(28) };
+    g.list = { m, g.watchRc.bottom + S(14), cr.right - m, g.footer.top - S(6) };
     // Link rechts in der Fusszeile: Ordner-Symbol + Text
     const std::wstring link = g.hasBackup ? L"Sicherung vorhanden" : L"Backup-Ordner";
     const int lw = TextWidth(dc, g.fSmall, link) + S(34);
@@ -246,7 +261,11 @@ void RefreshApplied() {
     for (size_t i = 0; i < all.size(); ++i) g.applied[i] = privacy::IsApplied(all[i]);
     const bool had = g.hasBackup;
     g.hasBackup = privacy::HasBackup();
-    if (had != g.hasBackup && g.hwnd) Layout();        // Linktext aendert sich mit dem Sicherungsstatus
+    const size_t hadMissing = g.missing.size();
+    g.missing.clear();
+    for (int id : privacy::MissingWanted())
+        for (size_t i = 0; i < all.size(); ++i) if (all[i].id == id) g.missing.push_back(static_cast<int>(i));
+    if ((had != g.hasBackup || hadMissing != g.missing.size()) && g.hwnd) Layout();        // Linktext aendert sich mit dem Sicherungsstatus
 }
 
 int AppliedCount() { return static_cast<int>(std::count(g.applied.begin(), g.applied.end(), true)); }
@@ -278,6 +297,7 @@ struct JobResult {
     bool apply = true;
     bool restoreAll = false;
     bool restorePoint = false;
+    int watch = 0;                     // 1 = Erneuern eingeschaltet, 2 = ausgeschaltet
     int ok = 0, total = 0;
     std::wstring error;
 };
@@ -306,7 +326,12 @@ void OnJobDone(JobResult* res) {
     g.busy = false;
     StopSpinner();
     RefreshApplied();
-    if (r->restorePoint) {
+    if (r->watch) {
+        if (r->error.empty()) {
+            g.watchOn = r->watch == 1;
+            SetStatus(g.watchOn ? L"Schutz wird bei jedem Anmelden geprüft und bei Bedarf still wiederhergestellt." : L"Automatisches Erneuern ausgeschaltet.", kGreen);
+        } else SetStatus(r->error, kRed);
+    } else if (r->restorePoint) {
         if (r->error.empty()) { g.restorePointDone = true; SetStatus(L"Wiederherstellungspunkt „Duncan's Suite Pre-Optimization“ angefordert. Windows legt standardmäßig nur einen Punkt pro 24 Stunden an.", kGreen); }
         else SetStatus(L"Kein Wiederherstellungspunkt: " + r->error, kRed);
     } else if (r->restoreAll) {
@@ -332,6 +357,7 @@ void RunChanges(const std::vector<int>& idxs, bool apply) {
             std::wstring err;
             const bool done = apply ? privacy::Apply(all[i], err) : privacy::Revert(all[i], err);
             Log(std::wstring(apply ? L"Anwenden " : L"Zurücknehmen ") + all[i].title + (done ? L": ok" : L": FEHLER – " + err));
+            if (done) privacy::MarkWanted(all[i].id, apply);       // fuer "Schutz erneuern" merken
             if (done) ++res.ok; else if (res.error.empty()) res.error = std::wstring(all[i].title) + L": " + err;
         }
     }, apply ? L"Einstellungen werden angewendet …" : L"Einstellungen werden zurückgenommen …");
@@ -392,6 +418,41 @@ void ProtectAll() {
     ApplyList(todo, true);
 }
 
+// Handler von "Empfohlen anwenden": nur die als "Empfohlen" gekennzeichneten Einstellungen (ohne die "Erweiterten" mit Nebenwirkungen)
+void ApplyRecommended() {
+    const auto& all = privacy::AllSettings();
+    std::vector<int> todo;
+    for (size_t i = 0; i < g.applied.size(); ++i) {
+        if (g.applied[i] || all[i].manualOnly) continue;
+        const Meta* mt = MetaFor(all[i].id);
+        if (mt && mt->badge && wcscmp(mt->badge, L"Empfohlen") == 0) todo.push_back(static_cast<int>(i));
+    }
+    if (todo.empty()) { SetStatus(L"Alle empfohlenen Einstellungen sind bereits aktiv.", kGreen); return; }
+    ApplyList(todo, true);
+}
+
+// "Erneut anwenden" im Hinweis: stellt zurueckgesetzte Einstellungen wieder her
+void ReapplyNow() {
+    if (g.missing.empty()) return;
+    ApplyList(g.missing, true);
+}
+
+// Schalter "Schutz automatisch erneuern": geplante Aufgabe anlegen oder entfernen (im Hintergrund, schtasks braucht einen Moment)
+void ToggleWatch() {
+    const bool enable = !g.watchOn;
+    StartJob([enable](JobResult& res) {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring err;
+        res.watch = enable ? 1 : 2;
+        const bool ok = enable ? privacy::EnableWatchTask(exe, err) : privacy::DisableWatchTask(err);
+        if (ok && enable) {
+            privacy::SeedWantedFromBackup();                       // falls noch nie angewendet: leere Liste
+        }
+        if (!ok) res.error = err;
+    }, enable ? L"Geplante Aufgabe wird eingerichtet …" : L"Geplante Aufgabe wird entfernt …");
+}
+
 // Handler von "Standard wiederherstellen"
 void RestoreDefaults() {
     if (!privacy::HasBackup()) { SetStatus(L"Es gibt keine Sicherung – es wurde noch nichts geändert.", kTextDim); return; }
@@ -399,6 +460,7 @@ void RestoreDefaults() {
         res.restoreAll = true;
         std::wstring err;
         const bool ok = privacy::RevertAll(res.ok, err);
+        if (ok) privacy::SaveWanted({});
         Log(ok ? L"Standard wiederhergestellt: " + std::to_wstring(res.ok) + L" Einstellung(en)" : L"Wiederherstellen FEHLER – " + err);
         if (!ok) res.error = err;
     }, L"Standard wird wiederhergestellt …");
@@ -492,9 +554,10 @@ void Paint(HDC dc, RECT cr) {
 
     // Werkzeugzeile
     const bool busy = g.busy || g.modal.open;
-    DrawButton(dc, g.btnAll, L"Alle schützen", true, !busy && g.hover == H_ALL, g.press == H_ALL && g.hover == H_ALL, !g.busy);
+    DrawButton(dc, g.btnRec, L"Empfohlen anwenden", true, !busy && g.hover == H_REC, g.press == H_REC && g.hover == H_REC, !g.busy);
+    DrawButton(dc, g.btnAll, L"Alle schützen", false, !busy && g.hover == H_ALL, g.press == H_ALL && g.hover == H_ALL, !g.busy);
     DrawButton(dc, g.btnRestore, L"Standard wiederherstellen", false, !busy && g.hover == H_RESTORE, g.press == H_RESTORE && g.hover == H_RESTORE, !g.busy);
-    DrawButton(dc, g.btnRp, L"Wiederherstellungspunkt erstellen", false, !busy && g.hover == H_RP, g.press == H_RP && g.hover == H_RP, !g.busy);
+    DrawButton(dc, g.btnRp, L"Wiederherstellungspunkt", false, !busy && g.hover == H_RP, g.press == H_RP && g.hover == H_RP, !g.busy);
     const std::wstring count = std::to_wstring(AppliedCount()) + L" von " + std::to_wstring(g.applied.size()) + L" aktiv";
     DrawText2(dc, g.fBold, AppliedCount() == static_cast<int>(g.applied.size()) ? kGreen : kTextDim,
               { cr.right - S(28) - S(200), S(30), cr.right - S(28), S(58) }, count, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
@@ -510,6 +573,29 @@ void Paint(HDC dc, RECT cr) {
         const int cx = g.toolbar.right - d, cy = (g.toolbar.top + g.toolbar.bottom) / 2;
         gr.DrawEllipse(&track, cx - d / 2, cy - d / 2, d, d);
         gr.DrawArc(&arc, cx - d / 2, cy - d / 2, d, d, static_cast<float>(g.spin), 100.0f);
+    }
+
+    // Hinweis: Windows hat Einstellungen zurueckgesetzt
+    if (g.banner.right > g.banner.left) {
+        FillRound(dc, g.banner, S(14), Blend(kCard, kOrange, 10), Blend(kBorder, kOrange, 70));
+        const auto& allS = privacy::AllSettings();
+        std::wstring names;
+        for (size_t i = 0; i < g.missing.size() && i < 2; ++i) names += (i ? L", " : L"") + std::wstring(allS[g.missing[i]].title);
+        if (g.missing.size() > 2) names += L" und " + std::to_wstring(g.missing.size() - 2) + L" weitere";
+        DrawText2(dc, g.fBold, kText, { g.banner.left + S(18), g.banner.top + S(7), g.btnReapply.left - S(12), g.banner.top + S(29) },
+                  L"Windows hat " + std::to_wstring(g.missing.size()) + (g.missing.size() == 1 ? L" Einstellung zurückgesetzt" : L" Einstellungen zurückgesetzt"),
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        DrawText2(dc, g.fSmall, kTextDim, { g.banner.left + S(18), g.banner.top + S(29), g.btnReapply.left - S(12), g.banner.bottom - S(6) }, names,
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        DrawButton(dc, g.btnReapply, L"Erneut anwenden", true, !busy && g.hover == H_REAPPLY, g.press == H_REAPPLY && g.hover == H_REAPPLY, !g.busy);
+    }
+    {
+        const bool hot = !busy && g.hover == H_WATCH;
+        FillRound(dc, g.watchRc, S(14), hot ? kCardHover : kCard, g.watchOn ? Blend(kBorder, kViolet, 55) : (hot ? kBorderHot : kBorder));
+        DrawText2(dc, g.fBold, kText, { g.watchRc.left + S(18), g.watchRc.top + S(8), g.watchToggle.left - S(14), g.watchRc.top + S(30) }, L"Schutz automatisch erneuern");
+        DrawText2(dc, g.fSmall, kTextDim, { g.watchRc.left + S(18), g.watchRc.top + S(30), g.watchToggle.left - S(14), g.watchRc.bottom - S(6) },
+                  L"Prüft bei jedem Anmelden, ob Windows Einstellungen zurückgesetzt hat, und stellt sie still wieder her.", DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        DrawToggle(dc, g.watchToggle, g.watchOn, hot);
     }
 
     // Liste (mit Clipping)
@@ -647,6 +733,9 @@ int HitTest(POINT p) {
         return H_NONE;
     }
     if (PtInRect(&g.aboutLink, p)) return H_ABOUT;
+    if (PtInRect(&g.btnRec, p)) return H_REC;
+    if (g.banner.right > g.banner.left && PtInRect(&g.btnReapply, p)) return H_REAPPLY;
+    if (PtInRect(&g.watchRc, p)) return H_WATCH;
     if (PtInRect(&g.btnAll, p)) return H_ALL;
     if (PtInRect(&g.btnRestore, p)) return H_RESTORE;
     if (PtInRect(&g.btnRp, p)) return H_RP;
@@ -696,6 +785,9 @@ void Activate(int id) {
     }
     else if (g.busy) return;
     else if (id == H_ALL) ProtectAll();
+    else if (id == H_REC) ApplyRecommended();
+    else if (id == H_REAPPLY) ReapplyNow();
+    else if (id == H_WATCH) ToggleWatch();
     else if (id == H_RESTORE) RestoreDefaults();
     else if (id == H_RP) CreateRestorePointNow();
     else if (id == H_FOLDER) OpenBackupFolder();
@@ -794,6 +886,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
+    {   // --reapply (geplante Aufgabe beim Anmelden): zurueckgesetzte Einstellungen still wiederherstellen, kein Fenster
+        int argc = 0;
+        LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+        const bool reapply = argv && argc >= 2 && std::wstring(argv[1]) == L"--reapply";
+        if (argv) LocalFree(argv);
+        if (reapply) {
+            if (!suite_safety::IsElevated()) return 5;
+            std::vector<std::wstring> titles, errors;
+            const int n = privacy::ReapplyMissing(titles, errors);
+            suite_safety::Log(L"PrivacyShield", L"Schutz erneuern (Anmeldung): " + std::to_wstring(n) + L" Einstellung(en) wiederhergestellt");
+            for (const std::wstring& t : titles) suite_safety::Log(L"PrivacyShield", L"  wiederhergestellt: " + t);
+            for (const std::wstring& e : errors) suite_safety::Log(L"PrivacyShield", L"  FEHLER: " + e);
+            return errors.empty() ? 0 : 1;
+        }
+    }
     HANDLE single = CreateMutexW(nullptr, TRUE, L"DuncansPrivacyShield.Single");
     if (single && GetLastError() == ERROR_ALREADY_EXISTS) {
         if (HWND other = FindWindowW(L"DuncansPrivacyShield", nullptr)) { ShowWindow(other, SW_RESTORE); SetForegroundWindow(other); }
@@ -811,15 +918,23 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
 
     g.dpi = GetDpiForSystem();
     MakeFonts();
-    g.hwnd = CreateWindowExW(0, wc.lpszClassName, kTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, S(800), S(700), nullptr, nullptr, inst, nullptr);
+    g.hwnd = CreateWindowExW(0, wc.lpszClassName, kTitle, WS_OVERLAPPEDWINDOW, CW_USEDEFAULT, CW_USEDEFAULT, S(900), S(760), nullptr, nullptr, inst, nullptr);
     if (!g.hwnd) return 1;
     g.dpi = GetDpiForWindow(g.hwnd);
     MakeFonts();
     gfx::EnableDarkTitleBar(g.hwnd);
+    privacy::SeedWantedFromBackup();                   // erster Start mit dieser Version: bisherige Einstellungen als gewuenscht merken
+    g.watchOn = privacy::WatchTaskExists();
+    if (g.watchOn) {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        privacy::RefreshWatchCopy(exe);                // die Kopie der Aufgabe bleibt auf dem Stand dieses Programms
+    }
     RefreshApplied();
     InitCollapsed();
     Layout();
-    SetStatus(g.hasBackup ? L"" : L"Vor der ersten Änderung wird ein Wiederherstellungspunkt erstellt.", kTextDim);
+    if (!g.missing.empty()) SetStatus(L"Windows hat " + std::to_wstring(g.missing.size()) + L" deiner Einstellungen zurückgesetzt – oben mit „Erneut anwenden“ wiederherstellen.", kOrange);
+    else SetStatus(g.hasBackup ? L"" : L"Vor der ersten Änderung wird ein Wiederherstellungspunkt erstellt.", kTextDim);
     ShowWindow(g.hwnd, show);
     UpdateWindow(g.hwnd);
 
