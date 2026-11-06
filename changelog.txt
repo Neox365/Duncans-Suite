@@ -276,6 +276,10 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.6.0 | 2026-11-06
+- Neu: Fälligkeits-Hinweis. Offene Rechnungen, die in den nächsten 7 Tagen fällig sind, stehen in der Liste mit „heute“, „morgen“ oder „in n Tagen“ in Orange; überfällige bleiben rot. Die Karte „Offene Rechnungen“ nennt zusätzlich, wie viele bald fällig sind.
+- Neu: Ein Klick auf die Karte „Offene Rechnungen“ zeigt nur die überfälligen und bald fälligen Rechnungen, ein zweiter Klick wieder alle.
+- Neu: „Beim Windows-Start an fällige Rechnungen erinnern“ im Zahnrad-Menü. Beim Anmelden prüft das Programm kurz im Hintergrund (ohne Fenster) und zeigt höchstens einmal am Tag eine Benachrichtigung, z. B. „2 Rechnungen überfällig (zusammen 129,89 €)“; ein Klick darauf öffnet Docs-Files. Gibt es nichts Fälliges, bleibt alles still.
 ## 0.5.0 | 2026-11-02
 - Neu: Beim automatischen Einsortieren liest das Programm Betrag und Fälligkeit aus dem PDF-Text (Stichwörter wie „Gesamtbetrag“, „Rechnungsbetrag“, „zahlbar bis“, „fällig am“). Die Werte sind ein Vorschlag und stehen mit dem Hinweis „bitte prüfen“ in der Meldung; mit F2 lassen sie sich ändern. Braucht die pdfium.dll der Suite; im Zahnrad-Menü abschaltbar. Gescannte PDFs ohne Text bleiben unverändert.
 ## 0.4.1 | 2026-10-27
