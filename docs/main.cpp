@@ -25,6 +25,7 @@
 #include <string>
 #include <vector>
 
+#include "EInvoice.h"
 #include "Invoice.h"
 #include "InvoiceText.h"
 #include "PdfText.h"
@@ -34,7 +35,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.7.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -140,6 +141,7 @@ std::wstring TodayIso() {
 }
 
 // ---- Erinnerung beim Windows-Start (Run-Eintrag mit --remind) -------------------------------------------------
+bool g_startAuto = false;   // --auto: Dateien aus der Kommandozeile ohne Dialog einsortieren ("Senden an")
 const wchar_t* const kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const wchar_t* const kRunValue = L"OggysDocsFiles";
 
@@ -471,7 +473,7 @@ bool App::Create(HINSTANCE hi, int show, const std::vector<std::wstring>& startF
     UpdateWindow(m_hwnd);
     DragAcceptFiles(m_hwnd, TRUE);
     SetTimer(m_hwnd, TIMER_CARET, 530, nullptr);
-    if (!startFiles.empty()) AddFiles(startFiles);
+    if (!startFiles.empty()) AddFiles(startFiles, g_startAuto);
     return true;
 }
 
@@ -1493,7 +1495,7 @@ void App::PickFilesToAdd() {
     DWORD opts = 0;
     dlg->GetOptions(&opts);
     dlg->SetOptions(opts | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM);
-    COMDLG_FILTERSPEC fl[2] = {{L"Belege (PDF, JPG, PNG)", L"*.pdf;*.jpg;*.jpeg;*.png"}, {L"Alle Dateien", L"*.*"}};
+    COMDLG_FILTERSPEC fl[2] = {{L"Belege (PDF, JPG, PNG, XML)", L"*.pdf;*.jpg;*.jpeg;*.png;*.xml"}, {L"Alle Dateien", L"*.*"}};
     dlg->SetFileTypes(2, fl);
     dlg->SetTitle(L"Rechnungen hinzufügen");
     if (FAILED(dlg->Show(m_hwnd))) return;
@@ -1541,7 +1543,7 @@ void App::AddFiles(std::vector<std::wstring> in, bool autoMode) {
         }
     }
     if (files.empty()) {
-        SetNote(L"Es wurden keine PDF-, JPG- oder PNG-Dateien gefunden.");
+        SetNote(L"Es wurden keine PDF-, JPG-, PNG- oder XML-Dateien gefunden.");
         Invalidate();
         return;
     }
@@ -1703,12 +1705,43 @@ void App::ImportAuto(const std::vector<std::wstring>& files) {
     std::vector<std::wstring> known(knownSet.begin(), knownSet.end());
     std::set<std::wstring> imported;
     std::wstring last;
-    int dup = 0, fail = 0, scanned = 0;
+    int dup = 0, fail = 0, scanned = 0, eInvoices = 0;
     std::unique_ptr<docs::PdfText> pdfText;           // erst beim ersten PDF anlegen
+    auto ensurePdf = [&]() {
+        if (pdfText) return;
+        std::vector<std::wstring> dirs;
+        const std::wstring reader = FindPdfReader();
+        if (!reader.empty()) dirs.push_back(fs::path(reader).parent_path().wstring());
+        wchar_t self[MAX_PATH * 2]{};
+        GetModuleFileNameW(nullptr, self, MAX_PATH * 2);
+        dirs.push_back(fs::path(self).parent_path().wstring());
+        pdfText = std::make_unique<docs::PdfText>(dirs);
+    };
+    auto readBytes = [](const std::wstring& path, size_t limit) {
+        std::ifstream f(fs::path(path), std::ios::binary);
+        std::string data;
+        if (!f) return data;
+        data.assign((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+        if (data.size() > limit) data.clear();
+        return data;
+    };
     for (const auto& src : files) {
         const std::wstring name = fs::path(src).filename().wstring();
-        const std::wstring year = docs::GuessYear(name, FileYear(src));
-        const std::wstring cred = docs::SanitizeName(docs::GuessCreditor(name, known), L"Sonstige");
+        // E-Rechnung (XRechnung-XML oder ZUGFeRD/Factur-X-PDF mit eingebettetem XML): Betrag, Faelligkeit, Jahr und Rechnungssteller kommen aus den Daten
+        docs::EInvoice ei;
+        const std::wstring srcExt = docs::Lower(fs::path(src).extension().wstring());
+        if (srcExt == L".xml") {
+            docs::ParseEInvoice(readBytes(src, 8u * 1024 * 1024), ei);
+        } else if (srcExt == L".pdf" && m_settings.readPdf) {
+            ensurePdf();
+            std::string xml = pdfText->ExtractXmlAttachment(src);
+            if (xml.empty()) xml = docs::FindEmbeddedXml(readBytes(src, 64u * 1024 * 1024));    // ohne PDFium: unkomprimiert eingebettetes XML
+            if (!xml.empty()) docs::ParseEInvoice(xml, ei);
+        }
+        std::wstring year = docs::GuessYear(name, FileYear(src));
+        if (ei.valid && ei.issueIso.size() >= 4) year = ei.issueIso.substr(0, 4);
+        std::wstring cred = docs::SanitizeName(docs::GuessCreditor(name, known), L"Sonstige");
+        if (ei.valid && !ei.seller.empty()) cred = docs::SanitizeName(ei.seller, cred);
         std::error_code e1, e2;
         const fs::path same = m_rootPath / docs::SanitizeName(year, L"Unbekannt") / cred / docs::SanitizeFileName(name, L"Datei");
         if (fs::exists(same, e1) && fs::file_size(same, e1) == fs::file_size(src, e2) && !e1 && !e2) { ++dup; continue; }   // schon archiviert
@@ -1720,16 +1753,14 @@ void App::ImportAuto(const std::vector<std::wstring>& files) {
         std::wstring rel = fs::relative(target, m_rootPath, e1).wstring();
         std::replace(rel.begin(), rel.end(), L'/', L'\\');
         docs::Meta meta;              // Status Offen; Betrag und Faelligkeit ergaenzt man mit F2, falls sie nicht aus dem PDF gelesen werden konnten
-        if (m_settings.readPdf && _wcsicmp(fs::path(target).extension().c_str(), L".pdf") == 0) {
-            if (!pdfText) {
-                std::vector<std::wstring> dirs;
-                const std::wstring reader = FindPdfReader();
-                if (!reader.empty()) dirs.push_back(fs::path(reader).parent_path().wstring());
-                wchar_t self[MAX_PATH * 2]{};
-                GetModuleFileNameW(nullptr, self, MAX_PATH * 2);
-                dirs.push_back(fs::path(self).parent_path().wstring());
-                pdfText = std::make_unique<docs::PdfText>(dirs);
-            }
+        if (ei.valid) {
+            meta.cents = ei.cents;
+            meta.due = ei.dueIso;
+            meta.tags = docs::EditTags(L"", L"E-Rechnung", L"");
+            if (!ei.number.empty()) meta.note = docs::CleanField(L"Rechnungs-Nr. " + ei.number);
+            ++eInvoices;
+        } else if (m_settings.readPdf && _wcsicmp(fs::path(target).extension().c_str(), L".pdf") == 0) {
+            ensurePdf();
             const docs::ScannedInvoice si = docs::ScanInvoiceText(pdfText->Extract(target.wstring()));
             if (si.hasAmount) meta.cents = si.cents;
             if (si.hasDue) meta.due = si.dueIso;
@@ -1756,6 +1787,7 @@ void App::ImportAuto(const std::vector<std::wstring>& files) {
     std::wstring note = std::to_wstring(imported.size()) + (imported.size() == 1 ? L" Beleg" : L" Belege") + L" automatisch nach Jahr und Gläubiger einsortiert";
     if (imported.empty()) note = L"Nichts importiert";
     else if (imported.size() == 1) note += L"  ·  F2: Betrag und Fälligkeit ergänzen, Doppelklick: im PDF Reader öffnen";
+    if (eInvoices) note += L"  ·  " + std::to_wstring(eInvoices) + (eInvoices == 1 ? L" E-Rechnung" : L" E-Rechnungen") + L" erkannt (Daten aus der Rechnung übernommen)";
     if (scanned) note += L"  ·  Betrag/Fälligkeit bei " + std::to_wstring(scanned) + L" aus dem PDF gelesen (bitte prüfen)";
     if (dup) note += L"  ·  " + std::to_wstring(dup) + L" schon vorhanden";
     if (fail) note += L"  ·  " + std::to_wstring(fail) + L" fehlgeschlagen";
@@ -2659,6 +2691,7 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int show) {
     if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
         for (int i = 1; i < argc; ++i) {
             if (std::wstring(argv[i]) == L"--remind") remind = true;
+            else if (std::wstring(argv[i]) == L"--auto") g_startAuto = true;
             else startFiles.push_back(argv[i]);
         }
         LocalFree(argv);

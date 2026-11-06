@@ -5,6 +5,7 @@
 #include <fstream>
 #include <string>
 
+#include "../EInvoice.h"
 #include "../Invoice.h"
 #include "../InvoiceText.h"
 #include "../Store.h"
@@ -444,9 +445,79 @@ static void dueReminder() {
     CHECK(!IsDueSoon(mk(L"garbage", Status::Open, 1), L"2026-12-28"));                    // ungueltiges Datum
 }
 
+static void eInvoice() {
+    using namespace docs;
+    const std::string cii = R"(<?xml version="1.0" encoding="UTF-8"?>
+<rsm:CrossIndustryInvoice xmlns:rsm="urn:un:unece:uncefact:data:standard:CrossIndustryInvoice:100" xmlns:ram="urn:un:unece:uncefact:data:standard:ReusableAggregateBusinessInformationEntity:100" xmlns:udt="urn:un:unece:uncefact:data:standard:UnqualifiedDataType:100">
+  <rsm:ExchangedDocumentContext><ram:GuidelineSpecifiedDocumentContextParameter><ram:ID>urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0</ram:ID></ram:GuidelineSpecifiedDocumentContextParameter></rsm:ExchangedDocumentContext>
+  <rsm:ExchangedDocument><ram:ID>RE-2026-0042</ram:ID><ram:TypeCode>380</ram:TypeCode>
+    <ram:IssueDateTime><udt:DateTimeString format="102">20261105</udt:DateTimeString></ram:IssueDateTime></rsm:ExchangedDocument>
+  <rsm:SupplyChainTradeTransaction>
+    <ram:ApplicableHeaderTradeAgreement>
+      <ram:SellerTradeParty><ram:Name>Muster &amp; S&#246;hne GmbH</ram:Name></ram:SellerTradeParty>
+      <ram:BuyerTradeParty><ram:Name>K&#228;ufer AG</ram:Name></ram:BuyerTradeParty>
+    </ram:ApplicableHeaderTradeAgreement>
+    <ram:ApplicableHeaderTradeSettlement>
+      <ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>
+      <ram:SpecifiedTradeSettlementPaymentMeans><ram:PayeePartyCreditorFinancialAccount><ram:IBANID>DE02120300000000202051</ram:IBANID></ram:PayeePartyCreditorFinancialAccount></ram:SpecifiedTradeSettlementPaymentMeans>
+      <ram:SpecifiedTradePaymentTerms><ram:DueDateDateTime><udt:DateTimeString format="102">20261119</udt:DateTimeString></ram:DueDateDateTime></ram:SpecifiedTradePaymentTerms>
+      <ram:SpecifiedTradeSettlementHeaderMonetarySummation><ram:LineTotalAmount>100.00</ram:LineTotalAmount><ram:TaxTotalAmount currencyID="EUR">19.00</ram:TaxTotalAmount>
+        <ram:GrandTotalAmount>119.00</ram:GrandTotalAmount><ram:TotalPrepaidAmount>19.00</ram:TotalPrepaidAmount><ram:DuePayableAmount>100.00</ram:DuePayableAmount></ram:SpecifiedTradeSettlementHeaderMonetarySummation>
+    </ram:ApplicableHeaderTradeSettlement>
+  </rsm:SupplyChainTradeTransaction>
+</rsm:CrossIndustryInvoice>)";
+    EInvoice e;
+    CHECK(ParseEInvoice(cii, e) && e.valid && !e.credit);
+    CHECK(e.number == L"RE-2026-0042" && e.issueIso == L"2026-11-05" && e.dueIso == L"2026-11-19");
+    CHECK(e.seller == L"Muster & Söhne GmbH");                        // &amp; und &#246; werden aufgeloest
+    CHECK(e.cents == 10000 && e.currency == L"EUR" && e.iban == L"DE02120300000000202051");   // zu zahlender Betrag, nicht Brutto
+    CHECK(std::wstring(e.format).find(L"CII") != std::wstring::npos);
+
+    const std::string ubl = R"(<?xml version="1.0"?>
+<Invoice xmlns="urn:oasis:names:specification:ubl:schema:xsd:Invoice-2" xmlns:cac="urn:oasis:names:specification:ubl:schema:xsd:CommonAggregateComponents-2" xmlns:cbc="urn:oasis:names:specification:ubl:schema:xsd:CommonBasicComponents-2">
+  <cbc:CustomizationID>urn:cen.eu:en16931:2017#compliant#urn:xeinkauf.de:kosit:xrechnung_3.0</cbc:CustomizationID>
+  <cbc:ID>2026-777</cbc:ID><cbc:IssueDate>2026-10-30</cbc:IssueDate><cbc:DueDate>2026-11-29</cbc:DueDate><cbc:InvoiceTypeCode>380</cbc:InvoiceTypeCode>
+  <cbc:DocumentCurrencyCode>EUR</cbc:DocumentCurrencyCode>
+  <cac:AccountingSupplierParty><cac:Party><cac:PartyName><cbc:Name>Kurzname</cbc:Name></cac:PartyName>
+    <cac:PartyLegalEntity><cbc:RegistrationName>Stadtwerke Beispiel GmbH</cbc:RegistrationName></cac:PartyLegalEntity></cac:Party></cac:AccountingSupplierParty>
+  <cac:PaymentMeans><cac:PayeeFinancialAccount><cbc:ID>DE89370400440532013000</cbc:ID></cac:PayeeFinancialAccount></cac:PaymentMeans>
+  <cac:LegalMonetaryTotal><cbc:TaxExclusiveAmount currencyID="EUR">84.03</cbc:TaxExclusiveAmount><cbc:TaxInclusiveAmount currencyID="EUR">1.234,5</cbc:TaxInclusiveAmount><cbc:PayableAmount currencyID="EUR">100.005</cbc:PayableAmount></cac:LegalMonetaryTotal>
+</Invoice>)";
+    CHECK(ParseEInvoice(ubl, e) && e.number == L"2026-777" && e.issueIso == L"2026-10-30" && e.dueIso == L"2026-11-29");
+    CHECK(e.seller == L"Stadtwerke Beispiel GmbH" && e.iban == L"DE89370400440532013000" && e.cents == 10001 && !e.credit);   // 100.005 auf 100,01 gerundet
+
+    std::string credit = cii;                                              // Gutschrift: Typ 381, Betrag negativ
+    credit.replace(credit.find("<ram:TypeCode>380"), 17, "<ram:TypeCode>381");
+    CHECK(ParseEInvoice(credit, e) && e.credit && e.cents == -10000);
+    const std::string note = R"(<CreditNote xmlns="urn:oasis:names:specification:ubl:schema:xsd:CreditNote-2" xmlns:cbc="x"><cbc:ID>G1</cbc:ID><cbc:IssueDate>2026-01-02</cbc:IssueDate><cac:LegalMonetaryTotal><cbc:PayableAmount>25.00</cbc:PayableAmount></cac:LegalMonetaryTotal></CreditNote>)";
+    CHECK(ParseEInvoice(note, e) && e.credit && e.cents == -2500 && e.number == L"G1");
+
+    CHECK(!ParseEInvoice("<html><body>keine Rechnung</body></html>", e) && !e.valid);          // fremdes XML
+    CHECK(!ParseEInvoice("", e));
+    std::string noAmount = cii;
+    noAmount.replace(noAmount.find("<ram:DuePayableAmount>100.00"), 28, "<ram:DuePayableAmount>abc");
+    CHECK(!ParseEInvoice(noAmount, e));                                                        // ungueltiger Betrag
+    std::string noDue = cii;                                                                   // nur Brutto vorhanden
+    noDue.erase(noDue.find("<ram:DuePayableAmount>"), noDue.find("</ram:DuePayableAmount>") + 23 - noDue.find("<ram:DuePayableAmount>"));
+    CHECK(ParseEInvoice(noDue, e) && e.cents == 11900);
+    CHECK(!ParseEInvoice("<rsm:CrossIndustryInvoice><ram:x>", e));                              // abgeschnitten
+
+    long long c = 0;
+    CHECK(einv::DecimalToCents("0.5", c) && c == 50 && einv::DecimalToCents("-12", c) && c == -1200 && einv::DecimalToCents(" 7.1 ", c) && c == 710);
+    CHECK(!einv::DecimalToCents("1,5", c) && !einv::DecimalToCents("", c) && !einv::DecimalToCents(".", c) && !einv::DecimalToCents("1.2.3", c));
+
+    // PDF-Rohdaten: unkomprimiertes XML wird gefunden, sonst nichts
+    const std::string pdf = "%PDF-1.7\n1 0 obj\n<< /Type /EmbeddedFile >>\nstream\n" + cii + "\nendstream\nendobj\n%%EOF";
+    const std::string found = FindEmbeddedXml(pdf);
+    CHECK(!found.empty() && found.compare(0, 5, "<?xml") == 0 && found.find("</rsm:CrossIndustryInvoice>") != std::string::npos);
+    CHECK(ParseEInvoice(found, e) && e.cents == 10000);
+    CHECK(FindEmbeddedXml("%PDF-1.7 nur Text").empty() && FindEmbeddedXml("</rsm:CrossIndustryInvoice>").empty());
+    CHECK(IsDocFile(L"x/rechnung.XML") && IsDocFile(L"a.pdf") && !IsDocFile(L"a.txt"));
+}
+
 int main() {
     amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness(); installmentRate(); closingAndFooter();
-    tagsStatsImport(); invoiceText(); dueReminder();
+    tagsStatsImport(); invoiceText(); dueReminder(); eInvoice();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }
