@@ -8,6 +8,7 @@
 #include <windows.h>
 
 #include <algorithm>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
@@ -24,11 +25,43 @@ public:
     PdfText& operator=(const PdfText&) = delete;
     bool Ready() const { return m_ok; }
 
+    // Eingebettete XML-Datei (ZUGFeRD/Factur-X: factur-x.xml, zugferd-invoice.xml, xrechnung.xml ...) als UTF-8; leer, wenn keine da ist
+    std::string ExtractXmlAttachment(const std::wstring& path) const {
+        std::string out;
+        if (!m_ok || !m_attCount || !m_att || !m_attName || !m_attFile) return out;
+        std::ifstream in(std::filesystem::path(path), std::ios::binary);
+        if (!in) return out;
+        std::vector<char> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (data.empty() || data.size() > 128u * 1024 * 1024) return out;
+        void* doc = m_load(data.data(), static_cast<int>(data.size()), nullptr);
+        if (!doc) return out;
+        const int n = std::min(m_attCount(doc), 20);
+        for (int i = 0; i < n && out.empty(); ++i) {
+            void* att = m_att(doc, i);
+            if (!att) continue;
+            const unsigned long nb = m_attName(att, nullptr, 0);                      // Bytes inkl. abschliessender 0
+            std::vector<unsigned short> name(nb / 2 + 1, 0);
+            if (nb >= 2) m_attName(att, name.data(), nb);
+            std::wstring wn;
+            for (unsigned short c : name) { if (!c) break; wn.push_back(static_cast<wchar_t>(c)); }
+            std::transform(wn.begin(), wn.end(), wn.begin(), [](wchar_t c) { return static_cast<wchar_t>(towlower(c)); });
+            if (wn.size() < 4 || wn.substr(wn.size() - 4) != L".xml") continue;
+            unsigned long len = 0;
+            m_attFile(att, nullptr, 0, &len);
+            if (len == 0 || len > 8u * 1024 * 1024) continue;
+            std::string buf(len, '\0');
+            unsigned long got = 0;
+            if (m_attFile(att, &buf[0], len, &got) && got <= len) { buf.resize(got); out = std::move(buf); }
+        }
+        m_close(doc);
+        return out;
+    }
+
     // Text der ersten maxPages Seiten (UTF-16); leer bei Fehler oder verschluesselter/gescannter PDF
     std::wstring Extract(const std::wstring& path, int maxPages = 3) const {
         std::wstring out;
         if (!m_ok) return out;
-        std::ifstream in(path, std::ios::binary);
+        std::ifstream in(std::filesystem::path(path), std::ios::binary);
         if (!in) return out;
         std::vector<char> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         if (data.empty() || data.size() > 128u * 1024 * 1024) return out;
@@ -70,6 +103,10 @@ private:
                Get("FPDF_LoadPage", m_page) && Get("FPDF_ClosePage", m_closePage) && Get("FPDF_CloseDocument", m_close) &&
                Get("FPDFText_LoadPage", m_textLoad) && Get("FPDFText_ClosePage", m_textClose) && Get("FPDFText_CountChars", m_chars) &&
                Get("FPDFText_GetText", m_text);
+        Get("FPDFDoc_GetAttachmentCount", m_attCount);       // optional: aeltere DLLs ohne Anhaenge lesen weiter den Text
+        Get("FPDFDoc_GetAttachment", m_att);
+        Get("FPDFAttachment_GetName", m_attName);
+        Get("FPDFAttachment_GetFile", m_attFile);
         if (m_ok) { Config cfg{}; cfg.version = 2; init(&cfg); }
     }
     HMODULE m_mod = nullptr;
@@ -83,6 +120,10 @@ private:
     void (*m_textClose)(void*) = nullptr;
     int (*m_chars)(void*) = nullptr;
     int (*m_text)(void*, int, int, unsigned short*) = nullptr;
+    int (*m_attCount)(void*) = nullptr;
+    void* (*m_att)(void*, int) = nullptr;
+    unsigned long (*m_attName)(void*, unsigned short*, unsigned long) = nullptr;
+    int (*m_attFile)(void*, void*, unsigned long, unsigned long*) = nullptr;
 };
 
 }  // namespace docs

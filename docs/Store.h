@@ -350,7 +350,7 @@ inline MetaMap ParseIndex(const std::string& utf8)
 inline bool IsDocFile(const std::filesystem::path& p)
 {
     const std::wstring e = Lower(p.extension().wstring());
-    return e == L".pdf" || e == L".jpg" || e == L".jpeg" || e == L".png";
+    return e == L".pdf" || e == L".jpg" || e == L".jpeg" || e == L".png" || e == L".xml";   // .xml: E-Rechnung (XRechnung)
 }
 
 // Zerlegt einen relativen Pfad "2026\Netzanbieter\x.pdf" in Jahr und Glaeubiger (fehlende Ebenen: "" bzw. "Sonstige").

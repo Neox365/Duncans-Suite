@@ -276,6 +276,11 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.7.0 | 2026-11-06
+- Neu: E-Rechnung lesen. Beim automatischen Einsortieren erkennt Docs-Files XRechnung-Dateien (.xml, CII und UBL) und ZUGFeRD/Factur-X-PDFs mit eingebettetem XML und übernimmt Rechnungssteller (als Gläubiger-Ordner), Rechnungsdatum (Jahr), Fälligkeit, zu zahlenden Betrag und Rechnungsnummer (als Notiz) direkt aus den Daten statt zu raten. Beleg bekommt den Tag „E-Rechnung“; Gutschriften erhalten einen negativen Betrag.
+- Neu: XML-Dateien (E-Rechnungen) lassen sich wie PDFs hinzufügen und stehen in der Liste; ein Doppelklick öffnet sie im Standardprogramm.
+- Neu: Start mit „--auto“ sortiert übergebene Dateien ohne Dialog ein (z. B. „Senden an“).
+- Gelesen werden nur die Daten; geprüft oder auf Gültigkeit validiert wird die E-Rechnung nicht, bitte Betrag und Fälligkeit wie bei allen automatisch gelesenen Werten kurz kontrollieren. Das Erzeugen von E-Rechnungen (XRechnung/ZUGFeRD) ist noch nicht enthalten.
 ## 0.6.0 | 2026-11-06
 - Neu: Fälligkeits-Hinweis. Offene Rechnungen, die in den nächsten 7 Tagen fällig sind, stehen in der Liste mit „heute“, „morgen“ oder „in n Tagen“ in Orange; überfällige bleiben rot. Die Karte „Offene Rechnungen“ nennt zusätzlich, wie viele bald fällig sind.
 - Neu: Ein Klick auf die Karte „Offene Rechnungen“ zeigt nur die überfälligen und bald fälligen Rechnungen, ein zweiter Klick wieder alle.
