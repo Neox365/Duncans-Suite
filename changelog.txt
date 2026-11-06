@@ -374,6 +374,10 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansQuickConvert.exe]
+## 0.4.0 | 2026-11-06
+- Neu: Zielformat FLAC (verlustfrei, deutlich kleiner als WAV) in der Audio/Video-Leiste. FLAC braucht den Windows-Baustein dafür; auf Rechnern ohne ihn meldet das Programm einen Fehler statt eine kaputte Datei zu schreiben.
+- Neu: „Max. Größe“ (Aus, 10, 16, 25 oder 50 MB). Jede Datei wird auf höchstens diese Größe gebracht, z. B. 16 MB für WhatsApp oder 10 MB für Discord. Bilder (JPG, WEBP, HEIC, PNG, GIF, BMP): das Programm sucht die höchste Qualität, die noch passt, und verkleinert bei Bedarf das Bild. Audio (MP3, M4A): die höchste Bitrate, die passt. Video (MP4, MKV): Bitrate und bei Bedarf die Auflösung werden nach der Länge des Videos berechnet; ist ein Video dafür zu lang, steht das als Fehler in der Liste. Bei WAV und FLAC geht kein Limit (verlustfrei); bei PDF gilt es nicht.
+- Hinweis: OGG und WebM sind nicht dabei, weil Windows dafür keine Encoder mitbringt (Vorbis, Opus, VP9). MKV gab es schon seit 0.3.0.
 ## 0.3.2 | 2026-11-05
 - Neu: Zielformat PDF für Bilder. Alle Bilder in der Liste landen in einem PDF mit einer A4-Seite je Bild (Hoch- oder Querformat nach dem Bild, eingepasst und zentriert, nie vergrößert). Die Qualität und die neue Bildgröße gelten für die eingebetteten Bilder; die Datei heißt nach dem ersten Bild, z. B. scan1 (3 Bilder).pdf.
 - Neu: Zielformat GIF für einzelne Bilder (256 Farben, Transparenz bleibt erhalten).
