@@ -6,11 +6,22 @@
 #include <mferror.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
+#include <codecapi.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <cwctype>
 #include <vector>
+
+// Aeltere MinGW-Header (nur fuer die Logik-Tests) kennen diese Werte nicht; MSVC/Windows-SDK schon.
+#ifndef __MSVC_VER_DEFINED_FALLBACKS
+#if !defined(_MSC_VER)
+#define WICBitmapInterpolationModeHighQualityCubic ((WICBitmapInterpolationMode)4)
+static const GUID MFAudioFormat_FLAC = { 0x0000F1AC, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71 } };
+#endif
+#endif
 
 namespace conv {
 namespace {
@@ -133,6 +144,7 @@ const wchar_t* AudioExt(AudioFmt f) {
         case AudioFmt::Wav: return L"wav";
         case AudioFmt::Mp4: return L"mp4";
         case AudioFmt::Mkv: return L"mkv";
+        case AudioFmt::Flac: return L"flac";
     }
     return L"mp3";
 }
@@ -146,7 +158,8 @@ int BitrateKbps(AudioFmt f, int quality) {
         case AudioFmt::M4a:
         case AudioFmt::Mkv:
         case AudioFmt::Mp4: return kAac[(quality * 3 + 50) / 100];
-        case AudioFmt::Wav: return 0;
+        case AudioFmt::Wav:
+        case AudioFmt::Flac: return 0;
     }
     return 0;
 }
@@ -155,6 +168,50 @@ int VideoBitrateKbps(int width, int height, double fps, int quality) {
     const double bpp = 0.04 + 0.16 * std::clamp(quality, 0, 100) / 100.0;
     const double kbps = static_cast<double>(width) * height * std::clamp(fps, 1.0, 120.0) * bpp / 1000.0;
     return static_cast<int>(std::clamp(kbps, 300.0, 40000.0));
+}
+
+int EncoderKbpsForSize(AudioFmt f, long long maxBytes, double seconds) {
+    if (f == AudioFmt::Wav || f == AudioFmt::Flac) return -1;
+    if (seconds <= 0 || maxBytes <= 0) return 0;
+    static const int kMp3[] = {128, 160, 192, 224, 256, 320};
+    static const int kAac[] = {96, 128, 160, 192};
+    const double allowed = static_cast<double>(maxBytes) * 8 * 0.97 / seconds / 1000.0;     // 3 % Reserve fuer Container und Tags
+    int best = 0;
+    if (f == AudioFmt::Mp3) { for (int k : kMp3) if (k <= allowed) best = k; }
+    else { for (int k : kAac) if (k <= allowed) best = k; }
+    return best;
+}
+
+VideoPlan PlanVideoForSize(int width, int height, double fps, double seconds, long long maxBytes, int qualityKbps, int qualityAudioKbps, bool hasAudio) {
+    VideoPlan p;
+    p.width = width & ~1;
+    p.height = height & ~1;
+    if (seconds <= 0 || maxBytes <= 0 || width < 16 || height < 16) return p;
+    fps = std::clamp(fps, 1.0, 120.0);
+    const double totalKbps = static_cast<double>(maxBytes) * 8 * 0.93 / seconds / 1000.0;   // 7 % Reserve fuer Container und Encoder-Schwankungen
+    p.audioKbps = hasAudio ? (totalKbps >= 400 ? std::max(96, qualityAudioKbps) : 96) : 0;
+    double video = totalKbps - p.audioKbps;
+    if (video < 100) return p;                                                                // nicht machbar
+    video = std::min(video, static_cast<double>(std::max(qualityKbps, 100)));                 // die Grenze macht nie groesser als der Regler
+    p.videoKbps = static_cast<int>(video);
+    const double bpp = video * 1000.0 / (static_cast<double>(width) * height * fps);
+    if (bpp < 0.04) {                                                                         // zu wenig Bits je Bildpunkt: Auflösung senken
+        const double pixels = video * 1000.0 / (fps * 0.05);
+        const double s = std::sqrt(pixels / (static_cast<double>(width) * height));
+        p.width = std::max(160, static_cast<int>(width * s)) & ~1;
+        p.height = std::max(90, static_cast<int>(height * s)) & ~1;
+        p.width = std::min(p.width, width & ~1);
+        p.height = std::min(p.height, height & ~1);
+    }
+    p.feasible = true;
+    return p;
+}
+
+std::vector<int> ImageEdgeSteps(int maxEdge) {
+    std::vector<int> out = {maxEdge};
+    for (int e : {2560, 1920, 1600, 1280, 1024, 800, 640, 480, 320, 240})
+        if (maxEdge == 0 || e < maxEdge) out.push_back(e);
+    return out;
 }
 
 bool IsAudioOnlyFile(const std::wstring& path) {
@@ -172,7 +229,7 @@ void MediaShutdown() { MFShutdown(); }
 // Bilder
 // ---------------------------------------------------------------------------------------------------------------------
 
-bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt, int quality, std::wstring* err, int maxEdge) {
+bool ConvertImageCore(const std::wstring& src, const std::wstring& dst, ImageFmt fmt, int quality, std::wstring* err, int maxEdge) {
     if (fmt == ImageFmt::Pdf) { SetErr(err, L"PDF entsteht nur aus mehreren Bildern zusammen"); return false; }
     Com<IWICImagingFactory> factory;
     HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&factory));
@@ -328,6 +385,54 @@ bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt
     return ok;
 }
 
+namespace {
+long long FileBytes(const std::wstring& p) {
+    WIN32_FILE_ATTRIBUTE_DATA a;
+    if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &a)) return -1;
+    return (static_cast<long long>(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
+}
+std::wstring MbText(long long bytes) {
+    wchar_t buf[32];
+    swprintf(buf, 32, L"%.1f", bytes / (1024.0 * 1024.0));
+    for (wchar_t* c = buf; *c; ++c) if (*c == L'.') *c = L',';
+    return buf;
+}
+}  // namespace
+
+bool ConvertImage(const std::wstring& src, const std::wstring& dst, ImageFmt fmt, int quality, std::wstring* err, int maxEdge, long long maxBytes) {
+    if (maxBytes <= 0 || fmt == ImageFmt::Pdf) return ConvertImageCore(src, dst, fmt, quality, err, maxEdge);
+    // Zieldateigroesse: je Bildkante die hoechste Qualitaet suchen, die passt (Halbierungssuche), sonst naechste kleinere Kante
+    const bool hasQ = HasQuality(fmt);
+    const int top = std::clamp(quality, 1, 100), lowest = 25;
+    std::wstring lastErr;
+    for (int edge : ImageEdgeSteps(maxEdge)) {
+        auto attempt = [&](int q, long long& size) {
+            DeleteFileW(dst.c_str());
+            if (!ConvertImageCore(src, dst, fmt, q, &lastErr, edge)) return false;
+            size = FileBytes(dst);
+            return true;
+        };
+        long long size = 0;
+        if (!attempt(hasQ ? top : 100, size)) { SetErr(err, lastErr); return false; }           // echter Fehler (Codec fehlt o. ae.): nicht weitersuchen
+        if (size <= maxBytes) return true;
+        if (!hasQ) continue;                                                                    // kein Qualitaetsregler: nur kleinere Kante hilft
+        if (!attempt(lowest, size)) { SetErr(err, lastErr); return false; }
+        if (size > maxBytes) continue;                                                          // selbst mit niedrigster Qualitaet zu gross: kleinere Kante
+        int lo = lowest, hi = top;                                                              // lo passt, hi passt nicht
+        for (int i = 0; i < 6 && hi - lo > 1; ++i) {
+            const int mid = (lo + hi) / 2;
+            long long ms = 0;
+            if (!attempt(mid, ms)) { SetErr(err, lastErr); return false; }
+            if (ms <= maxBytes) lo = mid; else hi = mid;
+        }
+        if (!attempt(lo, size)) { SetErr(err, lastErr); return false; }                         // die beste passende Stufe endgueltig schreiben
+        if (size <= maxBytes) return true;
+    }
+    DeleteFileW(dst.c_str());
+    SetErr(err, L"Die Zielgröße von " + MbText(maxBytes) + L" MB wird nicht erreicht" + (hasQ ? L" (auch nicht mit kleinerem Bild)" : L" – JPG oder WEBP lassen sich stärker verkleinern"));
+    return false;
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // Bilder -> PDF
 // ---------------------------------------------------------------------------------------------------------------------
@@ -458,7 +563,7 @@ bool WriteWavHeader(HANDLE f, uint32_t dataBytes) {
 
 // Video -> MP4 (H.264 + AAC) ueber den Windows-Encoder. Videobild wird auf gerade Seitenlaengen gebracht (H.264 verlangt das).
 bool ConvertVideoMp4(const std::wstring& src, const std::wstring& dst, int quality, const std::atomic<bool>& cancel,
-                     const std::function<void(int)>& progress, std::wstring* err) {
+                     const std::function<void(int)>& progress, std::wstring* err, long long maxBytes = 0) {
     Com<IMFAttributes> ra;
     MFCreateAttributes(&ra, 1);
     ra->SetUINT32(MF_SOURCE_READER_ENABLE_VIDEO_PROCESSING, TRUE);   // erlaubt Farbraum-Umwandlung und Skalierung
@@ -487,6 +592,25 @@ bool ConvertVideoMp4(const std::wstring& src, const std::wstring& dst, int quali
     w &= ~1u; h &= ~1u;
     if (w < 16 || h < 16) { SetErr(err, L"Das Videobild ist zu klein"); return false; }
     const double fps = static_cast<double>(fn) / fd;
+
+    // Zieldateigroesse: Bitrate und ggf. kleinere Aufloesung planen (Quelle wird vom Source Reader skaliert)
+    int plannedVideoKbps = 0, plannedAudioKbps = 0;
+    if (maxBytes > 0) {
+        PROPVARIANT dv;
+        PropVariantInit(&dv);
+        LONGLONG dur = 0;
+        if (SUCCEEDED(reader->GetPresentationAttribute(static_cast<DWORD>(MF_SOURCE_READER_MEDIASOURCE), MF_PD_DURATION, &dv)) && dv.vt == VT_UI8)
+            dur = static_cast<LONGLONG>(dv.uhVal.QuadPart);
+        PropVariantClear(&dv);
+        if (dur <= 0) { SetErr(err, L"Die Länge des Videos ist unbekannt, eine Zielgröße ist nicht möglich"); return false; }
+        const VideoPlan plan = PlanVideoForSize(static_cast<int>(w), static_cast<int>(h), fps, static_cast<double>(dur) / 1e7, maxBytes,
+                                                VideoBitrateKbps(static_cast<int>(w), static_cast<int>(h), fps, quality), BitrateKbps(AudioFmt::M4a, quality), aSrc != MAXDWORD);
+        if (!plan.feasible) { SetErr(err, L"Das Video ist zu lang für diese Zielgröße – auch mit der niedrigsten Qualität wäre die Datei größer"); return false; }
+        w = static_cast<UINT32>(plan.width);
+        h = static_cast<UINT32>(plan.height);
+        plannedVideoKbps = plan.videoKbps;
+        plannedAudioKbps = plan.audioKbps;
+    }
 
     reader->SetStreamSelection(static_cast<DWORD>(MF_SOURCE_READER_ALL_STREAMS), FALSE);
     reader->SetStreamSelection(vSrc, TRUE);
@@ -543,7 +667,7 @@ bool ConvertVideoMp4(const std::wstring& src, const std::wstring& dst, int quali
         MFCreateMediaType(&vout);
         vout->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
         vout->SetGUID(MF_MT_SUBTYPE, MFVideoFormat_H264);
-        vout->SetUINT32(MF_MT_AVG_BITRATE, static_cast<UINT32>(VideoBitrateKbps(static_cast<int>(w), static_cast<int>(h), fps, quality)) * 1000u);
+        vout->SetUINT32(MF_MT_AVG_BITRATE, static_cast<UINT32>(plannedVideoKbps ? plannedVideoKbps : VideoBitrateKbps(static_cast<int>(w), static_cast<int>(h), fps, quality)) * 1000u);
         vout->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
         vout->SetUINT32(MF_MT_MPEG2_PROFILE, 77);   // eAVEncH264VProfile_Main
         MFSetAttributeSize(vout.Get(), MF_MT_FRAME_SIZE, w, h);
@@ -552,7 +676,12 @@ bool ConvertVideoMp4(const std::wstring& src, const std::wstring& dst, int quali
         DWORD vOut = 0, aOut = 0;
         hr = writer->AddStream(vout.Get(), &vOut);
         if (FAILED(hr)) { why = L"Der H.264-Encoder von Windows ist nicht verfügbar (" + Hex(hr) + L")"; break; }
-        hr = writer->SetInputMediaType(vOut, vin.Get(), nullptr);
+        Com<IMFAttributes> encCfg;                                           // mit Zielgroesse: konstante Bitrate, damit die Datei nicht ueber die Grenze waechst
+        if (maxBytes > 0) {
+            MFCreateAttributes(&encCfg, 1);
+            encCfg->SetUINT32(CODECAPI_AVEncCommonRateControlMode, eAVEncCommonRateControlMode_CBR);
+        }
+        hr = writer->SetInputMediaType(vOut, vin.Get(), encCfg.Get());
         if (FAILED(hr)) { why = L"Der Video-Encoder nimmt das Bildformat nicht an (" + Hex(hr) + L")"; break; }
 
         if (pcm) {
@@ -563,7 +692,7 @@ bool ConvertVideoMp4(const std::wstring& src, const std::wstring& dst, int quali
             aout->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, kChannels);
             aout->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, kRate);
             aout->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, kBits);
-            aout->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, BitrateKbps(AudioFmt::M4a, quality) * 1000 / 8);
+            aout->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, (plannedAudioKbps ? plannedAudioKbps : BitrateKbps(AudioFmt::M4a, quality)) * 1000 / 8);
             aout->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 1);
             aout->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 0);
             aout->SetUINT32(MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0x29);
@@ -973,23 +1102,46 @@ bool RemuxToMkv(const std::wstring& src, const std::wstring& dst, const std::ato
 }
 
 // Video -> MKV: erst als MP4 kodieren (90 %), dann umpacken (10 %)
-bool ConvertVideoMkv(const std::wstring& src, const std::wstring& dst, int quality, const std::atomic<bool>& cancel,
-                     const std::function<void(int)>& progress, std::wstring* err) {
+bool ConvertVideoMkvOnce(const std::wstring& src, const std::wstring& dst, int quality, const std::atomic<bool>& cancel,
+                         const std::function<void(int)>& progress, std::wstring* err, long long maxBytes) {
     const std::wstring tmp = dst + L".tmp.mp4";
-    if (!ConvertVideoMp4(src, tmp, quality, cancel, [&](int p) { if (progress) progress(p * 9 / 10); }, err)) return false;
+    if (!ConvertVideoMp4(src, tmp, quality, cancel, [&](int p) { if (progress) progress(p * 9 / 10); }, err, maxBytes)) return false;
     const bool ok = RemuxToMkv(tmp, dst, cancel, [&](int p) { if (progress) progress(90 + p / 10); }, err);
     DeleteFileW(tmp.c_str());
     return ok;
 }
 
+// Mit Zielgroesse: wird die Datei trotz CBR zu gross, noch bis zu zweimal mit entsprechend kleinerer Vorgabe kodieren
+bool ConvertVideoSized(const std::wstring& src, const std::wstring& dst, bool mkv, int quality, const std::atomic<bool>& cancel,
+                       const std::function<void(int)>& progress, std::wstring* err, long long maxBytes) {
+    double factor = 1.0;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        const long long target = maxBytes > 0 ? static_cast<long long>(maxBytes * factor) : 0;
+        const bool ok = mkv ? ConvertVideoMkvOnce(src, dst, quality, cancel, progress, err, target)
+                            : ConvertVideoMp4(src, dst, quality, cancel, progress, err, target);
+        if (!ok || maxBytes <= 0) return ok;
+        const long long size = FileBytes(dst);
+        if (size <= maxBytes) return true;
+        if (attempt == 2 || size <= 0) break;
+        factor *= static_cast<double>(maxBytes) / static_cast<double>(size) * 0.96;
+        DeleteFileW(dst.c_str());
+    }
+    DeleteFileW(dst.c_str());
+    SetErr(err, L"Die Zielgröße von " + MbText(maxBytes) + L" MB wird nicht erreicht");
+    return false;
+}
+
 }  // namespace
 
 bool ConvertMedia(const std::wstring& src, const std::wstring& dst, AudioFmt fmt, int quality, const std::atomic<bool>& cancel,
-                  const std::function<void(int)>& progress, std::wstring* err) {
+                  const std::function<void(int)>& progress, std::wstring* err, long long maxBytes) {
     if (fmt == AudioFmt::Mp4 || fmt == AudioFmt::Mkv) {
         if (IsAudioOnlyFile(src)) fmt = AudioFmt::M4a;   // ohne Videobild gibt es nichts nach MP4/MKV zu kodieren
-        else if (fmt == AudioFmt::Mkv) return ConvertVideoMkv(src, dst, quality, cancel, progress, err);
-        else return ConvertVideoMp4(src, dst, quality, cancel, progress, err);
+        else return ConvertVideoSized(src, dst, fmt == AudioFmt::Mkv, quality, cancel, progress, err, maxBytes);
+    }
+    if (maxBytes > 0 && (fmt == AudioFmt::Wav || fmt == AudioFmt::Flac)) {
+        SetErr(err, L"Eine Zielgröße geht bei WAV und FLAC nicht (verlustfrei) – nimm M4A oder MP3");
+        return false;
     }
     Com<IMFSourceReader> reader;
     HRESULT hr = MFCreateSourceReaderFromURL(src.c_str(), nullptr, &reader);
@@ -1021,6 +1173,14 @@ bool ConvertMedia(const std::wstring& src, const std::wstring& dst, AudioFmt fmt
         PropVariantClear(&v);
     }
 
+    int kbps = BitrateKbps(fmt, quality);
+    if (maxBytes > 0) {
+        if (duration <= 0) { SetErr(err, L"Die Länge der Datei ist unbekannt, eine Zielgröße ist nicht möglich"); return false; }
+        const int fit = EncoderKbpsForSize(fmt, maxBytes, static_cast<double>(duration) / 1e7);
+        if (fit <= 0) { SetErr(err, L"Zu lang für diese Zielgröße – schon die niedrigste Stufe wäre größer"); return false; }
+        kbps = std::min(kbps, fit);
+    }
+
     int lastPct = -1;
     auto report = [&](LONGLONG ts) {
         if (!progress || duration <= 0) return;
@@ -1044,11 +1204,11 @@ bool ConvertMedia(const std::wstring& src, const std::wstring& dst, AudioFmt fmt
             Com<IMFMediaType> out;
             MFCreateMediaType(&out);
             out->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
-            out->SetGUID(MF_MT_SUBTYPE, fmt == AudioFmt::Mp3 ? MFAudioFormat_MP3 : MFAudioFormat_AAC);
+            out->SetGUID(MF_MT_SUBTYPE, fmt == AudioFmt::Mp3 ? MFAudioFormat_MP3 : (fmt == AudioFmt::Flac ? MFAudioFormat_FLAC : MFAudioFormat_AAC));
             out->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, kChannels);
             out->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, kRate);
-            if (fmt == AudioFmt::M4a) out->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, kBits);   // der MP3-Encoder kennt das Attribut nicht
-            out->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, BitrateKbps(fmt, quality) * 1000 / 8);
+            if (fmt == AudioFmt::M4a || fmt == AudioFmt::Flac) out->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, kBits);   // der MP3-Encoder kennt das Attribut nicht
+            out->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, fmt == AudioFmt::Flac ? kRate * kChannels * kBits / 8 : kbps * 1000 / 8);
             out->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 1);
             if (fmt == AudioFmt::M4a) {
                 out->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 0);

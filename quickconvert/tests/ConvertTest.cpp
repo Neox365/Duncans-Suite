@@ -266,6 +266,109 @@ int main() {
     CHECK(conv::VideoBitrateKbps(1920, 1080, 30, 0) < conv::VideoBitrateKbps(1920, 1080, 30, 100));
     CHECK(conv::VideoBitrateKbps(16, 16, 1, 0) == 300 && conv::VideoBitrateKbps(7680, 4320, 60, 100) == 40000);
 
+
+    // ---- Zieldateigroesse und FLAC ----
+    {
+        using conv::AudioFmt;
+        // Rechenhilfen
+        CHECK(conv::EncoderKbpsForSize(AudioFmt::M4a, 130000, 10) == 96);            // 10 s: 130 KB erlauben ~99 kbit/s -> Stufe 96
+        CHECK(conv::EncoderKbpsForSize(AudioFmt::M4a, 400000, 10) == 192);           // reichlich Platz: hoechste Stufe
+        CHECK(conv::EncoderKbpsForSize(AudioFmt::M4a, 50000, 10) == 0);              // passt nicht
+        CHECK(conv::EncoderKbpsForSize(AudioFmt::Mp3, 200000, 10) == 128);
+        CHECK(conv::EncoderKbpsForSize(AudioFmt::Mp3, 100000, 10) == 0);
+        CHECK(conv::EncoderKbpsForSize(AudioFmt::Wav, 1000000, 10) == -1 && conv::EncoderKbpsForSize(AudioFmt::Flac, 1000000, 10) == -1);
+        CHECK(conv::EncoderKbpsForSize(AudioFmt::M4a, 1000000, 0) == 0);
+        conv::VideoPlan big = conv::PlanVideoForSize(1920, 1080, 30, 600, 25ll * 1024 * 1024, 8000, 192, true);   // 10 Minuten 1080p in 25 MB
+        CHECK(big.feasible && big.audioKbps == 96 && big.videoKbps >= 100 && big.videoKbps < 300);
+        CHECK(big.width < 1920 && big.height < 1080 && big.width % 2 == 0 && big.height % 2 == 0 && big.width >= 160);   // Aufloesung wird gesenkt
+        CHECK(big.width * 1080 == (big.height * 1920) || std::abs(big.width * 1080.0 - big.height * 1920.0) < 1920.0 * 4);   // Seitenverhaeltnis bleibt
+        conv::VideoPlan roomy = conv::PlanVideoForSize(1280, 720, 30, 20, 25ll * 1024 * 1024, 4000, 128, true);    // 20 s, viel Platz: Regler gilt, keine Verkleinerung
+        CHECK(roomy.feasible && roomy.width == 1280 && roomy.height == 720 && roomy.videoKbps == 4000 && roomy.audioKbps == 128);
+        CHECK(!conv::PlanVideoForSize(1920, 1080, 30, 36000, 1024 * 1024, 4000, 128, true).feasible);              // 10 Stunden in 1 MB
+        CHECK(conv::PlanVideoForSize(640, 480, 30, 60, 5ll * 1024 * 1024, 2000, 128, false).audioKbps == 0);       // ohne Ton keine Tonrate
+        CHECK(!conv::PlanVideoForSize(640, 480, 30, 0, 1000, 2000, 128, true).feasible);
+        const std::vector<int> e0 = conv::ImageEdgeSteps(0), e1 = conv::ImageEdgeSteps(1280);
+        CHECK(e0.size() == 11 && e0[0] == 0 && e0[1] == 2560 && e0.back() == 240);
+        CHECK(e1.size() == 7 && e1[0] == 1280 && e1[1] == 1024 && e1.back() == 240);                                // nur kleinere Stufen
+
+        // Bild mit Zielgroesse: Rauschen laesst JPEG gross werden
+        const std::wstring noisy = Tmp(L"noisy.bmp");
+        {
+            const int w = 640, h = 480, row = w * 3;
+            std::vector<BYTE> d(54 + row * h, 0);
+            d[0] = 'B'; d[1] = 'M'; Put(d, 2, (unsigned)d.size(), 4); Put(d, 10, 54, 4); Put(d, 14, 40, 4); Put(d, 18, w, 4); Put(d, 22, h, 4);
+            d[26] = 1; d[28] = 24; Put(d, 34, row * h, 4);
+            unsigned r = 12345;
+            for (size_t i = 54; i < d.size(); ++i) { r = r * 1664525u + 1013904223u; d[i] = (BYTE)(r >> 24); }
+            HANDLE f = CreateFileW(noisy.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+            DWORD wr; WriteFile(f, d.data(), (DWORD)d.size(), &wr, nullptr); CloseHandle(f);
+        }
+        const std::wstring full = Tmp(L"noisy_full.jpg"), limited = Tmp(L"noisy_limit.jpg"), tiny = Tmp(L"noisy_tiny.jpg"), png = Tmp(L"noisy_limit.png");
+        DeleteFileW(full.c_str()); DeleteFileW(limited.c_str()); DeleteFileW(tiny.c_str()); DeleteFileW(png.c_str());
+        CHECK(conv::ConvertImage(noisy, full, conv::ImageFmt::Jpeg, 90, &err));
+        const long long fullSize = Size(full);
+        CHECK(fullSize > 150000);
+        CHECK(conv::ConvertImage(noisy, limited, conv::ImageFmt::Jpeg, 90, &err, 0, 100000));     // unter 100 KB gedrueckt
+        CHECK(Size(limited) > 0 && Size(limited) <= 100000);
+        CHECK(Size(limited) > 40000);                                                              // nicht unnoetig stark verkleinert (hoechste passende Stufe)
+        CHECK(!conv::ConvertImage(noisy, tiny, conv::ImageFmt::Jpeg, 90, &err, 0, 600) && !err.empty() && Size(tiny) < 0);   // unmoeglich: Fehler, keine Datei
+        std::wprintf(L"Zielgroesse Bild: %lld -> %lld Bytes; Fehlertext bei 600 Bytes: %ls\n", fullSize, Size(limited), err.c_str());
+        CHECK(conv::ConvertImage(noisy, png, conv::ImageFmt::Png, 90, &err, 0, 250000));          // PNG: nur ueber kleinere Bildkante
+        CHECK(Size(png) > 0 && Size(png) <= 250000);
+        const long long loose = 10ll * 1024 * 1024;                                                // grosszuegige Grenze aendert nichts am Regler
+        const std::wstring same = Tmp(L"noisy_loose.jpg");
+        DeleteFileW(same.c_str());
+        CHECK(conv::ConvertImage(noisy, same, conv::ImageFmt::Jpeg, 90, &err, 0, loose));
+        CHECK(Size(same) == fullSize);
+
+        // Audio: 10 s Sinuston
+        std::atomic<bool> noCancel{false};
+        const std::wstring wav10 = Tmp(L"sine10.wav");
+        WriteSineWav(wav10, 10);
+        const std::wstring a1 = Tmp(L"sized.m4a"), a2 = Tmp(L"sized.mp3"), a3 = Tmp(L"sized_fail.m4a"), a4 = Tmp(L"sized.wav");
+        for (const auto& f : {a1, a2, a3, a4}) DeleteFileW(f.c_str());
+        CHECK(conv::ConvertMedia(wav10, a1, AudioFmt::M4a, 100, noCancel, nullptr, &err, 130000));
+        CHECK(Size(a1) > 0 && Size(a1) <= 130000);
+        CHECK(conv::ConvertMedia(wav10, a2, AudioFmt::Mp3, 100, noCancel, nullptr, &err, 200000));
+        CHECK(Size(a2) > 0 && Size(a2) <= 200000);
+        CHECK(!conv::ConvertMedia(wav10, a3, AudioFmt::M4a, 100, noCancel, nullptr, &err, 50000) && !err.empty() && Size(a3) < 0);
+        CHECK(!conv::ConvertMedia(wav10, a4, AudioFmt::Wav, 100, noCancel, nullptr, &err, 500000) && !err.empty() && Size(a4) < 0);
+
+        // FLAC: verlustfrei, Datei beginnt mit "fLaC", ist kleiner als die WAV-Quelle und laesst sich wieder lesen
+        const std::wstring fl = Tmp(L"sine10.flac"), back = Tmp(L"sine10_back.wav");
+        DeleteFileW(fl.c_str()); DeleteFileW(back.c_str());
+        const bool flacOk = conv::ConvertMedia(wav10, fl, AudioFmt::Flac, 100, noCancel, nullptr, &err);
+        std::wprintf(L"FLAC: %ls %ls (%lld Bytes, WAV %lld)\n", flacOk ? L"ok" : L"nicht moeglich", flacOk ? L"" : err.c_str(), Size(fl), Size(wav10));
+        CHECK(flacOk);
+        if (flacOk) {
+            CHECK(Size(fl) > 1000 && Size(fl) < Size(wav10));
+            char magic[4] = {};
+            HANDLE h = CreateFileW(fl.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, 0, nullptr);
+            DWORD rd = 0; ReadFile(h, magic, 4, &rd, nullptr); CloseHandle(h);
+            CHECK(memcmp(magic, "fLaC", 4) == 0);
+            CHECK(conv::ConvertMedia(fl, back, AudioFmt::Wav, 100, noCancel, nullptr, &err));
+            CHECK(Size(back) > 1700000 && Size(back) < 1900000);                                   // 10 s 44,1 kHz Stereo 16 Bit = ~1,76 MB
+        }
+        CHECK(std::wstring(conv::AudioExt(AudioFmt::Flac)) == L"flac" && conv::BitrateKbps(AudioFmt::Flac, 50) == 0);
+
+        // Video: Zielgroesse (Testvideo 320x240, 1 s)
+        const std::wstring v1 = Tmp(L"sized_vid.mp4"), v2 = Tmp(L"sized_vid.mkv"), v3 = Tmp(L"unsized_vid.mp4");
+        for (const auto& f : {v1, v2, v3}) DeleteFileW(f.c_str());
+        const std::wstring src = Tmp(L"vid_for_size.mp4");
+        DeleteFileW(src.c_str());
+        if (MakeTestVideo(src)) {
+            CHECK(conv::ConvertMedia(src, v3, AudioFmt::Mp4, 90, noCancel, nullptr, &err));
+            const long long unsized = Size(v3);
+            const long long limit = unsized * 4 / 5;
+            CHECK(conv::ConvertMedia(src, v1, AudioFmt::Mp4, 90, noCancel, nullptr, &err, limit));
+            std::wprintf(L"Zielgroesse Video: ohne Grenze %lld Bytes, Grenze %lld -> %lld Bytes (%ls)\n", unsized, limit, Size(v1), err.c_str());
+            CHECK(Size(v1) > 0 && Size(v1) <= limit);
+            CHECK(conv::ConvertMedia(src, v2, AudioFmt::Mkv, 90, noCancel, nullptr, &err, limit));
+            CHECK(Size(v2) > 0 && Size(v2) <= limit);
+            CHECK(!conv::ConvertMedia(src, Tmp(L"sized_fail.mp4"), AudioFmt::Mp4, 90, noCancel, nullptr, &err, 3000) && !err.empty() && Size(Tmp(L"sized_fail.mp4")) < 0);
+        }
+    }
+
     conv::MediaShutdown();
     if (failures == 0) std::printf("alle Tests bestanden\n");
     return failures ? 1 : 0;

@@ -22,7 +22,7 @@
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.3.0"
+#define APP_VERSION L"0.4.0"
 #endif
 
 namespace {
@@ -44,10 +44,13 @@ enum : int {
     IDC_IMG0 = 110,   // 110..116: PNG, JPG, WEBP, BMP, HEIC, GIF, PDF
     IDC_AUD0 = 120,   // 120..124: MP3, M4A, WAV, MP4, MKV
     IDC_SZ0 = 130,    // 130..134: Bildgroesse Original, 2560, 1920, 1280, 800
+    IDC_MAX0 = 140,   // 140..144: Zielgroesse aus, 10, 16, 25, 50 MB
     IDM_OUT_PICK = 200, IDM_OUT_SAME = 201, IDM_OUT_SHOW = 202,
     IDM_OUT_RECENT0 = 210,   // 210..214: zuletzt benutzte Zielordner
 };
-constexpr int kImgCount = 7, kAudCount = 5, kMaxRecent = 5, kSizeCount = 5;
+constexpr int kImgCount = 7, kAudCount = 6, kMaxRecent = 5, kSizeCount = 5, kLimitCount = 5;
+constexpr long long kLimitMb[kLimitCount] = {0, 10, 16, 25, 50};   // Zielgroesse in MB, 0 = keine Grenze
+constexpr const wchar_t* kLimitNames[kLimitCount] = {L"Aus", L"10 MB", L"16 MB", L"25 MB", L"50 MB"};
 constexpr int kSizeVals[kSizeCount] = {0, 2560, 1920, 1280, 800};   // laengste Kante in Pixel, 0 = Original
 constexpr const wchar_t* kSizeNames[kSizeCount] = {L"Original", L"2560", L"1920", L"1280", L"800"};
 constexpr UINT WM_APP_UPDATE = WM_APP + 1;   // ein Eintrag hat sich geaendert
@@ -55,8 +58,8 @@ constexpr UINT WM_APP_DONE = WM_APP + 2;     // alle Worker sind fertig
 
 constexpr conv::ImageFmt kImgFmts[kImgCount] = {conv::ImageFmt::Png, conv::ImageFmt::Jpeg, conv::ImageFmt::Webp, conv::ImageFmt::Bmp, conv::ImageFmt::Heic, conv::ImageFmt::Gif, conv::ImageFmt::Pdf};
 constexpr const wchar_t* kImgNames[kImgCount] = {L"PNG", L"JPG", L"WEBP", L"BMP", L"HEIC", L"GIF", L"PDF"};
-constexpr conv::AudioFmt kAudFmts[kAudCount] = {conv::AudioFmt::Mp3, conv::AudioFmt::M4a, conv::AudioFmt::Wav, conv::AudioFmt::Mp4, conv::AudioFmt::Mkv};
-constexpr const wchar_t* kAudNames[kAudCount] = {L"MP3", L"M4A", L"WAV", L"MP4", L"MKV"};
+constexpr conv::AudioFmt kAudFmts[kAudCount] = {conv::AudioFmt::Mp3, conv::AudioFmt::M4a, conv::AudioFmt::Wav, conv::AudioFmt::Mp4, conv::AudioFmt::Mkv, conv::AudioFmt::Flac};
+constexpr const wchar_t* kAudNames[kAudCount] = {L"MP3", L"M4A", L"WAV", L"MP4", L"MKV", L"FLAC"};
 
 const wchar_t* AudName(conv::AudioFmt f) {
     for (int i = 0; i < kAudCount; ++i)
@@ -90,6 +93,7 @@ struct App {
     int imgSel = 1;      // JPG
     int audSel = 0;      // MP3
     int sizeSel = 0;     // Bildgroesse: Index in kSizeVals
+    int limitSel = 0;    // Zielgroesse: Index in kLimitMb
     int quality = 85;
     std::wstring outDir; // leer: neben der Originaldatei
     std::vector<std::wstring> recent;   // zuletzt benutzte Zielordner (neueste zuerst)
@@ -107,7 +111,7 @@ struct App {
     int scroll = 0;
     bool dragSlider = false;
     HWND btnAdd = nullptr, btnOut = nullptr, btnClear = nullptr, btnGo = nullptr, btnOpen = nullptr;
-    HWND chipImg[kImgCount]{}, chipAud[kAudCount]{}, chipSize[kSizeCount]{};
+    HWND chipImg[kImgCount]{}, chipAud[kAudCount]{}, chipSize[kSizeCount]{}, chipLimit[kLimitCount]{};
     std::atomic<bool> pdfClaimed{false};   // Format PDF: ein Worker uebernimmt alle Bilder zusammen
 
     int S(int v) const { return MulDiv(v, static_cast<int>(dpi), 96); }
@@ -137,6 +141,7 @@ void LoadSettings() {
     g.imgSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"BildFormat", g.imgSel, ini.c_str())), 0, kImgCount - 1);
     g.audSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"AudioFormat", g.audSel, ini.c_str())), 0, kAudCount - 1);
     g.sizeSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"BildGroesse", g.sizeSel, ini.c_str())), 0, kSizeCount - 1);
+    g.limitSel = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"MaxGroesse", g.limitSel, ini.c_str())), 0, kLimitCount - 1);
     g.quality = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Allgemein", L"Qualitaet", g.quality, ini.c_str())), 0, 100);
     g.openFolder = GetPrivateProfileIntW(L"Allgemein", L"OrdnerOeffnen", 0, ini.c_str()) != 0;
     g.outDir = str(L"Allgemein", L"Zielordner");
@@ -155,6 +160,7 @@ void SaveSettings() {
     put(L"Allgemein", L"BildFormat", std::to_wstring(g.imgSel));
     put(L"Allgemein", L"AudioFormat", std::to_wstring(g.audSel));
     put(L"Allgemein", L"BildGroesse", std::to_wstring(g.sizeSel));
+    put(L"Allgemein", L"MaxGroesse", std::to_wstring(g.limitSel));
     put(L"Allgemein", L"Qualitaet", std::to_wstring(g.quality));
     put(L"Allgemein", L"OrdnerOeffnen", g.openFolder ? L"1" : L"0");
     put(L"Allgemein", L"Zielordner", g.outDir);
@@ -246,7 +252,8 @@ std::wstring QualityDetail() {
     std::wstring s = L"Bilder (JPG, WEBP, HEIC, PDF): " + std::to_wstring(g.quality) + L" %   ·   ";
     const int kb = conv::BitrateKbps(kAudFmts[g.audSel], g.quality);
     if (kAudFmts[g.audSel] == conv::AudioFmt::Mp4 || kAudFmts[g.audSel] == conv::AudioFmt::Mkv) s += std::wstring(kAudNames[g.audSel]) + L": H.264 nach Auflösung, Ton " + std::to_wstring(kb) + L" kbit/s";
-    else s += kb ? std::wstring(kAudNames[g.audSel]) + L": " + std::to_wstring(kb) + L" kbit/s" : L"WAV: verlustfrei";
+    else s += kb ? std::wstring(kAudNames[g.audSel]) + L": " + std::to_wstring(kb) + L" kbit/s" : std::wstring(kAudNames[g.audSel]) + L": verlustfrei";
+    if (g.limitSel > 0) s = L"Mit Größenlimit passt das Programm Qualität und Bitrate selbst an – der Regler gilt als Obergrenze";
     return s;
 }
 
@@ -260,6 +267,7 @@ struct Settings {
     int quality;
     std::wstring outDir;
     int maxEdge;   // laengste Bildkante, 0 = Original
+    long long maxBytes;   // Zielgroesse je Datei, 0 = keine Grenze
 };
 
 void Worker(HWND hwnd, std::shared_ptr<Settings> s) {
@@ -329,7 +337,7 @@ void Worker(HWND hwnd, std::shared_ptr<Settings> s) {
             continue;
         }
         if (kind == conv::Kind::Image) {
-            ok = conv::ConvertImage(src, target, s->img, s->quality, &err, s->maxEdge);
+            ok = conv::ConvertImage(src, target, s->img, s->quality, &err, s->maxEdge, s->maxBytes);
         } else {
             ok = conv::ConvertMedia(src, target, s->aud, s->quality, g.cancel, [hwnd, i](int pct) {
                 {
@@ -337,7 +345,7 @@ void Worker(HWND hwnd, std::shared_ptr<Settings> s) {
                     g.items[i].pct = pct;
                 }
                 PostMessageW(hwnd, WM_APP_UPDATE, i, 0);
-            }, &err);
+            }, &err, s->maxBytes);
         }
         {
             std::lock_guard<std::mutex> lk(g.mu);
@@ -368,7 +376,7 @@ void StartBatch() {
         for (Item& it : g.items) { it.state = State::Waiting; it.pct = 0; it.text.clear(); }
         g.reserved.clear();
     }
-    auto s = std::make_shared<Settings>(Settings{kImgFmts[g.imgSel], kAudFmts[g.audSel], g.quality, g.outDir, kSizeVals[g.sizeSel]});
+    auto s = std::make_shared<Settings>(Settings{kImgFmts[g.imgSel], kAudFmts[g.audSel], g.quality, g.outDir, kSizeVals[g.sizeSel], kLimitMb[g.limitSel] * 1024 * 1024});
     g.cancel = false;
     g.pdfClaimed = false;
     g.nextJob = 0;
@@ -461,20 +469,22 @@ void Relayout() {
     RECT rc;
     GetClientRect(g.hwnd, &rc);
     const int m = g.S(24), w = rc.right, h = rc.bottom;
-    g.zone = {m, g.S(84), w - m, h - g.S(276)};
+    g.zone = {m, g.S(84), w - m, h - g.S(322)};
     const int y0 = g.zone.bottom + g.S(16);
     const int colW = g.S(190), colX = w - m - colW;
 
     int x = m + g.S(120);
     for (int i = 0; i < kImgCount; ++i, x += g.S(60)) MoveWindow(g.chipImg[i], x, y0, g.S(54), g.S(30), TRUE);   // sieben Chips, schmaler als die anderen Zeilen
     x = m + g.S(120);
-    for (int i = 0; i < kAudCount; ++i, x += g.S(72)) MoveWindow(g.chipAud[i], x, y0 + g.S(40), g.S(64), g.S(30), TRUE);
+    for (int i = 0; i < kAudCount; ++i, x += g.S(66)) MoveWindow(g.chipAud[i], x, y0 + g.S(40), g.S(60), g.S(30), TRUE);
     x = m + g.S(120);
     for (int i = 0; i < kSizeCount; ++i, x += g.S(72)) MoveWindow(g.chipSize[i], x, y0 + g.S(80), g.S(64), g.S(30), TRUE);
-    MoveWindow(g.btnOpen, m, y0 + g.S(186), g.S(400), g.S(26), TRUE);
+    x = m + g.S(120);
+    for (int i = 0; i < kLimitCount; ++i, x += g.S(72)) MoveWindow(g.chipLimit[i], x, y0 + g.S(120), g.S(64), g.S(30), TRUE);
+    MoveWindow(g.btnOpen, m, y0 + g.S(232), g.S(400), g.S(26), TRUE);
 
     const int sx0 = m + g.S(120), sx1 = std::max(sx0 + g.S(80), std::min(sx0 + g.S(300), colX - g.S(24)));
-    g.slider = {sx0, y0 + g.S(128), sx1, y0 + g.S(148)};
+    g.slider = {sx0, y0 + g.S(178), sx1, y0 + g.S(198)};
 
     MoveWindow(g.btnGo, colX, y0, colW, g.S(46), TRUE);
     MoveWindow(g.btnAdd, colX, y0 + g.S(56), (colW - g.S(8)) / 2, g.S(30), TRUE);
@@ -607,6 +617,8 @@ void Paint(HDC dc, const RECT& rc) {
     Text(dc, g.fBody, kDim, {m, y0 + g.S(40), m + g.S(112), y0 + g.S(70)}, L"Audio/Video →");
     Text(dc, g.fBody, kDim, {m, y0 + g.S(80), m + g.S(112), y0 + g.S(110)}, L"Bildgröße");
     Text(dc, g.fSmall, kDim, {m + g.S(120) + kSizeCount * g.S(72), y0 + g.S(80), m + g.S(120) + kSizeCount * g.S(72) + g.S(40), y0 + g.S(110)}, L"px");
+    Text(dc, g.fBody, kDim, {m, y0 + g.S(120), m + g.S(112), y0 + g.S(150)}, L"Max. Größe");
+    Text(dc, g.fSmall, kDim, {m + g.S(120), y0 + g.S(152), rc.right - m - g.S(200), y0 + g.S(172)}, L"Für WhatsApp 16 MB, Discord 10 MB (Nitro 50), E-Mail 25 MB");
     Text(dc, g.fBody, kDim, {m, g.slider.top - g.S(2), m + g.S(112), g.slider.bottom + g.S(2)}, L"Qualität");
     PaintSlider(dc);
     Text(dc, g.fBold, kText, {g.slider.right + g.S(12), g.slider.top - g.S(2), g.slider.right + g.S(70), g.slider.bottom + g.S(2)},
@@ -649,6 +661,7 @@ bool IsChipSelected(int id) {
     if (id >= IDC_IMG0 && id < IDC_IMG0 + kImgCount) return g.imgSel == id - IDC_IMG0;
     if (id >= IDC_AUD0 && id < IDC_AUD0 + kAudCount) return g.audSel == id - IDC_AUD0;
     if (id >= IDC_SZ0 && id < IDC_SZ0 + kSizeCount) return g.sizeSel == id - IDC_SZ0;
+    if (id >= IDC_MAX0 && id < IDC_MAX0 + kLimitCount) return g.limitSel == id - IDC_MAX0;
     return false;
 }
 
@@ -757,6 +770,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         for (int i = 0; i < kImgCount; ++i) g.chipImg[i] = btn(kImgNames[i], IDC_IMG0 + i);
         for (int i = 0; i < kAudCount; ++i) g.chipAud[i] = btn(kAudNames[i], IDC_AUD0 + i);
         for (int i = 0; i < kSizeCount; ++i) g.chipSize[i] = btn(kSizeNames[i], IDC_SZ0 + i);
+        for (int i = 0; i < kLimitCount; ++i) g.chipLimit[i] = btn(kLimitNames[i], IDC_MAX0 + i);
         g.btnGo = btn(L"Konvertieren", IDC_GO);
         g.btnAdd = btn(L"Hinzufügen", IDC_ADD);
         g.btnClear = btn(L"Leeren", IDC_CLEAR);
@@ -780,7 +794,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_GETMINMAXINFO: {
         auto* mm = reinterpret_cast<MINMAXINFO*>(lp);
-        mm->ptMinTrackSize = {g.S(760), g.S(600)};
+        mm->ptMinTrackSize = {g.S(760), g.S(650)};
         return 0;
     }
     case WM_DPICHANGED: {
@@ -849,6 +863,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (id >= IDC_IMG0 && id < IDC_IMG0 + kImgCount) { g.imgSel = id - IDC_IMG0; }
         else if (id >= IDC_AUD0 && id < IDC_AUD0 + kAudCount) { g.audSel = id - IDC_AUD0; }
         else if (id >= IDC_SZ0 && id < IDC_SZ0 + kSizeCount) { g.sizeSel = id - IDC_SZ0; }
+        else if (id >= IDC_MAX0 && id < IDC_MAX0 + kLimitCount) { g.limitSel = id - IDC_MAX0; }
         else if (id >= IDM_OUT_RECENT0 && id < IDM_OUT_RECENT0 + kMaxRecent) {
             if (const size_t i = static_cast<size_t>(id - IDM_OUT_RECENT0); i < g.recent.size()) {
                 const std::wstring dir = g.recent[i];
