@@ -12,11 +12,13 @@
 #include <memory>
 #include <thread>
 
+#include "CheckTask.h"
 #include "DeviceRepair.h"
 #include "DriverHistory.h"
 #include "Icons.h"
 #include "SuiteSafety.h"
 #include "Utils.h"
+#include "VendorLinks.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 
@@ -573,6 +575,11 @@ void MainWindow::OnCreate()
     }
     CreateFonts();
     RefreshHistoryCache();
+    {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        drvcheck::RefreshCopy(exe);              // falls die woechentliche Pruefung eingerichtet ist: Kopie auf den Stand dieses Programms bringen
+    }
 }
 
 // Animationen zeichnen nur ihren kleinen Bereich direkt in den Puffer und auf den Bildschirm. Ueber
@@ -905,6 +912,7 @@ void MainWindow::ShowCardMenu(const DriverInfo& d, const RECT& anchor)
     AppendMenuW(menu, MF_STRING | (d.hardwareId.empty() ? MF_GRAYED : 0), 3, L"Hardware-ID kopieren");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_STRING, 4, L"Treiber sichern …");
+    AppendMenuW(menu, MF_STRING, 7, L"Beim Hersteller suchen …");
     if (d.status == DriverStatus::Problem)
         AppendMenuW(menu, MF_STRING, 6, L"Reparatur versuchen …");
 
@@ -932,6 +940,9 @@ void MainWindow::ShowCardMenu(const DriverInfo& d, const RECT& anchor)
         break;
     case 6:
         ConfirmRepair(d);
+        break;
+    case 7:
+        OpenUrl(VendorSupportUrl(d));
         break;
     default:
         break;
@@ -1130,6 +1141,8 @@ void MainWindow::OnLButtonUp()
                 m_draft.autoScan = !m_draft.autoScan;
             else if (pressed == 2)
                 m_draft.splash = !m_draft.splash;
+            else if (pressed == 5)
+                m_draft.weekly = !m_draft.weekly;
             else
                 CloseSettings(pressed == 3);
         }
@@ -1884,6 +1897,17 @@ void MainWindow::Draw(HDC dc, int width, int height)
 
 void MainWindow::OpenSettings()
 {
+    m_settings.weekly = drvcheck::TaskExists();
+    {
+        std::wstring hint = L"Prüft montags im Hintergrund (ohne Fenster) und meldet nur, wenn es etwas gibt. Läuft nach dem Anmelden nach, falls der PC aus war.";
+        const std::wstring ini = SettingsFile(false);
+        wchar_t last[64] = {};
+        if (!ini.empty())
+            GetPrivateProfileStringW(L"Allgemein", L"LetztePruefung", L"", last, 64, ini.c_str());
+        if (last[0])
+            hint = L"Letzte Hintergrund-Prüfung: " + std::wstring(last) + L". Prüft montags und meldet nur, wenn es etwas gibt.";
+        m_weeklyHint = hint;
+    }
     m_draft = m_settings;
     m_settingsOpen = true;
     m_setHover = m_setPress = 0;
@@ -1896,11 +1920,28 @@ void MainWindow::CloseSettings(bool save)
     m_setHover = m_setPress = 0;
     if (save)
     {
+        const bool wasWeekly = m_settings.weekly;
         m_settings = m_draft;
         if (WriteFlag(L"AutoScan", m_settings.autoScan) && WriteFlag(L"StartAnimation", m_settings.splash))
             ShowToast(L"Einstellungen gespeichert");
         else
             ShowToast(L"Einstellungen konnten nicht gespeichert werden", 2);
+        if (m_settings.weekly != wasWeekly)
+        {
+            std::wstring err;
+            wchar_t exe[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+            const bool ok = m_settings.weekly ? drvcheck::Enable(exe, err) : drvcheck::Disable(err);
+            SetCursor(LoadCursorW(nullptr, IDC_ARROW));
+            if (ok)
+                ShowToast(m_settings.weekly ? L"Wöchentliche Prüfung eingeschaltet" : L"Wöchentliche Prüfung ausgeschaltet");
+            else
+            {
+                m_settings.weekly = wasWeekly;
+                ShowModal(L"Wöchentliche Prüfung", err, {}, { L"OK" }, 2, nullptr);
+            }
+        }
     }
     InvalidateRect(m_hwnd, nullptr, FALSE);
 }
@@ -1913,6 +1954,8 @@ void MainWindow::SettingsMouse(int x, int y, bool)
         hover = 1;
     else if (PtInRect(&m_chkSplash, pt))
         hover = 2;
+    else if (PtInRect(&m_chkWeekly, pt))
+        hover = 5;
     else if (PtInRect(&m_btnSave, pt))
         hover = 3;
     else if (PtInRect(&m_btnCancel, pt))
@@ -1931,7 +1974,7 @@ void MainWindow::DrawSettings(HDC dc, int width, int height)
     const int pad = S(26);
     const int boxW = std::min(S(560), width - S(40));
     const int titleH = S(30), btnH = S(38), rowH = S(50);
-    const int boxH = pad + titleH + S(18) + rowH + S(10) + rowH + S(26) + btnH + pad;
+    const int boxH = pad + titleH + S(18) + rowH + S(10) + rowH + S(10) + rowH + S(26) + btnH + pad;
     RECT box{ (width - boxW) / 2, (height - boxH) / 2, (width - boxW) / 2 + boxW, (height - boxH) / 2 + boxH };
 
     DrawShadow(dc, box, S(18), static_cast<int>(m_dpi));
@@ -1963,6 +2006,9 @@ void MainWindow::DrawSettings(HDC dc, int width, int height)
     y += rowH + S(10);
     m_chkSplash = { box.left + pad, y, box.right - pad, y + rowH };
     check(m_chkSplash, m_draft.splash, m_setHover == 2, L"Start-Animation anzeigen", L"Zeigt beim Öffnen den animierten Startbildschirm.");
+    y += rowH + S(10);
+    m_chkWeekly = { box.left + pad, y, box.right - pad, y + rowH };
+    check(m_chkWeekly, m_draft.weekly, m_setHover == 5, L"Wöchentlich im Hintergrund nach Updates suchen", m_weeklyHint.c_str());
 
     auto button = [&](const RECT& r, bool primary, int id, const wchar_t* text)
     {
