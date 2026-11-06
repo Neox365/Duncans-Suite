@@ -24,6 +24,7 @@ struct Settings {
     bool bass = false;          // zusaetzlicher Bass-Schub
     bool voice = false;         // Sprache klarer
     int  preamp = 0;            // Vorverstaerkung in dB (-12 ... +12), kommt zur automatischen Absenkung dazu
+    bool keepRunning = true;    // Fenster schliessen = im Infobereich weiterlaufen (Profilwechsel pro Geraet, Symbol)
     std::vector<std::string> extra;   // eingelesene Filterzeilen (z. B. AutoEq-Kopfhoerer-Korrektur), nur "Preamp:"/"Filter:"
 };
 
@@ -75,6 +76,10 @@ std::wstring DefaultOutputName();
 std::wstring SettingsPath();
 bool LoadSettings(Settings& s, const std::wstring& path);   // false: Datei fehlt/unlesbar (s bleibt Standard)
 bool SaveSettings(const Settings& s, const std::wstring& path);
+
+// Autostart mit Windows (HKCU\Software\Microsoft\Windows\CurrentVersion\Run, Start mit --background)
+bool GetAutostart(const wchar_t* valueName = L"DuncansEqualizer");
+bool SetAutostart(bool on, const std::wstring& exePath, const wchar_t* valueName = L"DuncansEqualizer");
 
 // Equalizer APO
 extern const wchar_t* const kConfigFile;     // "duncans-equalizer.txt" im config-Ordner von Equalizer APO

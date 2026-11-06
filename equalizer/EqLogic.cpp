@@ -217,7 +217,7 @@ std::wstring SettingsPath()
 
 bool SaveSettings(const Settings& s, const std::wstring& path)
 {
-    std::string t = std::string("enabled=") + (s.enabled ? "1" : "0") + "\r\nbass=" + (s.bass ? "1" : "0") +
+    std::string t = std::string("enabled=") + (s.enabled ? "1" : "0") + "\r\nkeeprunning=" + (s.keepRunning ? "1" : "0") + "\r\nbass=" + (s.bass ? "1" : "0") +
                     "\r\nvoice=" + (s.voice ? "1" : "0") + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(s.gains[b]));
@@ -244,6 +244,7 @@ bool LoadSettings(Settings& s, const std::wstring& path)
             continue;
         const std::string key = line.substr(0, eq), val = line.substr(eq + 1);
         if (key == "enabled") s.enabled = val == "1";
+        else if (key == "keeprunning") s.keepRunning = val != "0";
         else if (key == "bass") s.bass = val == "1";
         else if (key == "voice") s.voice = val == "1";
         else if (key == "gains")
@@ -527,6 +528,37 @@ std::wstring DefaultOutputName()
     if (SUCCEEDED(init))
         CoUninitialize();
     return name;
+}
+
+bool GetAutostart(const wchar_t* valueName)
+{
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_QUERY_VALUE, &k) != ERROR_SUCCESS)
+        return false;
+    const bool exists = RegQueryValueExW(k, valueName, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS;
+    RegCloseKey(k);
+    return exists;
+}
+
+bool SetAutostart(bool on, const std::wstring& exePath, const wchar_t* valueName)
+{
+    HKEY k = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) != ERROR_SUCCESS)
+        return false;
+    LONG r;
+    if (on)
+    {
+        const std::wstring cmd = L"\"" + exePath + L"\" --background";
+        r = RegSetValueExW(k, valueName, 0, REG_SZ, reinterpret_cast<const BYTE*>(cmd.c_str()), static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
+    }
+    else
+    {
+        r = RegDeleteValueW(k, valueName);
+        if (r == ERROR_FILE_NOT_FOUND)
+            r = ERROR_SUCCESS;
+    }
+    RegCloseKey(k);
+    return r == ERROR_SUCCESS;
 }
 
 }  // namespace eq

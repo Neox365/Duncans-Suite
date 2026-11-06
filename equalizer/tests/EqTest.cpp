@@ -217,6 +217,31 @@ int main()
         DeleteFileW(pp3.c_str());
     }
 
+
+    // Infobereich-Einstellung und Autostart
+    {
+        Settings k; CHECK(k.keepRunning);                         // Standard: im Infobereich weiterlaufen
+        k.keepRunning = false;
+        wchar_t tmp4[MAX_PATH]; GetTempPathW(MAX_PATH, tmp4);
+        std::wstring sp = std::wstring(tmp4) + L"eqkeep" + std::to_wstring(GetCurrentProcessId()) + L".txt";
+        Settings back; CHECK(SaveSettings(k, sp) && LoadSettings(back, sp) && !back.keepRunning);
+        Put(sp, "enabled=1\r\n");                                  // aeltere Datei ohne den Schluessel
+        CHECK(LoadSettings(back, sp) && back.keepRunning && back.enabled);
+        DeleteFileW(sp.c_str());
+        const wchar_t* name = L"DuncansEqualizerTest";
+        const std::wstring vexe = L"C:/Programme/Test Ordner/DuncansEqualizer.exe";
+        SetAutostart(false, vexe, name);
+        CHECK(!GetAutostart(name));
+        CHECK(SetAutostart(true, vexe, name) && GetAutostart(name));
+        HKEY key = nullptr; wchar_t val[512] = {}; DWORD sz = sizeof(val);
+        CHECK(RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", 0, KEY_QUERY_VALUE, &key) == ERROR_SUCCESS);
+        CHECK(RegQueryValueExW(key, name, nullptr, nullptr, reinterpret_cast<BYTE*>(val), &sz) == ERROR_SUCCESS);
+        RegCloseKey(key);
+        CHECK(std::wstring(val) == L"\"C:/Programme/Test Ordner/DuncansEqualizer.exe\" --background");
+        CHECK(SetAutostart(false, vexe, name) && !GetAutostart(name));
+        CHECK(SetAutostart(false, vexe, name));                    // schon aus: kein Fehler
+    }
+
     // Aufraeumen
     for (const wchar_t* f : { L"/apo/config/config.txt", L"/apo/config/duncans-equalizer.txt", L"/s.txt", L"/kaputt.txt" }) DeleteFileW((dir + f).c_str());
     RemoveDirectoryW((apo + L"/config").c_str()); RemoveDirectoryW(apo.c_str()); RemoveDirectoryW(dir.c_str());
