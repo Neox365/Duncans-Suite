@@ -34,7 +34,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.6.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -50,7 +50,8 @@ constexpr int kMaxItemRows = 10;    // Positionen im Rechnungsformular
 enum Id {
     B_ADD = 1, B_NEW, B_GEAR,
     T_ADD = 4, T_CLEAR = 5,         // Tag-Leiste: "+ Tags" und "Filter loeschen"
-    T_TAG0 = 6,                     // 6..29 Tag-Chips (Filter); Ids unter D_OK sind bei offenem Dialog gesperrt
+    T_TAG0 = 6,                     // 6..28 Tag-Chips (Filter); Ids unter D_OK sind bei offenem Dialog gesperrt
+    B_DUE = 29,                     // Karte "Offene Rechnungen": nur faellige zeigen
     D_OK = 30, D_CANCEL, D_SKIP, D_ADDROW, D_DELROW,
     D_STATUS0 = 40,                 // 40..43 Status-Auswahl im Formular
     D_CRED0 = 50,                   // 50..57 Glaeubiger-Vorschlaege
@@ -60,9 +61,9 @@ enum Id {
     D_EXAMPLE = 64, D_CLEAR = 65,   // Rechnungsdialog: "Beispiel laden" / "Felder leeren"
     D_TAGSUG0 = 70                  // 70..77 Tag-Vorschlaege im Tag-Dialog
 };
-constexpr int kMaxTagChips = 24;
+constexpr int kMaxTagChips = 23;
 enum MenuId {
-    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF,
+    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND,
     C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE, C_INCOME, C_EXPENSE, C_TAGS
 };
 
@@ -136,6 +137,35 @@ std::wstring TodayIso() {
     SYSTEMTIME st;
     GetLocalTime(&st);
     return docs::IsoFrom(st.wYear, st.wMonth, st.wDay);
+}
+
+// ---- Erinnerung beim Windows-Start (Run-Eintrag mit --remind) -------------------------------------------------
+const wchar_t* const kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const wchar_t* const kRunValue = L"OggysDocsFiles";
+
+bool RemindAutostartOn() {
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_QUERY_VALUE, &k) != ERROR_SUCCESS) return false;
+    const bool on = RegQueryValueExW(k, kRunValue, nullptr, nullptr, nullptr, nullptr) == ERROR_SUCCESS;
+    RegCloseKey(k);
+    return on;
+}
+
+bool SetRemindAutostart(bool on) {
+    HKEY k = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) != ERROR_SUCCESS) return false;
+    LONG r;
+    if (on) {
+        wchar_t exe[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        const std::wstring cmd = std::wstring(L"\"") + exe + L"\" --remind";
+        r = RegSetValueExW(k, kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(cmd.c_str()), static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
+    } else {
+        r = RegDeleteValueW(k, kRunValue);
+        if (r == ERROR_FILE_NOT_FOUND) r = ERROR_SUCCESS;
+    }
+    RegCloseKey(k);
+    return r == ERROR_SUCCESS;
 }
 
 std::wstring SettingsPath() {
@@ -396,6 +426,8 @@ private:
     std::wstring m_note;
     long long m_openCents = 0;
     int m_overdue = 0;
+    bool m_dueOnly = false;             // Ansicht: nur ueberfaellige und bald faellige offene Rechnungen
+    docs::DueInfo m_due;                // alle Belege: ueberfaellig / bald faellig
     docs::Stats m_stats;                                  // Finanz-Uebersicht ueber alle Belege (unabhaengig vom Filter)
     std::vector<std::pair<std::wstring, int>> m_tags;     // alle Tags mit Anzahl
     std::set<std::wstring> m_tagFilter;                   // aktive Tag-Filter (klein geschrieben, alle muessen passen)
@@ -672,8 +704,11 @@ void App::RebuildView() {
         it = found ? std::next(it) : m_tagFilter.erase(it);
     }
     m_stats = docs::ComputeStats(m_all, TodayIso().substr(0, 4), TodayIso());
+    const std::wstring todayNow = TodayIso();
+    m_due = docs::ComputeDue(m_all, todayNow);
     for (int i = 0; i < (int)m_all.size(); ++i) {
         const docs::Doc& d = m_all[i];
+        if (m_dueOnly && !docs::IsOverdue(d, todayNow) && !docs::IsDueSoon(d, todayNow)) continue;
         const std::wstring y = d.year.empty() ? L"?" : d.year;
         if (!nd.year.empty() && y != nd.year) continue;
         if (!nd.creditor.empty() && d.creditor != nd.creditor) continue;
@@ -735,8 +770,10 @@ std::vector<const docs::Doc*> App::SelectedDocs() const {
 
 std::wstring App::ViewTitle() const {
     const Node& nd = m_nodes[m_node];
-    if (nd.year.empty()) return L"Alle Rechnungen";
-    return nd.creditor.empty() ? nd.label : nd.year + L" › " + nd.creditor;
+    std::wstring base;
+    if (nd.year.empty()) base = L"Alle Rechnungen";
+    else base = nd.creditor.empty() ? nd.label : nd.year + L" › " + nd.creditor;
+    return m_dueOnly ? L"Nur fällige  ›  " + base : base;
 }
 
 // ============================================================================
@@ -803,6 +840,7 @@ void App::DrawStats() {
     const long long saldo = m_stats.income - m_stats.expense;
     std::wstring openLabel = L"Offene Rechnungen  ·  " + std::to_wstring(m_stats.openCount);
     if (m_stats.overdue > 0) openLabel += L"  (" + std::to_wstring(m_stats.overdue) + L" überfällig)";
+    else if (m_due.soon > 0) openLabel += L"  (" + std::to_wstring(m_due.soon) + L" bald fällig)";
     struct Card { std::wstring label, value; unsigned color; };
     const Card cards[4] = {{L"Einnahmen " + year, docs::FormatAmount(m_stats.income), Theme::Paid},
                            {L"Ausgaben " + year, docs::FormatAmount(m_stats.expense), Theme::Open},
@@ -811,7 +849,11 @@ void App::DrawStats() {
     for (int i = 0; i < 4; ++i) {
         const float x = rcStats.left + pad + i * (cw + gap);
         const D2D1_RECT_F r{x, rcStats.top + 10 * k, x + cw, rcStats.bottom - 6 * k};
-        FillRR(r, 10 * k, Theme::Card);
+        FillRR(r, 10 * k, (i == 3 && m_hoverBtn == B_DUE) ? Theme::CardHover : Theme::Card);
+        if (i == 3) {                                          // Klick auf diese Karte: nur faellige Rechnungen zeigen (nochmal klicken: alle)
+            m_hits.push_back({B_DUE, r});
+            if (m_dueOnly) StrokeRR(r, 10 * k, Theme::Accent, 1.5f * k);
+        }
         FillRR({r.left, r.top + 10 * k, r.left + 3 * k, r.bottom - 10 * k}, 1.5f * k, cards[i].color);
         Txt(cards[i].label, {r.left + 16 * k, r.top + 6 * k, r.right - 8 * k, r.top + 26 * k}, fSmall.Get(), Theme::TextDim);
         Txt(cards[i].value, {r.left + 16 * k, r.top + 25 * k, r.right - 8 * k, r.bottom - 2 * k}, fBold.Get(), cards[i].color);
@@ -894,8 +936,16 @@ void App::DrawList() {
             d.m.cents == docs::kUnknown ? Theme::TextDim : (d.m.income ? Theme::Paid : Theme::Text));
         const bool overdue = d.m.status == docs::Status::Open && !d.m.due.empty() && d.m.due < today;
         std::wstring due = d.m.due.empty() ? L"–" : docs::FormatDate(d.m.due);
+        const bool soon = !overdue && docs::IsDueSoon(d, today);
         if (overdue) due += L"  überfällig";
-        Txt(due, {xDue, y, xDue + wDue, y + rh}, fNormal.Get(), overdue ? Theme::Danger : (d.m.due.empty() ? Theme::TextDim : Theme::Text));
+        else if (soon) {
+            long long dueDays = 0, nowDays = 0;
+            docs::IsoToDays(d.m.due, dueDays);
+            docs::IsoToDays(today, nowDays);
+            const long long n = dueDays - nowDays;
+            due += n == 0 ? L"  heute" : (n == 1 ? L"  morgen" : L"  in " + std::to_wstring(n) + L" Tagen");
+        }
+        Txt(due, {xDue, y, xDue + wDue, y + rh}, fNormal.Get(), overdue ? Theme::Danger : (soon ? Theme::Warn : (d.m.due.empty() ? Theme::TextDim : Theme::Text)));
         const float bw = DrawBadge(xStat, y + (rh - 24 * k) / 2, 24 * k, d.m.status);
         if (d.m.status == docs::Status::Installment && !d.m.rate.empty() && xStat + bw + 8 * k < rcList.right - 16 * k)
             Txt(d.m.rate, {xStat + bw + 8 * k, y, rcList.right - 16 * k, y + rh}, fSmall.Get(), Theme::TextDim);
@@ -2065,6 +2115,7 @@ void App::ShowGearMenu() {
     const bool haveReader = !FindPdfReader().empty();
     AppendMenuW(m, MF_STRING | (m_settings.pdfReader && haveReader ? MF_CHECKED : 0) | (haveReader ? 0 : MF_GRAYED), M_PDFREADER,
                 haveReader ? L"PDFs im Duncan's PDF Reader \u00F6ffnen" : L"PDFs im Duncan's PDF Reader \u00F6ffnen (nicht gefunden)");
+    AppendMenuW(m, MF_STRING | (RemindAutostartOn() ? MF_CHECKED : 0), M_REMIND, L"Beim Windows-Start an fällige Rechnungen erinnern");
     AppendMenuW(m, MF_STRING, M_RESCAN, L"Neu einlesen (F5)");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, M_ABOUT, L"Über Oggys Docs-Files");
@@ -2079,6 +2130,10 @@ void App::ShowGearMenu() {
         case M_AUTOIMPORT: m_settings.autoImport = !m_settings.autoImport; SaveSettings(m_settings); break;
         case M_READPDF: m_settings.readPdf = !m_settings.readPdf; SaveSettings(m_settings); break;
         case M_PDFREADER: m_settings.pdfReader = !m_settings.pdfReader; SaveSettings(m_settings); break;
+        case M_REMIND:
+            if (SetRemindAutostart(!RemindAutostartOn())) SetNote(RemindAutostartOn() ? L"Erinnerung beim Windows-Start eingeschaltet (höchstens einmal am Tag)" : L"Erinnerung ausgeschaltet");
+            else SetNote(L"Die Erinnerung konnte nicht geändert werden.");
+            break;
         case M_RESCAN: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); break;
         case M_ABOUT: aboutcard::Open(m_about, m_hwnd); break;
     }
@@ -2258,6 +2313,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case B_ADD: PickFilesToAdd(); break;
             case B_NEW: BeginInvoiceDialog(); break;
             case B_GEAR: ShowGearMenu(); break;
+            case B_DUE: m_dueOnly = !m_dueOnly; m_scroll = 0; RebuildView(); break;
             case D_OK:
                 if (m_dlg.kind == DlgKind::Add) ApplyAdd(false);
                 else if (m_dlg.kind == DlgKind::Edit) ApplyEdit();
@@ -2513,6 +2569,79 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
 
 }  // namespace
 
+// ---- --remind: beim Windows-Start pruefen, ob Rechnungen faellig sind; wenn ja, eine Benachrichtigung zeigen und beenden ----
+NOTIFYICONDATAW g_remindNid{};
+const UINT WM_REMIND_TRAY = WM_APP + 21;
+
+LRESULT CALLBACK RemindProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
+    switch (msg) {
+    case WM_REMIND_TRAY: {
+        const UINT ev = LOWORD(lp);
+        if (ev == NIN_BALLOONUSERCLICK || ev == NIN_SELECT || ev == WM_LBUTTONUP) {       // Klick: das Programm oeffnen
+            wchar_t exe[MAX_PATH]{};
+            GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            ShellExecuteW(nullptr, L"open", exe, nullptr, nullptr, SW_SHOWNORMAL);
+            DestroyWindow(h);
+        } else if (ev == NIN_BALLOONTIMEOUT || ev == NIN_BALLOONHIDE) {
+            SetTimer(h, 2, 4000, nullptr);                                                 // Hinweis ist weg: gleich beenden
+        }
+        return 0;
+    }
+    case WM_TIMER: DestroyWindow(h); return 0;
+    case WM_DESTROY:
+        Shell_NotifyIconW(NIM_DELETE, &g_remindNid);
+        PostQuitMessage(0);
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+int RunRemind(HINSTANCE hi) {
+    Settings st;
+    LoadSettings(st);
+    if (st.root.empty()) return 0;                                  // noch nie benutzt
+    const std::wstring ini = SettingsPath(), today = TodayIso();
+    if (ini.empty() || IniString(ini, L"LetzteErinnerung") == today) return 0;     // heute schon erinnert
+    docs::MetaMap meta;
+    {
+        std::ifstream f(fs::path(fs::path(st.root) / L".oggys-index.tsv"), std::ios::binary);
+        if (f) meta = docs::ParseIndex(std::string((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>()));
+    }
+    std::error_code ec;
+    if (!fs::exists(fs::path(st.root), ec)) return 0;               // Ordner nicht erreichbar (z. B. Netzlaufwerk nicht verbunden)
+    const std::wstring text = docs::ReminderText(docs::ComputeDue(docs::Scan(fs::path(st.root), meta), today));
+    if (text.empty()) return 0;
+    WritePrivateProfileStringW(L"Allgemein", L"LetzteErinnerung", today.c_str(), ini.c_str());
+
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = RemindProc;
+    wc.hInstance = hi;
+    wc.lpszClassName = L"OggysDocsFilesRemind";
+    RegisterClassExW(&wc);
+    HWND h = CreateWindowExW(WS_EX_TOOLWINDOW, wc.lpszClassName, L"", WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, hi, nullptr);
+    if (!h) return 1;
+    g_remindNid = NOTIFYICONDATAW{};
+    g_remindNid.cbSize = sizeof(g_remindNid);
+    g_remindNid.hWnd = h;
+    g_remindNid.uID = 1;
+    g_remindNid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP | NIF_INFO;
+    g_remindNid.uCallbackMessage = WM_REMIND_TRAY;
+    g_remindNid.hIcon = LoadIconW(hi, MAKEINTRESOURCEW(1));
+    wcscpy_s(g_remindNid.szTip, L"Oggys Docs-Files");
+    wcscpy_s(g_remindNid.szInfoTitle, L"Rechnungen fällig");
+    wcsncpy_s(g_remindNid.szInfo, text.c_str(), _TRUNCATE);
+    g_remindNid.dwInfoFlags = NIIF_WARNING;
+    Shell_NotifyIconW(NIM_ADD, &g_remindNid);
+    SetTimer(h, 1, 25000, nullptr);                                  // spaetestens nach 25 s beenden
+    MSG msg;
+    while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        TranslateMessage(&msg);
+        DispatchMessageW(&msg);
+    }
+    return 0;
+}
+
 int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int show) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
@@ -2525,10 +2654,19 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int show) {
     }
     // Argumente: Dateien/Ordner, die direkt hinzugefuegt werden ("Senden an", Drag auf die EXE)
     std::vector<std::wstring> startFiles;
+    bool remind = false;
     int argc = 0;
     if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {
-        for (int i = 1; i < argc; ++i) startFiles.push_back(argv[i]);
+        for (int i = 1; i < argc; ++i) {
+            if (std::wstring(argv[i]) == L"--remind") remind = true;
+            else startFiles.push_back(argv[i]);
+        }
         LocalFree(argv);
+    }
+    if (remind) {
+        const int rc = RunRemind(hi);
+        CoUninitialize();
+        return rc;
     }
     int code = 0;
     {

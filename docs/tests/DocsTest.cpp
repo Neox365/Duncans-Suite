@@ -416,9 +416,37 @@ static void invoiceText() {
     CHECK(r.hasAmount && r.cents == 10000 && !r.hasDue);
 }
 
+static void dueReminder() {
+    using namespace docs;
+    auto mk = [](const wchar_t* due, Status st, long long cents) { Doc d; d.m.due = due; d.m.status = st; d.m.cents = cents; return d; };
+    const std::wstring today = L"2026-11-06";
+    std::vector<Doc> v = { mk(L"2026-11-05", Status::Open, 10000),      // gestern: ueberfaellig
+                           mk(L"2026-10-01", Status::Open, 5050),       // ueberfaellig
+                           mk(L"2026-11-06", Status::Open, 2000),       // heute: bald faellig
+                           mk(L"2026-11-13", Status::Open, 1000),       // genau 7 Tage: noch bald faellig
+                           mk(L"2026-11-14", Status::Open, 9999),       // 8 Tage: noch nicht
+                           mk(L"2026-11-01", Status::Paid, 7777),       // bezahlt: zaehlt nie
+                           mk(L"2026-11-01", Status::Installment, 1),   // Ratenzahlung: zaehlt nicht
+                           mk(L"", Status::Open, 4242),                 // ohne Faelligkeit: zaehlt nicht
+                           mk(L"2026-11-08", Status::Open, kUnknown) }; // Betrag unbekannt: zaehlt mit, aber ohne Summe
+    CHECK(IsOverdue(v[0], today) && IsOverdue(v[1], today) && !IsOverdue(v[2], today) && !IsOverdue(v[5], today) && !IsOverdue(v[7], today));
+    CHECK(IsDueSoon(v[2], today) && IsDueSoon(v[3], today) && !IsDueSoon(v[4], today) && !IsDueSoon(v[0], today) && !IsDueSoon(v[6], today));
+    DueInfo di = ComputeDue(v, today);
+    CHECK(di.overdue == 2 && di.soon == 3 && di.overdueCents == 15050 && di.soonCents == 3000 && di.Total() == 5 && di.Cents() == 18050);
+    CHECK(ReminderText(di) == L"2 Rechnungen überfällig, 3 Rechnungen in den nächsten 7 Tagen fällig (zusammen 180,50 €)");
+    DueInfo one; one.overdue = 1; one.overdueCents = 1250;
+    CHECK(ReminderText(one) == L"1 Rechnung überfällig (zusammen 12,50 €)");
+    DueInfo soonOnly; soonOnly.soon = 1;
+    CHECK(ReminderText(soonOnly) == L"1 Rechnung in den nächsten 7 Tagen fällig");       // ohne Betrag keine Summe
+    CHECK(ReminderText(DueInfo{}).empty() && ComputeDue({}, today).Total() == 0);
+    CHECK(ComputeDue(v, L"2026-12-28").soon == 0 && ComputeDue(v, L"2026-12-28").overdue == 6);
+    CHECK(IsDueSoon(mk(L"2027-01-02", Status::Open, 1), L"2026-12-28"));                  // ueber den Jahreswechsel
+    CHECK(!IsDueSoon(mk(L"garbage", Status::Open, 1), L"2026-12-28"));                    // ungueltiges Datum
+}
+
 int main() {
     amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness(); installmentRate(); closingAndFooter();
-    tagsStatsImport(); invoiceText();
+    tagsStatsImport(); invoiceText(); dueReminder();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

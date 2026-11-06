@@ -525,6 +525,57 @@ inline Stats ComputeStats(const std::vector<Doc>& all, const std::wstring& year,
     return s;
 }
 
+// ---- Faelligkeiten (Hinweis und Erinnerung) ------------------------------------------------------------
+
+constexpr int kSoonDays = 7;   // "bald faellig": heute bis heute + 7 Tage
+
+inline bool IsOverdue(const Doc& d, const std::wstring& todayIso)
+{
+    return d.m.status == Status::Open && !d.m.due.empty() && d.m.due < todayIso;
+}
+
+inline bool IsDueSoon(const Doc& d, const std::wstring& todayIso, int soonDays = kSoonDays)
+{
+    if (d.m.status != Status::Open || d.m.due.empty() || d.m.due < todayIso) return false;
+    const std::wstring limit = AddDaysIso(todayIso, soonDays);
+    return !limit.empty() && d.m.due <= limit;
+}
+
+struct DueInfo {
+    int overdue = 0, soon = 0;                  // Anzahl
+    long long overdueCents = 0, soonCents = 0;  // Summe der erfassten Betraege
+    int Total() const { return overdue + soon; }
+    long long Cents() const { return overdueCents + soonCents; }
+};
+
+inline DueInfo ComputeDue(const std::vector<Doc>& all, const std::wstring& todayIso, int soonDays = kSoonDays)
+{
+    DueInfo di;
+    for (const Doc& d : all) {
+        const bool over = IsOverdue(d, todayIso), soon = !over && IsDueSoon(d, todayIso, soonDays);
+        if (!over && !soon) continue;
+        long long& sum = over ? di.overdueCents : di.soonCents;
+        if (d.m.cents != kUnknown) sum += d.m.cents;
+        ++(over ? di.overdue : di.soon);
+    }
+    return di;
+}
+
+// "2 Rechnungen überfällig, 1 Rechnung in den nächsten 7 Tagen fällig (zusammen 150,00 €)"; leer, wenn nichts ansteht
+inline std::wstring ReminderText(const DueInfo& di, int soonDays = kSoonDays)
+{
+    std::wstring t;
+    auto part = [&](int n, const std::wstring& what) {
+        if (n <= 0) return;
+        if (!t.empty()) t += L", ";
+        t += std::to_wstring(n) + (n == 1 ? L" Rechnung " : L" Rechnungen ") + what;
+    };
+    part(di.overdue, L"überfällig");
+    part(di.soon, L"in den nächsten " + std::to_wstring(soonDays) + L" Tagen fällig");
+    if (!t.empty() && di.Cents() > 0) t += L" (zusammen " + FormatAmount(di.Cents()) + L")";
+    return t;
+}
+
 // ---- Automatischer Beleg-Import: Jahr und Glaeubiger aus dem Dateinamen raten ---------------------------
 
 // Erstes vierstelliges Jahr (1990..2100) im Dateinamen, das nicht Teil einer laengeren Ziffernfolge ist; sonst fallback.
