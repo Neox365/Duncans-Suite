@@ -8,7 +8,7 @@ set(DOCS_VER "0.7.0")
 set(VAULT_VER "0.6.1")
 set(OFFICE_VER "0.4.0")
 set(QUICKCONVERT_VER "0.3.2")
-set(BOOST_VER "0.2.0")
+set(BOOST_VER "0.3.0")
 set(CLIP_VER "0.3.0")
 set(EQUALIZER_VER "0.4.0")
 
@@ -228,6 +228,7 @@ target_link_libraries(DuncansQuickConvert PRIVATE gdiplus windowscodecs mfplat m
 add_executable(DuncansBoost WIN32
     boost/main.cpp
     boost/BoostLogic.cpp
+    boost/LiveStats.cpp
     src/Icons.cpp
     resources/boost.rc
 )
@@ -241,7 +242,7 @@ else()
     target_compile_options(DuncansBoost PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
     target_link_options(DuncansBoost PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
-target_link_libraries(DuncansBoost PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 powrprof psapi)
+target_link_libraries(DuncansBoost PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 powrprof psapi pdh)
 
 # ---- Duncan's Clip: Zwischenablage-Verlauf und Prompts (Win32 + GDI, keine Administratorrechte; Logik in clip/ClipLogic) ----
 add_executable(DuncansClip WIN32
