@@ -63,6 +63,9 @@
 
 
 [DuncansTidy.exe]
+## 1.6.0 | 2026-11-06
+- Neu: Die Ultra-Tiefenreinigung nimmt Absturzabbilder von Windows mit (Minidump, LiveKernelReports und das große Speicherabbild MEMORY.DMP, Gruppe „Absturzabbilder“) sowie die Wartungsprotokolle CBS und DISM (Gruppe „Diagnose- und ETL-Protokolle“). Was Windows gerade benutzt, bleibt stehen; ohne Administratorrechte werden manche Dateien übersprungen.
+- Neu: Gruppe „Entwickler-Caches“ mit den Zwischenspeichern von npm, pip, NuGet (Web-Cache) und Yarn. Alles wird bei Bedarf neu geladen, das nächste Installieren dauert nur etwas länger. Die NuGet-Paketablage und Gradle bleiben bewusst unberührt.
 ## 1.5.0 | 2026-11-06
 - Neu: Die Ultra-Tiefenreinigung räumt mehr App-Caches auf: Slack, Signal, Notion, Obsidian, Cursor, GitHub Desktop, Claude, Steam (Web-Cache), Epic Games Launcher (Web-Cache) und das neue Teams, zusätzlich zu Discord, VS Code, Spotify und dem alten Teams. Es werden nur Cache-Ordner (Cache, Code Cache, GPUCache, Shader-Caches) geleert, nie Anmeldung, Einstellungen, Nachrichten oder Spielstände; die Programme bauen den Cache beim nächsten Start neu auf. Vorher zeigt Tidy wie immer die Vorschau.
 ## 1.4.0 | 2026-11-06

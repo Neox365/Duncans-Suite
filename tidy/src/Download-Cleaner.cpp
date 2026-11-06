@@ -372,8 +372,8 @@ static std::wstring ItemLabel(int cat, const fs::path& p) {
 // auf: Shader-Caches der Grafiktreiber, System-Fehlerberichte, Windows-Update-/Delivery-Optimization-Reste, Treiber-Installer-Reste
 // (C:\NVIDIA, C:\AMD) und Windows\Temp. Es werden immer nur Inhalte fester Ordner aufgelistet (nie ganze Systemordner), und DeleteEntry
 // verweigert alles ausserhalb dieser Bereiche (IsCriticalPath). Auto-Clean und die Schnell-Reinigung aus dem Tray bleiben beim Standard.
-constexpr int kMaxGroups = 12;
-enum { GRP_SHADER = 5, GRP_WUPDATE = 6, GRP_DRIVER = 7, GRP_SETUP = 8, GRP_APPCACHE = 9, GRP_STORE = 10, GRP_ETL = 11 };
+constexpr int kMaxGroups = 13;
+enum { GRP_SHADER = 5, GRP_WUPDATE = 6, GRP_DRIVER = 7, GRP_SETUP = 8, GRP_APPCACHE = 9, GRP_STORE = 10, GRP_ETL = 11, GRP_DEVCACHE = 12 };
 static bool DeepOn() { return GetFlag(L"DeepClean", false); }
 // Ultra-Tiefenreinigung (Tidy 1.2.1): baut auf der Ultra-Tiefenreinigung auf. Dateigruppen: App-Caches (Discord, Slack, Steam, VS Code …), Store-Reste,
 // ETL-Protokolle. Dazu drei Aktionen, die Windows selbst ausfuehrt (DISM, Schattenkopien, Ereignisprotokolle) und die immer einzeln bestaetigt werden.
@@ -464,6 +464,19 @@ static std::wstring AppCacheLabel(const fs::path& p) {
         if (UnderDir(lp, ab.path)) return std::wstring(ab.label) + L"  ·  " + p.filename().wstring();
     return L"";
 }
+// Zwischenspeicher von Entwickler-Werkzeugen (alles wird bei Bedarf neu geladen, das naechste Installieren/Bauen dauert dann nur laenger).
+// Bewusst nicht dabei: die NuGet-Paketablage (.nuget\\packages) und Gradle, weil Offline-Builds sonst brechen koennten.
+static std::vector<fs::path> DevCacheDirs() {
+    std::vector<fs::path> d;
+    const fs::path lad = KnownFolder(FOLDERID_LocalAppData);
+    if (lad.empty()) return d;
+    d.push_back(lad / L"npm-cache");
+    d.push_back(lad / L"pip" / L"Cache");
+    d.push_back(lad / L"NuGet" / L"v3-cache");
+    d.push_back(lad / L"NuGet" / L"plugins-cache");
+    d.push_back(lad / L"Yarn" / L"Cache");
+    return d;
+}
 static void AddUltraItems(std::vector<fs::path>& v) {
     std::error_code ec;
     for (const AppBase& ab : AppCacheBases())
@@ -496,6 +509,15 @@ static void AddUltraItems(std::vector<fs::path>& v) {
         addEtl(d / L"AutoLogger");
         addEtl(d / L"ShutdownLogger");
     }
+    for (const fs::path& d : DevCacheDirs()) AddChildren(v, d);
+    if (!win.empty()) {  // Absturzabbilder und Wartungsprotokolle von Windows (ohne Administratorrechte bleibt Gesperrtes stehen)
+        AddChildren(v, win / L"Minidump");
+        AddChildren(v, win / L"LiveKernelReports");
+        if (fs::is_regular_file(win / L"MEMORY.DMP", ec)) v.push_back(win / L"MEMORY.DMP");
+        ec.clear();
+        AddChildren(v, win / L"Logs" / L"CBS");
+        AddChildren(v, win / L"Logs" / L"DISM");
+    }
     if (!win.empty()) {
         addEtl(win / L"System32" / L"LogFiles" / L"WMI");
         AddChildren(v, win / L"System32" / L"LogFiles" / L"WMI" / L"RtBackup");
@@ -510,6 +532,10 @@ static int DeepGroupOf(const fs::path& p) {
     if (UnderDir(lp, win / L"System32" / L"LogFiles" / L"WMI") || lp.find(L"\\diagnosis\\etllogs\\") != std::wstring::npos) return GRP_ETL;
     for (const AppBase& ab : AppCacheBases())
         if (UnderDir(lp, ab.path)) return GRP_APPCACHE;
+    if (UnderDir(lp, win / L"Minidump") || UnderDir(lp, win / L"LiveKernelReports") || lp == LowerPath(win / L"MEMORY.DMP")) return 2;   // Absturzabbilder
+    if (UnderDir(lp, win / L"Logs" / L"CBS") || UnderDir(lp, win / L"Logs" / L"DISM")) return GRP_ETL;                                        // Windows-Wartungsprotokolle
+    for (const fs::path& d : DevCacheDirs())
+        if (UnderDir(lp, d)) return GRP_DEVCACHE;
     if (UnderDir(lp, win / L"SoftwareDistribution") || UnderDir(lp, win / L"Logs") || lp.find(L"\\deliveryoptimization\\") != std::wstring::npos) return GRP_WUPDATE;
     if (UnderDir(lp, win / L"Temp")) return GRP_SETUP;
     static const wchar_t* kShader[] = {L"\\d3dscache\\", L"\\dxcache\\", L"\\glcache\\", L"\\vkcache\\", L"\\dxccache\\", L"\\computecache\\", L"\\nv_cache\\"};
@@ -527,8 +553,10 @@ static bool IsCriticalPath(const fs::path& p) {
     const fs::path win = KnownFolder(FOLDERID_Windows), pd = KnownFolder(FOLDERID_ProgramData), prof = KnownFolder(FOLDERID_Profile);
     if (!prof.empty() && lp == LowerPath(prof)) return true;
     if (!win.empty() && (lp == LowerPath(win) || UnderDir(lp, win))) {
-        for (const fs::path& ok : {win / L"Temp", win / L"SoftwareDistribution" / L"Download", win / L"Logs" / L"WindowsUpdate", win / L"System32" / L"LogFiles" / L"WMI"})
+        for (const fs::path& ok : {win / L"Temp", win / L"SoftwareDistribution" / L"Download", win / L"Logs" / L"WindowsUpdate", win / L"System32" / L"LogFiles" / L"WMI",
+                                   win / L"Minidump", win / L"LiveKernelReports", win / L"Logs" / L"CBS", win / L"Logs" / L"DISM"})
             if (UnderDir(lp, ok)) return false;
+        if (lp == LowerPath(win / L"MEMORY.DMP")) return false;   // das Speicherabbild nach einem Absturz (eine einzelne Datei)
         return true;
     }
     for (const KNOWNFOLDERID* id : {&FOLDERID_ProgramFiles, &FOLDERID_ProgramFilesX86, &FOLDERID_ProgramFilesCommon})
@@ -816,7 +844,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.5.0";
+constexpr wchar_t kVersion[] = L"1.6.0";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -2328,7 +2356,8 @@ static const wchar_t* GroupName(int cat, int g) {
                                  L"Installationsdateien", L"Sonstige Dateien"};
     static const wchar_t* s[] = {L"Vorschaubilder", L"Symbol-Cache", L"Absturzabbilder", L"Windows-Fehlerberichte", L"Sonstiges",
                                  L"Shader-Caches (DirectX, NVIDIA, AMD)", L"Windows-Update-Reste", L"Treiber-Installer-Reste", L"Setup-Reste (Windows-Temp)",
-                                 L"App-Caches (Discord, Slack, Steam, VS Code …)", L"Microsoft-Store-Reste", L"Diagnose- und ETL-Protokolle"};
+                                 L"App-Caches (Discord, Slack, Steam, VS Code …)", L"Microsoft-Store-Reste", L"Diagnose- und ETL-Protokolle",
+                                 L"Entwickler-Caches (npm, pip, NuGet, Yarn)"};
     static const wchar_t* d[] = {L"Dokumente", L"Bilder", L"Videos", L"Musik", L"Archive", L"Programme und Installer", L"Ordner", L"Sonstiges", L"Doppelte Dateien"};
     return Tr(cat == CAT_TEMP ? t[g] : cat == CAT_SYS ? s[g] : d[g]);
 }
@@ -2351,7 +2380,8 @@ static const wchar_t* GroupNote(int cat, int g) {
                                  L"Temporäre Setup-Dateien des Systems. Gesperrtes bleibt (ohne Administratorrechte)",
                                  L"Zwischenspeicher von Discord, Slack, Steam, VS Code, Teams, Spotify und weiteren Programmen – Anmeldung und Einstellungen bleiben, die Programme bauen den Cache neu auf",
                                  L"Zwischengespeicherte und vorübergehende Downloads des Microsoft Store",
-                                 L"Ablaufverfolgungs-Protokolle (.etl) von Windows. Von Windows benutzte Dateien bleiben (ohne Administratorrechte)"};
+                                 L"Ablaufverfolgungs-Protokolle (.etl) und Wartungsprotokolle (CBS, DISM) von Windows. Von Windows benutzte Dateien bleiben (ohne Administratorrechte)",
+                                 L"Heruntergeladene Paket-Zwischenspeicher von npm, pip, NuGet und Yarn – werden bei Bedarf neu geladen, das nächste Installieren dauert dann etwas länger"};
     static const wchar_t* d[] = {L"PDF, Word, Excel, PowerPoint, Text …", L"JPG, PNG, GIF, WebP …", L"MP4, MKV, AVI, MOV …", L"MP3, WAV, FLAC, M4A …",
                                  L"ZIP, RAR, 7z, ISO …", L"Installer, EXE, MSI, Skripte …", L"Ganze Ordner im Downloads-Ordner",
                                  L"Alles andere, was sich nicht eindeutig zuordnen lässt",
@@ -2363,7 +2393,7 @@ static const wchar_t* GroupNote(int cat, int g) {
 // keepWant: Schalterstellungen behalten (nach einem Scan), sonst alles an.
 static void BuildGroupCards(int cat, bool keepWant) {
     static const wchar_t* kTempGlyph[] = {L"\xE8B7", L"\xE7B8", L"\xE823", L"\xE8A5", L"\xE896", L"\xE712"};  // Ordner, Paket, Uhr, Dokument, Download, mehr
-    static const wchar_t* kSysGlyph[] = {L"\xE91B", L"\xE734", L"\xE7BA", L"\xE783", L"\xE712", L"\xE7F4", L"\xE895", L"\xE7B8", L"\xE74C", L"\xE71D", L"\xE719", L"\xE9D9"};  // Bild, Stern, Warnung, Fehler, mehr, Monitor, Sync, Paket, OEM, Apps, Store, Diagnose
+    static const wchar_t* kSysGlyph[] = {L"\xE91B", L"\xE734", L"\xE7BA", L"\xE783", L"\xE712", L"\xE7F4", L"\xE895", L"\xE7B8", L"\xE74C", L"\xE71D", L"\xE719", L"\xE9D9", L"\xE943"};  // Bild, Stern, Warnung, Fehler, mehr, Monitor, Sync, Paket, OEM, Apps, Store, Diagnose
     static const wchar_t* kDlGlyph[] = {L"\xE8A5", L"\xE91B", L"\xE714", L"\xE8D6", L"\xE7B8", L"\xE756", L"\xE8B7", L"\xE712", L"\xE8C8"};  // Dokument, Bild, Video, Musik, Paket, Konsole, Ordner, mehr, Kopie
     int count[kMaxGroups]{};
     unsigned long long bytes[kMaxGroups]{};
@@ -5970,6 +6000,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
     if (autoMode && !dryRun && !permanent && ok > 0) AskEmptyRecycleBin(nullptr);
     return failed ? 2 : 0;
 }
+
 
 
 
