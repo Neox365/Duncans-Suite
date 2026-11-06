@@ -63,6 +63,9 @@
 
 
 [DuncansTidy.exe]
+## 1.4.0 | 2026-11-06
+- Neu: Doppelte Dateien. Auf der Seite Downloads erscheint die neue Gruppe „Doppelte Dateien“: Dateien mit gleichem Inhalt (nicht nur gleichem Namen, geprüft mit SHA-256) werden erkannt. Die älteste Kopie bleibt immer unberührt, die übrigen landen wie alle Downloads im Papierkorb. Ordner und Verknüpfungen werden nie als doppelt gewertet. Die Gruppe lässt sich wie jede andere an- und abwählen.
+- Neu: In den Einstellungen schaltet „Doppelte Downloads erkennen“ die Suche ein oder aus (Standard: an). Das automatische Aufräumen ist davon nicht betroffen.
 ## 1.3.0 | 2026-11-02
 - Neu: Die Rückfrage von „Optimieren“ zeigt jetzt vorab die größten Einträge jeder Kategorie (Downloads, Temp, Systemdateien) mit Name und Größe und die Zahl der übrigen – so siehst du, was gelöscht wird, bevor du bestätigst. Downloads landen weiterhin im Papierkorb.
 ## 1.2.6 | 2026-10-27

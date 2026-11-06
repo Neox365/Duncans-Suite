@@ -44,6 +44,7 @@ using std::max;
 #include <psapi.h>
 #include <unordered_map>
 
+#include "Dupes.h"  // doppelte Dateien im Downloads-Ordner finden
 #include "public_key.inc"  // oeffentlicher Update-Schluessel, erzeugt von MakeSigningKey.ps1
 
 #pragma comment(lib, "advapi32.lib")
@@ -804,7 +805,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.3.0";
+constexpr wchar_t kVersion[] = L"1.4.0";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -1062,7 +1063,7 @@ constexpr int kTiles = 8;  //Kacheln der Uebersicht: eine pro Seite ausser der U
 static_assert(kTiles == kPages - 2, "Eine Kachel pro Seite (ohne Uebersicht und Einstellungen)");
 constexpr int kShownTiles = CAT_N;  // auf der Uebersicht nur die vier Kernbereiche (Downloads, Temp, Systemdateien, Browser-Cache); der Rest ist ueber die Seitenleiste erreichbar
 static RECT g_tile[kTiles];
-constexpr int kSettings = 7;  // Schalter auf der Einstellungen-Seite
+constexpr int kSettings = 8;  // Schalter auf der Einstellungen-Seite
 constexpr int kSetAutoRow = 2, kSetTextExtra = 36, kSetPillBar = 50, kSetExtra = kSetTextExtra + kSetPillBar;  // Auto-Clean-Zeile: Platz fuer 2 Textzeilen plus Leiste mit den Auswahlmenues (34 hoch, 16 Abstand unten)
 static RECT g_setRow[kSettings];
 static bool g_set[kSettings];
@@ -2317,7 +2318,7 @@ static const wchar_t* GroupName(int cat, int g) {
     static const wchar_t* s[] = {L"Vorschaubilder", L"Symbol-Cache", L"Absturzabbilder", L"Windows-Fehlerberichte", L"Sonstiges",
                                  L"Shader-Caches (DirectX, NVIDIA, AMD)", L"Windows-Update-Reste", L"Treiber-Installer-Reste", L"Setup-Reste (Windows-Temp)",
                                  L"App-Caches (Discord, Spotify, VS Code, Teams)", L"Microsoft-Store-Reste", L"Diagnose- und ETL-Protokolle"};
-    static const wchar_t* d[] = {L"Dokumente", L"Bilder", L"Videos", L"Musik", L"Archive", L"Programme und Installer", L"Ordner", L"Sonstiges"};
+    static const wchar_t* d[] = {L"Dokumente", L"Bilder", L"Videos", L"Musik", L"Archive", L"Programme und Installer", L"Ordner", L"Sonstiges", L"Doppelte Dateien"};
     return Tr(cat == CAT_TEMP ? t[g] : cat == CAT_SYS ? s[g] : d[g]);
 }
 
@@ -2342,7 +2343,8 @@ static const wchar_t* GroupNote(int cat, int g) {
                                  L"Ablaufverfolgungs-Protokolle (.etl) von Windows. Von Windows benutzte Dateien bleiben (ohne Administratorrechte)"};
     static const wchar_t* d[] = {L"PDF, Word, Excel, PowerPoint, Text …", L"JPG, PNG, GIF, WebP …", L"MP4, MKV, AVI, MOV …", L"MP3, WAV, FLAC, M4A …",
                                  L"ZIP, RAR, 7z, ISO …", L"Installer, EXE, MSI, Skripte …", L"Ganze Ordner im Downloads-Ordner",
-                                 L"Alles andere, was sich nicht eindeutig zuordnen lässt"};
+                                 L"Alles andere, was sich nicht eindeutig zuordnen lässt",
+                                 L"Inhaltlich gleiche Dateien – die älteste Kopie bleibt, die übrigen kommen in den Papierkorb"};
     return Tr(cat == CAT_TEMP ? t[g] : cat == CAT_SYS ? s[g] : d[g]);
 }
 
@@ -2351,7 +2353,7 @@ static const wchar_t* GroupNote(int cat, int g) {
 static void BuildGroupCards(int cat, bool keepWant) {
     static const wchar_t* kTempGlyph[] = {L"\xE8B7", L"\xE7B8", L"\xE823", L"\xE8A5", L"\xE896", L"\xE712"};  // Ordner, Paket, Uhr, Dokument, Download, mehr
     static const wchar_t* kSysGlyph[] = {L"\xE91B", L"\xE734", L"\xE7BA", L"\xE783", L"\xE712", L"\xE7F4", L"\xE895", L"\xE7B8", L"\xE74C", L"\xE71D", L"\xE719", L"\xE9D9"};  // Bild, Stern, Warnung, Fehler, mehr, Monitor, Sync, Paket, OEM, Apps, Store, Diagnose
-    static const wchar_t* kDlGlyph[] = {L"\xE8A5", L"\xE91B", L"\xE714", L"\xE8D6", L"\xE7B8", L"\xE756", L"\xE8B7", L"\xE712"};  // Dokument, Bild, Video, Musik, Paket, Konsole, Ordner, mehr
+    static const wchar_t* kDlGlyph[] = {L"\xE8A5", L"\xE91B", L"\xE714", L"\xE8D6", L"\xE7B8", L"\xE756", L"\xE8B7", L"\xE712", L"\xE8C8"};  // Dokument, Bild, Video, Musik, Paket, Konsole, Ordner, mehr, Kopie
     int count[kMaxGroups]{};
     unsigned long long bytes[kMaxGroups]{};
     bool known[kMaxGroups];
@@ -2410,6 +2412,23 @@ static void StartListScan(HWND h, int cat) {
             std::wstring label = ItemLabel(cat, p);
             const int group = GroupOf(cat, p);
             rows.push_back({std::move(p), std::move(label), group});
+        }
+        if (cat == CAT_DL && GetFlag(L"DupeScan", true)) {  // inhaltlich gleiche Dateien (nur Dateien, keine Ordner/Verknuepfungen) in die Gruppe "Doppelte Dateien"
+            std::vector<dupes::File> fl;
+            std::vector<size_t> idx;
+            for (size_t i = 0; i < rows.size(); ++i) {
+                WIN32_FILE_ATTRIBUTE_DATA a;
+                if (!GetFileAttributesExW(rows[i].p.c_str(), GetFileExInfoStandard, &a)) continue;
+                if (a.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT)) continue;
+                dupes::File f;
+                f.path = rows[i].p.wstring();
+                f.size = (static_cast<unsigned long long>(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
+                f.mtime = (static_cast<unsigned long long>(a.ftLastWriteTime.dwHighDateTime) << 32) | a.ftLastWriteTime.dwLowDateTime;
+                fl.push_back(std::move(f));
+                idx.push_back(i);
+            }
+            for (size_t k : dupes::FindRedundant(fl, [](const std::wstring& path) { return dupes::HashFile(path); }, [gen] { return g_listGen.load() != gen; }))
+                rows[idx[k]].group = 8;
         }
         std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {  // erst nach Gruppe, dann alphabetisch
             if (a.group != b.group) return a.group < b.group;
@@ -2720,6 +2739,7 @@ static void LoadSettings() {
     g_set[3] = !g_dark;  // an = helles Design
     g_set[4] = g_animOn;
     g_set[5] = DeepOn();
+    g_set[6] = GetFlag(L"DupeScan", true);
 }
 
 static void SetPage(HWND h, int p) {
@@ -3263,7 +3283,7 @@ static void PaintWindow(HWND h) {
         }
     } else if (g_page == kSettingsPage) {
         static const wchar_t* kSetTitle[kSettings] = {L"Mit Windows starten", L"Im Hintergrund weiterlaufen", L"Downloads automatisch aufräumen",
-                                                          L"Helles Design", L"Besen-Animation", L"Ultra-Tiefenreinigung", L"Sprache / Language"};
+                                                          L"Helles Design", L"Besen-Animation", L"Ultra-Tiefenreinigung", L"Doppelte Downloads erkennen", L"Sprache / Language"};
         static const wchar_t* kSetText[kSettings] = {
             L"Startet beim Anmelden unsichtbar im System-Tray (neben der Uhr).",
             L"X minimiert in den Tray. Beenden über „Exit“ oder Rechtsklick auf das Symbol.",
@@ -3271,8 +3291,9 @@ static void PaintWindow(HWND h) {
             L"Aus = dunkles Design (wie bisher), an = helles Design. Der Wechsel gilt sofort.",
             L"Der Besen in der Kopfzeile fegt beim Start und beim Aufräumen.",
             L"Nimmt bei den Systemdateien und beim Optimieren alles mit auf, was geht: Shader-Caches, Windows-Update- und Treiber-Installer-Reste, Fehlerberichte, Windows-Temp, App-Caches, Store-Reste und ETL-Protokolle. Auf der Seite Systemdateien kommen auf Wunsch DISM, Schattenkopien und Ereignisprotokolle dazu (jeweils mit Rückfrage und Administratorrechten). Vorher zeigt Tidy eine Vorschau. Auto-Clean und Schnell-Reinigung bleiben beim Standard.",
+            L"Sucht im Downloads-Ordner nach Dateien mit gleichem Inhalt (nicht nur gleichem Namen) und zeigt die überzähligen Kopien als eigene Gruppe „Doppelte Dateien“. Die älteste Kopie bleibt immer, die übrigen kommen wie alle Downloads in den Papierkorb. Große Downloads brauchen beim Öffnen der Seite etwas länger.",
             L"Sprache der Oberfläche. Ein Klick öffnet die Auswahl."};
-        static const wchar_t* kSetGlyph[kSettings] = {L"\xE7E8", L"\xE73F", L"\xE777", L"\xE706", L"\xE768", L"\xE74D", L"\xE774"};  // E706 = Sonne, E768 = Play
+        static const wchar_t* kSetGlyph[kSettings] = {L"\xE7E8", L"\xE73F", L"\xE777", L"\xE706", L"\xE768", L"\xE74D", L"\xE8C8", L"\xE774"};  // E706 = Sonne, E768 = Play, E8C8 = Kopie
         for (int i = 0; i < kSettings; ++i) {
             const RECT& r = g_setRow[i];
             const int rh = r.bottom - r.top - (i == kSetAutoRow ? kSetExtra : 0);  // Hoehe ohne die Leiste mit den Auswahlmenues
@@ -5033,6 +5054,8 @@ static void ToggleSetting(HWND h, int i) {
         SetAutoClean(!AutoCleanOn());
     } else if (i == 5) {
         SetDeep(h, !DeepOn());
+    } else if (i == 6) {
+        SetFlag(L"DupeScan", !GetFlag(L"DupeScan", true));
     } else if (i == kSettings - 1) {
         const RECT& r = g_setRow[i];  // Auswahlfeld mit allen Sprachen (gleiche Lage wie beim Zeichnen)
         const int rh = r.bottom - r.top;
