@@ -29,6 +29,8 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.4.0 | 2026-11-06
+- Neu: Programme sperren. Im Knopf unten rechts („Mehr: Prompts, Programme sperren“) sperrt „Zuletzt kopierendes Programm sperren“ das Programm, aus dem du zuletzt kopiert hast (z. B. Banking oder ein Passwort-Tresor). Daraus nimmt Clip nie wieder Text oder Bilder auf. Gesperrte Programme stehen im selben Menü und lassen sich dort wieder freigeben. Die Liste wird gemerkt. Bekannte Passwort-Manager waren schon vorher gesperrt.
 ## 0.3.0 | 2026-11-05
 - Neu: Anleitungskarte „Was ist Clip?“ oben im Fenster mit drei Schritten (Kopieren, Kürzel drücken, Prompts mit {clip}) und dem Hinweis zum Datenschutz. „Verstanden“ blendet sie aus, der Knopf „Hilfe“ holt sie zurück.
 - Neu: Unter den Einstellungen erklärt eine Zeile, was der Knopf unter der Maus macht (Mit Windows starten, Verlauf speichern, Kürzel, Verlauf löschen nach, Markierung übernehmen, Export/Import).

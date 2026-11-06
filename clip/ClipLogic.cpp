@@ -573,17 +573,67 @@ std::wstring DetectSecret(const std::wstring& text) {
     return L"";
 }
 
-SkipReason SkipReasonFor(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower) {
+std::wstring NormalizeExeName(const std::wstring& name) {
+    size_t b = name.find_last_of(L"\\/");
+    std::wstring n = b == std::wstring::npos ? name : name.substr(b + 1);
+    while (!n.empty() && iswspace(n.front())) n.erase(n.begin());
+    while (!n.empty() && iswspace(n.back())) n.pop_back();
+    for (wchar_t& ch : n) ch = static_cast<wchar_t>(towlower(ch));
+    if (n.empty() || n.size() > 100 || n.find_first_of(L";:*?\"<>|") != std::wstring::npos) return L"";
+    if (n.size() < 4 || n.compare(n.size() - 4, 4, L".exe") != 0) n += L".exe";
+    return n;
+}
+
+bool IsExcludedExe(const std::vector<std::wstring>& list, const std::wstring& exeLower) {
+    if (exeLower.empty()) return false;
+    return std::find(list.begin(), list.end(), exeLower) != list.end();
+}
+
+bool AddExcludedExe(std::vector<std::wstring>& list, const std::wstring& name) {
+    const std::wstring n = NormalizeExeName(name);
+    if (n.empty() || list.size() >= kMaxExcluded || IsExcludedExe(list, n)) return false;
+    list.push_back(n);
+    return true;
+}
+
+bool RemoveExcludedExe(std::vector<std::wstring>& list, const std::wstring& name) {
+    const std::wstring n = NormalizeExeName(name);
+    auto it = std::find(list.begin(), list.end(), n);
+    if (n.empty() || it == list.end()) return false;
+    list.erase(it);
+    return true;
+}
+
+std::wstring JoinExcluded(const std::vector<std::wstring>& list) {
+    std::wstring out;
+    for (const auto& e : list) { if (!out.empty()) out += L';'; out += e; }
+    return out;
+}
+
+std::vector<std::wstring> SplitExcluded(const std::wstring& text) {
+    std::vector<std::wstring> out;
+    size_t pos = 0;
+    while (pos <= text.size()) {
+        size_t semi = text.find(L';', pos);
+        if (semi == std::wstring::npos) semi = text.size();
+        AddExcludedExe(out, text.substr(pos, semi - pos));
+        pos = semi + 1;
+    }
+    return out;
+}
+
+SkipReason SkipReasonFor(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower, const std::vector<std::wstring>* userExcluded) {
     if (excludedByFormat) return SkipReason::Excluded;
     if (IsPasswordManagerExe(ownerExeLower)) return SkipReason::PasswordManager;
+    if (userExcluded && IsExcludedExe(*userExcluded, ownerExeLower)) return SkipReason::UserExcluded;
     if (IsBlank(text)) return SkipReason::Blank;
     if (text.size() > kMaxTextLen) return SkipReason::TooLong;
     if (!DetectSecret(text).empty()) return SkipReason::Secret;
     return SkipReason::None;
 }
 
-bool ShouldSkip(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower) {
-    return SkipReasonFor(text, excludedByFormat, ownerExeLower) != SkipReason::None;
+bool ShouldSkip(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower, const std::vector<std::wstring>* userExcluded) {
+    return SkipReasonFor(text, excludedByFormat, ownerExeLower, userExcluded) != SkipReason::None;
 }
 
 // ---- Zwischenablage ----
@@ -878,6 +928,9 @@ Settings LoadSettings() {
     s.retention = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Settings", L"Retention", 0, f.c_str())), 0, 2);
     s.captureSelection = GetPrivateProfileIntW(L"Settings", L"CaptureSelection", 1, f.c_str()) != 0;
     s.hideIntro = GetPrivateProfileIntW(L"Settings", L"HideIntro", 0, f.c_str()) != 0;
+    wchar_t buf[4096] = {};
+    GetPrivateProfileStringW(L"Settings", L"ExcludedApps", L"", buf, 4096, f.c_str());
+    s.excludedExes = SplitExcluded(buf);
     s.autostart = GetAutostart();
     return s;
 }
@@ -889,6 +942,7 @@ bool SaveSettings(const Settings& s) {
     ok &= WritePrivateProfileStringW(L"Settings", L"Retention", std::to_wstring(s.retention).c_str(), f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"CaptureSelection", s.captureSelection ? L"1" : L"0", f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"HideIntro", s.hideIntro ? L"1" : L"0", f.c_str()) != 0;
+    ok &= WritePrivateProfileStringW(L"Settings", L"ExcludedApps", JoinExcluded(s.excludedExes).c_str(), f.c_str()) != 0;
     return ok;
 }
 

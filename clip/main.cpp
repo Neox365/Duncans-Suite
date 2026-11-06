@@ -30,7 +30,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.3.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.4.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -85,6 +85,7 @@ struct App {
     int scroll = 0, contentH = 0;
     RECT tabHistory{}, tabPrompts{}, actionBtn{}, searchRc{}, chipsRc{}, list{}, set[6]{}, footer{}, editCard{}, editSave{}, editCancel{};
     RECT introRc{}, introOk{}, helpBtn{}, hintRc{};
+    std::wstring lastOwner;   // Programm, aus dem zuletzt kopiert wurde (zum Sperren per Menue)
     EditState edit;
     int hover = H_NONE, press = H_NONE;
     bool tracking = false;
@@ -219,17 +220,18 @@ void OnClipboardChanged() {
     if (GetTickCount() < g.suppressUntil) return;
     if (clip::ClipboardIsExcluded()) return;
     const std::wstring owner = clip::ClipboardOwnerExe();
+    if (!owner.empty()) g.lastOwner = owner;
     bool changed = false;
     std::wstring text;
     if (clip::ReadClipboardText(text)) {
-        const clip::SkipReason why = clip::SkipReasonFor(text, false, owner);
+        const clip::SkipReason why = clip::SkipReasonFor(text, false, owner, &g.cfg.excludedExes);
         if (why == clip::SkipReason::Secret) {          // Schluessel/Token nie speichern, aber sagen, dass es so ist
             SetStatus(L"Ein " + clip::DetectSecret(text) + L" wurde erkannt und nicht gespeichert.", kOrange);
             return;
         }
         if (why != clip::SkipReason::None) return;
         changed = clip::AddHistory(g.store, text);
-    } else if (clip::ClipboardHasImage() && !clip::IsPasswordManagerExe(owner)) {
+    } else if (clip::ClipboardHasImage() && !clip::IsPasswordManagerExe(owner) && !clip::IsExcludedExe(g.cfg.excludedExes, owner)) {
         std::string png; int w = 0, h = 0;
         if (clip::ReadClipboardImage(png, w, h)) changed = clip::AddImage(g.store, std::move(png), w, h);
     }
@@ -293,7 +295,7 @@ const wchar_t* const kSetHints[6] = {
     L"Kürzel: Mit dieser Tastenkombination öffnest du die Schnellauswahl in jedem Programm. Ein Klick wechselt das Kürzel.",
     L"Verlauf löschen nach: Entfernt kopierte Einträge nach der gewählten Zeit automatisch. Ein Klick wechselt (nie, 1 Stunde, 1 Tag).",
     L"Markierung übernehmen: Markierten Text übernimmt Clip beim Öffnen der Schnellauswahl und setzt ihn für {clip} ein – ohne vorher Strg+C.",
-    L"Prompts: Export / Import: Prompts als Textdatei sichern oder aus einer Datei laden (zum Weitergeben oder Wechseln des PCs).",
+    L"Mehr: Prompts als Textdatei sichern oder laden, und Programme sperren – aus gesperrten Programmen nimmt Clip nie etwas auf (z. B. Banking, Passwort-Tresor).",
 };
 
 std::vector<std::wstring> IntroSteps() {
@@ -506,11 +508,27 @@ void ExportImportMenu() {
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, 1, L"Prompts exportieren …");
     AppendMenuW(m, MF_STRING, 2, L"Prompts importieren …");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    const bool canBlock = !g.lastOwner.empty() && !clip::IsExcludedExe(g.cfg.excludedExes, g.lastOwner) && !clip::IsPasswordManagerExe(g.lastOwner);
+    AppendMenuW(m, canBlock ? MF_STRING : MF_STRING | MF_GRAYED, 3,
+                canBlock ? (L"Zuletzt kopierendes Programm sperren: " + g.lastOwner).c_str() : L"Programm sperren (erst etwas kopieren)");
+    for (size_t i = 0; i < g.cfg.excludedExes.size() && i < 20; ++i)
+        AppendMenuW(m, MF_STRING, static_cast<UINT_PTR>(100 + i), (L"Entsperren: " + g.cfg.excludedExes[i]).c_str());
     POINT pt{ g.set[5].left, g.set[5].top };
     ClientToScreen(g.hwnd, &pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_BOTTOMALIGN | TPM_LEFTALIGN, pt.x, pt.y - S(4), 0, g.hwnd, nullptr);
     DestroyMenu(m);
-    if (cmd == 1) ExportPromptsToFile(); else if (cmd == 2) ImportPromptsFromFile();
+    if (cmd == 1) ExportPromptsToFile();
+    else if (cmd == 2) ImportPromptsFromFile();
+    else if (cmd == 3 && clip::AddExcludedExe(g.cfg.excludedExes, g.lastOwner)) {
+        clip::SaveSettings(g.cfg);
+        SetStatus(g.lastOwner + L" ist gesperrt: daraus nimmt Clip nichts mehr auf.", kGreen);
+    } else if (cmd >= 100 && static_cast<size_t>(cmd - 100) < g.cfg.excludedExes.size()) {
+        const std::wstring name = g.cfg.excludedExes[static_cast<size_t>(cmd - 100)];
+        clip::RemoveExcludedExe(g.cfg.excludedExes, name);
+        clip::SaveSettings(g.cfg);
+        SetStatus(name + L" ist wieder freigegeben.", kGreen);
+    }
 }
 
 bool RegisterHotkeyFor(int index) {
@@ -758,7 +776,7 @@ void Paint(HDC dc, const RECT& cr) {
     DrawPill(dc, g.set[2], std::wstring(L"Kürzel: ") + clip::HotkeyPreset(g.cfg.hotkey).name, false, g.hover == H_SET_BASE + 2, kClip);
     DrawPill(dc, g.set[3], std::wstring(L"Verlauf löschen nach: ") + clip::RetentionName(g.cfg.retention), g.cfg.retention > 0, g.hover == H_SET_BASE + 3, kClip);
     DrawPill(dc, g.set[4], std::wstring(L"Markierung übernehmen: ") + (g.cfg.captureSelection ? L"an" : L"aus"), g.cfg.captureSelection, g.hover == H_SET_BASE + 4, kClip);
-    DrawPill(dc, g.set[5], L"Prompts: Export / Import", false, g.hover == H_SET_BASE + 5, kClip);
+    DrawPill(dc, g.set[5], g.cfg.excludedExes.empty() ? L"Mehr: Prompts, Programme sperren" : (L"Mehr: Prompts, " + std::to_wstring(g.cfg.excludedExes.size()) + L" gesperrt").c_str(), !g.cfg.excludedExes.empty(), g.hover == H_SET_BASE + 5, kClip);
 
     DrawText2(dc, g.fSmall, kTextDim, { g.footer.left, g.footer.top, g.footer.left + S(200), g.footer.bottom }, L"© 2026 Duncan · v" APP_VERSION, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawText2(dc, g.fSmall, g.statusColor, { g.footer.left + S(210), g.footer.top, g.footer.right, g.footer.bottom }, g.status, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
