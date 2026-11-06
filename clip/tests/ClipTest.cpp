@@ -153,6 +153,30 @@ int main() {
     CHECK(ShouldSkip(L"geheim", false, L"bitwarden.exe"));
     CHECK(ShouldSkip(L"  ", false, L""));
     CHECK(ShouldSkip(std::wstring(kMaxTextLen + 1, L'a'), false, L""));
+    // Vom Nutzer gesperrte Programme
+    {
+        CHECK(NormalizeExeName(L"C:\\Programme\\Google\\Chrome.EXE") == L"chrome.exe" && NormalizeExeName(L" Notepad ") == L"notepad.exe");
+        CHECK(NormalizeExeName(L"").empty() && NormalizeExeName(L"a;b").empty() && NormalizeExeName(L"x*.exe").empty());
+        std::vector<std::wstring> ex;
+        CHECK(AddExcludedExe(ex, L"Chrome") && AddExcludedExe(ex, L"C:\\x\\bank.exe"));
+        CHECK(!AddExcludedExe(ex, L"CHROME.exe") && ex.size() == 2);                       // keine Doppelten
+        CHECK(IsExcludedExe(ex, L"chrome.exe") && !IsExcludedExe(ex, L"notepad.exe") && !IsExcludedExe(ex, L""));
+        CHECK(JoinExcluded(ex) == L"chrome.exe;bank.exe");
+        CHECK(SplitExcluded(L"a.exe;;B;a.EXE; ").size() == 2 && SplitExcluded(L"").empty());
+        CHECK(SkipReasonFor(L"x", false, L"chrome.exe", &ex) == SkipReason::UserExcluded);
+        CHECK(SkipReasonFor(L"x", false, L"notepad.exe", &ex) == SkipReason::None && !ShouldSkip(L"x", false, L"chrome.exe"));
+        CHECK(SkipReasonFor(L"x", false, L"keepass.exe", &ex) == SkipReason::PasswordManager);
+        CHECK(RemoveExcludedExe(ex, L"chrome.exe") && !RemoveExcludedExe(ex, L"chrome.exe") && ex.size() == 1);
+        std::vector<std::wstring> many;
+        for (int i = 0; i < 60; ++i) AddExcludedExe(many, L"p" + std::to_wstring(i));
+        CHECK(many.size() == kMaxExcluded);
+        // Speichern und Laden
+        Settings st;
+        st.excludedExes = {L"a.exe", L"b.exe"};
+        CHECK(SaveSettings(st) && LoadSettings().excludedExes == st.excludedExes);
+        st.excludedExes.clear();
+        CHECK(SaveSettings(st) && LoadSettings().excludedExes.empty());
+    }
     CHECK(SkipReasonFor(L"x", true, L"") == SkipReason::Excluded && SkipReasonFor(L"x", false, L"keepass.exe") == SkipReason::PasswordManager);
     CHECK(SkipReasonFor(L" ", false, L"") == SkipReason::Blank && SkipReasonFor(L"hallo welt", false, L"") == SkipReason::None);
     CHECK(SkipReasonFor(L"gh" L"p_abcdefghijklmnopqrstuvwxyz0123456789ABCD", false, L"") == SkipReason::Secret);

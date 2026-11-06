@@ -80,10 +80,20 @@ bool IsPasswordManagerExe(const std::wstring& exeLower);
 // Erkennt Texte, die wie Schluessel, Tokens, Zugangsdaten oder Zahlungsdaten aussehen. Rueckgabe: Art ("API-Schluessel", "Kreditkartennummer" ...)
 // oder leer. Das ist eine Mustererkennung, keine Garantie.
 std::wstring DetectSecret(const std::wstring& text);
-enum class SkipReason { None, Excluded, PasswordManager, Blank, TooLong, Secret };
-SkipReason SkipReasonFor(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower);
+enum class SkipReason { None, Excluded, PasswordManager, UserExcluded, Blank, TooLong, Secret };
+// userExcluded: vom Nutzer gesperrte Programme (EXE-Namen klein); nullptr = keine
+SkipReason SkipReasonFor(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower, const std::vector<std::wstring>* userExcluded = nullptr);
+
+// Vom Nutzer gesperrte Programme (Liste in den Einstellungen): EXE-Namen klein, ohne Pfad, ohne Doppelte
+std::wstring NormalizeExeName(const std::wstring& name);                          // "C:\\x\\Chrome.EXE" -> "chrome.exe"; leer bei ungueltigem Namen
+bool AddExcludedExe(std::vector<std::wstring>& list, const std::wstring& name);   // true = neu aufgenommen (max. kMaxExcluded)
+bool RemoveExcludedExe(std::vector<std::wstring>& list, const std::wstring& name);
+bool IsExcludedExe(const std::vector<std::wstring>& list, const std::wstring& exeLower);
+std::wstring JoinExcluded(const std::vector<std::wstring>& list);                 // "a.exe;b.exe"
+std::vector<std::wstring> SplitExcluded(const std::wstring& text);                // Gegenstueck, bereinigt
+constexpr size_t kMaxExcluded = 50;
 // Entscheidet, ob eine Kopie uebersprungen wird (Windows-Markierung "nicht aufnehmen", Passwort-Manager, zu lang, leer, Geheimnis)
-bool ShouldSkip(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower);
+bool ShouldSkip(const std::wstring& text, bool excludedByFormat, const std::wstring& ownerExeLower, const std::vector<std::wstring>* userExcluded = nullptr);
 
 // ---- Zwischenablage (Windows) ----
 bool ReadClipboardText(std::wstring& out);                  // Text; false bei nicht-Text oder gesperrter Zwischenablage
@@ -117,6 +127,7 @@ struct Settings {
     int retention = 0;                                       // 0 = nie loeschen, 1 = nach 1 Stunde, 2 = nach 1 Tag
     bool captureSelection = true;                            // Markierung beim Oeffnen der Schnellauswahl automatisch uebernehmen
     bool hideIntro = false;                                  // Anleitungskarte "Was ist Clip?" ausgeblendet
+    std::vector<std::wstring> excludedExes;                  // Programme, aus denen Clip nie etwas aufnimmt (EXE-Namen klein)
 };
 
 unsigned long long RetentionMs(int retention);               // 0 = unbegrenzt
