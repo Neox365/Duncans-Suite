@@ -5,6 +5,10 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.5.0 | 2026-11-08
+- Neu: Frequenzkurve. Über den Reglern liegt jetzt eine Linie, die die Gesamtwirkung zeigt: Regler, Bass-Schub, „Sprache klarer“ und alle Filter zusammen (ohne Vorverstärkung). Die Kurve wird aus genau der Konfiguration berechnet, die an Equalizer APO geschrieben wird; sie ist eine Orientierung, kein Messergebnis.
+- Neu: „Filter & Korrektur …“ (ersetzt „Kopfhörer-Korrektur laden“). Das Fenster zeigt die Kurve groß mit Frequenz- und dB-Achse und lässt eigene Filter bauen: Glocke, Tiefen- und Höhen-Shelf, Hochpass, Tiefpass und Kerbfilter mit Frequenz, Verstärkung und Güte (Q) per Regler und Live-Vorschau, einzeln ein- und ausschaltbar. Dazu „Datei laden …“ für Korrekturdateien (zum Beispiel von AutoEq; die Zeilen werden angehängt) und „Alle entfernen“. Die Filter gehören wie die Regler zum Profil, bis zu 40 Zeilen.
+- Nicht enthalten: Limiter und Raumklang. Beides bringt Equalizer APO nicht selbst mit (es braucht zusätzliche Plug-ins).
 ## 0.4.0 | 2026-11-06
 - Neu: Symbol im Infobereich (neben der Uhr). Linksklick öffnet das Fenster, Rechtsklick zeigt ein Menü: Öffnen, Equalizer an/aus, Profil wählen, Beenden.
 - Neu: „Im Hintergrund“: Schließt man das Fenster, läuft der Equalizer im Infobereich weiter, damit der automatische Profilwechsel pro Ausgabegerät auch ohne offenes Fenster funktioniert (abschaltbar).

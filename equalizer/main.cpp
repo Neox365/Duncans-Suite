@@ -25,10 +25,12 @@ using std::min;
 #include "../src/Icons.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
+#include "EqCurve.h"
 #include "EqLogic.h"
+#include "FilterEditor.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.5.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -332,29 +334,12 @@ void BindDevice() {
     SetStatus(L"Wird jetzt automatisch gewählt, sobald „" + g.lastDevice + L"“ das Standardgerät ist", kGreen);
 }
 
-void ImportFilters() {
-    if (!g.cfg.extra.empty()) { g.cfg.extra.clear(); Changed(); SetStatus(L"Korrektur entfernt", kTextDim); return; }
-    wchar_t file[MAX_PATH] = {};
-    OPENFILENAMEW ofn{};
-    ofn.lStructSize = sizeof(ofn);
-    ofn.hwndOwner = g.hwnd;
-    ofn.lpstrFilter = L"Textdatei (*.txt)\0*.txt\0Alle Dateien\0*.*\0";
-    ofn.lpstrFile = file;
-    ofn.nMaxFile = MAX_PATH;
-    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
-    if (!GetOpenFileNameW(&ofn)) return;
-    HANDLE h = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (h == INVALID_HANDLE_VALUE) { SetStatus(L"Datei konnte nicht gelesen werden", kRed); return; }
-    std::string text;
-    char buf[8192]; DWORD n = 0;
-    while (text.size() < 300000 && ReadFile(h, buf, sizeof(buf), &n, nullptr) && n) text.append(buf, n);
-    CloseHandle(h);
-    int ignored = 0;
-    std::vector<std::string> lines = eq::ParseFilterFile(text, ignored);
-    if (lines.empty()) { SetStatus(L"In der Datei stehen keine nutzbaren Filterzeilen (erwartet: „Filter: ON PK Fc … Hz Gain … dB Q …“)", kOrange); return; }
-    g.cfg.extra = lines;
-    Changed();
-    SetStatus(std::to_wstring(lines.size()) + L" Zeilen übernommen" + (ignored ? L", " + std::to_wstring(ignored) + L" ignoriert" : std::wstring()), kGreen);
+void EditFilters() {                                // Fenster mit Frequenzkurve, eigenen Filtern und Datei-Korrektur
+    if (eq::ShowFilterEditor(g.hwnd, g.cfg)) {
+        Changed();
+        Layout();
+        SetStatus(g.cfg.extra.empty() ? L"Filter und Korrektur entfernt" : std::to_wstring(g.cfg.extra.size()) + L" Filterzeilen übernommen", kGreen);
+    }
 }
 
 void DeleteProfile() {
@@ -458,7 +443,7 @@ void Layout() {
     const int row2 = g.profCard.top + S(76), h2 = S(32);
     const bool hasDev = !g.profiles[static_cast<size_t>(g.active)].device.empty();
     const int bw1 = TextWidth(dc, g.fBold, hasDev ? L"Gerät lösen" : L"An aktuelles Gerät binden") + S(28);
-    const int bw2 = TextWidth(dc, g.fBold, g.cfg.extra.empty() ? L"Kopfhörer-Korrektur laden …" : L"Korrektur entfernen") + S(28);
+    const int bw2 = TextWidth(dc, g.fBold, L"Filter & Korrektur …") + S(28);
     const int bw3 = TextWidth(dc, g.fBold, g.delArmed ? L"Wirklich löschen?" : L"Löschen") + S(28);
     g.btnBind = { ix, row2, ix + bw1, row2 + h2 };
     g.btnImport = { g.btnBind.right + S(8), row2, g.btnBind.right + S(8) + bw2, row2 + h2 };
@@ -596,6 +581,30 @@ void Paint(HDC dc, const RECT& cr) {
                       pre ? L"auto " + std::to_wstring(eq::PreampDb(g.cfg)) : std::wstring(eq::BandName(b)), DT_CENTER | DT_SINGLELINE);
         }
 
+        {   // Frequenzkurve: Gesamtwirkung von Reglern, Bass, Sprache und Filtern (ohne Vorverstaerkung) ueber den Reglerspalten
+            const RECT& first = g.band[0];
+            const RECT& last = g.band[eq::kBands - 1];
+            const float cx0 = (first.left + first.right) / 2.f, cx9 = (last.left + last.right) / 2.f, colW = (cx9 - cx0) / (eq::kBands - 1);
+            const float top = static_cast<float>(TrackTop()), bottom = static_cast<float>(TrackBottom());
+            const std::vector<double> fr = eq::LogFreqs(140, 22.0, 22000.0);
+            const std::vector<double> db = eq::ResponseDb(g.cfg, fr);
+            std::vector<Gdiplus::PointF> pts;
+            for (size_t i = 0; i < fr.size(); ++i) {
+                const float pos = static_cast<float>(std::log2(fr[i] / 31.25));            // Baender liegen je eine Oktave auseinander
+                const float d = static_cast<float>(std::clamp(db[i], -static_cast<double>(eq::kMaxGain), static_cast<double>(eq::kMaxGain)));
+                pts.push_back({ cx0 + pos * colW, top + (bottom - top) * (eq::kMaxGain - d) / (2.f * eq::kMaxGain) });
+            }
+            Gdiplus::Graphics gr(dc);
+            gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            const COLORREF lc = on ? kEq : Blend(kEq, kCard, 55);
+            Gdiplus::Pen glow(Gdiplus::Color(on ? 55 : 30, GetRValue(lc), GetGValue(lc), GetBValue(lc)), static_cast<float>(S(7)));
+            Gdiplus::Pen line(Gdiplus::Color(on ? 230 : 140, GetRValue(lc), GetGValue(lc), GetBValue(lc)), static_cast<float>(S(2)));
+            glow.SetLineJoin(Gdiplus::LineJoinRound);
+            line.SetLineJoin(Gdiplus::LineJoinRound);
+            gr.DrawLines(&glow, pts.data(), static_cast<INT>(pts.size()));
+            gr.DrawLines(&line, pts.data(), static_cast<INT>(pts.size()));
+        }
+
         {
             const int shown = g.drag >= 0 ? g.drag : (g.hover >= H_BAND && g.hover <= H_BAND + eq::kBands ? g.hover - H_BAND : -1);
             const std::wstring preHint = L"Preamp: Gesamtlautstärke des Equalizers. Senke sie, wenn es verzerrt. Automatisch abgesenkt wird um " +
@@ -603,7 +612,7 @@ void Paint(HDC dc, const RECT& cr) {
             RECT line{ g.panel.left + S(14), g.panel.bottom - S(48), g.panel.right - S(14), g.panel.bottom - S(47) };
             FillRound(dc, line, 1, Blend(kCard, RGB(255, 255, 255), 12), Blend(kCard, RGB(255, 255, 255), 12));
             DrawText2(dc, g.fSmall, shown >= 0 ? kText : kTextDim, { g.panel.left + S(18), g.panel.bottom - S(44), g.btnReset.left - S(12), g.panel.bottom - S(4) },
-                      shown == eq::kBands ? preHint : shown >= 0 ? std::wstring(eq::BandHint(shown)) : std::wstring(L"Fahre mit der Maus über einen Regler: Hier steht, was er macht. Doppelklick setzt ihn auf 0."),
+                      shown == eq::kBands ? preHint : shown >= 0 ? std::wstring(eq::BandHint(shown)) : std::wstring(L"Maus über einen Regler: Erklärung. Doppelklick setzt ihn auf 0. Die Linie zeigt die Gesamtkurve."),
                       DT_LEFT | DT_VCENTER | DT_WORDBREAK);
             const bool rh = g.hover == H_RESET;
             FillRound(dc, g.btnReset, S(12), rh ? kCardHover : Blend(kCard, kBackground, 25), rh ? kBorderHot : kBorder);
@@ -648,7 +657,7 @@ void Paint(HDC dc, const RECT& cr) {
             DrawText2(dc, g.fBold, warn ? kOrange : kText, r, t, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         };
         smallBtn(g.btnBind, g.profiles[static_cast<size_t>(g.active)].device.empty() ? L"An aktuelles Gerät binden" : L"Gerät lösen", H_BIND, false);
-        smallBtn(g.btnImport, g.cfg.extra.empty() ? L"Kopfhörer-Korrektur laden …" : L"Korrektur entfernen", H_IMPORT, false);
+        smallBtn(g.btnImport, L"Filter & Korrektur …", H_IMPORT, false);
         smallBtn(g.btnDel, g.delArmed ? L"Wirklich löschen?" : L"Löschen", H_PROFDEL, g.delArmed);
         DrawButton(dc, g.confBtn, L"Geräte auswählen", false, g.hover == H_CONFIGURATOR, g.press == H_CONFIGURATOR && g.hover == H_CONFIGURATOR);
         {
@@ -729,7 +738,7 @@ void Activate(int id) {
     }
     else if (id == H_PROFNEW) BeginNewProfile();
     else if (id == H_BIND) BindDevice();
-    else if (id == H_IMPORT) ImportFilters();
+    else if (id == H_IMPORT) EditFilters();
     else if (id == H_PROFDEL) { DeleteProfile(); Layout(); }
     else if (id == H_DOWNLOAD) ShellExecuteW(g.hwnd, L"open", L"https://sourceforge.net/projects/equalizerapo/", nullptr, nullptr, SW_SHOWNORMAL);
     else if (id == H_RECHECK) { Recheck(); Layout(); }

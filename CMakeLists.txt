@@ -10,7 +10,7 @@ set(OFFICE_VER "0.4.0")
 set(QUICKCONVERT_VER "0.4.0")
 set(BOOST_VER "0.3.0")
 set(CLIP_VER "0.4.0")
-set(EQUALIZER_VER "0.4.0")
+set(EQUALIZER_VER "0.5.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -269,6 +269,8 @@ target_link_libraries(DuncansClip PRIVATE user32 gdi32 shell32 ole32 dwmapi gdip
 add_executable(DuncansEqualizer WIN32
     equalizer/main.cpp
     equalizer/EqLogic.cpp
+    equalizer/EqCurve.cpp
+    equalizer/FilterEditor.cpp
     src/Icons.cpp
     resources/equalizer.rc
 )
@@ -282,4 +284,4 @@ else()
     target_compile_options(DuncansEqualizer PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
     target_link_options(DuncansEqualizer PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
-target_link_libraries(DuncansEqualizer PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 comdlg32)
+target_link_libraries(DuncansEqualizer PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 comdlg32 comctl32 uxtheme)
