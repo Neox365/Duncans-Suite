@@ -1,6 +1,8 @@
 // Logik-Tests fuer Duncan's Equalizer (ohne Oberflaeche, ohne echtes Equalizer APO)
+#include "../EqCurve.h"
 #include "../EqLogic.h"
 
+#include <cmath>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -240,6 +242,85 @@ int main()
         CHECK(std::wstring(val) == L"\"C:/Programme/Test Ordner/DuncansEqualizer.exe\" --background");
         CHECK(SetAutostart(false, vexe, name) && !GetAutostart(name));
         CHECK(SetAutostart(false, vexe, name));                    // schon aus: kein Fehler
+    }
+
+    // ---- Frequenzkurve und eigene Filter (EqCurve) ----
+    {
+        const auto at = [](const Settings& s, double f) { return ResponseDb(s, { f })[0]; };
+        Settings flat;
+        flat.enabled = true;
+        CHECK(std::fabs(at(flat, 1000)) < 1e-9 && std::fabs(at(flat, 20)) < 1e-9);           // alles auf 0: gerade Linie
+
+        // Glocke +6 dB bei 1 kHz: dort genau +6, weit weg ungefaehr 0
+        Filter pk;
+        pk.type = "PK"; pk.fc = 1000; pk.gain = 6; pk.q = 1.0;
+        Settings a = flat;
+        a.extra = { FormatFilter(pk) };
+        CHECK(std::fabs(at(a, 1000) - 6.0) < 0.05 && std::fabs(at(a, 20)) < 0.3 && std::fabs(at(a, 20000)) < 1.0);
+        CHECK(at(a, 700) > 2 && at(a, 700) < 6 && std::fabs(at(a, 700) - at(a, 1430)) < 1.0);   // symmetrisch um die Mitte (logarithmisch)
+        pk.gain = -6;
+        a.extra = { FormatFilter(pk) };
+        CHECK(std::fabs(at(a, 1000) + 6.0) < 0.05);
+        pk.on = false;                                                                         // ausgeschalteter Filter wirkt nicht
+        a.extra = { FormatFilter(pk) };
+        CHECK(std::fabs(at(a, 1000)) < 1e-9);
+
+        // Hochpass 100 Hz: bei 100 Hz etwa -3 dB, darunter steil, darueber flach; Tiefpass spiegelbildlich
+        Filter hp; hp.type = "HP"; hp.fc = 100;
+        a.extra = { FormatFilter(hp) };
+        CHECK(std::fabs(at(a, 100) + 3.0) < 0.2 && at(a, 20) < -25 && std::fabs(at(a, 5000)) < 0.1);
+        Filter lp; lp.type = "LP"; lp.fc = 5000;
+        a.extra = { FormatFilter(lp) };
+        CHECK(std::fabs(at(a, 5000) + 3.0) < 0.2 && at(a, 20000) < -20 && std::fabs(at(a, 100)) < 0.1);
+
+        // Shelf-Filter und Kerbfilter
+        Filter ls; ls.type = "LSC"; ls.fc = 200; ls.gain = 5;
+        a.extra = { FormatFilter(ls) };
+        CHECK(std::fabs(at(a, 20) - 5.0) < 0.3 && std::fabs(at(a, 8000)) < 0.3);
+        Filter hs; hs.type = "HSC"; hs.fc = 6000; hs.gain = -4;
+        a.extra = { FormatFilter(hs) };
+        CHECK(std::fabs(at(a, 20000) + 4.0) < 0.5 && std::fabs(at(a, 100)) < 0.1);
+        Filter no; no.type = "NO"; no.fc = 1000; no.q = 8;
+        a.extra = { FormatFilter(no) };
+        CHECK(at(a, 1000) < -30 && std::fabs(at(a, 100)) < 0.1);
+
+        // Regler (Graphic-EQ): an den Stuetzstellen genau der Reglerwert, dazwischen verbunden; Bass-Schub hebt die Tiefen
+        Settings g = flat;
+        g.gains[5] = 6;   // 1 kHz
+        CHECK(std::fabs(at(g, 1000) - 6.0) < 1e-6 && std::fabs(at(g, 500)) < 1e-6 && at(g, 750) > 0 && at(g, 750) < 6);
+        Settings bass = flat;
+        bass.bass = true;
+        CHECK(at(bass, 30) > at(bass, 2000) + 2.5);
+        // Vorverstaerkung nur auf Wunsch in der Kurve
+        Settings pre = flat;
+        pre.gains[5] = 6;
+        CHECK(std::fabs(ResponseDb(pre, { 1000 }, true)[0] - (6.0 + (-6))) < 1e-6 && std::fabs(ResponseDb(pre, { 1000 }, false)[0] - 6.0) < 1e-6);
+        // Der Kurventext entspricht dem, was geschrieben wird: eingelesene AutoEq-Zeilen zaehlen mit
+        int ignored = 0;
+        Settings imp = flat;
+        imp.extra = ParseFilterFile("Preamp: -4.5 dB\nFilter 1: ON PK Fc 105 Hz Gain 5.3 dB Q 0.70\nFilter 2: ON HSC Fc 9000 Hz Gain -3.2 dB Q 0.7\n", ignored);
+        CHECK(ignored == 0 && imp.extra.size() == 3 && at(imp, 105) > 4.0 && at(imp, 20000) < -2.0);
+
+        // Zeilen lesen und schreiben
+        Filter f;
+        CHECK(ParseFilter("Filter: ON PK Fc 105 Hz Gain 5.3 dB Q 0.70", f) && f.type == "PK" && f.on && std::fabs(f.fc - 105) < 1e-9 && std::fabs(f.gain - 5.3) < 1e-9 && std::fabs(f.q - 0.7) < 1e-9);
+        CHECK(ParseFilter("Filter: OFF HP Fc 80 Hz", f) && !f.on && f.type == "HP" && f.gain == 0);
+        CHECK(ParseFilter("Filter: ON LSC Fc 110 Hz Gain 4 dB", f) && f.type == "LSC" && f.q == 0);   // ohne Q: Standard
+        CHECK(ParseFilter("Filter: ON PK Fc 99999 Hz Gain 99 dB Q 99", f) && f.fc == kMaxFc && f.gain == kMaxFilterGain && f.q == kMaxQ);   // begrenzt
+        CHECK(!ParseFilter("Preamp: -3 dB", f) && !ParseFilter("Filter: ON XX Fc 100 Hz", f) && !ParseFilter("Filter: ON PK Gain 3 dB", f) &&
+              !ParseFilter("Filter: ON PK Fc 100 Hz Gain 3 dB BW Oct 1", f) && !ParseFilter("Filter: ON PK Fc abc Hz", f) && !ParseFilter("", f));
+        Filter w;
+        w.type = "PK"; w.fc = 2500; w.gain = -3.5; w.q = 2;
+        const std::string line = FormatFilter(w);
+        Filter back;
+        CHECK(line == "Filter: ON PK Fc 2500.0 Hz Gain -3.5 dB Q 2.00" && ParseFilter(line, back) && back.type == "PK" && back.fc == 2500 && back.gain == -3.5 && back.q == 2);
+        Settings safe = flat;
+        safe.extra = { line, FormatFilter(hp), FormatFilter(ls), FormatFilter(no) };
+        const std::string cfg = BuildConfig(safe);
+        CHECK(Count(cfg, "Filter: ON") == 4);   // alle Zeilen passen durch die Sicherheitspruefung von BuildConfig
+        const auto fr = LogFreqs(5);
+        CHECK(fr.size() == 5 && std::fabs(fr[0] - 20) < 1e-9 && std::fabs(fr[4] - 20000) < 1e-6 && fr[2] > 600 && fr[2] < 650);
+        CHECK(FilterUsesGain("PK") && !FilterUsesGain("HP") && FilterUsesQ("NO") && !FilterUsesQ("LP"));
     }
 
     // Aufraeumen
