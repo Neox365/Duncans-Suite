@@ -67,6 +67,10 @@
 
 
 [DuncansTidy.exe]
+## 1.7.0 | 2026-11-08
+- Neu: Browser-Seite mit Verlauf und Cookies je Browser. Zusätzlich zum Cache gibt es für Chrome, Edge, Brave und Opera GX je eine Karte „Verlauf“ (besuchte Seiten, Favoriten-Symbole, Top-Sites) und „Cookies“, für Firefox eine Karte „Cookies“ (den Firefox-Verlauf fasst Tidy nicht an, er liegt dort zusammen mit den Lesezeichen). Die neuen Karten sind standardmäßig aus, der Schalter „Alle“ wählt sie nie mit, und vor dem Löschen steht, was passiert (Cookies: Du wirst bei Webseiten abgemeldet). Passwörter und Lesezeichen bleiben erhalten; laufende Browser bietet Tidy wie bisher vorher zu schließen an.
+- Neu: Einstellung „Sicher löschen (überschreiben)“. Ist sie an, überschreibt Tidy Dateien vor dem endgültigen Löschen einmal mit Zufallsdaten (Temp, Systemdateien, Browser-Daten, Auto-Clean; der Papierkorb ist nicht betroffen). Das dauert länger, und auf SSDs schützt es nur begrenzt, weil der Speicher Daten intern verschiebt.
+- Neu: Auf den Laufwerks-Karten überschreibt „Leerraum überschreiben“ den freien Speicher mit Windows’ eigenem Programm cipher (drei Durchgänge). Es läuft in einem eigenen Konsolenfenster mit Fortschritt, Schließen bricht ab, deine Dateien bleiben unberührt. Das kann Stunden dauern; auf SSDs bringt es wenig und verbraucht Schreibzyklen.
 ## 1.6.0 | 2026-11-06
 - Neu: Die Ultra-Tiefenreinigung nimmt Absturzabbilder von Windows mit (Minidump, LiveKernelReports und das große Speicherabbild MEMORY.DMP, Gruppe „Absturzabbilder“) sowie die Wartungsprotokolle CBS und DISM (Gruppe „Diagnose- und ETL-Protokolle“). Was Windows gerade benutzt, bleibt stehen; ohne Administratorrechte werden manche Dateien übersprungen.
 - Neu: Gruppe „Entwickler-Caches“ mit den Zwischenspeichern von npm, pip, NuGet (Web-Cache) und Yarn. Alles wird bei Bedarf neu geladen, das nächste Installieren dauert nur etwas länger. Die NuGet-Paketablage und Gradle bleiben bewusst unberührt.
