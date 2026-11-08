@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Crypto.h"
+#include "Totp.h"
 #include "UsbKey.h"
 
 namespace vault {
@@ -54,12 +55,13 @@ struct Entry {
     std::wstring id;
     Cat cat = Cat::Password;
     std::wstring title, user, secret, url, tags, notes;
+    std::wstring totp;   // 2FA-Schluessel (Base32) oder otpauth://totp/-Adresse; leer = kein Einmalcode
     long long created = 0, modified = 0;   // Unix-Sekunden
 };
 
 inline void Wipe(Entry& e)
 {
-    Wipe(e.id); Wipe(e.title); Wipe(e.user); Wipe(e.secret); Wipe(e.url); Wipe(e.tags); Wipe(e.notes);
+    Wipe(e.id); Wipe(e.title); Wipe(e.user); Wipe(e.secret); Wipe(e.url); Wipe(e.tags); Wipe(e.notes); Wipe(e.totp);
 }
 inline void Wipe(std::vector<Entry>& v)
 {
@@ -124,7 +126,7 @@ inline std::string Serialize(const std::vector<Entry>& entries)
     std::wstring out = L"#DuncansVault 1\n";
     for (const Entry& e : entries) {
         out += Esc(e.id) + L"\t" + std::to_wstring(static_cast<int>(e.cat)) + L"\t" + Esc(e.title) + L"\t" + Esc(e.user) + L"\t" + Esc(e.secret) + L"\t" +
-               Esc(e.url) + L"\t" + Esc(e.tags) + L"\t" + Esc(e.notes) + L"\t" + std::to_wstring(e.created) + L"\t" + std::to_wstring(e.modified) + L"\n";
+               Esc(e.url) + L"\t" + Esc(e.tags) + L"\t" + Esc(e.notes) + L"\t" + std::to_wstring(e.created) + L"\t" + std::to_wstring(e.modified) + L"\t" + Esc(e.totp) + L"\n";
     }
     std::string utf8 = ToUtf8(out);
     Wipe(out);
@@ -159,6 +161,7 @@ inline bool Parse(const std::string& utf8, std::vector<Entry>& entries)
         e.cat = static_cast<Cat>(std::clamp(c, 0, kCatCount - 1));
         e.title = Unesc(f[2]); e.user = Unesc(f[3]); e.secret = Unesc(f[4]); e.url = Unesc(f[5]); e.tags = Unesc(f[6]); e.notes = Unesc(f[7]);
         try { e.created = std::stoll(f[8]); e.modified = std::stoll(f[9]); } catch (...) {}
+        if (f.size() > 10) e.totp = Unesc(f[10]);   // aeltere Dateien haben das Feld nicht
         if (e.id.empty()) e.id = NewId();
         entries.push_back(std::move(e));
     }
@@ -271,7 +274,7 @@ inline bool ImportBrowserCsv(const std::wstring& csv, std::vector<Entry>& into, 
     };
     const int cName = col({L"name", L"title", L"account", L"login_name"}), cUrl = col({L"url", L"login_uri", L"website", L"web site", L"hostname"}),
               cUser = col({L"username", L"login_username", L"user name", L"login name", L"user", L"login", L"email", L"e-mail"}), cPass = col({L"password", L"login_password", L"pass"}),
-              cNote = col({L"note", L"notes", L"comments", L"extra"});
+              cNote = col({L"note", L"notes", L"comments", L"extra"}), cTotp = col({L"login_totp", L"totp", L"otp", L"otpauth"});
     if (cPass < 0) return false;
     auto at = [&](const std::vector<std::wstring>& r, int c) { return c >= 0 && c < static_cast<int>(r.size()) ? Trim(r[c]) : std::wstring(); };
     const long long now = static_cast<long long>(std::time(nullptr));
@@ -283,6 +286,7 @@ inline bool ImportBrowserCsv(const std::wstring& csv, std::vector<Entry>& into, 
         e.user = at(r, cUser);
         e.secret = r.size() > static_cast<size_t>(cPass) ? r[cPass] : std::wstring();
         e.notes = at(r, cNote);
+        { TotpParams tp; const std::wstring t = at(r, cTotp); if (ParseTotp(t, tp)) e.totp = t; Wipe(tp); }   // nur brauchbare 2FA-Schluessel uebernehmen
         e.title = at(r, cName);
         if (e.title.empty()) { const std::wstring lbl = DomainLabel(e.url); e.title = lbl.empty() ? e.url : lbl; }
         if (e.user.empty() && e.secret.empty()) continue;      // ohne Benutzername und Passwort gibt es nichts zu speichern

@@ -348,6 +348,9 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.7.0 | 2026-11-08
+- Neu: 2FA-Einmalcodes (TOTP). Im Eintrag lässt sich der 2FA-Schlüssel der Webseite (die Buchstabenfolge unter dem QR-Code, oder eine otpauth://-Adresse) hinterlegen. Die Detailansicht zeigt dann den 6-stelligen Code mit Restzeit-Balken, „Kopieren“ legt ihn für 15 Sekunden in die Zwischenablage. Unterstützt sind SHA-1, SHA-256 und SHA-512 mit 6 bis 8 Stellen und frei gewählter Periode; Steam Guard und Zähler-Codes (HOTP) gehören nicht dazu. Der Schlüssel liegt wie alles andere verschlüsselt im Tresor; ältere Tresordateien bleiben lesbar, ein älteres Programm würde den Schlüssel beim Speichern allerdings verwerfen. Beim Browser-Import wird die Spalte login_totp (Bitwarden) übernommen.
+- Neu: Passwort-Check (Zahnrad > Passwort-Check). Er zeigt häufig benutzte Passwörter (Liste und einfache Muster wie 123456 oder abcdefgh), schwache, mehrfach verwendete und seit über einem Jahr nicht geänderte Passwörter, jeweils mit Erklärung; ein Klick auf eine Zeile springt zum Eintrag. Die Detailansicht warnt außerdem, wenn dasselbe Passwort bei einem anderen Eintrag steht. Alles läuft im Tresor, es wird nichts ins Netz geschickt (ein Abgleich mit geleakten Passwörtern wäre nur online möglich und fehlt deshalb).
 ## 0.6.1 | 2026-11-04
 - Import: Der CSV-Import erkennt jetzt auch die Spalten des klassischen KeePass-Exports (Account, Login Name, Comments) und nimmt bei Proton Pass den Benutzernamen statt der E-Mail, wenn beide Spalten vorhanden sind.
 ## 0.6.0 | 2026-11-02
