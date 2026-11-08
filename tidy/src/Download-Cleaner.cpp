@@ -353,6 +353,44 @@ static void AddBrowserCaches(std::vector<fs::path>& v, int only = -1) {
     ec.clear();
 }
 
+// Verlauf (kind 1) und Cookies (kind 2) je Browser: einzelne Dateien in den Profilordnern. Passwoerter und Lesezeichen liegen woanders und bleiben erhalten.
+// Firefox: nur Cookies (der Verlauf steckt dort in places.sqlite, zusammen mit den Lesezeichen, und wird nicht angefasst).
+static void AddBrowserData(std::vector<fs::path>& v, int only, int kind) {
+    std::error_code ec;
+    const fs::path lad = KnownFolder(FOLDERID_LocalAppData), roam = KnownFolder(FOLDERID_RoamingAppData);
+    auto addFiles = [&](const fs::path& dir, std::initializer_list<const wchar_t*> names) {
+        for (const wchar_t* n : names) {
+            const fs::path f = dir / n;
+            if (fs::is_regular_file(f, ec)) v.push_back(f);
+            ec.clear();
+        }
+    };
+    auto profileFiles = [&](const fs::path& profile) {
+        if (kind == 1) addFiles(profile, {L"History", L"History-journal", L"Visited Links", L"Top Sites", L"Top Sites-journal", L"Favicons", L"Favicons-journal", L"Shortcuts", L"Shortcuts-journal"});
+        else addFiles(profile, {L"Cookies", L"Cookies-journal"});
+        if (kind == 2) addFiles(profile / L"Network", {L"Cookies", L"Cookies-journal"});
+    };
+    const fs::path chromium[] = {lad / L"Google" / L"Chrome" / L"User Data", lad / L"Microsoft" / L"Edge" / L"User Data", lad / L"BraveSoftware" / L"Brave-Browser" / L"User Data"};
+    for (int bi = 0; bi < 3; ++bi) {
+        if (only != bi) continue;
+        for (const auto& prof : fs::directory_iterator(chromium[bi], fs::directory_options::skip_permission_denied, ec)) {
+            const std::wstring pn = prof.path().filename().wstring();
+            if (_wcsicmp(pn.c_str(), L"Default") != 0 && _wcsnicmp(pn.c_str(), L"Profile ", 8) != 0) continue;
+            profileFiles(prof.path());
+        }
+        ec.clear();
+    }
+    if (only == 4) {
+        const fs::path og = lad / L"Opera Software" / L"Opera GX Stable", ogRoam = roam / L"Opera Software" / L"Opera GX Stable";
+        for (const fs::path& base : {og, og / L"Default", ogRoam, ogRoam / L"Default"}) profileFiles(base);
+    }
+    if (only == 3 && kind == 2) {
+        for (const auto& prof : fs::directory_iterator(roam / L"Mozilla" / L"Firefox" / L"Profiles", fs::directory_options::skip_permission_denied, ec))
+            addFiles(prof.path(), {L"cookies.sqlite", L"cookies.sqlite-wal", L"cookies.sqlite-shm"});
+        ec.clear();
+    }
+}
+
 static std::wstring AppCacheLabel(const fs::path& p);   // leer, wenn p kein App-Cache der Ultra-Tiefenreinigung ist
 // Anzeigename eines Eintrags: normalerweise der Dateiname, bei Browser-Caches "Browser · Profil · Ordner"
 static std::wstring ItemLabel(int cat, const fs::path& p) {
@@ -723,6 +761,33 @@ static std::wstring LongPath(const fs::path& p) {
     if (s.size() >= 240 && s.rfind(L"\\\\?\\", 0) != 0 && s.size() > 2 && s[1] == L':') s = L"\\\\?\\" + s;   // Pfade ueber MAX_PATH
     return s;
 }
+// Sicheres Loeschen (Einstellung): der Inhalt einer Datei wird vor dem endgueltigen Loeschen einmal mit Zufallsdaten ueberschrieben.
+// Auf SSDs und bei Dateisystemen, die Daten verschieben (Schattenkopien, Cloud-Ordner), schuetzt das nur begrenzt.
+static std::atomic<int> g_secureDel{-1};
+static bool SecureOn() {
+    int v = g_secureDel.load();
+    if (v < 0) { v = GetFlag(L"SecureDelete", false) ? 1 : 0; g_secureDel = v; }
+    return v != 0;
+}
+static void ShredContents(const std::wstring& lp, DWORD attrs) {
+    if (attrs & FILE_ATTRIBUTE_SPARSE_FILE) return;   // wuerde Gigabyte an Platz belegen
+    HANDLE f = CreateFileW(lp.c_str(), GENERIC_WRITE, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;           // in Benutzung: das Loeschen scheitert danach ohnehin
+    LARGE_INTEGER sz{};
+    if (GetFileSizeEx(f, &sz) && sz.QuadPart > 0) {
+        std::vector<BYTE> buf(1 << 16);
+        long long left = sz.QuadPart;
+        while (left > 0) {
+            const DWORD n = (DWORD)std::min<long long>(left, (long long)buf.size());
+            if (BCryptGenRandom(nullptr, buf.data(), n, BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) break;
+            DWORD w = 0;
+            if (!WriteFile(f, buf.data(), n, &w, nullptr) || w != n) break;
+            left -= n;
+        }
+        FlushFileBuffers(f);
+    }
+    CloseHandle(f);
+}
 static bool DeleteTree(const fs::path& p, int depth = 0) {
     const std::wstring lp = LongPath(p);
     const DWORD a = GetFileAttributesW(lp.c_str());
@@ -730,6 +795,7 @@ static bool DeleteTree(const fs::path& p, int depth = 0) {
     if (a & FILE_ATTRIBUTE_REPARSE_POINT) return (a & FILE_ATTRIBUTE_DIRECTORY) ? RemoveDirectoryW(lp.c_str()) != 0 : DeleteFileW(lp.c_str()) != 0;
     if (!(a & FILE_ATTRIBUTE_DIRECTORY)) {
         if (a & FILE_ATTRIBUTE_READONLY) SetFileAttributesW(lp.c_str(), a & ~FILE_ATTRIBUTE_READONLY);
+        if (SecureOn()) ShredContents(lp, a);
         return DeleteFileW(lp.c_str()) != 0;
     }
     if (depth > 200) return false;   // Schutz vor extrem tiefen Baeumen
@@ -844,7 +910,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.6.0";
+constexpr wchar_t kVersion[] = L"1.7.0";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -1102,7 +1168,7 @@ constexpr int kTiles = 8;  //Kacheln der Uebersicht: eine pro Seite ausser der U
 static_assert(kTiles == kPages - 2, "Eine Kachel pro Seite (ohne Uebersicht und Einstellungen)");
 constexpr int kShownTiles = CAT_N;  // auf der Uebersicht nur die vier Kernbereiche (Downloads, Temp, Systemdateien, Browser-Cache); der Rest ist ueber die Seitenleiste erreichbar
 static RECT g_tile[kTiles];
-constexpr int kSettings = 8;  // Schalter auf der Einstellungen-Seite
+constexpr int kSettings = 9;  // Schalter auf der Einstellungen-Seite
 constexpr int kSetAutoRow = 2, kSetTextExtra = 36, kSetPillBar = 50, kSetExtra = kSetTextExtra + kSetPillBar;  // Auto-Clean-Zeile: Platz fuer 2 Textzeilen plus Leiste mit den Auswahlmenues (34 hoch, 16 Abstand unten)
 static RECT g_setRow[kSettings];
 static bool g_set[kSettings];
@@ -1203,7 +1269,8 @@ static COLORREF ButtonColor(int id) {
 struct AutoEntry {
     std::wstring name, cmd, approvedSub, approvedValue;  // approvedSub: Run, Run32 oder StartupFolder
     std::wstring sub;                      // nur Browser-Eintraege: Untertitel (leer = Autostart-Eintrag)
-    std::vector<fs::path> paths;           // nur Browser-Eintraege: die Cache-Ordner
+    std::vector<fs::path> paths;           // nur Browser-Eintraege: die Cache-Ordner (bzw. bei Verlauf/Cookies die Dateien)
+    int bidx = -1, bkind = 0;              // nur Browser-Eintraege: Browser (0 Chrome ... 4 Opera GX) und Art (0 Cache, 1 Verlauf, 2 Cookies)
     unsigned long long bytes = 0;          // nur Browser-Eintraege: Groesse des Caches
     bool drive = false;                    // nur Laufwerks-Karten:
     int level = 0;                         //   Gesundheit: 0 = unbekannt, 1 = gut, 2 = Warnung, 3 = schlecht
@@ -1556,6 +1623,7 @@ static void StartBrowserScan(HWND h) {
         std::vector<AutoEntry> v;
         for (int b = 0; b < kBrowsers; ++b) {
             AutoEntry e;
+            e.bidx = b;
             e.name = kBrowserName[b];
             unsigned long long bytes = 0;
             {
@@ -1580,6 +1648,27 @@ static void StartBrowserScan(HWND h) {
             e.bytes = bytes;
             v.push_back(std::move(e));
         }
+        for (int kind = 1; kind <= 2; ++kind)   // danach je Browser Verlauf und Cookies, standardmaessig aus (Cookies loeschen meldet dich bei Webseiten ab)
+            for (int b : {0, 1, 2, 4, 3}) {
+                if (b == 3 && kind == 1) continue;   // Firefox-Verlauf nicht (liegt zusammen mit den Lesezeichen)
+                AutoEntry e;
+                e.bidx = b;
+                e.bkind = kind;
+                e.name = std::wstring(kBrowserName[b]) + L" · " + (kind == 1 ? Tr(L"Verlauf") : Tr(L"Cookies"));
+                AddBrowserData(e.paths, b, kind);
+                unsigned long long bytes = 0;
+                std::error_code ec;
+                for (const auto& f : e.paths) { const auto sz = fs::file_size(f, ec); if (!ec) bytes += sz; ec.clear(); }
+                e.bytes = bytes;
+                e.avail = !e.paths.empty();
+                e.orig = e.want = false;
+                e.warn = e.avail && IsRunning(kBrowserExe[b]);
+                e.sub = !e.avail ? std::wstring(Tr(L"Nichts gefunden"))
+                                 : FormatSize(bytes) + L"  ·  " + (kind == 1 ? Tr(L"Besuchte Seiten, Favoriten-Symbole und Top-Sites; Lesezeichen bleiben") : Tr(L"Du wirst bei Webseiten abgemeldet"));
+                if (e.warn) e.sub += Tr(L"  ·  läuft gerade, bitte schließen");
+                for (const auto& f : e.paths) e.cmd += (e.cmd.empty() ? L"" : L"\n") + f.wstring();
+                v.push_back(std::move(e));
+            }
         {
             std::lock_guard<std::mutex> lk(g_statMx);
             g_browTmp = std::move(v);
@@ -2067,6 +2156,27 @@ static int AutoRowAt(int y) {
     }
     return -1;
 }
+// Freien Speicher eines Laufwerks mit Windows' eigenem Programm cipher /w ueberschreiben (drei Durchgaenge: 0x00, 0xFF, Zufall).
+// Es laeuft in einem eigenen Konsolenfenster mit Fortschritt; das Fenster zu schliessen bricht ab. Dateien auf dem Laufwerk bleiben unberuehrt.
+static bool StartFreeSpaceWipe(HWND owner, wchar_t letter) {
+    wchar_t up = (wchar_t)towupper(letter);
+    std::wstring q = std::wstring(Tr(L"Der freie Speicher von Laufwerk ")) + up + Tr(L": wird dreimal überschrieben (0x00, 0xFF, Zufall), damit gelöschte Dateien nicht wiederherstellbar sind. Deine Dateien bleiben unberührt.\n@NDas kann je nach Größe Stunden dauern, belastet das Laufwerk und füllt es während des Laufs vorübergehend. Ein Konsolenfenster zeigt den Fortschritt; schließt du es, bricht der Vorgang ab.\n@NBei SSDs bringt das wenig (der Speicher verschiebt Daten intern) und verbraucht Schreibzyklen; dort hilft Verschlüsselung (BitLocker) mehr.\n@NStarten?");
+    if (AppBox(owner, q.c_str(), Tr(L"Freien Speicher überschreiben"), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return false;
+    wchar_t sys[MAX_PATH]{};
+    GetSystemDirectoryW(sys, MAX_PATH);
+    const std::wstring cmd = L"cmd.exe /c title Tidy - Freien Speicher ueberschreiben & \"" + std::wstring(sys) + L"\\cipher.exe\" /w:" + up + L":\\ & echo. & echo Fertig. & pause";
+    std::wstring line = cmd;
+    STARTUPINFOW si{sizeof si};
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, line.data(), nullptr, nullptr, FALSE, CREATE_NEW_CONSOLE, nullptr, nullptr, &si, &pi)) {
+        AppBox(owner, Tr(L"Windows konnte das Überschreiben nicht starten."), kApp, MB_OK | MB_ICONWARNING);
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return true;
+}
+
 static LRESULT CALLBACK AutoListProc(HWND h, UINT m, WPARAM w, LPARAM l) {
     const int step = D(RowH() + kAGap);
     switch (m) {
@@ -2121,11 +2231,15 @@ static LRESULT CALLBACK AutoListProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 FillRound(dc, fill, used > 0.9 ? RGB(248, 113, 113) : used > 0.75 ? RGB(251, 191, 36) : RGB(79, 140, 255), 8);
                 DrawFit(dc, g_fSm, kSub, lx, top + 56, rx, FormatSize(e.freeB) + Tr(L" frei von ") + FormatSize(e.totalB) + L"  ·  " + e.sub);
                 const COLORREF hc = e.level == 1 ? kGood : e.level == 2 ? kWarn : e.level == 3 ? kBad : kMuted;
-                DrawFit(dc, g_fSm, hc, lx, top + 78, rx - 180, L"●  " + e.health);
-                RECT hr2{rx - 175, top + 78, rx, top + 100};
+                DrawFit(dc, g_fSm, hc, lx, top + 78, rx - 440, L"●  " + e.health);
+                RECT hr2{rx - 430, top + 78, rx - 215, top + 100};
                 SelectObject(dc, g_fSm);
                 SetTextColor(dc, hot ? kText : kMuted);
                 DrawTextW(dc, Tr(L"Klick: größte Dateien"), -1, &hr2, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
+                RECT wp{rx - 205, top + 72, rx, top + 98};   // Knopf: freien Speicher ueberschreiben (Klick siehe WM_LBUTTONDOWN)
+                FillRound(dc, wp, hot ? kSwitchOffHot : kSwitchOff, 26);
+                SetTextColor(dc, kText);
+                DrawTextW(dc, Tr(L"Leerraum überschreiben"), -1, &wp, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
                 continue;
             }
             if (g_page == kUninstPage) {  // Programm: Symbol, Name, Herausgeber/Version/Datum, Groesse und Deinstallieren-Knopf
@@ -2250,6 +2364,16 @@ static LRESULT CALLBACK AutoListProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if ((g_aHotToggle || ((g_page == kDrivePage || g_page == kAutoPage) && g_aHover >= 0)) && LOWORD(l) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32649))); return TRUE; }
         break;
     case WM_LBUTTONDOWN:
+        if (g_page == kDrivePage && g_aHover >= 0 && g_aHover < (int)g_autoVis.size()) {   // Knopf "Leerraum ueberschreiben" rechts unten auf der Karte
+            RECT cr2;
+            GetClientRect(h, &cr2);
+            const int px = (short)LOWORD(l), py = (short)HIWORD(l) + g_aScroll - D(RowTopL(g_aHover));
+            if (px >= cr2.right - D(24 + 205) && px <= cr2.right - D(24) && py >= D(72) && py <= D(98)) {
+                const AutoEntry& we = Cur()[g_autoVis[g_aHover]];
+                if (!we.name.empty()) StartFreeSpaceWipe(GetParent(h), we.name[0]);
+                return 0;
+            }
+        }
         if (g_page == kDrivePage && g_aHover >= 0 && g_aHover < (int)g_autoVis.size() && !g_topBusy) {  // Laufwerks-Karte: groesste Dateien suchen
             const AutoEntry& de = Cur()[g_autoVis[g_aHover]];
             if (!de.name.empty()) PostMessageW(GetParent(h), WM_TOP_FILES, (WPARAM)de.name[0], 0);
@@ -2781,6 +2905,7 @@ static void LoadSettings() {
     g_set[4] = g_animOn;
     g_set[5] = DeepOn();
     g_set[6] = GetFlag(L"DupeScan", true);
+    g_set[7] = SecureOn();
 }
 
 static void SetPage(HWND h, int p) {
@@ -3203,7 +3328,7 @@ static void PaintWindow(HWND h) {
     if (g_page == kBrowserPage) {
         unsigned long long bb = 0;
         int found = 0;
-        for (const auto& e : g_brow) { bb += e.avail ? e.bytes : 0; found += e.avail ? 1 : 0; }
+        for (const auto& e : g_brow) { if (e.bkind) continue; bb += e.avail ? e.bytes : 0; found += e.avail ? 1 : 0; }
         status = g_browLoading ? std::wstring(Tr(L"Analyse läuft …  ·  nur Cache, nichts Persönliches"))
                                : std::to_wstring(found) + Tr(L" von 5 Browsern gefunden  ·  ") + FormatSize(bb) + Tr(L" Cache  ·  wird endgültig gelöscht");
     }
@@ -3324,7 +3449,7 @@ static void PaintWindow(HWND h) {
         }
     } else if (g_page == kSettingsPage) {
         static const wchar_t* kSetTitle[kSettings] = {L"Mit Windows starten", L"Im Hintergrund weiterlaufen", L"Downloads automatisch aufräumen",
-                                                          L"Helles Design", L"Besen-Animation", L"Ultra-Tiefenreinigung", L"Doppelte Downloads erkennen", L"Sprache / Language"};
+                                                          L"Helles Design", L"Besen-Animation", L"Ultra-Tiefenreinigung", L"Doppelte Downloads erkennen", L"Sicher löschen (überschreiben)", L"Sprache / Language"};
         static const wchar_t* kSetText[kSettings] = {
             L"Startet beim Anmelden unsichtbar im System-Tray (neben der Uhr).",
             L"X minimiert in den Tray. Beenden über „Exit“ oder Rechtsklick auf das Symbol.",
@@ -3333,8 +3458,9 @@ static void PaintWindow(HWND h) {
             L"Der Besen in der Kopfzeile fegt beim Start und beim Aufräumen.",
             L"Nimmt bei den Systemdateien und beim Optimieren alles mit auf, was geht: Shader-Caches, Windows-Update- und Treiber-Installer-Reste, Fehlerberichte, Windows-Temp, App-Caches, Store-Reste und ETL-Protokolle. Auf der Seite Systemdateien kommen auf Wunsch DISM, Schattenkopien und Ereignisprotokolle dazu (jeweils mit Rückfrage und Administratorrechten). Vorher zeigt Tidy eine Vorschau. Auto-Clean und Schnell-Reinigung bleiben beim Standard.",
             L"Sucht im Downloads-Ordner nach Dateien mit gleichem Inhalt (nicht nur gleichem Namen) und zeigt die überzähligen Kopien als eigene Gruppe „Doppelte Dateien“. Die älteste Kopie bleibt immer, die übrigen kommen wie alle Downloads in den Papierkorb. Große Downloads brauchen beim Öffnen der Seite etwas länger.",
+            L"Überschreibt Dateien vor dem endgültigen Löschen einmal mit Zufallsdaten, damit sie sich nicht wiederherstellen lassen. Gilt für alles, was Tidy endgültig löscht (Temp, Systemdateien, Browser-Daten, Auto-Clean), nicht für den Papierkorb. Dauert deutlich länger. Auf SSDs schützt es nur begrenzt, weil der Speicher Daten intern verschiebt; dort hilft Verschlüsselung (BitLocker) mehr.",
             L"Sprache der Oberfläche. Ein Klick öffnet die Auswahl."};
-        static const wchar_t* kSetGlyph[kSettings] = {L"\xE7E8", L"\xE73F", L"\xE777", L"\xE706", L"\xE768", L"\xE74D", L"\xE8C8", L"\xE774"};  // E706 = Sonne, E768 = Play, E8C8 = Kopie
+        static const wchar_t* kSetGlyph[kSettings] = {L"\xE7E8", L"\xE73F", L"\xE777", L"\xE706", L"\xE768", L"\xE74D", L"\xE8C8", L"\xE72E", L"\xE774"};  // E706 = Sonne, E768 = Play, E8C8 = Kopie
         for (int i = 0; i < kSettings; ++i) {
             const RECT& r = g_setRow[i];
             const int rh = r.bottom - r.top - (i == kSetAutoRow ? kSetExtra : 0);  // Hoehe ohne die Leiste mit den Auswahlmenues
@@ -3749,14 +3875,18 @@ static void DoClean(HWND h) {
         std::vector<fs::path> picked;
         std::wstring names, running;
         std::vector<int> runIdx;  // gewaehlte Browser, die gerade laufen (live geprueft, nicht vom letzten Scan)
+        bool anyHistory = false, anyCookies = false;
         for (int b = 0; b < (int)g_brow.size(); ++b) {
             const auto& e = g_brow[b];
             if (!e.avail || !e.want) continue;
             picked.insert(picked.end(), e.paths.begin(), e.paths.end());
             names += L"\n • " + e.name + L" (" + FormatSize(e.bytes) + L")";
-            if (b < kBrowsers && IsRunning(kBrowserExe[b])) {
-                running += (running.empty() ? L"" : L", ") + e.name;
-                runIdx.push_back(b);
+            anyHistory = anyHistory || e.bkind == 1;
+            anyCookies = anyCookies || e.bkind == 2;
+            const int bi = e.bidx;
+            if (bi >= 0 && bi < kBrowsers && IsRunning(kBrowserExe[bi]) && std::find(runIdx.begin(), runIdx.end(), bi) == runIdx.end()) {
+                running += (running.empty() ? L"" : L", ") + std::wstring(kBrowserName[bi]);
+                runIdx.push_back(bi);
             }
         }
         if (picked.empty()) {
@@ -3772,11 +3902,14 @@ static void DoClean(HWND h) {
                 SetCursor(LoadCursorW(nullptr, MAKEINTRESOURCEW(32512)));
                 running.clear();  // nur die, die sich nicht schliessen liessen (z. B. Hintergrundprozess)
                 for (int b : runIdx)
-                    if (IsRunning(kBrowserExe[b])) running += (running.empty() ? L"" : L", ") + g_brow[b].name;
+                    if (IsRunning(kBrowserExe[b])) running += (running.empty() ? L"" : L", ") + std::wstring(kBrowserName[b]);
             }
         }
-        std::wstring q = Tr(L"Der Cache folgender Browser wird ENDGÜLTIG gelöscht:\n") + names +
-                         Tr(L"\n\nCookies, Passwörter, Verlauf und Lesezeichen bleiben erhalten.");
+        std::wstring q = (anyHistory || anyCookies) ? std::wstring(Tr(L"Diese Browser-Daten werden ENDGÜLTIG gelöscht:\n")) + names
+                               : std::wstring(Tr(L"Der Cache folgender Browser wird ENDGÜLTIG gelöscht:\n")) + names;
+        if (anyCookies) q += Tr(L"\n\nCookies: Du wirst bei Webseiten abgemeldet und musst dich neu anmelden.");
+        if (anyHistory) q += Tr(L"\n\nVerlauf: Besuchte Seiten, Favoriten-Symbole und Top-Sites verschwinden.");
+        q += (anyHistory || anyCookies) ? std::wstring(Tr(L"\n\nPasswörter und Lesezeichen bleiben erhalten.")) : std::wstring(Tr(L"\n\nCookies, Passwörter, Verlauf und Lesezeichen bleiben erhalten."));
         if (!running.empty()) q += Tr(L"\n\nHinweis: ") + running + Tr(L" läuft noch. Benutzte Dateien bleiben dann erhalten; am besten vorher schließen.");
         if (AppBox(h, q.c_str(), kApp, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
         StartClean(h, std::move(picked), true, false, CAT_BROWSER);
@@ -5097,6 +5230,12 @@ static void ToggleSetting(HWND h, int i) {
         SetDeep(h, !DeepOn());
     } else if (i == 6) {
         SetFlag(L"DupeScan", !GetFlag(L"DupeScan", true));
+    } else if (i == 7) {
+        const bool on = !SecureOn();
+        if (on && AppBox(h, Tr(L"Beim endgültigen Löschen werden Dateien vorher einmal mit Zufallsdaten überschrieben.\n\nDas dauert bei großen Mengen deutlich länger. Auf SSDs schützt es nur begrenzt, weil der Speicher Daten intern verschiebt; dort hilft Verschlüsselung (BitLocker) mehr. Der Papierkorb ist nicht betroffen.\n\nEinschalten?"),
+                         kApp, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+        SetFlag(L"SecureDelete", on);
+        g_secureDel = on ? 1 : 0;
     } else if (i == kSettings - 1) {
         const RECT& r = g_setRow[i];  // Auswahlfeld mit allen Sprachen (gleiche Lage wie beim Zeichnen)
         const int rh = r.bottom - r.top;
@@ -5648,8 +5787,9 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             InvalidateRect(h, nullptr, FALSE);
         } else if (id == ID_TOGGLE && (g_page == kAutoPage || g_page == kBrowserPage || (g_page >= 1 && g_page <= 3))) {
             bool anyOff = false;
-            for (int i : g_autoVis) if (Cur()[i].avail && !Cur()[i].want) anyOff = true;
-            for (int i : g_autoVis) if (Cur()[i].avail) Cur()[i].want = anyOff;
+            const bool brow = g_page == kBrowserPage;   // dort nur die Caches: Cookies und Verlauf werden nie versehentlich mitgewaehlt
+            for (int i : g_autoVis) if (Cur()[i].avail && !(brow && Cur()[i].bkind) && !Cur()[i].want) anyOff = true;
+            for (int i : g_autoVis) if (Cur()[i].avail && !(brow && Cur()[i].bkind)) Cur()[i].want = anyOff;
             InvalidateRect(g_alist, nullptr, FALSE);
             InvalidateRect(h, nullptr, FALSE);
         } else if (id == ID_CLEAN) {
