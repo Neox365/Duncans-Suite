@@ -27,6 +27,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "CardDesigner.h"
 #include "ClipboardCopy.h"
 #include "Duplicates.h"
 #include "ImageOps.h"
@@ -35,7 +36,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.0"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.5.0"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -69,7 +70,7 @@ enum MenuId {
     MENU_SIZE_S = 100, MENU_SIZE_M, MENU_SIZE_L, MENU_OVERWRITE = 110, MENU_ABOUT = 120,
     MENU_SORT_NAME = 130, MENU_SORT_DATE, MENU_SORT_SIZE, MENU_SORT_TAKEN, MENU_SORT_DESC = 135,
     MENU_B_STRIP_COPY = 140, MENU_B_STRIP_OVERWRITE, MENU_B_RESIZE, MENU_B_ROT_CW, MENU_B_ROT_CCW,
-    MENU_B_DUPES, MENU_B_DUPES_END, MENU_B_RENAME = 147, MENU_B_RENAME_UNDO,
+    MENU_B_DUPES, MENU_B_DUPES_END, MENU_B_RENAME = 147, MENU_B_RENAME_UNDO, MENU_B_CARD,
     MENU_JUMP = 1000,   // Zeitleiste: 1000 + laufende Nummer des Monats
     MENU_FILTER_GPS = 150, MENU_RATING_1 = 155, MENU_RATING_3, MENU_RATING_5,
     MENU_SLIDE_2 = 160, MENU_SLIDE_4, MENU_SLIDE_6, MENU_SLIDE_10,
@@ -2545,6 +2546,7 @@ void App::ShowBatchMenu() {
     if (!m_lastRename.empty())
         AppendMenuW(m, MF_STRING, MENU_B_RENAME_UNDO, (L"Letzte Umbenennung rückgängig (" + std::to_wstring(m_lastRename.size()) + L" Dateien)").c_str());
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, MENU_B_CARD, L"Karte gestalten … (Grußkarte, Collage, Einladung)");
     AppendMenuW(m, MF_STRING | (m_dupRunning ? MF_GRAYED : 0), MENU_B_DUPES,
                 L"Doppelte und ähnliche Bilder im Ordner suchen");
     if (m_dupMode) AppendMenuW(m, MF_STRING, MENU_B_DUPES_END, L"Duplikatansicht beenden");
@@ -2562,6 +2564,12 @@ void App::ShowBatchMenu() {
         case MENU_B_ROT_CCW: StartBatch(BatchKind::RotateCcw); break;
         case MENU_B_RENAME: RenameByDate(); break;
         case MENU_B_RENAME_UNDO: UndoRename(); break;
+        case MENU_B_CARD: {
+            std::vector<std::wstring> paths;
+            for (int i : SelectedIdx()) paths.push_back(m_items[i].path);
+            card::ShowDesigner(m_hwnd, paths);
+            break;
+        }
         case MENU_B_DUPES: StartDupSearch(); break;
         case MENU_B_DUPES_END: EndDupMode(); break;
     }
