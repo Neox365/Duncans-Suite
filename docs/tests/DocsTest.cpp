@@ -5,6 +5,7 @@
 #include <fstream>
 #include <string>
 
+#include "../Export.h"
 #include "../EInvoice.h"
 #include "../Invoice.h"
 #include "../InvoiceText.h"
@@ -515,9 +516,36 @@ static void eInvoice() {
     CHECK(IsDocFile(L"x/rechnung.XML") && IsDocFile(L"a.pdf") && !IsDocFile(L"a.txt"));
 }
 
+static void csvExport() {
+    CHECK(docs::CsvAmount(123456) == L"1234,56" && docs::CsvAmount(-5) == L"-0,05" && docs::CsvAmount(0) == L"0,00" && docs::CsvAmount(100000000) == L"1000000,00");
+    CHECK(docs::CsvAmount(docs::kUnknown).empty());
+    CHECK(docs::CsvField(L"einfach") == L"einfach" && docs::CsvField(L"a;b") == L"\"a;b\"" && docs::CsvField(L"sie sagte \"hi\"") == L"\"sie sagte \"\"hi\"\"\"" &&
+          docs::CsvField(L"zwei\nZeilen") == L"\"zwei\nZeilen\"");
+    CHECK(docs::CsvText(L"=SUMME(A1)") == L"'=SUMME(A1)" && docs::CsvText(L"+49 123") == L"'+49 123" && docs::CsvText(L"@x") == L"'@x" && docs::CsvText(L"normal") == L"normal" &&
+          docs::CsvText(L"a\tb") == L"a b" && docs::CsvText(L"").empty());
+
+    std::vector<docs::Doc> v(3);
+    v[0].rel = L"2026\\Telekom\\Rechnung_Mai.pdf"; v[0].name = L"Rechnung_Mai.pdf"; v[0].year = L"2026"; v[0].creditor = L"Telekom";
+    v[0].m.cents = 12990; v[0].m.due = L"2026-06-15"; v[0].m.status = docs::Status::Open; v[0].m.tags = L"vertrag handy"; v[0].m.note = L"Zeile; mit Semikolon";
+    v[1].rel = L"2026\\Muster GmbH\\Rechnung_RE-2026-001.pdf"; v[1].name = L"Rechnung_RE-2026-001.pdf"; v[1].year = L"2026"; v[1].creditor = L"Muster GmbH";
+    v[1].m.cents = 1234567; v[1].m.status = docs::Status::Paid; v[1].m.income = true;
+    v[2].rel = L"Fixkosten.pdf"; v[2].name = L"Fixkosten.pdf"; v[2].creditor = L"=Cmd|' /C calc'!A0";
+    v[2].m.status = docs::Status::Installment; v[2].m.rate = L"Rate 3 von 12";
+    const std::string csv = docs::BuildCsv(v);
+    CHECK(csv.compare(0, 3, "\xEF\xBB\xBF") == 0);                                              // BOM fuer Excel
+    const std::wstring w = changelog::Utf8ToWide(csv.substr(3));
+    std::vector<std::wstring> lines;
+    for (size_t p = 0; p < w.size();) { size_t e = w.find(L"\r\n", p); if (e == std::wstring::npos) break; lines.push_back(w.substr(p, e - p)); p = e + 2; }
+    CHECK(lines.size() == 4 && lines[0] == docs::kCsvHeader);
+    CHECK(lines[1] == L"Rechnung_Mai.pdf;2026\\Telekom;2026;Telekom;129,90;15.06.2026;Offen;Ausgabe;;vertrag handy;\"Zeile; mit Semikolon\"");
+    CHECK(lines[2] == L"Rechnung_RE-2026-001.pdf;2026\\Muster GmbH;2026;Muster GmbH;12345,67;;Bezahlt;Einnahme;;;");
+    CHECK(lines[3].find(L";'=Cmd|") != std::wstring::npos && lines[3].find(L";;Ratenzahlung;Ausgabe;Rate 3 von 12;;") != std::wstring::npos);   // keine Formel, kein Betrag, Rate nur bei Ratenzahlung
+    CHECK(docs::BuildCsv({}) == std::string("\xEF\xBB\xBF") + docs::WideToUtf8(std::wstring(docs::kCsvHeader) + L"\r\n"));
+}
+
 int main() {
     amounts(); dates(); names(); indexAndScan(); textEdit(); dateMask(); pdf(); invoiceNumbers(); smallBusiness(); installmentRate(); closingAndFooter();
-    tagsStatsImport(); invoiceText(); dueReminder(); eInvoice();
+    tagsStatsImport(); invoiceText(); dueReminder(); eInvoice(); csvExport();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }

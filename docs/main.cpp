@@ -10,6 +10,7 @@
 #include <dwrite.h>
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <commdlg.h>
 #include <shlobj.h>
 #include <shlwapi.h>
 #include <wrl/client.h>
@@ -26,6 +27,7 @@
 #include <vector>
 
 #include "EInvoice.h"
+#include "Export.h"
 #include "Invoice.h"
 #include "InvoiceText.h"
 #include "PdfText.h"
@@ -35,7 +37,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.8.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -64,7 +66,7 @@ enum Id {
 };
 constexpr int kMaxTagChips = 23;
 enum MenuId {
-    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND,
+    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND, M_EXPORT,
     C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE, C_INCOME, C_EXPENSE, C_TAGS
 };
 
@@ -369,6 +371,7 @@ private:
     void ShowInExplorer(const docs::Doc& d);
     void ChangeRoot();
     void ShowGearMenu();
+    void ExportCsv();
     void ShowContextMenu(int x, int y);
     void OnDropFiles(HDROP drop);
     void SetNote(const std::wstring& s) { m_note = s; }
@@ -2136,6 +2139,29 @@ void App::ApplyInvoice() {
 // Menues
 // ============================================================================
 
+// Die Belege der aktuellen Ansicht (Suche, Ordner, Tags und Karten-Filter gelten) als CSV fuer Excel oder den Steuerberater speichern
+void App::ExportCsv() {
+    std::vector<docs::Doc> rows;
+    for (int i : m_view) rows.push_back(m_all[i]);
+    if (rows.empty()) { SetNote(L"Keine Belege in der Ansicht."); return; }
+    wchar_t file[MAX_PATH] = L"Belege.csv";
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = m_hwnd;
+    ofn.lpstrFilter = L"CSV-Datei für Excel (*.csv)\0*.csv\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"csv";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&ofn)) return;
+    const std::string csv = docs::BuildCsv(rows);
+    std::ofstream o(fs::path(file), std::ios::binary | std::ios::trunc);
+    if (!o) { SetNote(L"Die CSV-Datei konnte nicht geschrieben werden."); return; }
+    o.write(csv.data(), (std::streamsize)csv.size());
+    o.close();
+    SetNote(std::to_wstring(rows.size()) + L" Belege exportiert: " + fs::path(file).filename().wstring() + L"  \u00B7  Semikolon-getrennt, öffnet sich direkt in Excel");
+}
+
 void App::ShowGearMenu() {
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, M_ROOT, L"Rechnungsordner ändern …");
@@ -2149,6 +2175,7 @@ void App::ShowGearMenu() {
                 haveReader ? L"PDFs im Duncan's PDF Reader \u00F6ffnen" : L"PDFs im Duncan's PDF Reader \u00F6ffnen (nicht gefunden)");
     AppendMenuW(m, MF_STRING | (RemindAutostartOn() ? MF_CHECKED : 0), M_REMIND, L"Beim Windows-Start an fällige Rechnungen erinnern");
     AppendMenuW(m, MF_STRING, M_RESCAN, L"Neu einlesen (F5)");
+    AppendMenuW(m, MF_STRING | (m_view.empty() ? MF_GRAYED : 0), M_EXPORT, L"Belege der aktuellen Ansicht als CSV exportieren …");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, M_ABOUT, L"Über Oggys Docs-Files");
     POINT pt{(LONG)rcTop.right - (LONG)(16 * k), (LONG)rcTop.bottom};
@@ -2167,6 +2194,7 @@ void App::ShowGearMenu() {
             else SetNote(L"Die Erinnerung konnte nicht geändert werden.");
             break;
         case M_RESCAN: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); break;
+        case M_EXPORT: ExportCsv(); break;
         case M_ABOUT: aboutcard::Open(m_about, m_hwnd); break;
     }
     Invalidate();

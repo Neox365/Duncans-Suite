@@ -4,7 +4,7 @@ project(DuncansDriverUpdater VERSION 1.4.0 LANGUAGES CXX RC)
 set(SUITE_VER "1.1.42")
 set(PDF_VER "1.5.0")
 set(PHOTO_VER "0.5.0")
-set(DOCS_VER "0.7.0")
+set(DOCS_VER "0.8.0")
 set(VAULT_VER "0.7.0")
 set(OFFICE_VER "0.4.0")
 set(QUICKCONVERT_VER "0.4.0")
@@ -172,7 +172,7 @@ else()
     target_compile_options(OggysDocsFiles PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type -Os -ffunction-sections -fdata-sections)
     target_link_options(OggysDocsFiles PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
-target_link_libraries(OggysDocsFiles PRIVATE d2d1 dwrite ole32 shell32 shlwapi uuid dwmapi user32 gdi32)
+target_link_libraries(OggysDocsFiles PRIVATE d2d1 dwrite ole32 shell32 shlwapi uuid dwmapi user32 gdi32 comdlg32)
 
 # ---- Duncan's Vault: lokaler Passwort- und Lizenz-Manager (Direct2D/DirectWrite, Verschluesselung ueber Windows CNG) ----
 add_executable(DuncansVault WIN32
