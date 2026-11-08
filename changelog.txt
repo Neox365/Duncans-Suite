@@ -262,6 +262,8 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.5.0 | 2026-11-08
+- Neu: Karte gestalten (Stapelverarbeitung > Karte gestalten). Aus den markierten Fotos entsteht eine Grußkarte, Einladung oder Collage: acht Layouts von einem bis sechs Fotos, Papierformate 10 × 15, 13 × 18, A6, A5, A4 und Quadrat (hoch oder quer), einstellbarer Rand, Abstand, runde Ecken und weißer Fotorahmen. Der Hintergrund ist eine Farbe, ein Farbverlauf oder das erste Foto unscharf. Dazu kommt ein Text mit Schriftart, Größe, Farbe, Fett, Kursiv und Schatten, der sich in der Vorschau mit der Maus verschieben lässt (Doppelklick setzt ihn zurück), auf Wunsch in einem Schreibfeld unter den Fotos. Gespeichert wird als JPG oder PNG in Druckauflösung (300 dpi). Die Vorlagen sind eigene Layouts, es gibt keine Clipart-Sammlung.
 ## 0.4.0 | 2026-11-06
 - Neu: Kopieren mit Strg+C (auch im Rechtsklick-Menü). Die markierten Bilder landen als Dateien in der Zwischenablage und lassen sich im Explorer, in Chat-Programmen (WhatsApp, Discord) oder in Mails mit Strg+V einfügen. Bei genau einem Bild liegt es zusätzlich als Bild bereit, damit es auch in Paint, Word oder Bildbearbeitung einfügbar ist (Transparenz wird weiß). Im Viewer kopiert Strg+C das angezeigte Bild.
 ## 0.3.5 | 2026-11-05

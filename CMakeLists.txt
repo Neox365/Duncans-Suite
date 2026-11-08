@@ -3,7 +3,7 @@ project(DuncansDriverUpdater VERSION 1.4.0 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
 set(SUITE_VER "1.1.42")
 set(PDF_VER "1.5.0")
-set(PHOTO_VER "0.4.0")
+set(PHOTO_VER "0.5.0")
 set(DOCS_VER "0.7.0")
 set(VAULT_VER "0.6.1")
 set(OFFICE_VER "0.4.0")
@@ -141,6 +141,8 @@ add_executable(DuncansPhotoCommander WIN32
     photo/main.cpp
     photo/ImageOps.cpp
     photo/ThumbnailLoader.cpp
+    photo/Card.cpp
+    photo/CardDesigner.cpp
     resources/photo.rc
 )
 target_compile_definitions(DuncansPhotoCommander PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
@@ -153,7 +155,7 @@ else()
     target_compile_options(DuncansPhotoCommander PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type -Os -ffunction-sections -fdata-sections)
     target_link_options(DuncansPhotoCommander PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
-target_link_libraries(DuncansPhotoCommander PRIVATE d2d1 dwrite windowscodecs ole32 oleaut32 shell32 shlwapi uuid dwmapi user32 gdi32 propsys comctl32)
+target_link_libraries(DuncansPhotoCommander PRIVATE d2d1 dwrite windowscodecs ole32 oleaut32 shell32 shlwapi uuid dwmapi user32 gdi32 propsys comctl32 gdiplus comdlg32 uxtheme)
 
 # ---- Oggys Docs-Files: Rechnungs-Manager und Rechnungs-Generator (Direct2D/DirectWrite) ----
 add_executable(OggysDocsFiles WIN32
