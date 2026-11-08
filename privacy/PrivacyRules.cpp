@@ -1,6 +1,7 @@
 #include "PrivacyRules.h"
 
 #include <shlobj.h>
+#include <taskschd.h>
 #include <winioctl.h>
 
 #include "../src/SuiteSafety.h"
@@ -230,6 +231,78 @@ namespace {
         return true;
     }
 
+    // ---- Geplante Aufgaben (Aufgabenplanung per COM; unabhaengig von der Windows-Sprache) ----
+    struct TaskState {
+        bool exists = false;
+        bool enabled = false;
+    };
+
+    struct ComScope {
+        bool ok;
+        ComScope() { ok = SUCCEEDED(CoInitializeEx(nullptr, COINIT_MULTITHREADED)); }   // schon anders initialisiert (RPC_E_CHANGED_MODE): COM bleibt trotzdem nutzbar
+        ~ComScope() { if (ok) CoUninitialize(); }
+    };
+
+    bool OpenTask(const TaskOp& t, IRegisteredTask** task) {
+        *task = nullptr;
+        ITaskService* svc = nullptr;
+        if (FAILED(CoCreateInstance(CLSID_TaskScheduler, nullptr, CLSCTX_INPROC_SERVER, IID_ITaskService, reinterpret_cast<void**>(&svc)))) return false;
+        VARIANT none;
+        VariantInit(&none);
+        bool ok = false;
+        if (SUCCEEDED(svc->Connect(none, none, none, none))) {
+            ITaskFolder* folder = nullptr;
+            BSTR bf = SysAllocString(t.folder);
+            if (SUCCEEDED(svc->GetFolder(bf, &folder))) {
+                BSTR bn = SysAllocString(t.name);
+                ok = SUCCEEDED(folder->GetTask(bn, task));
+                SysFreeString(bn);
+                folder->Release();
+            }
+            SysFreeString(bf);
+        }
+        svc->Release();
+        return ok;
+    }
+
+    TaskState ReadTask(const TaskOp& t) {
+        ComScope com;
+        TaskState st;
+        IRegisteredTask* task = nullptr;
+        if (OpenTask(t, &task)) {
+            VARIANT_BOOL en = VARIANT_FALSE;
+            if (SUCCEEDED(task->get_Enabled(&en))) { st.exists = true; st.enabled = en != VARIANT_FALSE; }
+            task->Release();
+        }
+        return st;
+    }
+
+    bool WriteTask(const TaskOp& t, bool enabled, std::wstring& error) {
+        ComScope com;
+        IRegisteredTask* task = nullptr;
+        if (!OpenTask(t, &task)) { error = std::wstring(L"Geplante Aufgabe nicht zugänglich: ") + t.name; return false; }
+        const HRESULT hr = task->put_Enabled(enabled ? VARIANT_TRUE : VARIANT_FALSE);
+        task->Release();
+        if (FAILED(hr)) {
+            wchar_t code[16];
+            swprintf(code, 16, L"0x%08X", static_cast<unsigned>(hr));
+            error = std::wstring(L"Geplante Aufgabe \"") + t.name + L"\" lässt sich nicht " + (enabled ? L"einschalten" : L"abschalten") + L" (Fehler " + code + L"; Administratorrechte nötig)";
+            return false;
+        }
+        return true;
+    }
+
+    std::wstring TaskId(const TaskOp& t) { return std::wstring(L"TASK\\") + t.folder + L"\\" + t.name; }
+    std::wstring EncodeTask(const TaskState& st) { return st.exists ? (st.enabled ? L"task:1" : L"task:0") : L"absent"; }
+    bool DecodeTask(const std::wstring& s, TaskState& st) {
+        st = TaskState{};
+        if (s == L"absent") return true;
+        if (s != L"task:1" && s != L"task:0") return false;
+        st.exists = true;
+        st.enabled = s == L"task:1";
+        return true;
+    }
+
     std::wstring ServiceNameFromKey(const wchar_t* key) {
         const wchar_t* p = wcsstr(key, L"\\Services\\");
         return p ? std::wstring(p + 10) : L"";
@@ -296,6 +369,8 @@ bool IsApplied(const Setting& s) {
         const SvcState st = ReadService(so.name);
         if (st.exists && st.start != so.startType) return false;   // fehlt der Dienst, gibt es nichts abzuschalten
     }
+    for (const TaskOp& t : s.tasks)
+        if (ReadTask(t).enabled) return false;                      // fehlt die Aufgabe, gibt es nichts abzuschalten
     return true;
 }
 
@@ -324,6 +399,13 @@ bool Apply(const Setting& s, std::wstring& error) {
         if (!WriteBackup(SvcId(so), before)) { error = L"Die Sicherungsdatei kann nicht geschrieben werden oder der Ordner ist nicht vertrauenswürdig (%ProgramData%\\DuncansSuite\\Backups muss Administratoren gehören)."; return false; }
         suite_safety::Log(L"PrivacyShield", L"Sicherung " + SvcId(so) + L" = " + before);
     }
+    for (const TaskOp& t : s.tasks) {   // und den Zustand der geplanten Aufgaben
+        std::wstring ignore;
+        if (ReadBackup(TaskId(t), ignore)) continue;
+        const std::wstring before = EncodeTask(ReadTask(t));
+        if (!WriteBackup(TaskId(t), before)) { error = L"Die Sicherungsdatei kann nicht geschrieben werden oder der Ordner ist nicht vertrauenswürdig (%ProgramData%\\DuncansSuite\\Backups muss Administratoren gehören)."; return false; }
+        suite_safety::Log(L"PrivacyShield", L"Sicherung " + TaskId(t) + L" = " + before);
+    }
     // 2) Zielwerte schreiben; bei einem Fehler mittendrin alles wieder zuruecknehmen (keine halb angewendete Einstellung)
     for (const RegOp& op : s.ops)
         if (WriteValue(op, Target(op), error)) suite_safety::Log(L"PrivacyShield", L"Gesetzt " + OpId(op) + L" = " + Encode(Target(op)) + L" (ok)");
@@ -340,6 +422,18 @@ bool Apply(const Setting& s, std::wstring& error) {
         if (WriteService(so.name, so.startType, false, error)) suite_safety::Log(L"PrivacyShield", L"Dienst " + std::wstring(so.name) + L": Starttyp " + std::to_wstring(st.start) + L" -> " + std::to_wstring(so.startType) + L" (ok)");
         else {
             suite_safety::Log(L"PrivacyShield", L"FEHLER beim Ändern des Dienstes " + std::wstring(so.name) + L": " + error + L" – Einstellung wird zurückgenommen");
+            std::wstring ignore;
+            Revert(s, ignore);
+            return false;
+        }
+    }
+    for (const TaskOp& t : s.tasks) {            // geplante Aufgaben abschalten
+        const TaskState st = ReadTask(t);
+        if (!st.exists) { suite_safety::Log(L"PrivacyShield", std::wstring(L"Aufgabe nicht vorhanden: ") + t.name); continue; }
+        if (!st.enabled) continue;
+        if (WriteTask(t, false, error)) suite_safety::Log(L"PrivacyShield", L"Aufgabe abgeschaltet: " + TaskId(t) + L" (ok)");
+        else {
+            suite_safety::Log(L"PrivacyShield", L"FEHLER beim Abschalten der Aufgabe " + TaskId(t) + L": " + error + L" – Einstellung wird zurückgenommen");
             std::wstring ignore;
             Revert(s, ignore);
             return false;
@@ -381,6 +475,18 @@ bool Revert(const Setting& s, std::wstring& error) {
         DropBackup(SvcId(so));
         if (old.start == SERVICE_AUTO_START) StartServiceIfAuto(so.name);   // war automatisch gestartet: wieder starten
     }
+    for (const TaskOp& t : s.tasks) {
+        std::wstring enc;
+        TaskState old;
+        if (!ReadBackup(TaskId(t), enc) || !DecodeTask(enc, old)) continue;  // nie angewendet
+        const TaskState now = ReadTask(t);
+        if (!old.exists || !now.exists || now.enabled == old.enabled) { DropBackup(TaskId(t)); continue; }
+        std::wstring e2;
+        const bool done = WriteTask(t, old.enabled, e2);
+        suite_safety::Log(L"PrivacyShield", L"Wiederhergestellt " + TaskId(t) + L" = " + enc + (done ? L" (ok)" : L" FEHLER: " + e2));
+        if (!done) { ok = false; error = e2; continue; }
+        DropBackup(TaskId(t));
+    }
     return ok;
 }
 
@@ -391,6 +497,7 @@ bool RevertAll(int& restored, std::wstring& error) {
         bool had = false;
         for (const RegOp& op : s.ops) { std::wstring e; if (ReadBackup(OpId(op), e)) had = true; }
         for (const ServiceOp& so : s.services) { std::wstring e; if (ReadBackup(SvcId(so), e)) had = true; }
+        for (const TaskOp& t : s.tasks) { std::wstring e; if (ReadBackup(TaskId(t), e)) had = true; }
         if (!had) continue;
         if (Revert(s, error)) ++restored; else ok = false;
     }
@@ -427,6 +534,21 @@ const std::vector<Setting>& AllSettings() {
         { 13, L"Telemetrie & Diagnosedaten", L"Treiber-Updates über Windows Update verhindern",
           L"Windows sucht und installiert Gerätetreiber nicht mehr automatisch über Windows Update (Richtlinie SearchOrderConfig = 0).",
           { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\DriverSearching", L"SearchOrderConfig", ValType::Dword, 0, nullptr } }, {} },
+        { 31, L"Telemetrie & Diagnosedaten", L"Geplante Telemetrie-Aufgaben abschalten",
+          L"Schaltet die Windows-Aufgaben ab, die auch bei minimierter Telemetrie weiter Daten sammeln: Kompatibilitätsprüfung (Appraiser), Programm-Datenupdater, Programm-Erfahrungsverbesserung (CEIP), Feedback-Erinnerungen und die Datenträger-Diagnosesammlung.",
+          {}, {}, {}, false, false,
+          { { L"\\Microsoft\\Windows\\Application Experience", L"Microsoft Compatibility Appraiser" },
+            { L"\\Microsoft\\Windows\\Application Experience", L"ProgramDataUpdater" },
+            { L"\\Microsoft\\Windows\\Application Experience", L"StartupAppTask" },
+            { L"\\Microsoft\\Windows\\Application Experience", L"Microsoft Compatibility Appraiser Exp" },
+            { L"\\Microsoft\\Windows\\Application Experience", L"MareBackup" },
+            { L"\\Microsoft\\Windows\\Customer Experience Improvement Program", L"Consolidator" },
+            { L"\\Microsoft\\Windows\\Customer Experience Improvement Program", L"UsbCeip" },
+            { L"\\Microsoft\\Windows\\Customer Experience Improvement Program", L"KernelCeipTask" },
+            { L"\\Microsoft\\Windows\\Feedback\\Siuf", L"DmClient" },
+            { L"\\Microsoft\\Windows\\Feedback\\Siuf", L"DmClientOnScenarioDownload" },
+            { L"\\Microsoft\\Windows\\DiskDiagnostic", L"Microsoft-Windows-DiskDiagnosticDataCollector" },
+            { L"\\Microsoft\\Windows\\Autochk", L"Proxy" } } },
         { 5, L"Startmenü-Suche", L"Web- und Bing-Ergebnisse im Startmenü aus",
           L"Die Suche im Startmenü zeigt nur noch lokale Treffer (Apps, Dateien, Einstellungen) und sendet keine Eingaben an Bing.",
           { { Hive::User, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Search", L"BingSearchEnabled", ValType::Dword, 0, nullptr },
@@ -531,6 +653,32 @@ const std::vector<Setting>& AllSettings() {
         { 24, L"Windows-Dienste (Leistung)", L"Windows-Fehlerberichterstattung (WerSvc) deaktivieren",
           L"Deaktiviert und beendet den Dienst, der Absturzberichte an Microsoft sendet. Absturzdiagnosen von Windows entfallen.",
           {}, {}, { { L"WerSvc", SERVICE_DISABLED } }, true },
+        { 32, L"App-Berechtigungen", L"Kamerazugriff für Apps sperren",
+          L"Kein Programm und keine App darf die Kamera benutzen (Richtlinie „Apps dürfen auf die Kamera zugreifen“ = nicht zulassen und globaler Kameraschalter aus). Videoanrufe, Webcam-Programme und Windows Hello brauchen die Kamera.",
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", L"LetAppsAccessCamera", ValType::Dword, 2, nullptr },
+            { Hive::Machine, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\webcam", L"Value", ValType::String, 0, L"Deny" } }, {}, {}, true },
+        { 33, L"App-Berechtigungen", L"Mikrofonzugriff für Apps sperren",
+          L"Kein Programm und keine App darf das Mikrofon benutzen (Richtlinie und globaler Mikrofonschalter). Anrufe, Sprachchat, Diktat und Aufnahmen funktionieren dann nicht.",
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", L"LetAppsAccessMicrophone", ValType::Dword, 2, nullptr },
+            { Hive::Machine, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone", L"Value", ValType::String, 0, L"Deny" } }, {}, {}, true },
+        { 34, L"App-Berechtigungen", L"Persönliche Daten für Apps sperren",
+          L"Apps dürfen Kontakte, Kalender, E-Mail, Nachrichten, Anrufliste und Kontoinformationen nicht mehr lesen (Richtlinien und globale Schalter). Die Store-Apps Mail und Kalender sowie Telefon-Verknüpfung zeigen dann keine Daten.",
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", L"LetAppsAccessContacts", ValType::Dword, 2, nullptr },
+            { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", L"LetAppsAccessCalendar", ValType::Dword, 2, nullptr },
+            { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", L"LetAppsAccessEmail", ValType::Dword, 2, nullptr },
+            { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", L"LetAppsAccessMessaging", ValType::Dword, 2, nullptr },
+            { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", L"LetAppsAccessCallHistory", ValType::Dword, 2, nullptr },
+            { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", L"LetAppsAccessAccountInfo", ValType::Dword, 2, nullptr },
+            { Hive::Machine, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\contacts", L"Value", ValType::String, 0, L"Deny" },
+            { Hive::Machine, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\appointments", L"Value", ValType::String, 0, L"Deny" },
+            { Hive::Machine, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\email", L"Value", ValType::String, 0, L"Deny" },
+            { Hive::Machine, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\chat", L"Value", ValType::String, 0, L"Deny" },
+            { Hive::Machine, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\phoneCallHistory", L"Value", ValType::String, 0, L"Deny" },
+            { Hive::Machine, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\userAccountInformation", L"Value", ValType::String, 0, L"Deny" } }, {}, {}, true },
+        { 35, L"App-Berechtigungen", L"Diagnoseinformationen anderer Apps nicht freigeben",
+          L"Apps dürfen nicht auslesen, welche anderen Apps laufen und was sie tun (Richtlinie „Apps dürfen Diagnoseinformationen anderer Apps abrufen“ = nicht zulassen).",
+          { { Hive::Machine, L"SOFTWARE\\Policies\\Microsoft\\Windows\\AppPrivacy", L"LetAppsGetDiagnosticInfo", ValType::Dword, 2, nullptr },
+            { Hive::Machine, L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\appDiagnostics", L"Value", ValType::String, 0, L"Deny" } }, {} },
     };
     return all;
 }
@@ -589,6 +737,7 @@ bool HasBackupFor(const Setting& s) {
     std::wstring ignore;
     for (const RegOp& op : s.ops) if (ReadBackup(OpId(op), ignore)) return true;
     for (const ServiceOp& so : s.services) if (ReadBackup(SvcId(so), ignore)) return true;
+    for (const TaskOp& t : s.tasks) if (ReadBackup(TaskId(t), ignore)) return true;
     return false;
 }
 

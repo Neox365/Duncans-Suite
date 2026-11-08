@@ -229,6 +229,9 @@
 - Der PDF Reader kommt als Programm in die Suite.
 
 [DuncansPrivacy.exe]
+## 0.12.0 | 2026-11-08
+- Neu: „Geplante Telemetrie-Aufgaben abschalten“ (Gruppe Telemetrie & Diagnosedaten, empfohlen). Windows hat Aufgaben, die auch bei minimierter Telemetrie weiter Daten sammeln: Kompatibilitätsprüfung (Appraiser), Programm-Erfahrungsverbesserung (CEIP), Feedback-Erinnerungen, Datenträger-Diagnosesammlung und die SQM-Sammlung von Autochk. Der Schalter deaktiviert die auf deinem PC vorhandenen davon, merkt sich vorher, ob jede aktiv war, und stellt das beim Zurücknehmen wieder her. Mit „Schutz automatisch erneuern“ schaltet das Programm sie wieder ab, falls Windows sie nach einem Update neu einschaltet.
+- Neu: Gruppe „App-Berechtigungen“ mit vier Schaltern: Kamerazugriff für Apps sperren, Mikrofonzugriff für Apps sperren, Persönliche Daten für Apps sperren (Kontakte, Kalender, E-Mail, Nachrichten, Anrufliste, Kontoinfos) und Diagnoseinformationen anderer Apps nicht freigeben. Die ersten drei haben spürbare Nebenwirkungen (Videoanrufe, Windows Hello, Mail-App) und werden deshalb von „Alle schützen“ und „Empfohlen anwenden“ nicht mitgeschaltet; sie sind wie alles andere rückgängig zu machen.
 ## 0.11.0 | 2026-11-06
 - Neu: „Empfohlen anwenden“ schaltet nur die mit „Empfohlen“ gekennzeichneten Einstellungen ein (ohne die „Erweiterten“ mit Nebenwirkungen). „Alle schützen“ bleibt für die strenge Variante.
 - Neu: Hinweis „Windows hat n Einstellungen zurückgesetzt“ mit Knopf „Erneut anwenden“. Das Programm merkt sich, welche Einstellungen du eingeschaltet hast, und vergleicht beim Start.

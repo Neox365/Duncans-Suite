@@ -32,7 +32,7 @@ using std::min;
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.11.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.12.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -166,6 +166,11 @@ const Meta kMeta[] = {
     { 15, L"Empfohlen", L"Updates und Store-Apps laden nur noch direkt von Microsoft; bei sehr langsamer Internetverbindung im Heimnetz mit mehreren PCs kann das Laden etwas länger dauern. Der Schalter macht alles rückgängig." },
     { 16, L"Empfohlen", L"Wirkt auf Rechnern mit Recall (Windows 11 24H2 auf Copilot+-PCs); auf anderen Rechnern ist die Richtlinie harmlos und ohne Wirkung. Der Schalter macht alles rückgängig." },
     { 17, L"Empfohlen", L"Diktat und Sprachassistenten, die Microsoft-Server nutzen, funktionieren danach nur noch mit der Offline-Erkennung (Sprachpakete nötig). Der Schalter macht alles rückgängig." },
+    { 31, L"Empfohlen", L"Betrifft nur die Berichte für Windows Update und Microsoft; im Alltag merkst du nichts. Windows schaltet die Aufgaben nach großen Updates manchmal wieder ein, mit „Schutz automatisch erneuern“ stellt das Programm sie wieder ab. Braucht Administratorrechte. Der Schalter macht alles rückgängig und stellt den früheren Zustand jeder Aufgabe wieder her." },
+    { 32, L"Erweitert", L"Wirkt für alle Benutzer dieses PCs. Videoanrufe (Teams, Discord, Zoom), Webcam-Programme und die Gesichtsanmeldung Windows Hello funktionieren danach nicht. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
+    { 33, L"Erweitert", L"Wirkt für alle Benutzer dieses PCs. Anrufe, Sprachchat, Diktat und Aufnahmen funktionieren danach nicht. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
+    { 34, L"Erweitert", L"Mail und Kalender aus dem Store sowie die Telefon-Verknüpfung zeigen danach keine Daten mehr; normale Programme wie Outlook oder Thunderbird sind nicht betroffen. Wird von „Alle schützen“ nicht mitgeschaltet. Der Schalter macht alles rückgängig." },
+    { 35, L"Empfohlen", nullptr },
     { 13, L"Empfohlen", L"Windows installiert Treiber dann nicht mehr automatisch; Treiber-Updates müssen manuell oder über Hersteller-Tools kommen. Kann die Treibersuche über Windows Update im Duncan's Driver Updater beeinflussen (nicht geprüft). Schalter macht alles rückgängig." },
 };
 
