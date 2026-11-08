@@ -28,10 +28,11 @@
 #include "../docs/TextEdit.h"
 #include "../docs/Theme.h"
 #include "../common/AboutCard.h"
+#include "Audit.h"
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.0"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.7.0"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -48,13 +49,15 @@ enum Id {
     B_NEW = 1, B_GEAR, B_LOCK,
     C_CAT0 = 10,                    // 10..14: Alle, dann die vier Kategorien
     DT_COPYUSER = 20, DT_COPYSECRET, DT_SHOW, DT_OPENURL, DT_EDIT, DT_DELETE, DT_LOGIN = 26,   // DT_LOGIN: "Einloggen / Daten kopieren"
+    DT_COPYTOTP = 28,
     L_UNLOCK = 30, L_REVEAL, S_CREATE, S_REVEAL, S_SKIP, L_RECOVERY,
     D_OK = 40, D_CANCEL, D_CAT0 = 42,   // 42..45: Kategorie im Eintragsdialog
+    D_ROW0 = 200,                   // 200..: Zeilen im Passwort-Check
     D_REVEAL = 46, D_GENTOGGLE, D_GENRUN, D_LENMINUS, D_LENPLUS, D_GU, D_GL, D_GD, D_GS
 };
 enum FieldId {
     F_SEARCH = 1, F_LOCKPW = 10, F_SETPW = 11, F_SETPW2 = 12,
-    F_TITLE = 20, F_USER, F_SECRET, F_URL, F_TAGS, F_NOTES,
+    F_TITLE = 20, F_USER, F_SECRET, F_URL, F_TAGS, F_NOTES, F_TOTP = 27,
     F_OLD = 30, F_NEW, F_NEW2, F_IMPPW
 };
 
@@ -71,7 +74,7 @@ struct Field {
 struct HitBtn { int id; D2D1_RECT_F rc; };
 
 enum class Screen { Setup, Lock, Main };
-enum class DlgKind { None, Entry, ChangePw, Confirm, Import };
+enum class DlgKind { None, Entry, ChangePw, Confirm, Import, Check };
 
 struct Dialog {
     DlgKind kind = DlgKind::None;
@@ -84,6 +87,8 @@ struct Dialog {
     int mode = 0;                 // ChangePw: 0 aendern, 1 festlegen (bisher ohne Passwort), 2 entfernen
     bool noPw = false;            // Import: Backup ohne Master-Passwort (Windows-Konto)
     float msgH = 0;               // Hoehe des Hinweistexts im einfachen Dialog
+    vault::AuditResult audit;     // Check: Ergebnis des Passwort-Checks (nur Ids und Texte, keine Geheimnisse)
+    float scroll = 0;             // Check: Scrollposition der Liste
     D2D1_RECT_F box{};
 };
 
@@ -296,6 +301,9 @@ private:
     void DrawDialog();
     void DrawEntryDialog();
     void DrawSimpleDialog();
+    void DrawCheckDialog();
+    void BeginCheck();
+    void CheckSelect(int row);
     float EntryDialogHeight(float fh, float k2, float availH);
 
     // --- Tresor
@@ -925,6 +933,30 @@ void App::DrawDetail() {
         if (!e->secret.empty() && e->cat == vault::Cat::Password) {
             y -= 6 * k;
             y += DrawStrength(x0, y, fw * 0.6f, e->secret);
+            const std::vector<std::wstring> shared = vault::SharedWith(m_entries, *e);
+            if (!shared.empty()) {   // dasselbe Passwort an mehreren Stellen: ein Leck trifft alle
+                std::wstring who;
+                for (size_t i = 0; i < shared.size() && i < 3; ++i) who += (i ? L", " : L"") + shared[i];
+                if (shared.size() > 3) who += L" u. a.";
+                Txt(L"Gleiches Passwort auch bei: " + who, {x0, y - 4 * k, x0 + fw, y + 16 * k}, fSmall.Get(), Theme::Warn);
+                y += 22 * k;
+            }
+        }
+        if (e->cat == vault::Cat::Password && !e->totp.empty()) {
+            vault::TotpParams tp;
+            if (vault::ParseTotp(e->totp, tp)) {
+                const long long now = (long long)time(nullptr);
+                const int left = vault::TotpSecondsLeft(tp, now);
+                const std::wstring label = L"2FA-Code (noch " + std::to_wstring(left) + L" s)";
+                const unsigned col = left <= 5 ? Theme::Warn : Theme::Text;
+                block(label.c_str(), vault::FormatTotp(vault::TotpCode(tp, now)), DT_COPYTOTP, L"Kopieren", 0, nullptr);
+                const float bw = fw * (float)left / (float)tp.period;   // Restzeit als Balken unter dem Code
+                FillRR({x0, y - 10 * k, x0 + fw, y - 7 * k}, 1.5f * k, Theme::Border);
+                FillRR({x0, y - 10 * k, x0 + std::max(3 * k, bw), y - 7 * k}, 1.5f * k, col);
+            } else {
+                block(L"2FA-Code", L"Schlüssel ungültig – bitte unter Bearbeiten prüfen", 0, nullptr, 0, nullptr);
+            }
+            vault::Wipe(tp);
         }
     }
     if (sc.url) block(sc.url, e->url, e->url.empty() ? 0 : DT_OPENURL, L"Öffnen", 0, nullptr);
@@ -976,6 +1008,7 @@ void App::DrawStatusBar() {
 void App::DrawDialog() {
     Fill({0, 0, rcStatus.right, rcStatus.bottom}, 0x000000, 0.6f);
     if (m_dlg.kind == DlgKind::Entry) DrawEntryDialog();
+    else if (m_dlg.kind == DlgKind::Check) DrawCheckDialog();
     else DrawSimpleDialog();
 }
 
@@ -989,6 +1022,7 @@ float App::EntryDialogHeight(float fh, float, float availH) {
     if (sc.user) h += 24 * k + fh;
     if (sc.secret) h += 24 * k + fh + 26 * k + (d.genOpen ? 54 * k : 0);
     if (sc.url) h += 24 * k + fh;
+    if (d.cat == vault::Cat::Password) h += 24 * k + fh;  // 2FA-Schluessel
     h += 24 * k + fh;                                     // Tags
     h += 24 * k;                                          // Notiz-Beschriftung
     h += 28 * k + 38 * k + pad;                           // Fehler + Knoepfe
@@ -1060,6 +1094,11 @@ void App::DrawEntryDialog() {
         }
     } else { hide(F_SECRET); }
     if (sc.url) { place(F_URL, sc.url, fw); y += 24 * k + fh; } else hide(F_URL);
+    if (d.cat == vault::Cat::Password) {
+        place(F_TOTP, L"2FA-Schlüssel für Einmalcodes (optional, Base32 oder otpauth://-Adresse)", fw);
+        if (Field* f = FieldById(F_TOTP)) f->mask = !d.reveal;
+        y += 24 * k + fh;
+    } else hide(F_TOTP);
     place(F_TAGS, L"Tags (durch Leerzeichen getrennt)", fw);
     y += 24 * k + fh;
     {   // Notizfeld nimmt den Rest bis zu Fehlerzeile und Knoepfen
@@ -1108,6 +1147,92 @@ void App::DrawSimpleDialog() {
     Button(D_OK, {d.box.right - pad - 150 * k, by, d.box.right - pad, by + bh}, okLabel, !confirm, confirm || d.mode == 2);
     Button(D_CANCEL, {d.box.right - pad - 160 * k - 130 * k, by, d.box.right - pad - 160 * k, by + bh}, L"Abbrechen", false);
     for (auto& f : d.fields) DrawField(f, m_focusId == f.id);
+}
+
+void App::BeginCheck() {
+    m_dlg = Dialog{};
+    m_dlg.kind = DlgKind::Check;
+    m_dlg.title = L"Passwort-Check";
+    m_dlg.audit = vault::Audit(m_entries, (long long)time(nullptr));
+    Invalidate();
+}
+
+// Zeile anklicken: Dialog schliessen und den Eintrag in der Liste auswaehlen
+void App::CheckSelect(int row) {
+    if (row < 0 || row >= (int)m_dlg.audit.findings.size()) return;
+    const std::wstring id = m_dlg.audit.findings[row].id;
+    CloseDialog();
+    m_search.ed.SetText(L"");
+    m_cat = -1;
+    m_selId = id;
+    m_reveal = false;
+    Rebuild();
+    for (int i = 0; i < (int)m_view.size(); ++i)
+        if (m_entries[m_view[i]].id == id) { EnsureRowVisible(i); break; }
+}
+
+void App::DrawCheckDialog() {
+    Dialog& d = m_dlg;
+    RECT cr;
+    GetClientRect(m_hwnd, &cr);
+    const float pad = 24 * k, bw = std::min(760 * k, cr.right - 40 * k), height = std::min(620 * k, cr.bottom - 30 * k);
+    d.box = {(cr.right - bw) / 2, (cr.bottom - height) / 2, (cr.right + bw) / 2, (cr.bottom + height) / 2};
+    FillRR(d.box, 14 * k, Theme::Panel);
+    StrokeRR(d.box, 14 * k, Theme::Border);
+    const float x0 = d.box.left + pad, fw = W(d.box) - 2 * pad;
+    float y = d.box.top + pad;
+    Txt(d.title, {x0, y, d.box.right - pad, y + 30 * k}, fTitle.Get(), Theme::Text);
+    y += 38 * k;
+    const vault::AuditResult& a = d.audit;
+    std::wstring sum = std::to_wstring(a.checked) + (a.checked == 1 ? L" Passwort geprüft" : L" Passwörter geprüft");
+    if (a.Problems() == 0) sum += L" – nichts gefunden. Gut so!";
+    Txt(sum, {x0, y, x0 + fw, y + 22 * k}, fNormal.Get(), a.Problems() == 0 ? Theme::Paid : Theme::Text);
+    y += 28 * k;
+    if (a.Problems() > 0) {   // Zaehler je Art
+        const struct { const wchar_t* t; int n; unsigned c; } chips[4] = {{L"häufig", a.common, Theme::Danger}, {L"schwach", a.weak, Theme::Warn},
+                                                                        {L"mehrfach", a.reused, Theme::Warn}, {L"alt", a.old, Theme::TextDim}};
+        float cx = x0;
+        for (const auto& c : chips) {
+            if (!c.n) continue;
+            const std::wstring t = std::to_wstring(c.n) + L" " + c.t;
+            const float w = TextW(t, fBadge.Get()) + 26 * k;
+            const D2D1_RECT_F r{cx, y, cx + w, y + 24 * k};
+            FillRR(r, 12 * k, c.c, 0.16f);
+            StrokeRR(r, 12 * k, c.c);
+            Txt(t, r, fBadge.Get(), c.c);
+            cx += w + 8 * k;
+        }
+        y += 34 * k;
+    }
+    const float bh = 38 * k, by = d.box.bottom - pad - bh;
+    const D2D1_RECT_F list{x0, y, x0 + fw, by - 44 * k};
+    const float rowH = 52 * k, content = rowH * (float)a.findings.size();
+    d.scroll = std::clamp(d.scroll, 0.f, std::max(0.f, content - H(list)));
+    FillRR(list, 8 * k, Theme::Bg);
+    rt->PushAxisAlignedClip(list, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+    static const wchar_t* const kName[4] = {L"Häufig", L"Schwach", L"Mehrfach", L"Alt"};
+    for (int i = 0; i < (int)a.findings.size(); ++i) {
+        const float ry = list.top + i * rowH - d.scroll;
+        if (ry + rowH < list.top || ry > list.bottom) continue;
+        const vault::Finding& f = a.findings[i];
+        const vault::Entry* e = nullptr;
+        for (const auto& x : m_entries) if (x.id == f.id) { e = &x; break; }
+        const D2D1_RECT_F row{list.left, ry, list.right, ry + rowH};
+        const unsigned c = f.issue == vault::Issue::Common ? Theme::Danger : f.issue == vault::Issue::Old ? Theme::TextDim : Theme::Warn;
+        if (m_hoverBtn == D_ROW0 + i) Fill(row, Theme::CardHover);
+        const D2D1_RECT_F badge{row.left + 12 * k, ry + 12 * k, row.left + 92 * k, ry + 34 * k};
+        FillRR(badge, 11 * k, c, 0.16f);
+        Txt(kName[(int)f.issue], badge, fBadge.Get(), c);
+        Txt(e ? e->title : L"?", {row.left + 104 * k, ry + 6 * k, row.right - 12 * k, ry + 28 * k}, fBold.Get(), Theme::Text);
+        Txt(f.detail, {row.left + 104 * k, ry + 28 * k, row.right - 12 * k, ry + 48 * k}, fSmall.Get(), Theme::TextDim);
+        Fill({row.left + 12 * k, ry + rowH - 1, row.right - 12 * k, ry + rowH}, Theme::Border);
+        m_hits.push_back({D_ROW0 + i, {row.left, std::max(row.top, list.top), row.right, std::min(row.bottom, list.bottom)}});
+    }
+    rt->PopAxisAlignedClip();
+    DrawScrollbar(list, d.scroll, content);
+    Txt(L"Der Check läuft nur im Tresor, es wird nichts ins Netz geschickt. „Alt“ zählt ab einem Jahr seit der letzten Änderung des Eintrags.",
+        {x0, by - 38 * k, x0 + fw, by - 4 * k}, fSmall.Get(), Theme::TextDim);
+    Button(D_CANCEL, {d.box.right - pad - 130 * k, by, d.box.right - pad, by + bh}, L"Schließen", true);
 }
 
 // ============================================================================
@@ -1539,6 +1664,8 @@ void App::BeginEntry(const vault::Entry* e) {
     mk(F_SECRET, L"", e ? e->secret : L"", 512);
     d.fields.back().mask = true;
     mk(F_URL, L"https://…", e ? e->url : L"", 300);
+    mk(F_TOTP, L"z. B. JBSW Y3DP EHPK 3PXP", e ? e->totp : L"", 512);
+    d.fields.back().mask = true;
     mk(F_TAGS, L"z. B. arbeit privat", e ? e->tags : L"", 120);
     mk(F_NOTES, L"", e ? e->notes : L"", 8000);
     d.fields.back().multiline = true;
@@ -1552,6 +1679,13 @@ void App::ApplyEntry() {
     auto txt = [&](int id) { const Field* f = FieldById(id); return f ? f->ed.text : std::wstring(); };
     std::wstring title = vault::Trim(txt(F_TITLE));
     if (title.empty()) { d.error = L"Bitte einen Titel eingeben."; Invalidate(); return; }
+    if (d.cat == vault::Cat::Password) {
+        const std::wstring t = vault::Trim(txt(F_TOTP));
+        vault::TotpParams tp;
+        const bool bad = !t.empty() && !vault::ParseTotp(t, tp);
+        vault::Wipe(tp);
+        if (bad) { d.error = L"Der 2FA-Schlüssel ist ungültig (erlaubt: Base32 oder otpauth://totp/…)."; Invalidate(); return; }
+    }
     vault::Entry* e = d.editId.empty() ? nullptr : FindEntry(d.editId);
     vault::Entry fresh;
     if (!e) {
@@ -1564,6 +1698,7 @@ void App::ApplyEntry() {
     e->user = vault::Trim(txt(F_USER));
     e->secret = txt(F_SECRET);
     e->url = vault::Trim(txt(F_URL));
+    e->totp = d.cat == vault::Cat::Password ? vault::Trim(txt(F_TOTP)) : std::wstring();
     e->tags = vault::Trim(txt(F_TAGS));
     e->notes = txt(F_NOTES);
     e->modified = (long long)time(nullptr);
@@ -1991,6 +2126,9 @@ void App::ShowGearMenu() {
     AppendMenuW(m, MF_STRING, 5, L"Backup exportieren (.vault) …");
     AppendMenuW(m, MF_STRING, 6, L"Backup importieren (.vault) …");
     AppendMenuW(m, MF_STRING, 10, L"Aus Browser-Export importieren (.csv) …");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, 11, L"Passwort-Check (schwach, doppelt, alt) …");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, 3, L"Tresor-Ordner im Explorer öffnen");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, 4, L"Über Duncan's Vault");
@@ -2008,6 +2146,7 @@ void App::ShowGearMenu() {
         case 8: m_settings.autoType = !m_settings.autoType; SaveSettings(m_settings); break;
         case 9: m_settings.windowCheck = !m_settings.windowCheck; SaveSettings(m_settings); break;
         case 10: ImportCsv(); break;
+        case 11: BeginCheck(); break;
         case 5: ExportBackup(); break;
         case 6: BeginImport(); break;
         case 3: ShellExecuteW(m_hwnd, L"open", DataDir().c_str(), nullptr, nullptr, SW_SHOWNORMAL); break;
@@ -2126,6 +2265,7 @@ void App::KeyDown(WPARAM vk) {
         if (vk == VK_ESCAPE) { CloseDialog(); return; }
         if (vk == VK_TAB) { FocusNext(shift); return; }
         if (vk == VK_RETURN) {
+            if (m_dlg.kind == DlgKind::Check) { CloseDialog(); return; }
             Field* f = FocusedField();
             if (m_dlg.kind == DlgKind::Entry && f && f->multiline && !ctrl) {   // im Notizfeld ist Enter ein Zeilenumbruch
                 f->ed.Insert(L"\n");
@@ -2227,6 +2367,13 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case B_LOCK: Lock(false); break;
             case DT_COPYUSER: if (const vault::Entry* e = Sel()) CopyText(e->user, false, vault::SchemaOf(e->cat).user); break;
             case DT_COPYSECRET: if (const vault::Entry* e = Sel()) CopyText(e->secret, true, vault::SecretWord(e->cat)); break;
+            case DT_COPYTOTP:
+                if (const vault::Entry* e = Sel()) {
+                    vault::TotpParams tp;
+                    if (vault::ParseTotp(e->totp, tp)) CopyText(vault::TotpCode(tp, (long long)time(nullptr)), true, L"2FA-Code");
+                    vault::Wipe(tp);
+                }
+                break;
             case DT_SHOW: m_reveal = !m_reveal; break;
             case DT_OPENURL: if (const vault::Entry* e = Sel()) OpenUrl(e->url); break;
             case DT_LOGIN: ShowLoginMenu(); break;
@@ -2261,7 +2408,9 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             case D_GD: m_settings.gen.digits = !m_settings.gen.digits; GenerateInto(); break;
             case D_GS: m_settings.gen.symbols = !m_settings.gen.symbols; GenerateInto(); break;
             default:
-                if (id >= C_CAT0 && id < C_CAT0 + 1 + vault::kCatCount) {
+                if (id >= D_ROW0 && m_dlg.kind == DlgKind::Check) {
+                    CheckSelect(id - D_ROW0);
+                } else if (id >= C_CAT0 && id < C_CAT0 + 1 + vault::kCatCount) {
                     m_cat = id - C_CAT0 - 1;
                     m_scroll = 0;
                     Rebuild();
@@ -2389,6 +2538,11 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
             return 0;
         case WM_MOUSEWHEEL:
             Touch();
+            if (m_screen == Screen::Main && m_dlg.kind == DlgKind::Check) {
+                m_dlg.scroll -= GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 2 * 52 * k;
+                Invalidate();
+                return 0;
+            }
             if (m_screen == Screen::Main && m_dlg.kind == DlgKind::None) {
                 m_scroll -= GET_WHEEL_DELTA_WPARAM(wp) / 120.f * 3 * kRowH * k;
                 ClampScroll();

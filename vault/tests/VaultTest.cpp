@@ -5,6 +5,7 @@
 #include <fstream>
 #include <string>
 
+#include "../Audit.h"
 #include "../Vault.h"
 
 namespace fs = std::filesystem;
@@ -405,9 +406,107 @@ static void windowCheckAndCsv() {
     CHECK(into[0].user == L"forumuser" && into[0].title == L"Forum");    vault::Wipe(into);
 }
 
+static std::wstring B32(const std::string& s) {   // Test-Hilfe: Bytes -> Base32
+    static const char* a = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    std::wstring o;
+    unsigned acc = 0;
+    int bits = 0;
+    for (unsigned char c : s) {
+        acc = (acc << 8) | c;
+        bits += 8;
+        while (bits >= 5) { bits -= 5; o.push_back(static_cast<wchar_t>(a[(acc >> bits) & 31])); }
+    }
+    if (bits > 0) o.push_back(static_cast<wchar_t>(a[(acc << (5 - bits)) & 31]));
+    return o;
+}
+
+static void totpCodes() {
+    // RFC 6238, Anhang B: 8 Stellen, SHA-1 / SHA-256 / SHA-512 mit den Schluesseln aus dem RFC
+    struct V { long long t; const wchar_t* sha1; const wchar_t* sha256; const wchar_t* sha512; };
+    const V v[] = {{59, L"94287082", L"46119246", L"90693936"},          {1111111109, L"07081804", L"68084774", L"25091201"},
+                   {1111111111, L"14050471", L"67062674", L"99943326"}, {1234567890, L"89005924", L"91819424", L"93441116"},
+                   {2000000000, L"69279037", L"90698825", L"38618901"}, {20000000000, L"65353130", L"77737706", L"47863826"}};
+    const std::string k1 = "12345678901234567890", k256 = "12345678901234567890123456789012",
+                      k512 = "1234567890123456789012345678901234567890123456789012345678901234";
+    for (const V& x : v) {
+        vault::TotpParams p;
+        p.digits = 8;
+        CHECK(vault::Base32Decode(B32(k1), p.key));
+        p.algo = 1;
+        CHECK(vault::TotpCode(p, x.t) == x.sha1);
+        CHECK(vault::Base32Decode(B32(k256), p.key));
+        p.algo = 256;
+        CHECK(vault::TotpCode(p, x.t) == x.sha256);
+        CHECK(vault::Base32Decode(B32(k512), p.key));
+        p.algo = 512;
+        CHECK(vault::TotpCode(p, x.t) == x.sha512);
+    }
+    // Base32: Schreibweise egal, Leerzeichen und Bindestriche werden ignoriert, Fehler werden erkannt
+    vault::Bytes a, b;
+    CHECK(vault::Base32Decode(L"JBSWY3DPEHPK3PXP", a) && vault::Base32Decode(L"jbsw y3dp-ehpk 3pxp", b) && a == b && a.size() == 10);
+    CHECK(!vault::Base32Decode(L"JBSW1", a) && !vault::Base32Decode(L"", a));
+    // Standardwerte: 6 Stellen, 30 Sekunden; Restzeit und Anzeige
+    vault::TotpParams p;
+    CHECK(vault::ParseTotp(L"  JBSWY3DPEHPK3PXP ", p) && p.digits == 6 && p.period == 30 && p.algo == 1 && p.key.size() == 10);
+    CHECK(vault::TotpCode(p, 59).size() == 6 && vault::TotpCode(p, 59) == vault::TotpCode(p, 30) && vault::TotpCode(p, 59) != vault::TotpCode(p, 60));
+    CHECK(vault::TotpSecondsLeft(p, 0) == 30 && vault::TotpSecondsLeft(p, 29) == 1 && vault::TotpSecondsLeft(p, 30) == 30);
+    CHECK(vault::FormatTotp(L"123456") == L"123 456" && vault::FormatTotp(L"12345678") == L"1234 5678");
+    // otpauth-Adresse: Aussteller, Konto, Stellen, Periode, Algorithmus (auch percent-kodiert)
+    CHECK(vault::ParseTotp(L"otpauth://totp/Example%3Aalice%40example.org?secret=JBSWY3DPEHPK3PXP&issuer=Example&digits=8&period=60&algorithm=SHA256", p));
+    CHECK(p.issuer == L"Example" && p.account == L"alice@example.org" && p.digits == 8 && p.period == 60 && p.algo == 256);
+    CHECK(vault::TotpCode(p, 100).size() == 8);
+    CHECK(!vault::ParseTotp(L"otpauth://hotp/x?secret=JBSWY3DPEHPK3PXP&counter=1", p));      // Zaehler-Codes gibt es nicht
+    CHECK(!vault::ParseTotp(L"otpauth://totp/x?issuer=nur", p));                              // kein Schluessel
+    CHECK(!vault::ParseTotp(L"otpauth://totp/x?secret=JBSWY3DPEHPK3PXP&algorithm=MD5", p));
+    CHECK(!vault::ParseTotp(L"JBSWY", p) && !vault::ParseTotp(L"kein schluessel!", p) && !vault::ParseTotp(L"", p));   // zu kurz / ungueltig
+    // Speichern und Laden behaelt den Schluessel; CSV-Spalte login_totp wird uebernommen, Unbrauchbares nicht
+    std::vector<vault::Entry> v1(1);
+    v1[0].id = L"t1"; v1[0].title = L"Konto"; v1[0].secret = L"x"; v1[0].totp = L"JBSWY3DPEHPK3PXP";
+    std::vector<vault::Entry> v2;
+    CHECK(vault::Parse(vault::Serialize(v1), v2) && v2.size() == 1 && v2[0].totp == L"JBSWY3DPEHPK3PXP");
+    CHECK(vault::Parse("#DuncansVault 1\nid\t0\tAlt\tu\ts\t\t\t\t1\t2\n", v2) && v2.size() == 1 && v2[0].totp.empty());   // Datei ohne das Feld
+    std::vector<vault::Entry> into;
+    int added = 0, skipped = 0;
+    CHECK(vault::ImportBrowserCsv(L"name,url,username,password,login_totp\nA,https://a.de,u,pw1,JBSWY3DPEHPK3PXP\nB,https://b.de,u,pw2,quatsch\n", into, added, skipped) && added == 2);
+    CHECK(into[0].totp == L"JBSWY3DPEHPK3PXP" && into[1].totp.empty());
+}
+
+static void passwordCheck() {
+    CHECK(vault::IsCommonPassword(L"123456") && vault::IsCommonPassword(L"Passwort2024!") && vault::IsCommonPassword(L"qwertz") && vault::IsCommonPassword(L"aaaaaaaa"));
+    CHECK(vault::IsCommonPassword(L"abcdefgh") && vault::IsCommonPassword(L"87654321") && vault::IsCommonPassword(L"Hallo123"));
+    CHECK(!vault::IsCommonPassword(L"") && !vault::IsCommonPassword(L"k7#Vq9!mLp2$Rt") && !vault::IsCommonPassword(L"Kaffeetasse-Wolke-71"));
+
+    const long long now = 2000000000, year = 365ll * 24 * 3600;
+    auto mk = [&](const wchar_t* id, const wchar_t* title, const wchar_t* pw, long long modified, vault::Cat cat = vault::Cat::Password) {
+        vault::Entry e;
+        e.id = id; e.title = title; e.secret = pw; e.cat = cat; e.created = modified; e.modified = modified;
+        return e;
+    };
+    std::vector<vault::Entry> v;
+    v.push_back(mk(L"a", L"Gut", L"k7#Vq9!mLp2$Rt", now - 1000));
+    v.push_back(mk(L"b", L"Haeufig", L"123456", now - 1000));
+    v.push_back(mk(L"c", L"Schwach", L"Kx9mQz", now - 1000));                  // kurz, aber kein bekanntes Muster
+    v.push_back(mk(L"d", L"Zwilling1", L"gemeinsam-Geheim#4711", now - 1000));
+    v.push_back(mk(L"e", L"Zwilling2", L"gemeinsam-Geheim#4711", now - 1000));
+    v.push_back(mk(L"f", L"Alt", L"j3$Lw8!Nb5&Zc", now - year - 90ll * 24 * 3600));
+    v.push_back(mk(L"g", L"Wlan", L"123456", now - 1000, vault::Cat::Wifi));   // andere Kategorie: nicht geprueft
+    v.push_back(mk(L"h", L"Ohne", L"", now - year * 3));                        // ohne Passwort: nicht geprueft
+    const vault::AuditResult r = vault::Audit(v, now);
+    CHECK(r.checked == 6 && r.common == 1 && r.weak == 1 && r.reused == 2 && r.reusedGroups == 1 && r.old == 1 && r.Problems() == 5);
+    CHECK(r.findings.size() == 5 && r.findings[0].id == L"b" && r.findings[0].issue == vault::Issue::Common);      // Reihenfolge: haeufig zuerst
+    bool oldOk = false, reusedText = false;
+    for (const auto& f : r.findings) {
+        if (f.id == L"f" && f.issue == vault::Issue::Old && f.detail.find(L"15 Monaten") != std::wstring::npos) oldOk = true;
+        if (f.id == L"d" && f.issue == vault::Issue::Reused && f.detail.find(L"Zwilling2") != std::wstring::npos) reusedText = true;
+    }
+    CHECK(oldOk && reusedText);
+    CHECK(vault::SharedWith(v, v[3]).size() == 1 && vault::SharedWith(v, v[3])[0] == L"Zwilling2" && vault::SharedWith(v, v[0]).empty() && vault::SharedWith(v, v[6]).empty());
+    CHECK(vault::Audit({}, now).Problems() == 0);
+}
+
 int main() {
     vault::MinIterations() = 1000;   // die Tests arbeiten mit wenigen Runden, damit sie schnell laufen
-    serialization(); merge(); search(); generator(); strength(); kdf(); file(); noPassword(); memoryProtection(); usbKey(); windowCheckAndCsv();
+    serialization(); merge(); search(); generator(); strength(); kdf(); file(); noPassword(); memoryProtection(); usbKey(); windowCheckAndCsv(); totpCodes(); passwordCheck();
     std::printf(failures ? "FAILED\n" : "OK\n");
     return failures ? 1 : 0;
 }
