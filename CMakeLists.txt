@@ -125,7 +125,7 @@ add_executable(DuncansPrivacyShield WIN32
 )
 set_target_properties(DuncansPrivacyShield PROPERTIES OUTPUT_NAME DuncansPrivacy)
 target_compile_definitions(DuncansPrivacyShield PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX _WIN32_WINNT=0x0A00
-                           APP_VERSION=L\"0.11.0\")
+                           APP_VERSION=L\"0.12.0\")
 if(MSVC)
     target_compile_options(DuncansPrivacyShield PRIVATE /utf-8 /W4 /permissive-)
     set_property(TARGET DuncansPrivacyShield PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -134,7 +134,7 @@ else()
     target_compile_options(DuncansPrivacyShield PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
     target_link_options(DuncansPrivacyShield PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
-target_link_libraries(DuncansPrivacyShield PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32)
+target_link_libraries(DuncansPrivacyShield PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 oleaut32 taskschd)
 
 # ---- Duncan's Photo Commander: Foto-Verwaltung (Direct2D/DirectWrite/WIC), EXIF-/GPS-Cleaner ----
 add_executable(DuncansPhotoCommander WIN32

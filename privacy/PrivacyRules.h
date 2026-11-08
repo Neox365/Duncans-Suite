@@ -32,6 +32,12 @@ struct ServiceOp {
     DWORD startType;           // SERVICE_DISABLED, SERVICE_DEMAND_START ...
 };
 
+// Geplante Aufgabe (Aufgabenplanung), die abgeschaltet wird; ob sie vorher aktiv war, wird gesichert und beim Zuruecknehmen wiederhergestellt
+struct TaskOp {
+    const wchar_t* folder;     // z. B. L"\\Microsoft\\Windows\\Application Experience"
+    const wchar_t* name;
+};
+
 struct Setting {
     int id;
     const wchar_t* group;
@@ -42,6 +48,7 @@ struct Setting {
     std::vector<ServiceOp> services;            // Starttyp per Dienstverwaltung; Dienste mit Zieltyp "deaktiviert" werden auch beendet
     bool manualOnly = false;                    // wird von "Alle schuetzen" nicht mit angewendet (Nebenwirkungen: nur bewusst einschalten)
     bool requiresSsd = false;                   // wird abgelehnt, wenn das Systemlaufwerk eine Festplatte ist
+    std::vector<TaskOp> tasks;                  // geplante Aufgaben, die deaktiviert werden (nicht vorhandene werden uebersprungen)
 };
 
 const std::vector<Setting>& AllSettings();
