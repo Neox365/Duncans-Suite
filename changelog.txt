@@ -443,6 +443,8 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.5.0 | 2026-11-09
+- Neu: Diagramme in Sheets. Bereich markieren und in der Leiste oben rechts auf das Säulen-Symbol klicken: Das Diagramm-Fenster zeigt den Bereich als Säulen oder Linien. Steht in der ersten Zeile Text, sind das die Namen der Reihen, steht in der ersten Spalte Text, sind das die Beschriftungen; jede weitere Spalte ist eine Reihe (bis zu 8 Reihen und 60 Werte). „Als Bild kopieren“ legt das Diagramm mit hellem Hintergrund in die Zwischenablage, zum Einfügen in Writer oder andere Programme.
 ## 0.4.0 | 2026-11-06
 - Neu: Der Writer öffnet und speichert Word-Dokumente (.docx). Übernommen werden Absätze, Überschriften, Fett, Kursiv, Unterstrichen, Durchgestrichen, Schriftart, -größe und -farbe, hoch- und tiefgestellter Text, Ausrichtung, Tabulatoren, Zeilen- und Seitenumbrüche, Aufzählungen, nummerierte Listen und einfache Tabellen.
 - Der Writer zeigt keine Bilder, Zeichnungen, Kopf- und Fußzeilen, Fußnoten und Kommentare. Enthält ein Word-Dokument so etwas, weist das Programm beim Öffnen darauf hin, schlägt beim Speichern einen neuen Namen vor und fragt, bevor das Original überschrieben wird.
