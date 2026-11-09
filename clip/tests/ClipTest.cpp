@@ -307,6 +307,30 @@ int main() {
     }
     if (hadText) SetPlain(original); else { OpenClipboard(nullptr); EmptyClipboard(); CloseClipboard(); }
 
+    // ---- Links saeubern ----
+    CHECK(CleanLink(L"https://example.com/seite?utm_source=x&utm_medium=y&id=5") == L"https://example.com/seite?id=5");
+    CHECK(CleanLink(L"https://example.com/a?fbclid=abc") == L"https://example.com/a");
+    CHECK(CleanLink(L"https://example.com/a?gclid=1&x=2#teil") == L"https://example.com/a?x=2#teil");
+    CHECK(CleanLink(L"  https://example.com/a?utm_campaign=z \r\n") == L"https://example.com/a");
+    CHECK(CleanLink(L"HTTPS://Example.com/A?UTM_Source=x&B=1") == L"HTTPS://Example.com/A?B=1");
+    CHECK(CleanLink(L"https://www.amazon.de/Produkt-Name/dp/B0ABC12345/ref=sr_1_3?crid=XYZ&qid=1&sprefix=a&th=1") == L"https://www.amazon.de/Produkt-Name/dp/B0ABC12345?th=1");
+    CHECK(CleanLink(L"https://www.amazon.de/dp/B0ABC12345?tag=partner-21&pf_rd_r=1&pd_rd_w=2") == L"https://www.amazon.de/dp/B0ABC12345");
+    CHECK(CleanLink(L"https://youtu.be/abcDEF?si=zzz&t=30") == L"https://youtu.be/abcDEF?t=30");
+    CHECK(CleanLink(L"https://example.com/x?si=1") == L"");                      // si nur bei YouTube/Spotify
+    CHECK(CleanLink(L"https://example.com/m%C3%BCnchen/%C3%A4pfel%20und%2Fbirnen") == L"https://example.com/münchen/äpfel%20und%2Fbirnen");
+    CHECK(CleanLink(L"https://example.com/%C3") == L"");                          // unvollstaendige Folge bleibt
+    CHECK(CleanLink(L"https://example.com/%C2%A0x") == L"");                      // Geschuetztes Leerzeichen wird nicht eingesetzt
+    CHECK(CleanLink(L"https://example.com/sauber?id=5") == L"");                  // nichts zu tun
+    CHECK(CleanLink(L"schau mal https://example.com/a?utm_source=x") == L"");     // Text mit Link: nicht anfassen
+    CHECK(CleanLink(L"ftp://example.com/a?utm_source=x") == L"");
+    CHECK(CleanLink(L"hallo welt") == L"" && CleanLink(L"") == L"" && CleanLink(L"https://") == L"");
+    {
+        Settings a; a.cleanLinks = true;
+        CHECK(SaveSettings(a) && LoadSettings().cleanLinks);
+        a.cleanLinks = false;
+        CHECK(SaveSettings(a) && !LoadSettings().cleanLinks);
+    }
+
     // ---- Autostart (nur, wenn er vorher aus war; danach wieder aus) ----
     if (!GetAutostart()) {
         CHECK(SetAutostart(true, L"C:\\Test\\DuncansClip.exe") && GetAutostart());

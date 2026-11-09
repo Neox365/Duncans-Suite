@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <iterator>
+#include <cwchar>
+#include <cwctype>
 
 #ifdef _MSC_VER
 #pragma comment(lib, "gdiplus.lib")
@@ -928,6 +930,7 @@ Settings LoadSettings() {
     s.retention = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Settings", L"Retention", 0, f.c_str())), 0, 2);
     s.captureSelection = GetPrivateProfileIntW(L"Settings", L"CaptureSelection", 1, f.c_str()) != 0;
     s.hideIntro = GetPrivateProfileIntW(L"Settings", L"HideIntro", 0, f.c_str()) != 0;
+    s.cleanLinks = GetPrivateProfileIntW(L"Settings", L"CleanLinks", 0, f.c_str()) != 0;
     wchar_t buf[4096] = {};
     GetPrivateProfileStringW(L"Settings", L"ExcludedApps", L"", buf, 4096, f.c_str());
     s.excludedExes = SplitExcluded(buf);
@@ -942,6 +945,7 @@ bool SaveSettings(const Settings& s) {
     ok &= WritePrivateProfileStringW(L"Settings", L"Retention", std::to_wstring(s.retention).c_str(), f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"CaptureSelection", s.captureSelection ? L"1" : L"0", f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"HideIntro", s.hideIntro ? L"1" : L"0", f.c_str()) != 0;
+    ok &= WritePrivateProfileStringW(L"Settings", L"CleanLinks", s.cleanLinks ? L"1" : L"0", f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"ExcludedApps", JoinExcluded(s.excludedExes).c_str(), f.c_str()) != 0;
     return ok;
 }
@@ -1013,6 +1017,135 @@ std::vector<std::wstring> LoadHistory() {
 }
 
 void DeleteHistoryFile() { DeleteFileW(Path(L"history.dat").c_str()); }
+
+// ---- Links saeubern ----
+namespace {
+
+std::wstring LowerAscii(std::wstring s) {
+    for (wchar_t& c : s) if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c + 32);
+    return s;
+}
+
+bool StartsWithW(const std::wstring& s, const wchar_t* prefix) {
+    return s.compare(0, wcslen(prefix), prefix) == 0;
+}
+
+int HexDigit(wchar_t c) {
+    if (c >= L'0' && c <= L'9') return c - L'0';
+    if (c >= L'a' && c <= L'f') return c - L'a' + 10;
+    if (c >= L'A' && c <= L'F') return c - L'A' + 10;
+    return -1;
+}
+
+bool IsBlankChar(wchar_t c) {
+    return c <= L' ' || c == 0x00A0 || (c >= 0x2000 && c <= 0x200B) || c == 0x2028 || c == 0x2029 || c == 0x3000 || c == 0xFEFF;
+}
+
+// %C3%A4 -> ä (nur mehrbyte-UTF-8; %20, %2F und andere ASCII-Zeichen bleiben, damit der Link funktioniert)
+std::wstring DecodeUtf8Escapes(const std::wstring& s) {
+    auto byteAt = [&](size_t p, int& v) {
+        if (p + 2 >= s.size()) return false;
+        if (s[p] != L'%') return false;
+        const int h = HexDigit(s[p + 1]), l = HexDigit(s[p + 2]);
+        if (h < 0 || l < 0) return false;
+        v = h * 16 + l;
+        return true;
+    };
+    std::wstring out;
+    for (size_t i = 0; i < s.size();) {
+        int b0 = 0;
+        if (byteAt(i, b0) && b0 >= 0xC2 && b0 <= 0xF4) {
+            const int n = b0 < 0xE0 ? 2 : (b0 < 0xF0 ? 3 : 4);
+            char buf[4] = { static_cast<char>(b0), 0, 0, 0 };
+            bool ok = true;
+            for (int k = 1; k < n && ok; ++k) {
+                int v = 0;
+                if (!byteAt(i + static_cast<size_t>(3 * k), v) || v < 0x80 || v > 0xBF) ok = false;
+                else buf[k] = static_cast<char>(v);
+            }
+            wchar_t w[4] = {};
+            const int cnt = ok ? MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, buf, n, w, 4) : 0;
+            if (cnt > 0 && !IsBlankChar(w[0])) {
+                out.append(w, static_cast<size_t>(cnt));
+                i += static_cast<size_t>(3 * n);
+                continue;
+            }
+        }
+        out += s[i++];
+    }
+    return out;
+}
+
+bool IsTrackingParam(const std::wstring& name, const std::wstring& host) {
+    static const wchar_t* const kAlways[] = {
+        L"fbclid", L"gclid", L"dclid", L"gbraid", L"wbraid", L"msclkid", L"mc_eid", L"mc_cid", L"igshid", L"yclid", L"twclid", L"ttclid",
+        L"_hsenc", L"_hsmi", L"mkt_tok", L"li_fat_id", L"ref_src", L"s_cid", L"vero_id", L"oly_enc_id", L"oly_anon_id" };
+    if (StartsWithW(name, L"utm_")) return true;
+    for (const wchar_t* k : kAlways) if (name == k) return true;
+    const bool video = host.find(L"youtu") != std::wstring::npos || host.find(L"spotify.") != std::wstring::npos;
+    if (video && name == L"si") return true;
+    if (host.find(L"amazon.") != std::wstring::npos) {
+        static const wchar_t* const kAmazon[] = { L"ref", L"ref_", L"tag", L"qid", L"sr", L"crid", L"sprefix", L"linkcode", L"linkid", L"content-id", L"keywords" };
+        if (StartsWithW(name, L"pf_rd_") || StartsWithW(name, L"pd_rd_")) return true;
+        for (const wchar_t* k : kAmazon) if (name == k) return true;
+    }
+    return false;
+}
+
+}  // namespace
+
+std::wstring CleanLink(const std::wstring& text) {
+    size_t b = 0, e = text.size();
+    while (b < e && IsBlankChar(text[b])) ++b;
+    while (e > b && IsBlankChar(text[e - 1])) --e;
+    const std::wstring url = text.substr(b, e - b);
+    if (url.size() < 10 || url.size() > 4000) return L"";
+    const std::wstring low = LowerAscii(url);
+    if (!StartsWithW(low, L"http://") && !StartsWithW(low, L"https://")) return L"";
+    for (wchar_t c : url) if (IsBlankChar(c)) return L"";      // ein Link, kein Text mit Link darin
+
+    std::wstring rest = url, frag;
+    const size_t hash = rest.find(L'#');
+    if (hash != std::wstring::npos) { frag = rest.substr(hash); rest.resize(hash); }
+    std::wstring query;
+    const size_t qm = rest.find(L'?');
+    if (qm != std::wstring::npos) { query = rest.substr(qm + 1); rest.resize(qm); }
+
+    const size_t hostStart = rest.find(L"//") + 2;
+    const size_t hostEnd = rest.find(L'/', hostStart);
+    const std::wstring host = LowerAscii(rest.substr(hostStart, hostEnd == std::wstring::npos ? std::wstring::npos : hostEnd - hostStart));
+    if (host.empty()) return L"";
+
+    // Amazon: .../dp/B00XXXX/ref=sr_1_3 -> .../dp/B00XXXX
+    if (host.find(L"amazon.") != std::wstring::npos && hostEnd != std::wstring::npos) {
+        const std::wstring lp = LowerAscii(rest);
+        const size_t r = lp.find(L"/ref=", hostEnd);
+        if (r != std::wstring::npos) {
+            const size_t next = rest.find(L'/', r + 1);
+            rest.erase(r, next == std::wstring::npos ? std::wstring::npos : next - r);
+        }
+    }
+
+    std::wstring kept;
+    size_t pos = 0;
+    while (pos <= query.size() && !query.empty()) {
+        size_t amp = query.find(L'&', pos);
+        if (amp == std::wstring::npos) amp = query.size();
+        const std::wstring part = query.substr(pos, amp - pos);
+        if (!part.empty()) {
+            const size_t eq = part.find(L'=');
+            const std::wstring name = LowerAscii(part.substr(0, eq));
+            if (!IsTrackingParam(name, host)) kept += (kept.empty() ? L"" : L"&") + part;
+        }
+        pos = amp + 1;
+    }
+
+    std::wstring result = rest;
+    if (!kept.empty()) result += L"?" + kept;
+    result += frag;
+    result = DecodeUtf8Escapes(result);
+    return result == text ? L"" : result;
+}
 
 // ---- Autostart ----
 namespace { const wchar_t* const kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run"; }

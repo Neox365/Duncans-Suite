@@ -30,7 +30,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.5.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -230,6 +230,13 @@ void OnClipboardChanged() {
             return;
         }
         if (why != clip::SkipReason::None) return;
+        if (g.cfg.cleanLinks) {                         // Link von Tracking saeubern und die Zwischenablage durch die saubere Fassung ersetzen
+            const std::wstring cleaned = clip::CleanLink(text);
+            if (!cleaned.empty()) {
+                g.suppressUntil = GetTickCount() + 1500;
+                if (clip::WriteClipboardText(cleaned, false)) { text = cleaned; SetStatus(L"Link gesäubert: Tracking entfernt.", kGreen); }
+            }
+        }
         changed = clip::AddHistory(g.store, text);
     } else if (clip::ClipboardHasImage() && !clip::IsPasswordManagerExe(owner) && !clip::IsExcludedExe(g.cfg.excludedExes, owner)) {
         std::string png; int w = 0, h = 0;
@@ -295,7 +302,7 @@ const wchar_t* const kSetHints[6] = {
     L"Kürzel: Mit dieser Tastenkombination öffnest du die Schnellauswahl in jedem Programm. Ein Klick wechselt das Kürzel.",
     L"Verlauf löschen nach: Entfernt kopierte Einträge nach der gewählten Zeit automatisch. Ein Klick wechselt (nie, 1 Stunde, 1 Tag).",
     L"Markierung übernehmen: Markierten Text übernimmt Clip beim Öffnen der Schnellauswahl und setzt ihn für {clip} ein – ohne vorher Strg+C.",
-    L"Mehr: Prompts als Textdatei sichern oder laden, und Programme sperren – aus gesperrten Programmen nimmt Clip nie etwas auf (z. B. Banking, Passwort-Tresor).",
+    L"Mehr: Prompts als Textdatei sichern oder laden, Links beim Kopieren von Tracking säubern, und Programme sperren – aus gesperrten Programmen nimmt Clip nie etwas auf.",
 };
 
 std::vector<std::wstring> IntroSteps() {
@@ -476,6 +483,13 @@ void ToggleCapture() {
                                      : L"Markierung wird nicht mehr automatisch übernommen: vorher Strg+C drücken.", kGreen);
 }
 
+void ToggleCleanLinks() {
+    g.cfg.cleanLinks = !g.cfg.cleanLinks;
+    clip::SaveSettings(g.cfg);
+    SetStatus(g.cfg.cleanLinks ? L"Kopierte Links werden von Tracking (utm_, fbclid, Amazon-ref …) gesäubert."
+                               : L"Links werden wieder unverändert gelassen.", kGreen);
+}
+
 void ExportPromptsToFile() {
     wchar_t file[MAX_PATH] = L"Clip-Prompts.txt";
     OPENFILENAMEW ofn{};
@@ -509,6 +523,8 @@ void ExportImportMenu() {
     AppendMenuW(m, MF_STRING, 1, L"Prompts exportieren …");
     AppendMenuW(m, MF_STRING, 2, L"Prompts importieren …");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING | (g.cfg.cleanLinks ? MF_CHECKED : 0), 4, L"Links beim Kopieren säubern (Tracking entfernen)");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     const bool canBlock = !g.lastOwner.empty() && !clip::IsExcludedExe(g.cfg.excludedExes, g.lastOwner) && !clip::IsPasswordManagerExe(g.lastOwner);
     AppendMenuW(m, canBlock ? MF_STRING : MF_STRING | MF_GRAYED, 3,
                 canBlock ? (L"Zuletzt kopierendes Programm sperren: " + g.lastOwner).c_str() : L"Programm sperren (erst etwas kopieren)");
@@ -520,6 +536,7 @@ void ExportImportMenu() {
     DestroyMenu(m);
     if (cmd == 1) ExportPromptsToFile();
     else if (cmd == 2) ImportPromptsFromFile();
+    else if (cmd == 4) ToggleCleanLinks();
     else if (cmd == 3 && clip::AddExcludedExe(g.cfg.excludedExes, g.lastOwner)) {
         clip::SaveSettings(g.cfg);
         SetStatus(g.lastOwner + L" ist gesperrt: daraus nimmt Clip nichts mehr auf.", kGreen);

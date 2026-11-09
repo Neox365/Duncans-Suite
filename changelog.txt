@@ -33,6 +33,8 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.5.0 | 2026-11-09
+- Neu: Links säubern. Im Knopf unten rechts („Mehr“) schaltet „Links beim Kopieren säubern“ die Funktion ein (standardmäßig aus). Kopierst du dann einen Link, entfernt Clip Tracking wie utm_…, fbclid, gclid und msclkid, bei Amazon den „/ref=…“-Teil und Werbe-Parameter, bei YouTube und Spotify „si“, und macht aus %C3%A4 wieder ein ä. Die saubere Fassung liegt in der Zwischenablage. Text, der nur einen Link enthält, bleibt unberührt; es wird nichts aus dem Internet nachgeladen.
 ## 0.4.0 | 2026-11-06
 - Neu: Programme sperren. Im Knopf unten rechts („Mehr: Prompts, Programme sperren“) sperrt „Zuletzt kopierendes Programm sperren“ das Programm, aus dem du zuletzt kopiert hast (z. B. Banking oder ein Passwort-Tresor). Daraus nimmt Clip nie wieder Text oder Bilder auf. Gesperrte Programme stehen im selben Menü und lassen sich dort wieder freigeben. Die Liste wird gemerkt. Bekannte Passwort-Manager waren schon vorher gesperrt.
 ## 0.3.0 | 2026-11-05
