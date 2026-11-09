@@ -30,7 +30,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.5.2"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -809,7 +809,7 @@ void Paint(HDC dc, const RECT& cr) {
     DrawPill(dc, g.set[2], std::wstring(L"Kürzel: ") + clip::HotkeyPreset(g.cfg.hotkey).name, false, g.hover == H_SET_BASE + 2, kClip);
     DrawPill(dc, g.set[3], std::wstring(L"Verlauf löschen nach: ") + clip::RetentionName(g.cfg.retention), g.cfg.retention > 0, g.hover == H_SET_BASE + 3, kClip);
     DrawPill(dc, g.set[4], std::wstring(L"Markierung übernehmen: ") + (g.cfg.captureSelection ? L"an" : L"aus"), g.cfg.captureSelection, g.hover == H_SET_BASE + 4, kClip);
-    DrawPill(dc, g.set[5], g.cfg.excludedExes.empty() ? L"Mehr: Prompts, Programme sperren" : (L"Mehr: Prompts, " + std::to_wstring(g.cfg.excludedExes.size()) + L" gesperrt").c_str(), !g.cfg.excludedExes.empty(), g.hover == H_SET_BASE + 5, kClip);
+    DrawPill(dc, g.set[5], g.cfg.excludedExes.empty() ? L"Mehr: Prompts & Optionen" : (L"Mehr: Prompts, " + std::to_wstring(g.cfg.excludedExes.size()) + L" gesperrt").c_str(), !g.cfg.excludedExes.empty(), g.hover == H_SET_BASE + 5, kClip);
 
     DrawText2(dc, g.fSmall, kTextDim, { g.footer.left, g.footer.top, g.footer.left + S(200), g.footer.bottom }, L"© 2026 Duncan · v" APP_VERSION, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     DrawText2(dc, g.fSmall, g.statusColor, { g.footer.left + S(210), g.footer.top, g.footer.right, g.footer.bottom }, g.status, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);

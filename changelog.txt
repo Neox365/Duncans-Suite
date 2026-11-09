@@ -33,6 +33,8 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.5.2 | 2026-11-09
+- Behoben: Die Beschriftung des Knopfs „Mehr“ unten rechts war zu lang und wurde an beiden Seiten abgeschnitten. Sie heißt jetzt „Mehr: Prompts & Optionen“.
 ## 0.5.1 | 2026-11-09
 - Neu: Nur reinen Text behalten. Im Knopf unten rechts („Mehr“) entfernt „Beim Kopieren nur reinen Text behalten“ die Formatierung (HTML, RTF) aus kopiertem Text, sodass beim Einfügen überall nur Text ankommt. Standardmäßig aus. Achtung: Auch Tabellen aus Excel kommen dann ohne Zellen an.
 ## 0.5.0 | 2026-11-09
@@ -58,6 +60,8 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.6.1 | 2026-11-09
+- Behoben: Die Überschrift „Andere Programme leiser, solange das Spiel im Vordergrund ist“ war zu lang und wurde abgeschnitten. Die Titel der Ton-Schalter sind jetzt kürzer („Andere Programme leiser beim Spielen“, „Spiel stumm beim Wegschalten“), die Erklärung steht darunter.
 ## 0.6.0 | 2026-11-09
 - Neu: Profile. Unter „Profile (optional)“ speicherst du die gerade laufenden Programme als Arbeitsplatz-Set (z. B. Arbeit, Gaming) mit eigenem Namen. Ein Klick auf ein Profil öffnet ein Menü: Wechseln, Umbenennen, mit den jetzt laufenden Programmen überschreiben, Löschen. Beim Wechseln zeigt Boost vorher, was passiert: Programme der anderen Profile, die das neue nicht braucht, werden höflich beendet (sie fragen bei ungespeicherter Arbeit nach, hart beendet wird nichts), die des neuen Profils gestartet. Programme, die in beiden Profilen stehen, bleiben offen. Die Fensteranordnung auf den Monitoren gehört noch nicht dazu.
 ## 0.5.0 | 2026-11-09

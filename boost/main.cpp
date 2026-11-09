@@ -34,7 +34,7 @@ using std::min;
 #include "LiveStats.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.6.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -143,12 +143,12 @@ void Toggle(std::vector<std::wstring>& v, const std::wstring& s) {
 
 const wchar_t* kAutoTitle = L"Automatisch starten, wenn ich ein Spiel starte";
 const wchar_t* kAutoDesc = L"Hake unten dein Spiel an. Sobald es läuft, schaltet sich der Zock-Modus ohne Rückfrage ein, nach dem Spiel wieder aus.";
-const wchar_t* kDuckTitle = L"Andere Programme leiser, solange das Spiel im Vordergrund ist";
-const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Browser, Musik & Co. laufen auf 40 % und sind sofort wieder normal, wenn du das Spiel verlässt. Discord, TeamSpeak & Co. bleiben unverändert.";
+const wchar_t* kDuckTitle = L"Andere Programme leiser beim Spielen";
+const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Solange ein Spiel im Vordergrund ist, laufen Browser, Musik & Co. auf 40 % und sind sofort wieder normal, wenn du das Spiel verlässt. Discord, TeamSpeak & Co. bleiben unverändert.";
 const wchar_t* kCrossTitle = L"Fadenkreuz über dem Spiel anzeigen";
 const wchar_t* kCrossDesc = L"Ein kleines Fadenkreuz in der Bildschirmmitte, nur über den oben angehakten Spielen (ist keines angehakt, immer). Es ist ein normales, durchklickbares Fenster und greift nicht in das Spiel ein. Es erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
-const wchar_t* kMuteTitle = L"Spiel stumm, wenn ich es verlasse (Alt+Tab)";
-const wchar_t* kMuteDesc = L"Der Ton des angehakten Spiels ist aus, solange du in einem anderen Fenster bist, und kommt beim Zurückwechseln wieder.";
+const wchar_t* kMuteTitle = L"Spiel stumm beim Wegschalten";
+const wchar_t* kMuteDesc = L"Der Ton des angehakten Spiels ist aus, solange du in einem anderen Fenster bist (Alt+Tab), und kommt beim Zurückwechseln wieder.";
 
 // ---------- Zustand ----------
 void SetStatus(const std::wstring& t, COLORREF c = kTextDim) { g.status = t; g.statusColor = c; InvalidateRect(g.hwnd, nullptr, FALSE); }
