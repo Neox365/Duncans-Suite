@@ -910,7 +910,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.8.0";
+constexpr wchar_t kVersion[] = L"1.8.1";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -1118,7 +1118,7 @@ static COLORREF kBg, kSide, kPanel, kCard, kCardHot, kText, kSub, kMuted, kStron
                 kGood, kWarn, kBad;
 static const COLORREF kHdrSub = RGB(214, 220, 255);  // Untertitel auf dem Farbverlauf der Kopfzeile (in beiden Designs hell)
 static bool g_dark = true;
-constexpr int ID_CLEAN = 101, ID_EXIT = 102, ID_TOGGLE = 103, ID_UPDATE = 106, ID_PROTECT = 107, ID_ADMIN = 110, ID_RAM = 111, ID_NAV0 = 200;
+constexpr int ID_CLEAN = 101, ID_EXIT = 102, ID_TOGGLE = 103, ID_UPDATE = 106, ID_PROTECT = 107, ID_ADMIN = 110, ID_RAM = 111, ID_NAV0 = 200, ID_MORE = 190;  // ID_MORE: Eintrag "Mehr" in der Seitenleiste, klappt Laufwerke bis Arbeitsspeicher auf
 constexpr UINT_PTR ID_RAMTICK = 80;  // Zeitgeber der Arbeitsspeicher-Seite
 // Alle Masse unten sind "logische" Einheiten (96 DPI); g_ui rechnet sie auf die Bildschirmskalierung um.
 constexpr int kModeW1 = 120, kModeW2 = 120, kModeH = 28;  // Umschalter "Standard | Ultra" in der Kopfzeile
@@ -1163,6 +1163,8 @@ static RECT g_listRect{};  // Bereich der Liste auf den Kategorie-Seiten (logisc
 static HICON g_logo;
 static HWND g_main;  // Hauptfenster (fuer Hilfsfunktionen, die Meldungen dorthin schicken)
 static int g_hover = 0, g_page = 0, g_tileHot = -1;
+static bool g_navMore = false;  // Seitenleiste: Seiten 5..8 (Laufwerke, Autostart, Programme, Arbeitsspeicher) aufgeklappt
+static bool NavGrouped(int i) { return i >= 5 && i <= 8; }
 static std::vector<fs::path> g_items;
 constexpr int kTiles = 8;  //Kacheln der Uebersicht: eine pro Seite ausser der Uebersicht selbst
 static_assert(kTiles == kPages - 2, "Eine Kachel pro Seite (ohne Uebersicht und Einstellungen)");
@@ -2724,7 +2726,7 @@ static void SetMode(HWND h, int mode) {
 static void DrawButton(const DRAWITEMSTRUCT* d) {
     int id = (int)d->CtlID;
     bool down = d->itemState & ODS_SELECTED, hot = g_hover == id;
-    bool nav = id >= ID_NAV0 && id < ID_NAV0 + kPages;
+    bool nav = (id >= ID_NAV0 && id < ID_NAV0 + kPages) || id == ID_MORE;
     wchar_t text[64];
     GetWindowTextW(d->hwndItem, text, 64);
     // Erst im Speicher zeichnen und dann in einem Rutsch auf den Bildschirm: kein Flackern beim Hovern
@@ -2737,7 +2739,7 @@ static void DrawButton(const DRAWITEMSTRUCT* d) {
     SetBkMode(dc, TRANSPARENT);
     SetLogical(dc);
     if (nav) {
-        bool sel = g_page == id - ID_NAV0;
+        bool sel = id != ID_MORE && g_page == id - ID_NAV0;
         FillRect(dc, &rc, g_sideBrush);
         if (sel || hot) FillRound(dc, rc, sel ? kNavSel : kNavHot, 14);
         if (sel) {
@@ -2748,7 +2750,7 @@ static void DrawButton(const DRAWITEMSTRUCT* d) {
         RECT rg{18, 0, 50, rc.bottom}, rt{54, 0, rc.right, rc.bottom};
         SelectObject(dc, g_fIcon);
         SetTextColor(dc, sel ? RGB(79, 140, 255) : col);
-        DrawTextW(dc, kNavGlyphBase[id - ID_NAV0], -1, &rg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(dc, id == ID_MORE ? (g_navMore ? L"ç0E" : L"ç0D") : kNavGlyphBase[id - ID_NAV0], -1, &rg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, g_fNav);
         SetTextColor(dc, col);
         DrawTextW(dc, text, -1, &rt, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -2829,8 +2831,15 @@ static void Layout(HWND h) {
     const int cx = kSideW + kMargin, cw = W - kSideW - 2 * kMargin, btnH = 52;
     g_noteRect = {};
     const int navStep = 48, navH = 42;  // 9 Eintraege oben plus Einstellungen unten
-    for (int i = 0; i < kPages - 1; ++i) MW(GetDlgItem(h, ID_NAV0 + i), 10, 112 + i * navStep, kSideW - 20, navH);
-    MW(GetDlgItem(h, ID_NAV0 + kSettingsPage), 10, std::max(112 + (kPages - 1) * navStep, H - 92 - 62), kSideW - 20, navH);  // Einstellungen sitzen unten, ueber Exit
+    int row = 0;
+    for (int i = 0; i < kPages - 1; ++i) {
+        if (i == 5) { MW(GetDlgItem(h, ID_MORE), 10, 112 + row * navStep, kSideW - 20, navH); ++row; }  // "Mehr" gruppiert die selteneren Seiten
+        HWND b = GetDlgItem(h, ID_NAV0 + i);
+        bool show = !NavGrouped(i) || g_navMore;
+        ShowWindow(b, show ? SW_SHOWNA : SW_HIDE);
+        if (show) { MW(b, 10, 112 + row * navStep, kSideW - 20, navH); ++row; }
+    }
+    MW(GetDlgItem(h, ID_NAV0 + kSettingsPage), 10, std::max(112 + row * navStep, H - 92 - 62), kSideW - 20, navH);  // Einstellungen sitzen unten, ueber Exit
     MW(GetDlgItem(h, ID_EXIT), 14, H - 92, kSideW - 28, 40);
     {   // Update-Button: Breite richtet sich nach dem Text, damit nichts abgeschnitten wird
         HWND ub = GetDlgItem(h, ID_UPDATE);
@@ -2940,6 +2949,7 @@ static void LoadSettings() {
 
 static void SetPage(HWND h, int p) {
     g_page = p;
+    if (NavGrouped(p) && !g_navMore) { g_navMore = true; SetWindowTextW(GetDlgItem(h, ID_MORE), Tr(L"Weniger")); Layout(h); }
     g_setHot = -1;
     if (p == kSettingsPage) LoadSettings();
     SetWindowTextW(GetDlgItem(h, ID_CLEAN), p == 0 ? Tr(L"Optimieren") : p == kAutoPage ? Tr(L"Änderungen übernehmen") : Tr(L"Clean Now"));
@@ -5253,6 +5263,7 @@ static void ApplyLanguage(HWND h, int idx) {
     g_lang = idx;
     SaveLanguage(idx);
     for (int i = 0; i < kPages; ++i) SetWindowTextW(GetDlgItem(h, ID_NAV0 + i), Tr(kPageName[i]));
+    SetWindowTextW(GetDlgItem(h, ID_MORE), g_navMore ? Tr(L"Weniger") : Tr(L"Mehr"));
     SetWindowTextW(GetDlgItem(h, ID_EXIT), Tr(L"Exit"));
     SetWindowTextW(GetDlgItem(h, ID_TOGGLE), Tr(L"Alle / Keine"));
     SetWindowTextW(GetDlgItem(h, ID_PROTECT), Tr(L"Schutzliste"));
@@ -5372,6 +5383,8 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             SetWindowSubclass(b, ButtonProc, (UINT_PTR)id, 0);
         };
         for (int i = 0; i < kPages; ++i) btn(Tr(kPageName[i]), ID_NAV0 + i);
+        btn(Tr(L"Mehr"), ID_MORE);
+        for (int i = 5; i <= 8; ++i) ShowWindow(GetDlgItem(h, ID_NAV0 + i), SW_HIDE);
         btn(Tr(L"Exit"), ID_EXIT);
         btn(Tr(L"Clean Now"), ID_CLEAN);
         btn(Tr(L"Alle / Keine"), ID_TOGGLE, false);
@@ -5800,6 +5813,12 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         if (g_busy && id != ID_EXIT) return 0;  // waehrend der Bereinigung nichts anderes anfassen
         if (id == ID_EXIT) {
             DestroyWindow(h);
+        } else if (id == ID_MORE) {
+            g_navMore = !g_navMore;
+            if (!g_navMore && NavGrouped(g_page)) SetPage(h, 0);  // aktive Seite wuerde verschwinden: zurueck zur Uebersicht
+            SetWindowTextW(GetDlgItem(h, ID_MORE), g_navMore ? Tr(L"Weniger") : Tr(L"Mehr"));
+            Layout(h);
+            InvalidateRect(h, nullptr, FALSE);
         } else if (id >= ID_NAV0 && id < ID_NAV0 + kPages) {
             SetPage(h, id - ID_NAV0);
         } else if (id == ID_UPDATE) {

@@ -67,6 +67,8 @@
 
 
 [DuncansTidy.exe]
+## 1.8.1 | 2026-11-09
+- Aufgeräumter: Die Seitenleiste zeigt nur noch die wichtigsten Bereiche (Übersicht, Downloads, Temp-Dateien, Systemdateien, Browser, Einstellungen). Laufwerke, Autostart, Programme und Arbeitsspeicher stecken hinter dem neuen Eintrag „Mehr“ und lassen sich dort aufklappen. Nichts wurde entfernt.
 ## 1.8.0 | 2026-11-09
 - Neu: Große vergessene Dateien. Im Fenster „Größte Dateien“ (Klick auf eine Laufwerks-Karte oder „Ordner analysieren“) wechselt der neue Knopf „Vergessene suchen (über 1 Jahr)“ auf die 20 größten Dateien ab 50 MB, die seit über einem Jahr weder geändert noch benutzt wurden, jeweils mit dem Datum der letzten Änderung. Übersprungen werden Windows, Programm- und AppData-Ordner und Spiele-Bibliotheken (Steam, Epic u. a.), weil dort „alt“ nicht „vergessen“ heißt. Tidy löscht dabei nichts: Ein Klick zeigt die Datei im Explorer, du entscheidest. Ob Windows die Zugriffszeit führt, hängt vom System ab; im Zweifel zählt das Änderungsdatum.
 ## 1.7.0 | 2026-11-08
