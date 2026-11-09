@@ -74,6 +74,12 @@ int MergePrompts(std::vector<Prompt>& dst, const std::vector<Prompt>& src);
 bool WriteTextFile(const std::wstring& path, const std::wstring& text);   // UTF-8 mit BOM
 bool ReadTextFile(const std::wstring& path, std::wstring& text);          // UTF-8 (mit/ohne BOM) oder UTF-16
 
+// ---- Links saeubern ----
+// Ist text genau ein Link (http/https, ohne Leerzeichen), entfernt das bekannte Tracking-Teile (utm_*, fbclid, gclid, msclkid ...,
+// bei Amazon /ref=... und Werbe-Parameter, bei YouTube/Spotify "si") und liest %C3%A4 & Co. wieder als Umlaut.
+// Rueckgabe: der gesaeuberte Link, oder leer, wenn es kein Link ist oder sich nichts aendert. Es wird nichts nachgeladen.
+std::wstring CleanLink(const std::wstring& text);
+
 // ---- Sperrregeln: was nie in den Verlauf kommt ----
 // Kopien aus bekannten Passwort-Managern (EXE-Name in Kleinbuchstaben)
 bool IsPasswordManagerExe(const std::wstring& exeLower);
@@ -127,6 +133,7 @@ struct Settings {
     int retention = 0;                                       // 0 = nie loeschen, 1 = nach 1 Stunde, 2 = nach 1 Tag
     bool captureSelection = true;                            // Markierung beim Oeffnen der Schnellauswahl automatisch uebernehmen
     bool hideIntro = false;                                  // Anleitungskarte "Was ist Clip?" ausgeblendet
+    bool cleanLinks = false;                                 // kopierte Links automatisch von Tracking saeubern (Menue "Mehr")
     std::vector<std::wstring> excludedExes;                  // Programme, aus denen Clip nie etwas aufnimmt (EXE-Namen klein)
 };
 
