@@ -1,9 +1,10 @@
-// Tests fuer Duncan's Office: Tabellen-Engine (Formeln, Fehler, CSV) und Textkodierung. Ohne Win32, reines C++17.
+﻿// Tests fuer Duncan's Office: Tabellen-Engine (Formeln, Fehler, CSV) und Textkodierung. Ohne Win32, reines C++17.
 #include <cstdio>
 #include <string>
 
 #include <vector>
 
+#include "../Chart.h"
 #include "../Codec.h"
 #include "../Docx.h"
 #include "../Sheet.h"
@@ -179,9 +180,36 @@ static void DocxTests()
     CHECK(sp.ok && zip::ReadDirectory(sp.bytes, es3) && zip::ReadEntry(sp.bytes, es3, "word/document.xml", doc3) && Contains(doc3, "&lt;a&gt; &amp; &quot;b&quot;") && WellFormed(doc3));
 }
 
+void ChartTests()
+{
+    sheet::Sheet s;
+    // Kopfzeile + Beschriftungsspalte + zwei Reihen
+    s.Set(0, 0, L"Monat"); s.Set(0, 1, L"Umsatz"); s.Set(0, 2, L"Kosten");
+    s.Set(1, 0, L"Jan"); s.Set(1, 1, L"10"); s.Set(1, 2, L"4");
+    s.Set(2, 0, L"Feb"); s.Set(2, 1, L"=B2*2"); s.Set(2, 2, L"6");
+    chart::Data d = chart::Extract(s, 0, 0, 2, 2);
+    CHECK(d.ok);
+    CHECK(d.labels.size() == 2 && d.labels[0] == L"Jan" && d.labels[1] == L"Feb");
+    CHECK(d.names.size() == 2 && d.names[0] == L"Umsatz" && d.names[1] == L"Kosten");
+    CHECK(d.series.size() == 2 && d.series[0][1] == 20 && d.series[1][0] == 4);
+    // nur Zahlen: Beschriftungen sind 1, 2, ...
+    chart::Data e = chart::Extract(s, 1, 1, 2, 2);
+    CHECK(e.ok && e.labels.size() == 2 && e.labels[0] == L"1" && e.names[0].empty() && e.series.size() == 2);
+    // einzelne Zelle und Text ohne Zahlen sind kein Diagramm
+    CHECK(!chart::Extract(s, 1, 1, 1, 1).ok);
+    CHECK(!chart::Extract(s, 0, 0, 2, 0).ok);
+    // schoene Achse
+    double lo, hi, st;
+    chart::NiceAxis(0, 87, lo, hi, st);
+    CHECK(lo == 0 && hi >= 87 && st > 0 && (hi - lo) / st <= 10);
+    chart::NiceAxis(-3, 4, lo, hi, st);
+    CHECK(lo <= -3 && hi >= 4);
+}
+
 int main()
 {
     DocxTests();
+    ChartTests();
     using namespace sheet;
 
     // Zellbezuege

@@ -1,4 +1,4 @@
-// Duncan's Office: Writer (Textverarbeitung auf Basis des Windows-Rich-Edit-Steuerelements) und Sheets (Tabellenkalkulation)
+﻿// Duncan's Office: Writer (Textverarbeitung auf Basis des Windows-Rich-Edit-Steuerelements) und Sheets (Tabellenkalkulation)
 // in einer Anwendung. Reines Win32 + GDI, keine Fremdbibliotheken. Alles bleibt lokal, es gibt keine Netzwerkzugriffe.
 //
 // Aufbau: Das Hauptfenster zeichnet Tab-Leiste, Werkzeugleiste und Statusleiste selbst (Knoepfe als Rechtecke, Auswahl per
@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "../docs/PdfWriter.h"
+#include "Chart.h"
 #include "Codec.h"
 #include "Docx.h"
 #include "Sheet.h"
@@ -33,7 +34,7 @@
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.0"
+#define APP_VERSION L"0.5.0"
 #endif
 
 namespace {
@@ -59,7 +60,7 @@ enum Cmd : int {
     C_BOLD, C_ITALIC, C_UNDER, C_SMALLER, C_BIGGER, C_SIZE, C_LEFT, C_CENTER, C_RIGHT,
     C_PICK_WRITER, C_PICK_SHEETS,
     C_STRIKE, C_FONT, C_COLOR, C_BULLET, C_FIND, C_FINDNEXT, C_TABLE,
-    C_FMT_EUR, C_FMT_PCT, C_FILL,
+    C_FMT_EUR, C_FMT_PCT, C_FILL, C_CHART,
     ID_RICH = 201, ID_FORMULA = 202,
     C_SIZE_BASE = 300,
     C_PRINTER_BASE = 400,   // bis 400 + Zahl der Drucker
@@ -257,6 +258,7 @@ private:
     void ShowSizeMenu();
     void ShowFontMenu();
     void ShowColorMenu();
+    void ShowChartDialog();                        // Sheets: Diagramm (Saeulen/Linien) fuer den markierten Bereich
     void ShowTableMenu();                          // Auswahl der Tabellengroesse unter dem Tabellen-Knopf
     void InsertTable(int cols, int rows);          // Tabelle an der Schreibmarke einfuegen (Rich-Edit-Tabelle, wird in .rtf gespeichert)
     void SetFontName(const std::wstring& name);
@@ -552,8 +554,9 @@ void App::Layout()
     else if (m_mode == Mode::Sheets) {
         m_addrRc = { S(16), by, S(16) + S(76), by + bh };
         m_fxRc = { m_addrRc.right + S(10), by, m_addrRc.right + S(40), by + bh };
-        m_formulaBox = { m_fxRc.right + S(4), by, W - S(16) - S(138), by + bh };
+        m_formulaBox = { m_fxRc.right + S(4), by, W - S(16) - S(184), by + bh };
         const int bx0 = W - S(16) - S(130);
+        add(C_CHART, { bx0 - S(46), by, bx0 - S(4), by + bh }, L"");
         add(C_FMT_EUR, { bx0, by, bx0 + S(38), by + bh }, L"");
         add(C_FMT_PCT, { bx0 + S(42), by, bx0 + S(80), by + bh }, L"");
         add(C_FILL, { bx0 + S(84), by, bx0 + S(130), by + bh }, L"");
@@ -692,6 +695,14 @@ void App::DrawBtn(HDC dc, int index)
         case C_ITALIC: Text(dc, m_fI, kText, b.rc, L"I", center); break;
         case C_UNDER: Text(dc, m_fU, kText, b.rc, L"U", center); break;
         case C_STRIKE: Text(dc, m_fS, kText, b.rc, L"S", center); break;
+        case C_CHART: {   // kleines Saeulensymbol
+            const int w = S(4), g = S(3), hmax = S(16), cx = (b.rc.left + b.rc.right) / 2 - (3 * w + 2 * g) / 2, base = (b.rc.top + b.rc.bottom) / 2 + hmax / 2;
+            const int hs[3] = { hmax * 5 / 10, hmax, hmax * 7 / 10 };
+            HBRUSH br = CreateSolidBrush(kAccent);
+            for (int i = 0; i < 3; ++i) { RECT bar{ cx + i * (w + g), base - hs[i], cx + i * (w + g) + w, base }; FillRect(dc, &bar, br); }
+            DeleteObject(br);
+            break;
+        }
         case C_FMT_EUR: Text(dc, m_fB, kText, b.rc, L"\u20AC", center); break;
         case C_FMT_PCT: Text(dc, m_fB, kText, b.rc, L"%", center); break;
         case C_FILL: {   // Farbfeld in der zuletzt gewaehlten Fuellung (leer = keine) mit Pfeil
@@ -958,6 +969,7 @@ void App::Command(int id)
         case C_FMT_EUR: if (sheets) ToggleFormat(sheet::FmtCurrency); break;
         case C_FMT_PCT: if (sheets) ToggleFormat(sheet::FmtPercent); break;
         case C_FILL: if (sheets) ShowFillMenu(); break;
+        case C_CHART: if (sheets) ShowChartDialog(); break;
         case C_SMALLER: if (writer) StepSize(-1); break;
         case C_BIGGER: if (writer) StepSize(1); break;
         case C_SIZE: if (writer) ShowSizeMenu(); break;
@@ -1989,6 +2001,261 @@ void App::ToggleFormat(unsigned char f)
     InvalidateRect(m_grid, nullptr, FALSE);
     InvalidateRect(m_hwnd, &m_barRc, FALSE);
     UpdateSheetStatus();
+}
+
+
+// ---- Diagramm-Fenster (Sheets): Saeulen oder Linien fuer den markierten Bereich, als Bild kopierbar ----
+namespace {
+struct ChartWin {
+    chart::Data d;
+    int type = 0;                 // 0 = Saeulen, 1 = Linien
+    UINT dpi = 96;
+    RECT bType[2]{}, bCopy{};
+    int hot = -1;                 // 0/1 = Typ-Knopf, 2 = Kopieren
+    bool done = false;
+    std::wstring note;
+};
+const COLORREF kSeriesCol[8] = { RGB(0x72, 0x89, 0xDA), RGB(0x6C, 0xC4, 0x8E), RGB(0xF2, 0xB1, 0x5A), RGB(0xE5, 0x73, 0x7F),
+                                 RGB(0xB0, 0x8B, 0xE0), RGB(0x5B, 0xC0, 0xD0), RGB(0xD9, 0xD0, 0x6A), RGB(0xA0, 0xA8, 0xB8) };
+
+std::wstring AxisText(double v)
+{
+    wchar_t buf[48];
+    if (std::fabs(v - std::round(v)) < 1e-9) swprintf(buf, 48, L"%.0f", v);
+    else swprintf(buf, 48, L"%.2f", v);
+    std::wstring t = buf;
+    for (auto& c : t) if (c == L'.') c = L',';
+    return t;
+}
+
+void PaintChart(HDC dc, const RECT& rc, ChartWin& w, bool forExport)
+{
+    auto S = [&](int v) { return MulDiv(v, static_cast<int>(w.dpi), 96); };
+    HBRUSH bg = CreateSolidBrush(forExport ? RGB(255, 255, 255) : kBg);
+    FillRect(dc, &rc, bg);
+    DeleteObject(bg);
+    const COLORREF txt = forExport ? RGB(0x20, 0x20, 0x28) : kText, dim = forExport ? RGB(0x70, 0x70, 0x80) : kDim, grid = forExport ? RGB(0xD8, 0xD8, 0xE0) : kLine;
+    SetBkMode(dc, TRANSPARENT);
+    HFONT font = CreateFontW(-S(12), 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+    HFONT old = static_cast<HFONT>(SelectObject(dc, font));
+
+    double lo = 0, hi = 0;
+    for (const auto& s : w.d.series) for (double v : s) { lo = std::min(lo, v); hi = std::max(hi, v); }
+    double axMin, axMax, step;
+    chart::NiceAxis(lo, hi, axMin, axMax, step);
+
+    const bool legend = w.d.series.size() > 1 || (!w.d.names.empty() && !w.d.names[0].empty());
+    RECT plot{ rc.left + S(64), rc.top + (forExport ? S(20) : S(64)), rc.right - S(24), rc.bottom - S(44) - (legend ? S(24) : 0) };
+    const int n = static_cast<int>(w.d.labels.size());
+    auto yOf = [&](double v) { return plot.bottom - static_cast<int>((v - axMin) / (axMax - axMin) * (plot.bottom - plot.top)); };
+
+    HPEN gp = CreatePen(PS_SOLID, 1, grid);
+    HPEN oldp = static_cast<HPEN>(SelectObject(dc, gp));
+    for (double v = axMin; v <= axMax + step * 1e-6; v += step) {
+        const int y = yOf(v);
+        MoveToEx(dc, plot.left, y, nullptr);
+        LineTo(dc, plot.right, y);
+        RECT lr{ rc.left + S(4), y - S(9), plot.left - S(8), y + S(9) };
+        SetTextColor(dc, dim);
+        DrawTextW(dc, AxisText(v).c_str(), -1, &lr, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+    }
+    SelectObject(dc, oldp);
+    DeleteObject(gp);
+
+    const int slotW = std::max<int>(1, (plot.right - plot.left) / std::max(1, n));
+    const int ns = static_cast<int>(w.d.series.size());
+    if (w.type == 0) {
+        const int groupW = slotW * 7 / 10, barW = std::max(1, groupW / std::max(1, ns));
+        for (int i = 0; i < n; ++i) {
+            const int gx = plot.left + i * slotW + (slotW - barW * ns) / 2;
+            for (int j = 0; j < ns; ++j) {
+                HBRUSH br = CreateSolidBrush(kSeriesCol[j % 8]);
+                const int y0 = yOf(0), y1 = yOf(w.d.series[j][i]);
+                RECT bar{ gx + j * barW, std::min(y0, y1), gx + (j + 1) * barW - (barW > 3 ? 1 : 0), std::max(y0, y1) };
+                if (bar.bottom == bar.top) bar.bottom = bar.top + 1;
+                FillRect(dc, &bar, br);
+                DeleteObject(br);
+            }
+        }
+    } else {
+        for (int j = 0; j < ns; ++j) {
+            HPEN lp = CreatePen(PS_SOLID, std::max(2, S(2)), kSeriesCol[j % 8]);
+            HPEN o2 = static_cast<HPEN>(SelectObject(dc, lp));
+            HBRUSH br = CreateSolidBrush(kSeriesCol[j % 8]);
+            for (int i = 0; i < n; ++i) {
+                const int x = plot.left + i * slotW + slotW / 2, y = yOf(w.d.series[j][i]);
+                if (i == 0) MoveToEx(dc, x, y, nullptr); else LineTo(dc, x, y);
+            }
+            SelectObject(dc, o2);
+            DeleteObject(lp);
+            for (int i = 0; i < n; ++i) {
+                const int x = plot.left + i * slotW + slotW / 2, y = yOf(w.d.series[j][i]), r = S(3);
+                RECT dot{ x - r, y - r, x + r + 1, y + r + 1 };
+                FillRect(dc, &dot, br);
+            }
+            DeleteObject(br);
+        }
+    }
+    HPEN zp = CreatePen(PS_SOLID, 1, dim);
+    oldp = static_cast<HPEN>(SelectObject(dc, zp));
+    MoveToEx(dc, plot.left, yOf(0), nullptr);
+    LineTo(dc, plot.right, yOf(0));
+    SelectObject(dc, oldp);
+    DeleteObject(zp);
+    const int every = std::max(1, (S(70) + slotW - 1) / slotW);
+    SetTextColor(dc, txt);
+    for (int i = 0; i < n; i += every) {
+        RECT lr{ plot.left + i * slotW - (every - 1) * slotW / 2, plot.bottom + S(6), plot.left + i * slotW + slotW + (every - 1) * slotW / 2, plot.bottom + S(24) };
+        DrawTextW(dc, w.d.labels[i].c_str(), -1, &lr, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    }
+    if (legend) {
+        int x = plot.left;
+        const int y = rc.bottom - S(28);
+        for (int j = 0; j < ns; ++j) {
+            std::wstring nm = w.d.names[j].empty() ? L"Reihe " + std::to_wstring(j + 1) : w.d.names[j];
+            HBRUSH br = CreateSolidBrush(kSeriesCol[j % 8]);
+            RECT sw{ x, y + S(4), x + S(12), y + S(16) };
+            FillRect(dc, &sw, br);
+            DeleteObject(br);
+            RECT tr{ x + S(18), y, x + S(18) + S(160), y + S(20) };
+            SetTextColor(dc, txt);
+            DrawTextW(dc, nm.c_str(), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            SIZE sz{};
+            GetTextExtentPoint32W(dc, nm.c_str(), static_cast<int>(nm.size()), &sz);
+            x += S(18) + std::min<int>(sz.cx, S(160)) + S(20);
+        }
+    }
+    SelectObject(dc, old);
+    DeleteObject(font);
+}
+
+LRESULT CALLBACK ChartProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    ChartWin* w = reinterpret_cast<ChartWin*>(GetWindowLongPtrW(h, GWLP_USERDATA));
+    auto S = [&](int v) { return MulDiv(v, w ? static_cast<int>(w->dpi) : 96, 96); };
+    switch (msg) {
+    case WM_CREATE: SetWindowLongPtrW(h, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTW*>(lp)->lpCreateParams)); return 0;
+    case WM_PAINT: {
+        PAINTSTRUCT ps;
+        HDC dc = BeginPaint(h, &ps);
+        RECT rc;
+        GetClientRect(h, &rc);
+        HDC mem = CreateCompatibleDC(dc);
+        HBITMAP bmp = CreateCompatibleBitmap(dc, rc.right, rc.bottom);
+        HGDIOBJ ob = SelectObject(mem, bmp);
+        PaintChart(mem, rc, *w, false);
+        HFONT font = CreateFontW(-S(13), 0, 0, 0, FW_SEMIBOLD, 0, 0, 0, DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0, L"Segoe UI");
+        HGDIOBJ of = SelectObject(mem, font);
+        SetBkMode(mem, TRANSPARENT);
+        w->bType[0] = { S(16), S(12), S(16) + S(90), S(12) + S(32) };
+        w->bType[1] = { S(112), S(12), S(112) + S(90), S(12) + S(32) };
+        w->bCopy = { rc.right - S(16) - S(170), S(12), rc.right - S(16), S(12) + S(32) };
+        const wchar_t* names[3] = { L"Säulen", L"Linien", L"Als Bild kopieren" };
+        const RECT* rs[3] = { &w->bType[0], &w->bType[1], &w->bCopy };
+        for (int i = 0; i < 3; ++i) {
+            const bool active = i < 2 && w->type == i, hot = w->hot == i;
+            HBRUSH br = CreateSolidBrush(active ? Mix(kPanel, kAccent, 40) : hot ? kHover : kPanel);
+            HPEN pn = CreatePen(PS_SOLID, 1, active ? kAccent : kLine);
+            HGDIOBJ ob2 = SelectObject(mem, br), op = SelectObject(mem, pn);
+            RoundRect(mem, rs[i]->left, rs[i]->top, rs[i]->right, rs[i]->bottom, S(8), S(8));
+            SelectObject(mem, ob2);
+            SelectObject(mem, op);
+            DeleteObject(br);
+            DeleteObject(pn);
+            SetTextColor(mem, kText);
+            RECT tr = *rs[i];
+            DrawTextW(mem, names[i], -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+        if (!w->note.empty()) {
+            SetTextColor(mem, kDim);
+            RECT nr{ S(216), S(12), w->bCopy.left - S(8), S(44) };
+            DrawTextW(mem, w->note.c_str(), -1, &nr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        }
+        SelectObject(mem, of);
+        DeleteObject(font);
+        BitBlt(dc, 0, 0, rc.right, rc.bottom, mem, 0, 0, SRCCOPY);
+        SelectObject(mem, ob);
+        DeleteObject(bmp);
+        DeleteDC(mem);
+        EndPaint(h, &ps);
+        return 0;
+    }
+    case WM_ERASEBKGND: return 1;
+    case WM_MOUSEMOVE: {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        const int hot = PtInRect(&w->bType[0], pt) ? 0 : PtInRect(&w->bType[1], pt) ? 1 : PtInRect(&w->bCopy, pt) ? 2 : -1;
+        if (hot != w->hot) { w->hot = hot; InvalidateRect(h, nullptr, FALSE); }
+        return 0;
+    }
+    case WM_LBUTTONDOWN: {
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        if (PtInRect(&w->bType[0], pt)) { w->type = 0; InvalidateRect(h, nullptr, FALSE); }
+        else if (PtInRect(&w->bType[1], pt)) { w->type = 1; InvalidateRect(h, nullptr, FALSE); }
+        else if (PtInRect(&w->bCopy, pt)) {
+            RECT rc;
+            GetClientRect(h, &rc);
+            HDC sdc = GetDC(h);
+            HDC mem = CreateCompatibleDC(sdc);
+            HBITMAP bmp = CreateCompatibleBitmap(sdc, rc.right, rc.bottom);
+            HGDIOBJ ob = SelectObject(mem, bmp);
+            PaintChart(mem, rc, *w, true);
+            SelectObject(mem, ob);
+            DeleteDC(mem);
+            ReleaseDC(h, sdc);
+            if (OpenClipboard(h)) {
+                EmptyClipboard();
+                if (SetClipboardData(CF_BITMAP, bmp)) { bmp = nullptr; w->note = L"Diagramm in die Zwischenablage kopiert."; }
+                CloseClipboard();
+            }
+            if (bmp) DeleteObject(bmp);
+            InvalidateRect(h, nullptr, FALSE);
+        }
+        return 0;
+    }
+    case WM_KEYDOWN: if (wp == VK_ESCAPE) DestroyWindow(h); return 0;
+    case WM_CLOSE: DestroyWindow(h); return 0;
+    case WM_DESTROY: if (w) w->done = true; return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+}  // namespace
+
+void App::ShowChartDialog()
+{
+    int r1, c1, r2, c2;
+    SelRange(r1, c1, r2, c2);
+    ChartWin w;
+    w.d = chart::Extract(m_sheet, r1, c1, r2, c2);
+    if (!w.d.ok) { MessageBoxW(m_hwnd, w.d.error.c_str(), L"Diagramm", MB_OK | MB_ICONINFORMATION); return; }
+    w.dpi = m_dpi;
+    static bool reg = false;
+    if (!reg) {
+        WNDCLASSEXW wc{ sizeof wc };
+        wc.lpfnWndProc = ChartProc;
+        wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.lpszClassName = L"DuncansOfficeChart";
+        RegisterClassExW(&wc);
+        reg = true;
+    }
+    RECT own;
+    GetWindowRect(m_hwnd, &own);
+    RECT want{ 0, 0, S(820), S(560) };
+    AdjustWindowRectEx(&want, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    const int fw = want.right - want.left, fh = want.bottom - want.top;
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"DuncansOfficeChart", L"Diagramm", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+                               own.left + ((own.right - own.left) - fw) / 2, own.top + ((own.bottom - own.top) - fh) / 2, fw, fh, m_hwnd, nullptr,
+                               GetModuleHandleW(nullptr), &w);
+    if (!dlg) return;
+    EnableWindow(m_hwnd, FALSE);
+    SetForegroundWindow(dlg);
+    MSG m;
+    while (!w.done && GetMessageW(&m, nullptr, 0, 0) > 0) {
+        TranslateMessage(&m);
+        DispatchMessageW(&m);
+    }
+    EnableWindow(m_hwnd, TRUE);
+    SetForegroundWindow(m_hwnd);
 }
 
 void App::ShowFillMenu()
