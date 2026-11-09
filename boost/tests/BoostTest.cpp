@@ -3,6 +3,7 @@
 #include "../BoostLogic.h"
 #include "../AudioFocus.h"
 #include "../Crosshair.h"
+#include "../Profiles.h"
 
 #include <shellapi.h>
 
@@ -123,6 +124,34 @@ static void AudioTests() {
     CHECK(!r.Get(L"g")->muted);
 
     CHECK(IsNeverDucked(L"discord.exe") && IsNeverDucked(L"ts3client_win64.exe") && !IsNeverDucked(L"chrome.exe"));
+}
+
+static void ProfileTests() {
+    std::vector<Profile> all(2);
+    all[0].name = L"Arbeit"; all[0].paths = { L"C:\\a\\Chrome.exe", L"C:\\a\\word.exe", L"C:\\Windows\\explorer.exe" };
+    all[1].name = L"Gaming"; all[1].paths = { L"C:\\b\\steam.exe", L"C:\\a\\chrome.exe" };
+    CHECK(ExeOfPath(L"C:\\a\\Chrome.EXE") == L"chrome.exe" && ExeOfPath(L"x.exe") == L"x.exe");
+
+    SwitchPlan p = PlanSwitch(all, 1, { L"chrome.exe", L"word.exe", L"explorer.exe" });   // Arbeit -> Gaming
+    CHECK(p.closeExes == std::vector<std::wstring>{ L"word.exe" });                      // Browser bleibt (in beiden), explorer ist gesperrt
+    CHECK(p.startPaths == std::vector<std::wstring>{ L"C:\\b\\steam.exe" });
+
+    p = PlanSwitch(all, 0, { L"steam.exe", L"chrome.exe" });                              // Gaming -> Arbeit
+    CHECK(p.closeExes == std::vector<std::wstring>{ L"steam.exe" });
+    CHECK(p.startPaths == std::vector<std::wstring>{ L"C:\\a\\word.exe" });   // chrome laeuft schon, explorer wird nie gestartet
+    p = PlanSwitch(all, 1, { L"steam.exe", L"chrome.exe" });                              // schon alles da
+    CHECK(p.closeExes.empty() && p.startPaths.empty());
+    p = PlanSwitch(all, 7, {});
+    CHECK(p.closeExes.empty() && p.startPaths.empty());
+
+    CHECK(UniqueProfileName(all, L"Neu") == L"Neu" && UniqueProfileName(all, L"arbeit") == L"arbeit 2");
+    CHECK(UniqueProfileName(all, L"   ") == L"Profil" && UniqueProfileName(all, L"a=b|c") == L"a b c");
+    CHECK(UniqueProfileName(all, std::wstring(80, L'x')).size() == 30);
+
+    CHECK(SaveProfiles(all));
+    const std::vector<Profile> back = LoadProfiles();
+    CHECK(back.size() == 2 && back[0].name == L"Arbeit" && back[0].paths == all[0].paths && back[1].paths == all[1].paths);
+    CHECK(SaveProfiles({}) && LoadProfiles().empty());
 }
 
 static void CrosshairTests() {
@@ -276,6 +305,7 @@ int main() {
 
     AudioTests();
     CrosshairTests();
+    ProfileTests();
     std::printf("%d bestanden, %d fehlgeschlagen\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

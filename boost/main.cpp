@@ -30,10 +30,11 @@ using std::min;
 #include "BoostLogic.h"
 #include "AudioFocus.h"
 #include "Crosshair.h"
+#include "Profiles.h"
 #include "LiveStats.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.6.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -54,7 +55,7 @@ const UINT WM_JOB_DONE = WM_APP + 1;                // lp = JobResult*
 const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6, kTimerCross = 7;
 
 enum HitId { H_NONE = -1, H_HERO = 1000, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP = 5000 };
-enum RowType { R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_GROUP, R_HINT };
+enum RowType { R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_PROF_NEW, R_PROF, R_GROUP, R_HINT };
 
 struct Row {
     RowType type = R_HINT;
@@ -81,6 +82,8 @@ struct App {
     std::vector<Row> rows;
     bool autoCollapsed = true;                    // "Automatik (optional)" ist beim Start eingeklappt
     bool crossCollapsed = true;                   // "Fadenkreuz (optional)" ebenso
+    bool profCollapsed = true;                    // "Profile (optional)" ebenso
+    std::vector<boostmode::Profile> profiles;
     boostmode::CrosshairOverlay cross;
     int scroll = 0, contentH = 0;
     RECT hero{}, heroToggle{}, liveRc{}, list{}, footer{};
@@ -193,6 +196,13 @@ void BuildRows(HDC dc) {
     if (!g.crossCollapsed) {
         Row r; r.type = R_CROSS_ON; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kCrossDesc, textW) + S(14));
         for (RowType t : { R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE }) { Row c; c.type = t; add(c, S(52)); }
+    }
+
+    { Row r; r.type = R_GROUP; r.idx = 2; r.text = L"Profile (optional)"; add(r, S(46)); }
+    if (!g.profCollapsed) {
+        hint(L"Ein Profil ist ein Arbeitsplatz-Set (z. B. Arbeit, Gaming). Beim Wechsel beendet Boost die Programme der anderen Profile höflich und startet die des neuen.");
+        for (size_t i = 0; i < g.profiles.size(); ++i) { Row p; p.type = R_PROF; p.idx = static_cast<int>(i); add(p, S(60)); }
+        if (g.profiles.size() < boostmode::kMaxProfiles) { Row n; n.type = R_PROF_NEW; add(n, S(52)); }
     }
     g.contentH = y;
 }
@@ -307,6 +317,178 @@ void AudioTick() {
     g.audio.Tick(*backend, g.cfg.gameApps, boostmode::ForegroundExe(), o);
 }
 
+// ---------- Profile ----------
+struct NameDlg { std::wstring text; bool ok = false, done = false; HWND edit = nullptr; };
+
+LRESULT CALLBACK NameProc(HWND h, UINT m, WPARAM w, LPARAM l) {
+    NameDlg* d = reinterpret_cast<NameDlg*>(GetWindowLongPtrW(h, GWLP_USERDATA));
+    switch (m) {
+    case WM_CREATE: {
+        d = static_cast<NameDlg*>(reinterpret_cast<CREATESTRUCTW*>(l)->lpCreateParams);
+        SetWindowLongPtrW(h, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(d));
+        HINSTANCE inst = GetModuleHandleW(nullptr);
+        d->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", d->text.c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL, S(14), S(14), S(300), S(26), h, reinterpret_cast<HMENU>(100), inst, nullptr);
+        HWND ok = CreateWindowExW(0, L"BUTTON", L"OK", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON, S(144), S(54), S(80), S(28), h, reinterpret_cast<HMENU>(IDOK), inst, nullptr);
+        HWND ca = CreateWindowExW(0, L"BUTTON", L"Abbrechen", WS_CHILD | WS_VISIBLE | WS_TABSTOP, S(232), S(54), S(82), S(28), h, reinterpret_cast<HMENU>(IDCANCEL), inst, nullptr);
+        for (HWND c : { d->edit, ok, ca }) SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(g.fBody), TRUE);
+        SendMessageW(d->edit, EM_SETLIMITTEXT, 30, 0);
+        SendMessageW(d->edit, EM_SETSEL, 0, -1);
+        SetFocus(d->edit);
+        return 0;
+    }
+    case WM_COMMAND:
+        if (LOWORD(w) == IDOK && d) {
+            wchar_t buf[64] = {};
+            GetWindowTextW(d->edit, buf, 64);
+            d->text = buf; d->ok = true; d->done = true;
+        } else if (LOWORD(w) == IDCANCEL && d) d->done = true;
+        return 0;
+    case WM_CLOSE: if (d) d->done = true; return 0;
+    }
+    return DefWindowProcW(h, m, w, l);
+}
+
+// Kleines Fenster zum Eingeben eines Namens (Boost hat sonst keine Eingabefelder)
+bool AskName(const wchar_t* title, std::wstring& name) {
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{};
+        wc.cbSize = sizeof(wc); wc.lpfnWndProc = NameProc; wc.hInstance = GetModuleHandleW(nullptr);
+        wc.hbrBackground = GetSysColorBrush(COLOR_BTNFACE); wc.hCursor = LoadCursorW(nullptr, IDC_ARROW); wc.lpszClassName = L"DuncansBoostName";
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    NameDlg d; d.text = name;
+    RECT owner; GetWindowRect(g.hwnd, &owner);
+    const int w = S(342), h = S(130);
+    EnableWindow(g.hwnd, FALSE);
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"DuncansBoostName", title, WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+                               (owner.left + owner.right - w) / 2, (owner.top + owner.bottom - h) / 2, w, h, g.hwnd, nullptr, GetModuleHandleW(nullptr), &d);
+    MSG m;
+    while (dlg && !d.done && GetMessageW(&m, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(dlg, &m)) { TranslateMessage(&m); DispatchMessageW(&m); }
+    }
+    EnableWindow(g.hwnd, TRUE);
+    if (dlg) DestroyWindow(dlg);
+    SetForegroundWindow(g.hwnd);
+    if (d.ok) name = d.text;
+    return d.ok;
+}
+
+void SaveProfilesNow() { boostmode::SaveProfiles(g.profiles); }
+
+std::vector<std::wstring> RunningOfProfiles() {      // welche Programme aus den Profilen laufen gerade (auch ohne Fenster)
+    std::vector<std::wstring> out;
+    for (const auto& p : g.profiles)
+        for (const std::wstring& path : p.paths) {
+            const std::wstring e = boostmode::ExeOfPath(path);
+            if (!Has(out, e) && boostmode::AnyRunning({ e })) out.push_back(e);
+        }
+    return out;
+}
+
+std::wstring BulletList(const std::vector<std::wstring>& v) {
+    std::wstring s;
+    for (size_t i = 0; i < v.size() && i < 8; ++i) s += L"•  " + v[i] + L"\n";
+    if (v.size() > 8) s += L"… und " + std::to_wstring(v.size() - 8) + L" weitere\n";
+    return s;
+}
+
+void StartProfileJob(const boostmode::SwitchPlan& plan) {
+    if (g.busy) return;
+    g.busy = true; g.spin = 0;
+    SetStatus(L"Profil wird gewechselt …", kBoost);
+    StartSpin();
+    HWND hwnd = g.hwnd;
+    std::thread([hwnd, plan]() {
+        auto* r = new JobResult();
+        r->ok = boostmode::RunSwitch(plan, 6000, r->note);
+        PostMessageW(hwnd, WM_JOB_DONE, 0, reinterpret_cast<LPARAM>(r));
+    }).detach();
+}
+
+void SwitchToProfile(size_t i) {
+    if (i >= g.profiles.size()) return;
+    const boostmode::SwitchPlan plan = boostmode::PlanSwitch(g.profiles, i, RunningOfProfiles());
+    if (plan.closeExes.empty() && plan.startPaths.empty()) { SetStatus(L"Es läuft schon alles wie in diesem Profil.", kGreen); return; }
+    std::wstring text;
+    if (!plan.closeExes.empty()) text += L"Wird beendet:\n" + BulletList(plan.closeExes) + L"\n";
+    if (!plan.startPaths.empty()) {
+        std::vector<std::wstring> names;
+        for (const std::wstring& p : plan.startPaths) names.push_back(boostmode::ExeOfPath(p));
+        text += L"Wird gestartet:\n" + BulletList(names) + L"\n";
+    }
+    text += L"Die Programme bekommen Zeit, sich selbst zu schließen, und fragen bei ungespeicherter Arbeit nach. Was nicht reagiert, bleibt offen; hart beendet wird nichts.";
+    ShowModal(L"Zu „" + g.profiles[i].name + L"“ wechseln?", text, L"Wechseln", L"Abbrechen", [plan](bool go) { if (go) StartProfileJob(plan); });
+}
+
+std::vector<std::wstring> RunningPaths(std::vector<std::wstring>* names) {   // laufende Fensterprogramme samt Pfad
+    std::vector<std::wstring> paths;
+    for (const auto& a : g.apps) {
+        if (a.procCount <= 0 || paths.size() >= boostmode::kMaxProfilePrograms) continue;
+        const std::wstring p = boostmode::PathOfRunning(a.exe);
+        if (p.empty()) continue;
+        paths.push_back(p);
+        if (names) names->push_back(a.exe);
+    }
+    return paths;
+}
+
+void NewProfile() {
+    if (g.profiles.size() >= boostmode::kMaxProfiles) { SetStatus(L"Mehr als 12 Profile sind nicht möglich.", kOrange); return; }
+    RefreshApps();
+    std::vector<std::wstring> names;
+    const std::vector<std::wstring> paths = RunningPaths(&names);
+    if (paths.empty()) { SetStatus(L"Es laufen keine Programme mit Fenster, die ins Profil könnten.", kOrange); return; }
+    ShowModal(L"Neues Profil speichern?", L"Diese gerade laufenden Programme kommen ins Profil:\n\n" + BulletList(names) +
+              L"\nTipp: Starte vorher genau die Programme, die zum Profil gehören, und schließe den Rest. Danach gibst du dem Profil einen Namen.",
+              L"Weiter", L"Abbrechen", [paths](bool go) {
+        if (!go) return;
+        std::wstring name = L"Profil " + std::to_wstring(g.profiles.size() + 1);
+        if (!AskName(L"Name des Profils", name)) return;
+        boostmode::Profile p;
+        p.name = boostmode::UniqueProfileName(g.profiles, name);
+        p.paths = paths;
+        g.profiles.push_back(p);
+        SaveProfilesNow();
+        SetStatus(L"Profil „" + p.name + L"“ gespeichert.", kGreen);
+        Layout();
+    });
+}
+
+void ProfileMenu(size_t i) {
+    if (i >= g.profiles.size()) return;
+    HMENU m = CreatePopupMenu();
+    AppendMenuW(m, MF_STRING, 1, L"Zu diesem Profil wechseln");
+    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, 2, L"Umbenennen …");
+    AppendMenuW(m, MF_STRING, 3, L"Mit den jetzt laufenden Programmen überschreiben");
+    AppendMenuW(m, MF_STRING, 4, L"Löschen");
+    POINT pt; GetCursorPos(&pt);
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, g.hwnd, nullptr);
+    DestroyMenu(m);
+    if (cmd == 1) SwitchToProfile(i);
+    else if (cmd == 2) {
+        std::wstring name = g.profiles[i].name;
+        if (AskName(L"Profil umbenennen", name)) {
+            std::vector<boostmode::Profile> others = g.profiles;
+            others.erase(others.begin() + static_cast<std::ptrdiff_t>(i));
+            g.profiles[i].name = boostmode::UniqueProfileName(others, name);
+            SaveProfilesNow(); Layout();
+        }
+    } else if (cmd == 3) {
+        RefreshApps();
+        std::vector<std::wstring> names;
+        const std::vector<std::wstring> paths = RunningPaths(&names);
+        if (paths.empty()) { SetStatus(L"Es laufen keine Programme mit Fenster.", kOrange); return; }
+        ShowModal(L"Profil überschreiben?", L"„" + g.profiles[i].name + L"“ enthält danach genau diese Programme:\n\n" + BulletList(names), L"Überschreiben", L"Abbrechen",
+                  [i, paths](bool go) { if (go && i < g.profiles.size()) { g.profiles[i].paths = paths; SaveProfilesNow(); Layout(); SetStatus(L"Profil aktualisiert.", kGreen); } });
+    } else if (cmd == 4) {
+        ShowModal(L"Profil löschen?", L"„" + g.profiles[i].name + L"“ wird gelöscht. Die Programme selbst bleiben unberührt.", L"Löschen", L"Abbrechen",
+                  [i](bool go) { if (go && i < g.profiles.size()) { g.profiles.erase(g.profiles.begin() + static_cast<std::ptrdiff_t>(i)); SaveProfilesNow(); Layout(); } });
+    }
+}
+
 // Fadenkreuz: alle 0,5 s pruefen, ob es zu sehen sein soll, und auf den Monitor des Vordergrundfensters setzen
 void CrossTick() {
     static const std::wstring self = [] {
@@ -333,6 +515,8 @@ void ActivateRow(const Row& r) {
     else if (r.type == R_AUTO) { g.cfg.optAuto = !g.cfg.optAuto; g.missPolls = 0; SaveCfg(); }
     else if (r.type == R_DUCK) { g.cfg.optDuck = !g.cfg.optDuck; SaveCfg(); AudioTick(); }
     else if (r.type == R_MUTE) { g.cfg.optMuteGame = !g.cfg.optMuteGame; SaveCfg(); AudioTick(); }
+    else if (r.type == R_PROF_NEW) NewProfile();
+    else if (r.type == R_PROF) ProfileMenu(static_cast<size_t>(r.idx));
     else if (r.type == R_CROSS_ON) { g.cfg.optCross = !g.cfg.optCross; SaveCfg(); CrossTick(); }
     else if (r.type == R_CROSS_STYLE) { g.cfg.crossStyle = (g.cfg.crossStyle + 1) % boostmode::CrosshairStyleCount(); SaveCfg(); CrossTick(); }
     else if (r.type == R_CROSS_COLOR) { g.cfg.crossColor = (g.cfg.crossColor + 1) % boostmode::CrosshairColorCount(); SaveCfg(); CrossTick(); }
@@ -478,8 +662,8 @@ void Paint(HDC dc, const RECT& cr) {
             continue;
         }
         if (r.type == R_GROUP) {
-            const bool collapsed = r.idx == 0 ? g.autoCollapsed : g.crossCollapsed;
-            const bool grpOn = r.idx == 0 ? g.cfg.optAuto : g.cfg.optCross;
+            const bool collapsed = r.idx == 0 ? g.autoCollapsed : (r.idx == 1 ? g.crossCollapsed : g.profCollapsed);
+            const bool grpOn = r.idx == 0 ? g.cfg.optAuto : (r.idx == 1 ? g.cfg.optCross : !g.profiles.empty());
             FillRound(dc, card, S(12), hot ? kCardHover : Blend(kCard, kBackground, 40), hot ? kBorderHot : kBorder);
             {
                 Gdiplus::Graphics gr(dc);
@@ -494,11 +678,29 @@ void Paint(HDC dc, const RECT& cr) {
             }
             DrawText2(dc, g.fHead, kText, { card.left + S(48), card.top, card.right - S(180), card.bottom }, r.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
             DrawText2(dc, g.fSmall, grpOn ? kBoost : kTextDim, { card.right - S(170), card.top, card.right - S(18), card.bottom },
-                      grpOn ? L"an" : L"aus", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                      r.idx == 2 ? (g.profiles.empty() ? std::wstring(L"keine") : std::to_wstring(g.profiles.size()) + (g.profiles.size() == 1 ? L" Profil" : L" Profile"))
+                                 : std::wstring(grpOn ? L"an" : L"aus"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
         if (r.type == R_HINT) {
             DrawText2(dc, g.fSmall, kTextDim, { card.left + S(6), card.top + S(6), card.right - S(6), card.bottom }, r.text, DT_LEFT | DT_TOP | DT_WORDBREAK);
+            continue;
+        }
+        if (r.type == R_PROF_NEW) {
+            FillRound(dc, card, S(14), hot ? kCardHover : kCard, hot ? kBorderHot : kBorder);
+            DrawText2(dc, g.fBold, kBoost, { card.left + pad, card.top, card.right - pad, card.bottom }, L"+  Laufende Programme als neues Profil speichern …", DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            continue;
+        }
+        if (r.type == R_PROF) {
+            const boostmode::Profile& p = g.profiles[static_cast<size_t>(r.idx)];
+            FillRound(dc, card, S(14), hot ? kCardHover : kCard, hot ? kBorderHot : kBorder);
+            std::wstring list;
+            for (size_t k = 0; k < p.paths.size() && k < 6; ++k) list += (k ? L", " : L"") + boostmode::ExeOfPath(p.paths[k]);
+            if (p.paths.size() > 6) list += L" …";
+            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(9), card.right - S(150), card.top + S(9) + S(24) }, p.name, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawText2(dc, g.fSmall, kTextDim, { card.left + pad, card.top + S(9) + S(24), card.right - pad, card.bottom - S(4) }, list, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawText2(dc, g.fSmall, kBoost, { card.right - S(150), card.top + S(9), card.right - pad, card.top + S(9) + S(24) },
+                      std::to_wstring(p.paths.size()) + (p.paths.size() == 1 ? L" Programm" : L" Programme"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
         if (r.type == R_CROSS_STYLE || r.type == R_CROSS_COLOR || r.type == R_CROSS_SIZE) {
@@ -591,8 +793,8 @@ void Activate(int id) {
     if (id == H_MODAL_OK) { CloseModal(true); return; }
     if (id == H_MODAL_CANCEL) { CloseModal(false); return; }
     if (g.modal.open) return;
-    if (id == H_GROUP || id == H_GROUP + 1) {
-        bool& collapsed = id == H_GROUP ? g.autoCollapsed : g.crossCollapsed;
+    if (id >= H_GROUP && id <= H_GROUP + 2) {
+        bool& collapsed = id == H_GROUP ? g.autoCollapsed : (id == H_GROUP + 1 ? g.crossCollapsed : g.profCollapsed);
         collapsed = !collapsed;
         g.hover = H_NONE;
         Layout();
@@ -726,6 +928,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     g.cfg.optRestart = true;        // Benachrichtigungen werden nicht angefasst
     g.cfg.optToast = false;
     g.state = boostmode::LoadState();
+    g.profiles = boostmode::LoadProfiles();
     RefreshApps();
     if (firstRun) {                 // erster Start: laufende, unkritische Hintergrundhelfer (Cloud-Sync, Firmenchat) vorhaken
         for (const std::wstring& e : boostmode::SuggestedHelpers())
