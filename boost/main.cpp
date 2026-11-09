@@ -29,10 +29,11 @@ using std::min;
 #include "../common/Gfx.h"
 #include "BoostLogic.h"
 #include "AudioFocus.h"
+#include "Crosshair.h"
 #include "LiveStats.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.5.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -50,10 +51,10 @@ const COLORREF kBoost = RGB(255, 150, 50);          // Akzent dieses Programms (
 
 const wchar_t* kTitle = L"Duncan's Boost";
 const UINT WM_JOB_DONE = WM_APP + 1;                // lp = JobResult*
-const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6;
+const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6, kTimerCross = 7;
 
 enum HitId { H_NONE = -1, H_HERO = 1000, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP = 5000 };
-enum RowType { R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_GROUP, R_HINT };
+enum RowType { R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_GROUP, R_HINT };
 
 struct Row {
     RowType type = R_HINT;
@@ -79,6 +80,8 @@ struct App {
     std::vector<boostmode::AppInfo> apps;         // laufende Programme + gespeicherte, aktuell nicht laufende
     std::vector<Row> rows;
     bool autoCollapsed = true;                    // "Automatik (optional)" ist beim Start eingeklappt
+    bool crossCollapsed = true;                   // "Fadenkreuz (optional)" ebenso
+    boostmode::CrosshairOverlay cross;
     int scroll = 0, contentH = 0;
     RECT hero{}, heroToggle{}, liveRc{}, list{}, footer{};
     std::unique_ptr<boostmode::LiveStats> live;   // CPU-/RAM-/GPU-Werte fuer die Anzeige unter dem Schalter
@@ -139,6 +142,8 @@ const wchar_t* kAutoTitle = L"Automatisch starten, wenn ich ein Spiel starte";
 const wchar_t* kAutoDesc = L"Hake unten dein Spiel an. Sobald es läuft, schaltet sich der Zock-Modus ohne Rückfrage ein, nach dem Spiel wieder aus.";
 const wchar_t* kDuckTitle = L"Andere Programme leiser, solange das Spiel im Vordergrund ist";
 const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Browser, Musik & Co. laufen auf 40 % und sind sofort wieder normal, wenn du das Spiel verlässt. Discord, TeamSpeak & Co. bleiben unverändert.";
+const wchar_t* kCrossTitle = L"Fadenkreuz über dem Spiel anzeigen";
+const wchar_t* kCrossDesc = L"Ein kleines Fadenkreuz in der Bildschirmmitte, nur über den oben angehakten Spielen (ist keines angehakt, immer). Es ist ein normales, durchklickbares Fenster und greift nicht in das Spiel ein. Es erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
 const wchar_t* kMuteTitle = L"Spiel stumm, wenn ich es verlasse (Alt+Tab)";
 const wchar_t* kMuteDesc = L"Der Ton des angehakten Spiels ist aus, solange du in einem anderen Fenster bist, und kommt beim Zurückwechseln wieder.";
 
@@ -182,6 +187,12 @@ void BuildRows(HDC dc) {
         Row mu; mu.type = R_MUTE; add(mu, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kMuteDesc, textW) + S(14));
         if (g.apps.empty()) hint(L"Starte dein Spiel einmal, dann kannst du es hier anhaken.");
         for (size_t i = 0; i < g.apps.size(); ++i) appRow(R_APP_GAME, static_cast<int>(i));
+    }
+
+    { Row r; r.type = R_GROUP; r.idx = 1; r.text = L"Fadenkreuz (optional)"; add(r, S(46)); }
+    if (!g.crossCollapsed) {
+        Row r; r.type = R_CROSS_ON; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kCrossDesc, textW) + S(14));
+        for (RowType t : { R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE }) { Row c; c.type = t; add(c, S(52)); }
     }
     g.contentH = y;
 }
@@ -296,12 +307,36 @@ void AudioTick() {
     g.audio.Tick(*backend, g.cfg.gameApps, boostmode::ForegroundExe(), o);
 }
 
+// Fadenkreuz: alle 0,5 s pruefen, ob es zu sehen sein soll, und auf den Monitor des Vordergrundfensters setzen
+void CrossTick() {
+    static const std::wstring self = [] {
+        wchar_t p[MAX_PATH * 2] = {};
+        GetModuleFileNameW(nullptr, p, MAX_PATH * 2);
+        std::wstring s = p;
+        const size_t slash = s.find_last_of(L'\\');
+        if (slash != std::wstring::npos) s.erase(0, slash + 1);
+        for (wchar_t& c : s) if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c + 32);
+        return s;
+    }();
+    if (!g.cfg.optCross) { g.cross.Update(false, {}, nullptr, g.dpi); return; }
+    boostmode::CrosshairSpec spec;
+    spec.on = true; spec.style = g.cfg.crossStyle; spec.color = g.cfg.crossColor; spec.size = g.cfg.crossSize;
+    spec = boostmode::ClampCrosshair(spec);
+    HWND fgw = GetForegroundWindow();
+    const bool vis = boostmode::CrosshairVisible(spec, g.cfg.gameApps, boostmode::ForegroundExe(), self);
+    g.cross.Update(vis, spec, MonitorFromWindow(fgw ? fgw : g.hwnd, MONITOR_DEFAULTTOPRIMARY), g.dpi);
+}
+
 void ActivateRow(const Row& r) {
     if (r.type == R_APP_CLOSE) { Toggle(g.cfg.closeApps, g.apps[r.idx].exe); SaveCfg(); }
     else if (r.type == R_APP_GAME) { Toggle(g.cfg.gameApps, g.apps[r.idx].exe); SaveCfg(); }
     else if (r.type == R_AUTO) { g.cfg.optAuto = !g.cfg.optAuto; g.missPolls = 0; SaveCfg(); }
     else if (r.type == R_DUCK) { g.cfg.optDuck = !g.cfg.optDuck; SaveCfg(); AudioTick(); }
     else if (r.type == R_MUTE) { g.cfg.optMuteGame = !g.cfg.optMuteGame; SaveCfg(); AudioTick(); }
+    else if (r.type == R_CROSS_ON) { g.cfg.optCross = !g.cfg.optCross; SaveCfg(); CrossTick(); }
+    else if (r.type == R_CROSS_STYLE) { g.cfg.crossStyle = (g.cfg.crossStyle + 1) % boostmode::CrosshairStyleCount(); SaveCfg(); CrossTick(); }
+    else if (r.type == R_CROSS_COLOR) { g.cfg.crossColor = (g.cfg.crossColor + 1) % boostmode::CrosshairColorCount(); SaveCfg(); CrossTick(); }
+    else if (r.type == R_CROSS_SIZE) { g.cfg.crossSize = (g.cfg.crossSize + 1) % boostmode::CrosshairSizeCount(); SaveCfg(); CrossTick(); }
 }
 
 // ---------- Zeichnen ----------
@@ -434,7 +469,7 @@ void Paint(HDC dc, const RECT& cr) {
         const int top = g.list.top + r.top - g.scroll;
         if (top + r.height < g.list.top || top > g.list.bottom) continue;
         RECT card{ g.list.left, top, g.list.left + cardW, top + r.height };
-        const int hid = r.type == R_GROUP ? H_GROUP : H_ROW_BASE + static_cast<int>(ri);
+        const int hid = r.type == R_GROUP ? H_GROUP + r.idx : H_ROW_BASE + static_cast<int>(ri);
         const bool hot = !busy && g.hover == hid;
         const int pad = S(18);
         if (r.type == R_HEAD) {
@@ -443,6 +478,8 @@ void Paint(HDC dc, const RECT& cr) {
             continue;
         }
         if (r.type == R_GROUP) {
+            const bool collapsed = r.idx == 0 ? g.autoCollapsed : g.crossCollapsed;
+            const bool grpOn = r.idx == 0 ? g.cfg.optAuto : g.cfg.optCross;
             FillRound(dc, card, S(12), hot ? kCardHover : Blend(kCard, kBackground, 40), hot ? kBorderHot : kBorder);
             {
                 Gdiplus::Graphics gr(dc);
@@ -451,23 +488,39 @@ void Paint(HDC dc, const RECT& cr) {
                 pen.SetStartCap(Gdiplus::LineCapRound); pen.SetEndCap(Gdiplus::LineCapRound); pen.SetLineJoin(Gdiplus::LineJoinRound);
                 const int cx = card.left + S(26), cy = (card.top + card.bottom) / 2, a = S(4);
                 Gdiplus::Point pts[3];
-                if (!g.autoCollapsed) { pts[0] = { cx - a, cy - a / 2 }; pts[1] = { cx, cy + a / 2 + 1 }; pts[2] = { cx + a, cy - a / 2 }; }
+                if (!collapsed) { pts[0] = { cx - a, cy - a / 2 }; pts[1] = { cx, cy + a / 2 + 1 }; pts[2] = { cx + a, cy - a / 2 }; }
                 else                  { pts[0] = { cx - a / 2, cy - a }; pts[1] = { cx + a / 2 + 1, cy }; pts[2] = { cx - a / 2, cy + a }; }
                 gr.DrawLines(&pen, pts, 3);
             }
             DrawText2(dc, g.fHead, kText, { card.left + S(48), card.top, card.right - S(180), card.bottom }, r.text, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-            DrawText2(dc, g.fSmall, g.cfg.optAuto ? kBoost : kTextDim, { card.right - S(170), card.top, card.right - S(18), card.bottom },
-                      g.cfg.optAuto ? L"an" : L"aus", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fSmall, grpOn ? kBoost : kTextDim, { card.right - S(170), card.top, card.right - S(18), card.bottom },
+                      grpOn ? L"an" : L"aus", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
         if (r.type == R_HINT) {
             DrawText2(dc, g.fSmall, kTextDim, { card.left + S(6), card.top + S(6), card.right - S(6), card.bottom }, r.text, DT_LEFT | DT_TOP | DT_WORDBREAK);
             continue;
         }
-        if (r.type == R_AUTO || r.type == R_DUCK || r.type == R_MUTE) {
-            const bool v = r.type == R_AUTO ? g.cfg.optAuto : (r.type == R_DUCK ? g.cfg.optDuck : g.cfg.optMuteGame);
-            const wchar_t* title = r.type == R_AUTO ? kAutoTitle : (r.type == R_DUCK ? kDuckTitle : kMuteTitle);
-            const wchar_t* desc = r.type == R_AUTO ? kAutoDesc : (r.type == R_DUCK ? kDuckDesc : kMuteDesc);
+        if (r.type == R_CROSS_STYLE || r.type == R_CROSS_COLOR || r.type == R_CROSS_SIZE) {
+            FillRound(dc, card, S(14), hot ? kCardHover : kCard, hot ? kBorderHot : kBorder);
+            const wchar_t* label = r.type == R_CROSS_STYLE ? L"Form" : (r.type == R_CROSS_COLOR ? L"Farbe" : L"Größe");
+            const wchar_t* val = r.type == R_CROSS_STYLE ? boostmode::CrosshairStyleName(g.cfg.crossStyle)
+                               : (r.type == R_CROSS_COLOR ? boostmode::CrosshairColorName(g.cfg.crossColor) : boostmode::CrosshairSizeName(g.cfg.crossSize));
+            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top, card.left + pad + S(120), card.bottom }, label, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            int right = card.right - pad;
+            if (r.type == R_CROSS_COLOR) {                  // Farbmuster
+                const int d = S(18);
+                RECT sw{ right - d, card.top + (r.height - d) / 2, right, card.top + (r.height - d) / 2 + d };
+                FillRound(dc, sw, d / 2, boostmode::CrosshairColorValue(g.cfg.crossColor), kBorderHot);
+                right -= d + S(10);
+            }
+            DrawText2(dc, g.fBold, kBoost, { card.left + pad + S(120), card.top, right, card.bottom }, val, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            continue;
+        }
+        if (r.type == R_AUTO || r.type == R_DUCK || r.type == R_MUTE || r.type == R_CROSS_ON) {
+            const bool v = r.type == R_AUTO ? g.cfg.optAuto : (r.type == R_DUCK ? g.cfg.optDuck : (r.type == R_MUTE ? g.cfg.optMuteGame : g.cfg.optCross));
+            const wchar_t* title = r.type == R_AUTO ? kAutoTitle : (r.type == R_DUCK ? kDuckTitle : (r.type == R_MUTE ? kMuteTitle : kCrossTitle));
+            const wchar_t* desc = r.type == R_AUTO ? kAutoDesc : (r.type == R_DUCK ? kDuckDesc : (r.type == R_MUTE ? kMuteDesc : kCrossDesc));
             const int textW = cardW - pad * 2 - S(64) - S(16);
             FillRound(dc, card, S(14), hot ? kCardHover : kCard, v ? Blend(kBorder, kBoost, 55) : (hot ? kBorderHot : kBorder));
             DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(14), card.left + pad + textW, card.top + S(14) + S(24) }, title);
@@ -521,7 +574,7 @@ int HitTest(POINT p) {
         for (size_t i = 0; i < g.rows.size(); ++i) {
             const Row& r = g.rows[i];
             if (y < r.top || y >= r.top + r.height) continue;
-            if (r.type == R_GROUP) return H_GROUP;
+            if (r.type == R_GROUP) return H_GROUP + r.idx;
             if (r.type != R_HINT && r.type != R_HEAD) return H_ROW_BASE + static_cast<int>(i);
         }
     }
@@ -538,11 +591,12 @@ void Activate(int id) {
     if (id == H_MODAL_OK) { CloseModal(true); return; }
     if (id == H_MODAL_CANCEL) { CloseModal(false); return; }
     if (g.modal.open) return;
-    if (id == H_GROUP) {
-        g.autoCollapsed = !g.autoCollapsed;
+    if (id == H_GROUP || id == H_GROUP + 1) {
+        bool& collapsed = id == H_GROUP ? g.autoCollapsed : g.crossCollapsed;
+        collapsed = !collapsed;
         g.hover = H_NONE;
         Layout();
-        if (!g.autoCollapsed) Scroll(g.contentH);      // aufgeklappt: nach unten scrollen, damit der neue Bereich sichtbar ist
+        if (!collapsed) Scroll(g.contentH);      // aufgeklappt: nach unten scrollen, damit der neue Bereich sichtbar ist
         InvalidateRect(g.hwnd, nullptr, FALSE);
         return;
     }
@@ -629,11 +683,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == kTimerList) ListPoll();
         else if (wp == kTimerLive) LiveTick();
         else if (wp == kTimerAudio) AudioTick();
+        else if (wp == kTimerCross) CrossTick();
         return 0;
     case WM_ENDSESSION:
         if (wp) RestoreAudio();
         return 0;
-    case WM_DESTROY: RestoreAudio(); PostQuitMessage(0); return 0;
+    case WM_DESTROY: RestoreAudio(); g.cross.Destroy(); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -685,6 +740,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     g.cur = g.live->Sample();
     SetTimer(g.hwnd, kTimerLive, 1000, nullptr);
     SetTimer(g.hwnd, kTimerAudio, 700, nullptr);
+    SetTimer(g.hwnd, kTimerCross, 500, nullptr);
     ShowWindow(g.hwnd, show);
     UpdateWindow(g.hwnd);
 

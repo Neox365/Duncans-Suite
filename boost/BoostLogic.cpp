@@ -9,6 +9,7 @@
 #include <tlhelp32.h>
 
 #include <algorithm>
+#include <cstdlib>
 #include <iterator>
 #include <map>
 #include <set>
@@ -366,6 +367,10 @@ Settings LoadSettings() {
     s.optRestart = ReadIni(f, L"Settings", L"Restart", L"1") == L"1";
     s.optDuck = ReadIni(f, L"Settings", L"Duck", L"0") == L"1";
     s.optMuteGame = ReadIni(f, L"Settings", L"MuteGame", L"0") == L"1";
+    s.optCross = ReadIni(f, L"Settings", L"Cross", L"0") == L"1";
+    s.crossStyle = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"CrossStyle", L"0").c_str(), nullptr, 10));
+    s.crossColor = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"CrossColor", L"0").c_str(), nullptr, 10));
+    s.crossSize = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"CrossSize", L"1").c_str(), nullptr, 10));
     return s;
 }
 
@@ -379,6 +384,10 @@ bool SaveSettings(const Settings& s) {
     ok &= WriteIni(f, L"Settings", L"Restart", s.optRestart ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"Duck", s.optDuck ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"MuteGame", s.optMuteGame ? L"1" : L"0");
+    ok &= WriteIni(f, L"Settings", L"Cross", s.optCross ? L"1" : L"0");
+    ok &= WriteIni(f, L"Settings", L"CrossStyle", std::to_wstring(s.crossStyle));
+    ok &= WriteIni(f, L"Settings", L"CrossColor", std::to_wstring(s.crossColor));
+    ok &= WriteIni(f, L"Settings", L"CrossSize", std::to_wstring(s.crossSize));
     return ok;
 }
 

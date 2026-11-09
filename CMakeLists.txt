@@ -8,7 +8,7 @@ set(DOCS_VER "0.8.1")
 set(VAULT_VER "0.7.0")
 set(OFFICE_VER "0.5.0")
 set(QUICKCONVERT_VER "0.4.0")
-set(BOOST_VER "0.4.0")
+set(BOOST_VER "0.5.0")
 set(CLIP_VER "0.5.0")
 set(EQUALIZER_VER "0.5.0")
 
@@ -232,6 +232,8 @@ add_executable(DuncansBoost WIN32
     boost/BoostLogic.cpp
     boost/AudioFocus.cpp
     boost/AudioSystem.cpp
+    boost/Crosshair.cpp
+    boost/CrosshairWindow.cpp
     boost/LiveStats.cpp
     src/Icons.cpp
     resources/boost.rc
