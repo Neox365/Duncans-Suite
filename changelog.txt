@@ -56,6 +56,8 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.4.0 | 2026-11-09
+- Neu: Ton nach Fokus. Unter „Automatik (optional)“ gibt es zwei Schalter (beide standardmäßig aus), die für die angehakten Spiele gelten. „Andere Programme leiser“ stellt Browser, Musik & Co. auf 40 %, solange das Spiel im Vordergrund ist, und danach wieder zurück; Discord, TeamSpeak, Teams & Co. bleiben unverändert, und wenn du einen Regler selbst bewegst, arbeitet Boost nicht dagegen. „Spiel stumm, wenn ich es verlasse“ schaltet das Spiel bei Alt+Tab stumm und beim Zurückwechseln wieder ein. Boost nutzt nur die normale Lautstärkemischung von Windows (wie der Lautstärkemixer), greift nicht in Spiele ein und stellt beim Beenden alles zurück.
 ## 0.3.1 | 2026-11-09
 - Neu: Der Zock-Modus schaltet zusätzlich den Windows-Spielmodus ein und die Hintergrundaufnahme der Xbox Game Bar aus (sie nimmt sonst im Hintergrund auf und kostet Leistung). Beim Ausschalten stellt Boost die vorherigen Werte wieder her, auch nach einem Absturz. Es gibt dafür keinen eigenen Schalter: Es gehört wie die Höchstleistung zum Zock-Modus. Wie viel das bringt, hängt vom Spiel und vom PC ab.
 ## 0.3.0 | 2026-11-06

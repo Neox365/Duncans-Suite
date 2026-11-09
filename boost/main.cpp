@@ -28,10 +28,11 @@ using std::min;
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "BoostLogic.h"
+#include "AudioFocus.h"
 #include "LiveStats.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.3.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.4.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -49,10 +50,10 @@ const COLORREF kBoost = RGB(255, 150, 50);          // Akzent dieses Programms (
 
 const wchar_t* kTitle = L"Duncan's Boost";
 const UINT WM_JOB_DONE = WM_APP + 1;                // lp = JobResult*
-const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5;
+const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6;
 
 enum HitId { H_NONE = -1, H_HERO = 1000, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP = 5000 };
-enum RowType { R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_GROUP, R_HINT };
+enum RowType { R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_GROUP, R_HINT };
 
 struct Row {
     RowType type = R_HINT;
@@ -86,6 +87,7 @@ struct App {
     bool tracking = false, busy = false;
     int spin = 0;
     int missPolls = 0;                            // Auto-Modus: aufeinanderfolgende Pruefungen ohne laufendes Spiel
+    boostmode::AudioFocus audio;                  // Ton nach Fokus: merkt sich, was Boost leiser/stumm gestellt hat
     std::wstring status;
     COLORREF statusColor = kTextDim;
     Modal modal;
@@ -135,6 +137,10 @@ void Toggle(std::vector<std::wstring>& v, const std::wstring& s) {
 
 const wchar_t* kAutoTitle = L"Automatisch starten, wenn ich ein Spiel starte";
 const wchar_t* kAutoDesc = L"Hake unten dein Spiel an. Sobald es läuft, schaltet sich der Zock-Modus ohne Rückfrage ein, nach dem Spiel wieder aus.";
+const wchar_t* kDuckTitle = L"Andere Programme leiser, solange das Spiel im Vordergrund ist";
+const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Browser, Musik & Co. laufen auf 40 % und sind sofort wieder normal, wenn du das Spiel verlässt. Discord, TeamSpeak & Co. bleiben unverändert.";
+const wchar_t* kMuteTitle = L"Spiel stumm, wenn ich es verlasse (Alt+Tab)";
+const wchar_t* kMuteDesc = L"Der Ton des angehakten Spiels ist aus, solange du in einem anderen Fenster bist, und kommt beim Zurückwechseln wieder.";
 
 // ---------- Zustand ----------
 void SetStatus(const std::wstring& t, COLORREF c = kTextDim) { g.status = t; g.statusColor = c; InvalidateRect(g.hwnd, nullptr, FALSE); }
@@ -172,6 +178,8 @@ void BuildRows(HDC dc) {
     { Row r; r.type = R_GROUP; r.text = L"Automatik (optional)"; add(r, S(46)); }
     if (!g.autoCollapsed) {
         Row r; r.type = R_AUTO; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kAutoDesc, textW) + S(14));
+        Row d; d.type = R_DUCK; add(d, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kDuckDesc, textW) + S(14));
+        Row mu; mu.type = R_MUTE; add(mu, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kMuteDesc, textW) + S(14));
         if (g.apps.empty()) hint(L"Starte dein Spiel einmal, dann kannst du es hier anhaken.");
         for (size_t i = 0; i < g.apps.size(); ++i) appRow(R_APP_GAME, static_cast<int>(i));
     }
@@ -276,10 +284,24 @@ void ListPoll() {                                  // Liste von selbst aktuell h
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
 
+// Ton nach Fokus: alle 0,7 s; nur aktiv, wenn eine der beiden Optionen an ist (oder noch etwas zurueckzustellen ist)
+void AudioTick() {
+    if (!g.cfg.optDuck && !g.cfg.optMuteGame && !g.audio.Active()) return;
+    auto backend = boostmode::MakeSystemAudio();     // jedes Mal neu: folgt einem gewechselten Wiedergabegeraet (Kopfhoerer)
+    if (!backend) return;
+    if (!g.cfg.optDuck && !g.cfg.optMuteGame) { g.audio.RestoreAll(*backend); return; }
+    boostmode::AudioOptions o;
+    o.duck = g.cfg.optDuck;
+    o.muteGame = g.cfg.optMuteGame;
+    g.audio.Tick(*backend, g.cfg.gameApps, boostmode::ForegroundExe(), o);
+}
+
 void ActivateRow(const Row& r) {
     if (r.type == R_APP_CLOSE) { Toggle(g.cfg.closeApps, g.apps[r.idx].exe); SaveCfg(); }
     else if (r.type == R_APP_GAME) { Toggle(g.cfg.gameApps, g.apps[r.idx].exe); SaveCfg(); }
     else if (r.type == R_AUTO) { g.cfg.optAuto = !g.cfg.optAuto; g.missPolls = 0; SaveCfg(); }
+    else if (r.type == R_DUCK) { g.cfg.optDuck = !g.cfg.optDuck; SaveCfg(); AudioTick(); }
+    else if (r.type == R_MUTE) { g.cfg.optMuteGame = !g.cfg.optMuteGame; SaveCfg(); AudioTick(); }
 }
 
 // ---------- Zeichnen ----------
@@ -442,12 +464,14 @@ void Paint(HDC dc, const RECT& cr) {
             DrawText2(dc, g.fSmall, kTextDim, { card.left + S(6), card.top + S(6), card.right - S(6), card.bottom }, r.text, DT_LEFT | DT_TOP | DT_WORDBREAK);
             continue;
         }
-        if (r.type == R_AUTO) {
-            const bool v = g.cfg.optAuto;
+        if (r.type == R_AUTO || r.type == R_DUCK || r.type == R_MUTE) {
+            const bool v = r.type == R_AUTO ? g.cfg.optAuto : (r.type == R_DUCK ? g.cfg.optDuck : g.cfg.optMuteGame);
+            const wchar_t* title = r.type == R_AUTO ? kAutoTitle : (r.type == R_DUCK ? kDuckTitle : kMuteTitle);
+            const wchar_t* desc = r.type == R_AUTO ? kAutoDesc : (r.type == R_DUCK ? kDuckDesc : kMuteDesc);
             const int textW = cardW - pad * 2 - S(64) - S(16);
             FillRound(dc, card, S(14), hot ? kCardHover : kCard, v ? Blend(kBorder, kBoost, 55) : (hot ? kBorderHot : kBorder));
-            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(14), card.left + pad + textW, card.top + S(14) + S(24) }, kAutoTitle);
-            DrawText2(dc, g.fSmall, kTextDim, { card.left + pad, card.top + S(14) + S(24), card.left + pad + textW, card.bottom - S(8) }, kAutoDesc, DT_LEFT | DT_TOP | DT_WORDBREAK);
+            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(14), card.left + pad + textW, card.top + S(14) + S(24) }, title);
+            DrawText2(dc, g.fSmall, kTextDim, { card.left + pad, card.top + S(14) + S(24), card.left + pad + textW, card.bottom - S(8) }, desc, DT_LEFT | DT_TOP | DT_WORDBREAK);
             RECT tg{ card.right - pad - S(52), card.top + (r.height - S(28)) / 2, card.right - pad, card.top + (r.height - S(28)) / 2 + S(28) };
             DrawToggle(dc, tg, v, hot, kBoost);
             continue;
@@ -531,6 +555,11 @@ void Activate(int id) {
     }
 }
 
+void RestoreAudio() {                              // beim Beenden: Lautstaerken und Stummschaltung wie vorher
+    if (!g.audio.Active()) return;
+    if (auto backend = boostmode::MakeSystemAudio()) g.audio.RestoreAll(*backend);
+}
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_ERASEBKGND: return 1;
@@ -599,8 +628,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == kTimerAuto) AutoPoll();
         else if (wp == kTimerList) ListPoll();
         else if (wp == kTimerLive) LiveTick();
+        else if (wp == kTimerAudio) AudioTick();
         return 0;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_ENDSESSION:
+        if (wp) RestoreAudio();
+        return 0;
+    case WM_DESTROY: RestoreAudio(); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -614,6 +647,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
         return 0;
     }
     IconsInit();
+    CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = WndProc;
@@ -650,11 +684,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     g.live = std::make_unique<boostmode::LiveStats>();
     g.cur = g.live->Sample();
     SetTimer(g.hwnd, kTimerLive, 1000, nullptr);
+    SetTimer(g.hwnd, kTimerAudio, 700, nullptr);
     ShowWindow(g.hwnd, show);
     UpdateWindow(g.hwnd);
 
     MSG m;
     while (GetMessageW(&m, nullptr, 0, 0) > 0) { TranslateMessage(&m); DispatchMessageW(&m); }
     IconsShutdown();
+    CoUninitialize();
     return static_cast<int>(m.wParam);
 }
