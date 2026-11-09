@@ -377,7 +377,7 @@ static const Translation kTranslations[] = {
     {L"  ·  Bisher freigeräumt: ",
      {L"  ·  Freed so far: ", L"  ·  Libéré jusqu'ici : ", L"  ·  Liberado hasta ahora: ", L"  ·  Dotychczas zwolniono: ", L"  ·  Liberado até agora: ", L"  ·  これまでに解放：", L"  ·  累計釋放："}},
     {L" (letzte 30 Tage: ",
-     {L" (last 30 days: ", L" (30 derniers jours : ", L" (últimos 30 días: ", L" (ostatnie 30 dni: ", L" (últimos 30 dias: ", L"（過去30日：", L"（最近 30 天：")}},
+     {L" (last 30 days: ", L" (30 derniers jours : ", L" (últimos 30 días: ", L" (ostatnie 30 dni: ", L" (últimos 30 dias: ", L"（過去30日：", L"（最近 30 天："}},
     {L"Mit „Optimieren“ entfernbar: ",
      {L"Removable with \"Optimize\": ", L"Supprimable avec « Optimiser » : ", L"Se puede eliminar con «Optimizar»: ", L"Do usunięcia przez „Optymalizuj”: ", L"Removível com «Otimizar»: ", L"「最適化」で削除できる量： ", L"可用「最佳化」移除： "}},
     {L" (ohne Browser-Cache)",
