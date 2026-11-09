@@ -98,6 +98,15 @@ int main() {
     st.closedPaths = { L"C:\\Spiele\\Größe\\a.exe", L"C:\\b.exe" };
     CHECK(SaveState(st));
     State st2 = LoadState();
+    // Spiel-Einstellungen: gesichert und gelesen wie die Toast-Werte
+    st.gameMask = 5; st.prevGame[0] = { true, 0 }; st.prevGame[2] = { false, 0 };
+    CHECK(SaveState(st));
+    {
+        State g2 = LoadState();
+        CHECK(g2.gameMask == 5 && g2.prevGame[0].exists && g2.prevGame[0].value == 0 && !g2.prevGame[2].exists);
+    }
+    CHECK(GameTweakWanted(0) == 1 && GameTweakWanted(1) == 0 && GameTweakWanted(2) == 0);
+    for (int i = 0; i < kGameTweaks; ++i) { const RegDword r0 = GetGameTweak(i); CHECK(SetGameTweak(i, r0)); const RegDword r1 = GetGameTweak(i); CHECK(r1.exists == r0.exists && (!r0.exists || r1.value == r0.value)); }
     CHECK(st2.active && st2.auto_ && st2.powerChanged && IsEqualGUID(st2.prevScheme, g) && st2.toastChanged && st2.prevToast.exists && st2.prevToast.value == 1);
     CHECK(st2.closedPaths == st.closedPaths);
     CHECK(SaveState(State{}));

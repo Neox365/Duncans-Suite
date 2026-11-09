@@ -8,7 +8,7 @@ set(DOCS_VER "0.8.1")
 set(VAULT_VER "0.7.0")
 set(OFFICE_VER "0.5.0")
 set(QUICKCONVERT_VER "0.4.0")
-set(BOOST_VER "0.3.0")
+set(BOOST_VER "0.3.1")
 set(CLIP_VER "0.4.0")
 set(EQUALIZER_VER "0.5.0")
 
