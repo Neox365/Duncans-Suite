@@ -1,6 +1,7 @@
 // Test der Zock-Modus-Logik (Duncan's Boost). Nur Windows. Startet fuer die Beendentests Kopien von sich selbst als Fenster-Attrappe.
-// g++ -std=c++17 -DUNICODE -D_UNICODE -I.. BoostTest.cpp ../BoostLogic.cpp -o BoostTest.exe -lole32 -lpowrprof -lpsapi -ldwmapi -lshell32 -luser32 -ladvapi32 -static
+// g++ -std=c++17 -DUNICODE -D_UNICODE -I.. BoostTest.cpp ../BoostLogic.cpp ../AudioFocus.cpp -o BoostTest.exe -lole32 -lpowrprof -lpsapi -ldwmapi -lshell32 -luser32 -ladvapi32 -static
 #include "../BoostLogic.h"
+#include "../AudioFocus.h"
 
 #include <shellapi.h>
 
@@ -53,6 +54,75 @@ static bool WaitListed(const std::wstring& exe, int ms = 8000) {
 }
 
 static bool Contains(const std::vector<std::wstring>& v, const std::wstring& s) { for (const auto& x : v) if (x == s) return true; return false; }
+
+// ---- Ton nach Fokus mit Attrappe statt echter Lautsprecher ----
+struct FakeAudio : AudioBackend {
+    std::vector<AudioSession> s;
+    std::vector<AudioSession> List() override { return s; }
+    bool SetVolume(const std::wstring& id, float v) override { for (auto& x : s) if (x.id == id) { x.volume = v; return true; } return false; }
+    bool SetMute(const std::wstring& id, bool m) override { for (auto& x : s) if (x.id == id) { x.muted = m; return true; } return false; }
+    AudioSession* Get(const std::wstring& id) { for (auto& x : s) if (x.id == id) return &x; return nullptr; }
+};
+static bool Near(float a, float b) { return a > b - 0.01f && a < b + 0.01f; }
+
+static void AudioTests() {
+    const std::vector<std::wstring> games = { L"game.exe" };
+    FakeAudio a;
+    a.s = { {L"g", L"game.exe", 1.0f, false}, {L"b1", L"chrome.exe", 0.8f, false}, {L"b2", L"chrome.exe", 0.5f, false},
+            {L"d", L"discord.exe", 1.0f, false}, {L"sys", L"", 1.0f, false} };
+    AudioFocus f;
+    AudioOptions both; both.duck = true; both.muteGame = true;
+
+    f.Tick(a, games, L"game.exe", both);                                   // Spiel vorne: andere leiser, Spiel hoerbar
+    CHECK(Near(a.Get(L"b1")->volume, 0.32f) && Near(a.Get(L"b2")->volume, 0.2f));
+    CHECK(Near(a.Get(L"d")->volume, 1.0f) && Near(a.Get(L"sys")->volume, 1.0f) && Near(a.Get(L"g")->volume, 1.0f));
+    CHECK(!a.Get(L"g")->muted && f.Active());
+    f.Tick(a, games, L"game.exe", both);                                   // zweiter Durchlauf aendert nichts (kein doppeltes Leisermachen)
+    CHECK(Near(a.Get(L"b1")->volume, 0.32f));
+
+    f.Tick(a, games, L"chrome.exe", both);                                 // Alt+Tab: Browser wieder normal, Spiel stumm
+    CHECK(Near(a.Get(L"b1")->volume, 0.8f) && Near(a.Get(L"b2")->volume, 0.5f));
+    CHECK(a.Get(L"g")->muted);
+    f.Tick(a, games, L"game.exe", both);                                   // zurueck: Spiel hoerbar, Browser wieder leiser
+    CHECK(!a.Get(L"g")->muted && Near(a.Get(L"b1")->volume, 0.32f));
+
+    // Du bewegst den Regler selbst: Boost arbeitet nicht dagegen
+    a.Get(L"b1")->volume = 0.9f;
+    f.Tick(a, games, L"game.exe", both);
+    CHECK(Near(a.Get(L"b1")->volume, 0.9f));
+    f.Tick(a, games, L"chrome.exe", both);
+    CHECK(Near(a.Get(L"b1")->volume, 0.9f));                               // dein Wert bleibt
+
+    // Spiel beendet: alles normal
+    f.Tick(a, games, L"game.exe", both);
+    a.s.erase(a.s.begin());                                                // Spiel-Sitzung weg
+    f.Tick(a, games, L"explorer.exe", both);
+    CHECK(Near(a.Get(L"b2")->volume, 0.5f));
+
+    // Spiel war schon von dir stumm geschaltet: Boost schaltet nicht ein und nicht wieder aus
+    FakeAudio m; m.s = { {L"g", L"game.exe", 1.0f, true} };
+    AudioFocus f2;
+    f2.Tick(m, games, L"chrome.exe", both);
+    f2.Tick(m, games, L"game.exe", both);
+    CHECK(m.Get(L"g")->muted && !f2.Active());
+
+    // Optionen einzeln und RestoreAll
+    FakeAudio r; r.s = { {L"g", L"game.exe", 1.0f, false}, {L"b", L"chrome.exe", 1.0f, false} };
+    AudioFocus f3; AudioOptions duckOnly; duckOnly.duck = true;
+    f3.Tick(r, games, L"chrome.exe", duckOnly);
+    CHECK(!r.Get(L"g")->muted && Near(r.Get(L"b")->volume, 1.0f));         // kein Spiel vorne: nichts passiert
+    f3.Tick(r, games, L"game.exe", duckOnly);
+    CHECK(Near(r.Get(L"b")->volume, 0.4f));
+    f3.RestoreAll(r);
+    CHECK(Near(r.Get(L"b")->volume, 1.0f) && !f3.Active());
+    AudioFocus f4; AudioOptions muteOnly; muteOnly.muteGame = true;
+    f4.Tick(r, games, L"chrome.exe", muteOnly);
+    CHECK(r.Get(L"g")->muted && Near(r.Get(L"b")->volume, 1.0f));
+    f4.Tick(r, games, L"chrome.exe", AudioOptions{});                      // Option aus: Spiel wieder hoerbar
+    CHECK(!r.Get(L"g")->muted);
+
+    CHECK(IsNeverDucked(L"discord.exe") && IsNeverDucked(L"ts3client_win64.exe") && !IsNeverDucked(L"chrome.exe"));
+}
 
 int main() {
     int argc = 0;
@@ -180,6 +250,7 @@ int main() {
     GUID fin{}; GetActiveScheme(fin);
     CHECK(IsEqualGUID(fin, original));
 
+    AudioTests();
     std::printf("%d bestanden, %d fehlgeschlagen\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

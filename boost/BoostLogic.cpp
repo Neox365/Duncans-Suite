@@ -364,6 +364,8 @@ Settings LoadSettings() {
     s.optToast = ReadIni(f, L"Settings", L"Toast", L"0") == L"1";
     s.optAuto = ReadIni(f, L"Settings", L"Auto", L"0") == L"1";
     s.optRestart = ReadIni(f, L"Settings", L"Restart", L"1") == L"1";
+    s.optDuck = ReadIni(f, L"Settings", L"Duck", L"0") == L"1";
+    s.optMuteGame = ReadIni(f, L"Settings", L"MuteGame", L"0") == L"1";
     return s;
 }
 
@@ -375,6 +377,8 @@ bool SaveSettings(const Settings& s) {
     ok &= WriteIni(f, L"Settings", L"Toast", s.optToast ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"Auto", s.optAuto ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"Restart", s.optRestart ? L"1" : L"0");
+    ok &= WriteIni(f, L"Settings", L"Duck", s.optDuck ? L"1" : L"0");
+    ok &= WriteIni(f, L"Settings", L"MuteGame", s.optMuteGame ? L"1" : L"0");
     return ok;
 }
 

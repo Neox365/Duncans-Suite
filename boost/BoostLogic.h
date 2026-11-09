@@ -70,6 +70,8 @@ struct Settings {
     bool optToast = false;
     bool optAuto = false;
     bool optRestart = true;               // beendete Programme nach dem Zock-Modus wieder starten
+    bool optDuck = false;                 // Ton: andere Programme leiser, solange ein angehaktes Spiel im Vordergrund ist
+    bool optMuteGame = false;             // Ton: Spiel stumm, solange es nicht im Vordergrund ist
 };
 
 // Zustand waehrend aktivem Zock-Modus (ueberlebt Abstuerze: beim naechsten Start laesst sich alles wiederherstellen)

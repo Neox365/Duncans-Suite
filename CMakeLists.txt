@@ -8,7 +8,7 @@ set(DOCS_VER "0.8.1")
 set(VAULT_VER "0.7.0")
 set(OFFICE_VER "0.5.0")
 set(QUICKCONVERT_VER "0.4.0")
-set(BOOST_VER "0.3.1")
+set(BOOST_VER "0.4.0")
 set(CLIP_VER "0.5.0")
 set(EQUALIZER_VER "0.5.0")
 
@@ -230,6 +230,8 @@ target_link_libraries(DuncansQuickConvert PRIVATE gdiplus windowscodecs mfplat m
 add_executable(DuncansBoost WIN32
     boost/main.cpp
     boost/BoostLogic.cpp
+    boost/AudioFocus.cpp
+    boost/AudioSystem.cpp
     boost/LiveStats.cpp
     src/Icons.cpp
     resources/boost.rc
