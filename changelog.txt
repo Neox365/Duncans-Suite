@@ -326,6 +326,8 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.8.1 | 2026-11-09
+- Verbessert: Die Erinnerung an fällige Rechnungen kommt jetzt auch, wenn der PC nicht neu gestartet wird. Zusätzlich zum Windows-Start prüft eine unsichtbare Aufgabe in der Windows-Aufgabenplanung täglich um 9 Uhr (und holt das nach, wenn der PC um 9 Uhr aus war). Es bleibt bei höchstens einer Erinnerung am Tag. Wer die Erinnerung schon an hatte, bekommt die Aufgabe beim nächsten Start des Programms automatisch; beim Ausschalten wird sie wieder entfernt.
 ## 0.8.0 | 2026-11-08
 - Neu: CSV-Export. Im Zahnrad-Menü speichert „Belege der aktuellen Ansicht als CSV exportieren …“ genau die Belege, die gerade in der Liste stehen (Suche, Ordner, Tags und Filter gelten), als Tabelle für Excel oder den Steuerberater: Datei, Ordner, Jahr, Gläubiger, Betrag, Fällig am, Status, Art (Einnahme oder Ausgabe), Rate, Tags und Notiz. Das Format passt zum deutschen Excel (Semikolon, Dezimalkomma, Umlaute). Texte, die mit = + - oder @ beginnen, bekommen ein Hochkomma, damit Excel sie nicht als Formel ausführt. Das ist kein DATEV-Buchungsstapel.
 ## 0.7.0 | 2026-11-06

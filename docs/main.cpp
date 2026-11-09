@@ -1,4 +1,4 @@
-// Oggys Docs-Files (Win32 + Direct2D + DirectWrite): Rechnungs-Manager und Rechnungs-Generator.
+﻿// Oggys Docs-Files (Win32 + Direct2D + DirectWrite): Rechnungs-Manager und Rechnungs-Generator.
 //
 // Aufbau: Topbar (Suche, Hinzufuegen, Rechnung erstellen, Zahnrad) | Ordnerbaum Jahr/Glaeubiger | Rechnungsliste | Statusleiste.
 // Belege liegen unter <Wurzel>\<Jahr>\<Glaeubiger>\, Betrag/Faelligkeit/Status/Schlagworte stehen im Index
@@ -24,6 +24,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "EInvoice.h"
@@ -37,7 +38,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.8.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.8.1"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -155,6 +156,82 @@ bool RemindAutostartOn() {
     return on;
 }
 
+// Zusaetzlich zum Run-Eintrag: eine Aufgabe in der Windows-Aufgabenplanung, die taeglich um 9 Uhr (und nachgeholt, wenn der PC dann aus war)
+// "--remind" startet. So kommt die Erinnerung auch, wenn der PC wochenlang im Ruhezustand laeuft. Das "hoechstens einmal am Tag" gilt weiter.
+const wchar_t* const kTaskName = L"OggysDocsFilesErinnerung";
+
+// Fuehrt schtasks.exe aus (ohne Fenster, hoechstens 15 s) und liefert dessen Exitcode, -1 bei Startfehler.
+int RunSchtasks(const std::wstring& args) {
+    wchar_t sys[MAX_PATH]{};
+    GetSystemDirectoryW(sys, MAX_PATH);
+    std::wstring cmd = std::wstring(L"\"") + sys + L"\\schtasks.exe\" " + args;
+    STARTUPINFOW si{sizeof si};
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return -1;
+    DWORD code = 0xFFFFFFFF;
+    if (WaitForSingleObject(pi.hProcess, 15000) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return static_cast<int>(code);
+}
+
+std::wstring XmlEscape(const std::wstring& s) {
+    std::wstring o;
+    for (wchar_t c : s) {
+        switch (c) {
+            case L'&': o += L"&amp;"; break;
+            case L'<': o += L"&lt;"; break;
+            case L'>': o += L"&gt;"; break;
+            case L'"': o += L"&quot;"; break;
+            default: o += c;
+        }
+    }
+    return o;
+}
+
+bool RemindTaskExists() { return RunSchtasks(std::wstring(L"/Query /TN \"") + kTaskName + L"\"") == 0; }
+
+bool CreateRemindTask() {
+    wchar_t exe[MAX_PATH]{}, user[256]{}, domain[256]{}, tmpDir[MAX_PATH]{};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    GetEnvironmentVariableW(L"USERNAME", user, 256);
+    GetEnvironmentVariableW(L"USERDOMAIN", domain, 256);
+    if (!GetTempPathW(MAX_PATH, tmpDir) || !user[0]) return false;
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t start[40];
+    swprintf_s(start, L"%04d-%02d-%02dT09:00:00", st.wYear, st.wMonth, st.wDay);
+    const std::wstring account = XmlEscape(std::wstring(domain) + (domain[0] ? L"\\" : L"") + user);
+    const std::wstring xml =
+        L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n"
+        L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n"
+        L"  <RegistrationInfo><Description>Erinnert an faellige Rechnungen (Oggys Docs-Files).</Description></RegistrationInfo>\n"
+        L"  <Triggers><CalendarTrigger><StartBoundary>" + std::wstring(start) + L"</StartBoundary><Enabled>true</Enabled>"
+        L"<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger></Triggers>\n"
+        L"  <Principals><Principal id=\"Author\"><UserId>" + account + L"</UserId><LogonType>InteractiveToken</LogonType>"
+        L"<RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n"
+        L"  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
+        L"<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand>"
+        L"<Enabled>true</Enabled><Hidden>true</Hidden><ExecutionTimeLimit>PT2M</ExecutionTimeLimit></Settings>\n"
+        L"  <Actions Context=\"Author\"><Exec><Command>" + XmlEscape(exe) + L"</Command><Arguments>--remind</Arguments></Exec></Actions>\n"
+        L"</Task>\n";
+    const std::wstring file = std::wstring(tmpDir) + L"OggysDocsFilesTask.xml";
+    FILE* f = nullptr;
+    if (_wfopen_s(&f, file.c_str(), L"wb") != 0 || !f) return false;
+    const unsigned char bom[2] = {0xFF, 0xFE};   // UTF-16 LE mit BOM, wie schtasks es erwartet
+    fwrite(bom, 1, 2, f);
+    fwrite(xml.data(), sizeof(wchar_t), xml.size(), f);
+    fclose(f);
+    const int rc = RunSchtasks(std::wstring(L"/Create /TN \"") + kTaskName + L"\" /XML \"" + file + L"\" /F");
+    DeleteFileW(file.c_str());
+    return rc == 0;
+}
+
+void DeleteRemindTask() { RunSchtasks(std::wstring(L"/Delete /TN \"") + kTaskName + L"\" /F"); }
+
+
 bool SetRemindAutostart(bool on) {
     HKEY k = nullptr;
     if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) != ERROR_SUCCESS) return false;
@@ -164,9 +241,11 @@ bool SetRemindAutostart(bool on) {
         GetModuleFileNameW(nullptr, exe, MAX_PATH);
         const std::wstring cmd = std::wstring(L"\"") + exe + L"\" --remind";
         r = RegSetValueExW(k, kRunValue, 0, REG_SZ, reinterpret_cast<const BYTE*>(cmd.c_str()), static_cast<DWORD>((cmd.size() + 1) * sizeof(wchar_t)));
+        if (r == ERROR_SUCCESS) CreateRemindTask();   // taeglich 9 Uhr zusaetzlich; scheitert das, bleibt der Run-Eintrag
     } else {
         r = RegDeleteValueW(k, kRunValue);
         if (r == ERROR_FILE_NOT_FOUND) r = ERROR_SUCCESS;
+        DeleteRemindTask();
     }
     RegCloseKey(k);
     return r == ERROR_SUCCESS;
@@ -2173,7 +2252,7 @@ void App::ShowGearMenu() {
     const bool haveReader = !FindPdfReader().empty();
     AppendMenuW(m, MF_STRING | (m_settings.pdfReader && haveReader ? MF_CHECKED : 0) | (haveReader ? 0 : MF_GRAYED), M_PDFREADER,
                 haveReader ? L"PDFs im Duncan's PDF Reader \u00F6ffnen" : L"PDFs im Duncan's PDF Reader \u00F6ffnen (nicht gefunden)");
-    AppendMenuW(m, MF_STRING | (RemindAutostartOn() ? MF_CHECKED : 0), M_REMIND, L"Beim Windows-Start an fällige Rechnungen erinnern");
+    AppendMenuW(m, MF_STRING | (RemindAutostartOn() ? MF_CHECKED : 0), M_REMIND, L"An fällige Rechnungen erinnern (beim Windows-Start und täglich um 9 Uhr)");
     AppendMenuW(m, MF_STRING, M_RESCAN, L"Neu einlesen (F5)");
     AppendMenuW(m, MF_STRING | (m_view.empty() ? MF_GRAYED : 0), M_EXPORT, L"Belege der aktuellen Ansicht als CSV exportieren …");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
@@ -2190,7 +2269,7 @@ void App::ShowGearMenu() {
         case M_READPDF: m_settings.readPdf = !m_settings.readPdf; SaveSettings(m_settings); break;
         case M_PDFREADER: m_settings.pdfReader = !m_settings.pdfReader; SaveSettings(m_settings); break;
         case M_REMIND:
-            if (SetRemindAutostart(!RemindAutostartOn())) SetNote(RemindAutostartOn() ? L"Erinnerung beim Windows-Start eingeschaltet (höchstens einmal am Tag)" : L"Erinnerung ausgeschaltet");
+            if (SetRemindAutostart(!RemindAutostartOn())) SetNote(RemindAutostartOn() ? L"Erinnerung eingeschaltet: beim Windows-Start und täglich um 9 Uhr (höchstens einmal am Tag)" : L"Erinnerung ausgeschaltet");
             else SetNote(L"Die Erinnerung konnte nicht geändert werden.");
             break;
         case M_RESCAN: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); break;
@@ -2728,6 +2807,9 @@ int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int show) {
         const int rc = RunRemind(hi);
         CoUninitialize();
         return rc;
+    }
+    if (RemindAutostartOn()) {   // Erinnerung war schon an (aeltere Version): die Tagesaufgabe im Hintergrund nachtragen
+        std::thread([] { if (!RemindTaskExists()) CreateRemindTask(); }).detach();
     }
     int code = 0;
     {
