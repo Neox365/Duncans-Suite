@@ -57,6 +57,8 @@ static const Translation kTranslations[] = {
      {L"Component store (DISM)", L"Magasin de composants (DISM)", L"Almacén de componentes (DISM)", L"Magazyn składników (DISM)", L"Armazenamento de componentes (DISM)", L"コンポーネントストア（DISM）", L"元件存放區（DISM）"}},
     {L"Alte Schattenkopien",
      {L"Old shadow copies", L"Anciens clichés instantanés", L"Instantáneas antiguas", L"Stare kopie w tle", L"Cópias de sombra antigas", L"古いシャドウコピー", L"舊的陰影複製"}},
+    {L"Vorherige Windows-Installation",
+     {L"Previous Windows installation", L"Installation Windows précédente", L"Instalación anterior de Windows", L"Poprzednia instalacja systemu Windows", L"Instalação anterior do Windows", L"以前の Windows のインストール", L"先前的 Windows 安裝"}},
     {L"Ereignisprotokolle",
      {L"Event logs", L"Journaux d'événements", L"Registros de eventos", L"Dzienniki zdarzeń", L"Logs de eventos", L"イベントログ", L"事件記錄檔"}},
     {L"fehlgeschlagen",
