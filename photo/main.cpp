@@ -36,7 +36,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.0"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.7.1"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -61,7 +61,7 @@ constexpr UINT kShareEdge = 2048;               // Stapel "Verkleinern": laengst
 
 enum ButtonId {
     BTN_OPEN = 1, BTN_FULLSCREEN, BTN_BATCH, BTN_SETTINGS,
-    BTN_ROT_L, BTN_ROT_R, BTN_CROP, BTN_STRIP, BTN_EDIT, BTN_CONVERT,
+    BTN_ROT_L, BTN_ROT_R, BTN_CROP, BTN_STRIP, BTN_EDIT, BTN_CONVERT, BTN_CARD,
     VB_PREV = 20, VB_NEXT, VB_FIT, VB_ACTUAL, VB_CLOSE, VB_DELETE, VB_CROP_OK, VB_CROP_CANCEL,
     VB_EDIT_SAVE, VB_EDIT_SAVEAS, VB_EDIT_RESET, VB_EDIT_CANCEL,
     VB_SLIDE_PREV, VB_SLIDE_PLAY, VB_SLIDE_NEXT, VB_SLIDE_CLOSE
@@ -492,6 +492,7 @@ private:
     void CopySelected();
     void DeleteSelected();
     void ShowBatchMenu();
+    void OpenCardDesigner();
     void StartBatch(BatchKind kind);
     void RenameByDate();                      // Dateien nach Aufnahmedatum benennen (YYYY-MM-DD_HHMMSS), mit Rueckgaengig
     void UndoRename();
@@ -829,6 +830,7 @@ void App::Layout() {
     add(BTN_OPEN, L"Ordner öffnen", true);
     add(BTN_FULLSCREEN, L"Vollbild", false);
     add(BTN_BATCH, L"Stapelverarbeitung", false);
+    add(BTN_CARD, L"Karte gestalten", false);   // auch im Stapel-Menue, aber hier gut sichtbar
     Btn gear;
     gear.id = BTN_SETTINGS;
     gear.label = L"⚙";
@@ -2041,6 +2043,7 @@ void App::Command(int id) {
             break;
         case VB_SLIDE_CLOSE: EndSlideshow(); break;
         case BTN_BATCH: ShowBatchMenu(); break;
+        case BTN_CARD: OpenCardDesigner(); break;
         case BTN_SETTINGS: ShowSettings(); break;
         case BTN_ROT_L: RotateSelected(false); break;
         case BTN_ROT_R: RotateSelected(true); break;
@@ -2530,6 +2533,12 @@ void App::DeleteSelected() {
     OpenFolder(m_folder, next, true);
 }
 
+void App::OpenCardDesigner() {   // Karte gestalten mit den markierten Fotos (Knopf oben und Stapel-Menue)
+    std::vector<std::wstring> paths;
+    for (int i : SelectedIdx()) paths.push_back(m_items[i].path);
+    card::ShowDesigner(m_hwnd, paths);
+}
+
 void App::ShowBatchMenu() {
     if (m_batchRunning) {
         if (MessageBoxW(m_hwnd, L"Die Stapelverarbeitung läuft noch. Abbrechen?", L"Stapelverarbeitung",
@@ -2578,12 +2587,7 @@ void App::ShowBatchMenu() {
         case MENU_B_ROT_CCW: StartBatch(BatchKind::RotateCcw); break;
         case MENU_B_RENAME: RenameByDate(); break;
         case MENU_B_RENAME_UNDO: UndoRename(); break;
-        case MENU_B_CARD: {
-            std::vector<std::wstring> paths;
-            for (int i : SelectedIdx()) paths.push_back(m_items[i].path);
-            card::ShowDesigner(m_hwnd, paths);
-            break;
-        }
+        case MENU_B_CARD: OpenCardDesigner(); break;
         case MENU_B_DUPES: StartDupSearch(); break;
         case MENU_B_DUPES_END: EndDupMode(); break;
     }

@@ -291,6 +291,8 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.7.1 | 2026-11-09
+- Verbessert: „Karte gestalten“ hat jetzt einen eigenen Knopf oben neben „Stapelverarbeitung“ und steckt nicht mehr nur im Stapel-Menü. Er öffnet das Fenster mit den markierten Fotos; der Menüpunkt bleibt zusätzlich bestehen.
 ## 0.7.0 | 2026-11-09
 - Neu: Vorlagen in „Karte gestalten“. Oben im Fenster wählst du eine Vorlage für den Anlass: Geburtstag, Weihnachten, Hochzeit, Einladung, Urlaubsgruß, Danke oder Baby. Ein Klick setzt Hintergrund (Farbe oder Verlauf), Fotorahmen, runde Ecken, Schrift, Farbe und einen Beispieltext; deine Fotos, das Papierformat, das Layout und Hoch- oder Querformat bleiben, und alles lässt sich danach wie gewohnt weiter ändern. „Eigene Einstellungen“ ändert nichts.
 ## 0.6.0 | 2026-11-09
