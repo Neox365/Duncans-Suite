@@ -841,12 +841,43 @@ static bool DeleteEntry(const fs::path& p, bool permanent) {
 
 static void MarkCleaned() { std::ofstream{StateFile()} << std::time(nullptr); }
 
+// Verlauf der freigeraeumten Menge: eine Zeile "Zeitpunkt<Tab>Bytes" je Bereinigung in freigeraeumt.tsv (neben last_run.txt).
+// Die Uebersicht zeigt daraus "Bisher freigeraeumt" und die letzten 30 Tage.
+static fs::path FreedFile() { return StateFile().parent_path() / L"freigeraeumt.tsv"; }
+static std::atomic<unsigned long long> g_freedTotal{0}, g_freed30{0};
+static void LoadFreed() {
+    std::ifstream f(FreedFile());
+    unsigned long long total = 0, d30 = 0;
+    const long long now = (long long)std::time(nullptr);
+    long long t;
+    unsigned long long b;
+    while (f >> t >> b) {
+        total += b;
+        if (now - t <= 30ll * 86400) d30 += b;
+    }
+    g_freedTotal = total;
+    g_freed30 = d30;
+}
+static void RecordFreed(unsigned long long bytes) {
+    if (!bytes) return;
+    { std::ofstream f(FreedFile(), std::ios::app); f << (long long)std::time(nullptr) << '\t' << bytes << '\n'; }
+    LoadFreed();
+}
+static unsigned long long FreedTotal() {   // beim ersten Zugriff aus der Datei laden
+    static bool loaded = false;
+    if (!loaded) { loaded = true; LoadFreed(); }
+    return g_freedTotal;
+}
+
 // Loescht die Eintraege; "failed" sind bei Temp meist von Programmen benutzte Dateien.
 static void CleanPaths(const std::vector<fs::path>& items, bool permanent, int& ok, int& failed) {
+    unsigned long long freed = 0;
     for (const auto& path : items) {
-        if (DeleteEntry(path, permanent)) ++ok;
+        const unsigned long long sz = PathSize(path);   // vor dem Loeschen messen (Auto-Clean ohne Fenster)
+        if (DeleteEntry(path, permanent)) { ++ok; freed += sz; }
         else ++failed;
     }
+    RecordFreed(freed);
 }
 
 // Kommandozeile/Auto: leert Downloads und setzt den Zaehler zurueck
@@ -921,7 +952,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.8.6";
+constexpr wchar_t kVersion[] = L"1.8.7";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -3444,7 +3475,9 @@ static void PaintWindow(HWND h) {
                 DrawFit(dc, g_fSm, kMuted, cx, kActTop + 24, textRight, g_doneSub);
             } else {
                 DrawFit(dc, g_fMed, kSub, cx, kActTop + 8, textRight,
-                        g_scanned ? Tr(L"Mit „Optimieren“ entfernbar: ") + FormatSize(junk) + Tr(L" (ohne Browser-Cache)")
+                        g_scanned ? Tr(L"Mit „Optimieren“ entfernbar: ") + FormatSize(junk) + Tr(L" (ohne Browser-Cache)") +
+                                        (FreedTotal() ? Tr(L"  ·  Bisher freigeräumt: ") + FormatSize(FreedTotal()) + Tr(L" (letzte 30 Tage: ") + FormatSize(g_freed30.load()) + L")"
+                                                      : std::wstring())
                                   : Tr(L"Bitte einen Moment warten"));
             }
         }
@@ -5697,6 +5730,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         int cat = (int)l, ok = g_resOk, failed = g_resFail;
         unsigned long long freed = g_resFreed;
         if ((cat == CAT_DL && w) || dlOpt) MarkCleaned();  // Zaehler nur zuruecksetzen, wenn alles geleert wurde
+        RecordFreed(freed);
         ShowWindow(GetDlgItem(h, ID_CLEAN), SW_SHOW);
         std::wstring skipList;
         { std::lock_guard<std::mutex> lk(g_jobMx);

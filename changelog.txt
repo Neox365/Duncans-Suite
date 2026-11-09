@@ -69,6 +69,8 @@
 
 
 [DuncansTidy.exe]
+## 1.8.7 | 2026-11-09
+- Neu: Die Übersicht zeigt in der Zeile unter dem Banner jetzt „Bisher freigeräumt“ mit der Gesamtmenge und den letzten 30 Tagen. Tidy merkt sich dafür bei jeder Bereinigung (auch beim stillen Auto-Clean) die freigegebene Menge in einer kleinen Datei neben den anderen Tidy-Daten; sie bleibt auf deinem PC. Die Zahl beginnt ab diesem Update bei 0.
 ## 1.8.6 | 2026-11-09
 - Neu: Die Ultra-Tiefenreinigung kann die vorherige Windows-Installation (Windows.old) löschen, die nach einem großen Windows-Update oft 10 bis 30 GB belegt. Die Frage erscheint nur, wenn der Ordner existiert, und wie bei den anderen Windows-Aktionen einzeln mit Warnung: Danach ist kein Zurückgehen auf die alte Windows-Version mehr möglich. Windows fragt dafür einmal nach Administratorrechten.
 ## 1.8.5 | 2026-11-09
