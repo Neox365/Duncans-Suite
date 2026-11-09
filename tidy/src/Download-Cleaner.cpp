@@ -921,7 +921,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.8.5";
+constexpr wchar_t kVersion[] = L"1.8.6";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -3698,7 +3698,13 @@ static void EnsureExplorer() {
 
 // ---- Ultra-Aktionen: von Windows selbst ausgefuehrt, mit Administratorrechten (eine UAC-Abfrage) ----
 // Das Skript laeuft ueber -EncodedCommand (keine Datei, die vor dem Start veraendert werden koennte) und nutzt nur Programme aus dem Systemordner.
-enum { ULTRA_DISM = 1, ULTRA_VSS = 2, ULTRA_EVT = 4 };
+enum { ULTRA_DISM = 1, ULTRA_VSS = 2, ULTRA_EVT = 4, ULTRA_WINOLD = 8 };
+static fs::path WinOldPath() {  // Ordner der vorherigen Windows-Installation (nur wenn er ein echter Ordner und keine Verknuepfung ist)
+    const fs::path p = KnownFolder(FOLDERID_Windows).parent_path() / L"Windows.old";
+    std::error_code ec;
+    if (!fs::is_directory(p, ec) || fs::is_symlink(p, ec)) return {};
+    return p;
+}
 static std::atomic<int> g_ultraMask{0}, g_ultraDone{0}, g_ultraResult{0};
 
 // Rueckgabe: -1 = Administrator-Abfrage abgelehnt oder Start fehlgeschlagen, sonst Maske der Aktionen, die NICHT gelungen sind
@@ -3710,6 +3716,16 @@ static int RunUltraActions(int mask, HWND owner) {
         s += L"try { Get-CimInstance Win32_ShadowCopy | Group-Object VolumeName | ForEach-Object { $_.Group | Sort-Object InstallDate | Select-Object -SkipLast 1 | ForEach-Object { Remove-CimInstance -InputObject $_ -ErrorAction Stop } } } catch { $f+=2 }\n";
     if (mask & ULTRA_EVT)  // alle Ereignisprotokolle ausser Sicherheit; manche Kanaele lassen sich nicht leeren, das ist normal
         s += L"$w=Join-Path $env:windir 'System32\\wevtutil.exe'; $t=0; $bad=0; & $w el | Where-Object { $_ -and $_ -ne 'Security' } | ForEach-Object { $t++; & $w cl $_ 2>$null; if ($LASTEXITCODE -ne 0) { $bad++ } }; if ($t -gt 0 -and $bad -eq $t) { $f+=4 }\n";
+    if (mask & ULTRA_WINOLD) {  // Windows.old: Besitz uebernehmen (takeown fragt je nach Sprache nach J oder Y), Rechte setzen, dann loeschen
+        const fs::path wo = WinOldPath();
+        if (wo.empty()) s += L"$f+=8\n";
+        else {
+            std::wstring q = wo.wstring();
+            for (size_t i = 0; (i = q.find(L'\'', i)) != std::wstring::npos; i += 2) q.insert(i, L"'");
+            s += L"$p='" + q + L"'; $sys=Join-Path $env:windir 'System32'; & (Join-Path $sys 'takeown.exe') /F $p /R /A /D Y 2>$null | Out-Null; & (Join-Path $sys 'takeown.exe') /F $p /R /A /D J 2>$null | Out-Null; "
+                 L"& (Join-Path $sys 'icacls.exe') $p /grant '*S-1-5-32-544:(OI)(CI)F' /T /C /Q 2>$null | Out-Null; Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue; if (Test-Path -LiteralPath $p) { $f+=8 }\n";
+        }
+    }
     s += L"exit $f";
     const std::wstring b64 = PsEncode(s);
     if (b64.empty()) return -1;
@@ -3726,7 +3742,7 @@ static int RunUltraActions(int mask, HWND owner) {
     DWORD code = 0xFFFF;
     if (WaitForSingleObject(sei.hProcess, 60 * 60 * 1000) == WAIT_OBJECT_0) GetExitCodeProcess(sei.hProcess, &code);
     CloseHandle(sei.hProcess);
-    return code == 0xFFFF ? (ULTRA_DISM | ULTRA_VSS | ULTRA_EVT) & mask : (int)(code & 7);
+    return code == 0xFFFF ? (ULTRA_DISM | ULTRA_VSS | ULTRA_EVT | ULTRA_WINOLD) & mask : (int)(code & 15);
 }
 
 static void StartClean(HWND h, std::vector<fs::path> items, bool permanent, bool all, int cat, std::vector<fs::path> recycle = {}) {
@@ -3850,9 +3866,11 @@ static int AskUltraActions(HWND h) {
     static const Q kQ[] = {
         {ULTRA_DISM, L"Windows-Komponentenspeicher (WinSxS) bereinigen?\n\nStartet DISM mit /StartComponentCleanup /ResetBase und entfernt ersetzte Komponentenversionen. Das kann von einigen Minuten bis zu einer halben Stunde dauern; Tidy bitte so lange geöffnet lassen. Danach lassen sich bereits installierte Windows-Updates NICHT mehr deinstallieren. Nicht rückgängig zu machen.\n\nWindows fragt dafür einmal nach Administratorrechten."},
         {ULTRA_VSS, L"Alte Schattenkopien löschen?\n\nLöscht auf jedem Laufwerk alle Schattenkopien (Wiederherstellungspunkte, „Vorgängerversionen“) außer der neuesten. Ältere Wiederherstellungspunkte sind danach weg. Nicht rückgängig zu machen.\n\nBenötigt Administratorrechte."},
-        {ULTRA_EVT, L"Windows-Ereignisprotokolle leeren?\n\nLeert alle Ereignisprotokolle (Anwendung, System, Setup …); das Sicherheitsprotokoll bleibt unberührt. Die Einträge helfen bei der Fehlersuche und sind danach weg. Nicht rückgängig zu machen.\n\nBenötigt Administratorrechte."}};
+        {ULTRA_EVT, L"Windows-Ereignisprotokolle leeren?\n\nLeert alle Ereignisprotokolle (Anwendung, System, Setup …); das Sicherheitsprotokoll bleibt unberührt. Die Einträge helfen bei der Fehlersuche und sind danach weg. Nicht rückgängig zu machen.\n\nBenötigt Administratorrechte."},
+        {ULTRA_WINOLD, L"Vorherige Windows-Installation (Windows.old) löschen?\n\nLöscht den Ordner Windows.old. Er enthält die Dateien der alten Windows-Version und braucht oft 10 bis 30 GB. Danach ist ein Zurückgehen auf die vorherige Windows-Version NICHT mehr möglich. Windows löscht den Ordner nach einigen Tagen auch selbst. Nicht rückgängig zu machen.\n\nBenötigt Administratorrechte."}};
     int mask = 0;
     for (const Q& q : kQ) {
+        if (q.bit == ULTRA_WINOLD && WinOldPath().empty()) continue;  // nur anbieten, wenn der Ordner existiert
         if (AppBox(h, Tr(q.text), Tr(L"Ultra-Tiefenreinigung"), MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) mask |= q.bit;   // Nein, Esc oder X = auslassen
     }
     return mask;
@@ -5696,6 +5714,7 @@ static LRESULT CALLBACK WndProc(HWND h, UINT m, WPARAM w, LPARAM l) {
                 if (um & ULTRA_DISM) msg += std::wstring(L"\n · ") + Tr(L"Komponentenspeicher (DISM)") + L": " + ((res & ULTRA_DISM) ? Tr(L"fehlgeschlagen") : Tr(L"erledigt"));
                 if (um & ULTRA_VSS) msg += std::wstring(L"\n · ") + Tr(L"Alte Schattenkopien") + L": " + ((res & ULTRA_VSS) ? Tr(L"fehlgeschlagen") : Tr(L"erledigt"));
                 if (um & ULTRA_EVT) msg += std::wstring(L"\n · ") + Tr(L"Ereignisprotokolle") + L": " + ((res & ULTRA_EVT) ? Tr(L"fehlgeschlagen") : Tr(L"erledigt"));
+                if (um & ULTRA_WINOLD) msg += std::wstring(L"\n · ") + Tr(L"Vorherige Windows-Installation") + L": " + ((res & ULTRA_WINOLD) ? Tr(L"fehlgeschlagen") : Tr(L"erledigt"));
             }
         }
         if (g_page == 0) {

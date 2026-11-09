@@ -67,6 +67,8 @@
 
 
 [DuncansTidy.exe]
+## 1.8.6 | 2026-11-09
+- Neu: Die Ultra-Tiefenreinigung kann die vorherige Windows-Installation (Windows.old) löschen, die nach einem großen Windows-Update oft 10 bis 30 GB belegt. Die Frage erscheint nur, wenn der Ordner existiert, und wie bei den anderen Windows-Aktionen einzeln mit Warnung: Danach ist kein Zurückgehen auf die alte Windows-Version mehr möglich. Windows fragt dafür einmal nach Administratorrechten.
 ## 1.8.5 | 2026-11-09
 - Verbessert: Die Ultra-Tiefenreinigung räumt zusätzlich die Zwischenspeicher von Unreal Engine (Derived Data Cache), Unity, CurseForge, r2modman und Overwolf auf. Es werden nur Cache-Ordner geleert, nie Projekte, Mods, Anmeldung oder Einstellungen; Unreal und Unity bauen den Cache beim nächsten Öffnen neu auf, das dauert dann etwas länger. Vorher zeigt Tidy wie immer die Vorschau.
 ## 1.8.3 | 2026-11-09
