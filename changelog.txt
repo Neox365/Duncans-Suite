@@ -490,6 +490,8 @@
 - Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
 
 [DuncansSuite.exe]
+## 1.1.44 | 2026-11-09
+- Neu: Programme deinstallieren. Im Info-Dialog („i“) gibt es bei jedem installierten Programm den Knopf „Deinstallieren …“, ebenso im Rechtsklick-Menü einer Karte. Die Suite zeigt vorher, welche Dateien gelöscht werden, und fragt nach. Gelöscht wird nur die Programmdatei (bei geschützten Ordnern fragt Windows nach Administratorrechten); deine Daten und Einstellungen bleiben erhalten, zum Beispiel Tresor oder Rechnungen. Beim PDF Reader entfällt auch der Eintrag im Explorer-Kontextmenü, bei Docs-Files die Erinnerung beim Windows-Start. Das Programm lässt sich danach auf der Karte wieder herunterladen. Läuft das Programm noch, meldet die Suite, welche Dateien nicht gelöscht werden konnten.
 ## 1.1.43 | 2026-11-09
 - Neu: Karten ausblenden. Ein Rechtsklick auf eine Karte blendet das Programm aus, die übrigen Karten rücken auf; die Suite wird dadurch übersichtlicher, wenn du nicht alle Programme brauchst. Ausgeblendete Programme bleiben installiert und werden weiter aktualisiert, es ändert sich nur die Anzeige. Ein Rechtsklick auf eine freie Stelle zeigt sie wieder, und die Fußzeile weist darauf hin, solange etwas ausgeblendet ist. Mindestens eine Karte bleibt immer sichtbar.
 ## 1.1.42 | 2026-11-05

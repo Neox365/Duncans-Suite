@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.43"
+#define SUITE_VERSION L"1.1.44"
 #endif
 
 namespace
@@ -876,6 +876,7 @@ namespace
     }
     constexpr int kInfoTabs = kToolCount + 1;   // ein Reiter je Programm plus die Suite selbst
     constexpr int kInfoCloseId = 37;            // Hover-/Klick-Id des Schliessen-Knopfs
+    constexpr int kUninstId = 40;               // Hover-/Klick-Id des Knopfs "Deinstallieren" im Info-Dialog
     constexpr int kUpdAllId = 39;               // Hover-/Klick-Id des Chips "Alle aktualisieren" (frueher 36, jetzt Reiter)
     constexpr int kFootLinkId = 38;             // Hover-/Klick-Id des GitHub-Links in der Fusszeile (frueher 35, jetzt Reiter)
     static_assert(24 + kInfoTabs <= 37, "Info-Reiter (Ids ab 24) duerfen nicht in die Ids 37 (Schliessen), 38 (Fusszeile), 39 (Alle aktualisieren) und ab 40 (Karten) reichen");
@@ -1044,6 +1045,7 @@ private:
     void ShowModal(const std::wstring& title, const std::wstring& text);
     void SetNote(const std::wstring& text);
     void StartDownload(int index);
+    void UninstallTool(int index);       // Programmdatei(en) einer Karte loeschen (Daten und Einstellungen bleiben)
     int  PendingModuleUpdates() const;   // Programme mit neuerer Version, die die Suite selbst laden kann
     void StartUpdateAll();               // alle Programm-Updates nacheinander laden
     void ContinueUpdateQueue();          // naechstes Programm aus der Warteschlange starten (nach einem fertigen Download)
@@ -1169,7 +1171,7 @@ private:
     // Info-Dialog (Button "i" neben dem Zahnrad): Neuigkeiten je Programm. Ids: 23 Info-Button, 24..35 Reiter, 37 Schliessen
     bool m_infoOpen = false, m_changesFetched = false, m_changesOnline = false;
     int m_infoTab = 0, m_infoScroll = 0, m_infoMaxScroll = 0;
-    RECT m_infoRect{}, m_infoTabs[kInfoTabs]{}, m_infoClose{}, m_infoView{};
+    RECT m_infoRect{}, m_infoTabs[kInfoTabs]{}, m_infoClose{}, m_infoView{}, m_btnUninst{};
     std::vector<changelog::Section> m_changes;       // eingebaute Fassung, nach dem Laden aus dem Netz ersetzt
     std::shared_ptr<ChangeFetch> m_changeFetch;
 
@@ -1993,11 +1995,18 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
     }
 
     // Fusszeile: Quelle links, Schliessen rechts
-    DrawLabel(dc, m_fontSmall, kTextDim, { box.left + pad, box.bottom - pad - btnH + S(10), box.right - pad - S(160), box.bottom - pad },
+    DrawLabel(dc, m_fontSmall, kTextDim, { box.left + pad, box.bottom - pad - btnH + S(10), box.right - pad - S(340), box.bottom - pad },
               m_changesOnline ? L"Quelle: GitHub (aktuell)" : L"Quelle: in der Suite eingebaut");
     const int bw = S(120);
     m_infoClose = { box.right - pad - bw, box.bottom - pad - btnH, box.right - pad, box.bottom - pad };
     DrawButton(dc, m_infoClose, true, m_hover == kInfoCloseId, m_press == kInfoCloseId && m_hover == kInfoCloseId, L"Schließen");
+    // Deinstallieren: nur fuer ein installiertes Programm (nicht fuer die Suite selbst)
+    m_btnUninst = {};
+    if (m_infoTab < kToolCount && !installed.empty())
+    {
+        m_btnUninst = { m_infoClose.left - S(12) - S(170), m_infoClose.top, m_infoClose.left - S(12), m_infoClose.bottom };
+        DrawButton(dc, m_btnUninst, false, m_hover == kUninstId, m_press == kUninstId && m_hover == kUninstId, L"Deinstallieren …");
+    }
 }
 
 void SuiteWindow::AddTrayIcon()
@@ -2061,6 +2070,109 @@ void SuiteWindow::TrayBalloon(const std::wstring& title, const std::wstring& tex
     wcsncpy_s(n.szInfo, text.c_str(), _TRUNCATE);
     n.dwInfoFlags = NIIF_INFO | NIIF_RESPECT_QUIET_TIME;
     Shell_NotifyIconW(NIM_MODIFY, &n);   // erscheint als Windows-Benachrichtigung
+}
+
+
+// ---- Deinstallieren: nur die Programmdatei(en) loeschen, Daten und Einstellungen bleiben ----
+void SuiteWindow::UninstallTool(int index)
+{
+    if (index < 0 || index >= kToolCount || m_tools[index].downloading || false)
+        return;
+    Tool& t = m_tools[index];
+    if (t.path.empty())
+    {
+        SetNote(std::wstring(t.title) + L" ist nicht installiert");
+        return;
+    }
+    // Alle Kopien, die die Suite findet (Ordner der Suite und %LOCALAPPDATA%\<Name>), samt Zusatzdatei (z. B. pdfium.dll)
+    std::vector<std::wstring> files;
+    for (const std::wstring& c : t.searched)
+    {
+        if (!FileExists(c))
+            continue;
+        files.push_back(c);
+        if (t.extraName)
+        {
+            const size_t slash = c.find_last_of(L'\\');
+            if (slash != std::wstring::npos && FileExists(c.substr(0, slash + 1) + t.extraName))
+                files.push_back(c.substr(0, slash + 1) + t.extraName);
+        }
+    }
+    if (files.empty())
+        return;
+    std::wstring list;
+    for (const std::wstring& f : files)
+        list += L"\n" + f;
+    const std::wstring question = std::wstring(t.title) + L" deinstallieren?\n\nDiese Dateien werden gelöscht:" + list +
+                                  L"\n\nDeine Daten und Einstellungen bleiben erhalten (zum Beispiel ein Tresor oder Rechnungen). Du kannst das Programm jederzeit wieder herunterladen. "
+                                  L"Liegt eine Datei in einem geschützten Ordner, fragt Windows nach Administratorrechten.";
+    if (MessageBoxW(m_hwnd, question.c_str(), L"Deinstallieren", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+        return;
+
+    std::wstring failed;
+    for (const std::wstring& f : files)
+    {
+        bool ok = DeleteFileW(f.c_str()) != FALSE;
+        if (!ok && (GetLastError() == ERROR_ACCESS_DENIED || GetLastError() == ERROR_PRIVILEGE_NOT_HELD))
+        {
+            // geschuetzter Ordner (z. B. Programme): der Pfad stammt aus der festen Tabelle der Suite, nie von aussen
+            wchar_t sys[MAX_PATH] = {};
+            GetSystemDirectoryW(sys, MAX_PATH);
+            const std::wstring cmd = std::wstring(sys) + L"\\cmd.exe";
+            const std::wstring args = L"/c del /f /q \"" + f + L"\"";
+            SHELLEXECUTEINFOW sei{ sizeof sei };
+            sei.fMask = SEE_MASK_NOCLOSEPROCESS;
+            sei.hwnd = m_hwnd;
+            sei.lpVerb = L"runas";
+            sei.lpFile = cmd.c_str();
+            sei.lpParameters = args.c_str();
+            sei.nShow = SW_HIDE;
+            if (ShellExecuteExW(&sei) && sei.hProcess)
+            {
+                WaitForSingleObject(sei.hProcess, 20000);
+                CloseHandle(sei.hProcess);
+            }
+            ok = !FileExists(f);
+        }
+        if (!ok)
+            failed += L"\n" + f;
+    }
+
+    // Reste der Anbindung entfernen, damit nichts auf eine fehlende Datei zeigt
+    if (std::wstring(t.exe) == L"DuncansPdf.exe")
+        UnregisterVerb(kPdfVerb);   // Explorer-Kontextmenue "Mit Duncan's PDF oeffnen"
+    if (std::wstring(t.exe) == L"OggysDocsFiles.exe")
+    {
+        HKEY k = nullptr;
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, kRunKey, 0, KEY_SET_VALUE, &k) == ERROR_SUCCESS)
+        {
+            RegDeleteValueW(k, L"OggysDocsFiles");   // Erinnerung beim Windows-Start
+            RegCloseKey(k);
+        }
+        wchar_t sys[MAX_PATH] = {};
+        GetSystemDirectoryW(sys, MAX_PATH);
+        std::wstring cmd = std::wstring(L"\"") + sys + L"\\schtasks.exe\" /Delete /TN OggysDocsFilesErinnerung /F";
+        STARTUPINFOW si{ sizeof si };
+        si.dwFlags = STARTF_USESHOWWINDOW;
+        si.wShowWindow = SW_HIDE;
+        PROCESS_INFORMATION pi{};
+        if (CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+        {
+            WaitForSingleObject(pi.hProcess, 10000);
+            CloseHandle(pi.hThread);
+            CloseHandle(pi.hProcess);
+        }
+    }
+    const std::wstring dir = InstallDir(t);
+    if (!dir.empty())
+        RemoveDirectoryW(dir.c_str());   // nur wenn leer; Daten im Ordner bleiben
+
+    FindTools();
+    InvalidateRect(m_hwnd, nullptr, TRUE);
+    if (failed.empty())
+        SetNote(std::wstring(t.title) + L" wurde deinstalliert");
+    else
+        ShowModal(L"Deinstallieren", std::wstring(t.title) + L" konnte nicht vollständig deinstalliert werden. Läuft das Programm noch? Bitte beenden und noch einmal versuchen.\n\nNicht gelöscht:" + failed);
 }
 
 void SuiteWindow::ShowTrayMenu()
@@ -2539,6 +2651,8 @@ void SuiteWindow::OnMouseMove(int x, int y)
                 hover = 24 + i;
         if (PtInRect(&m_infoClose, pt))
             hover = kInfoCloseId;
+        else if (PtInRect(&m_btnUninst, pt))
+            hover = kUninstId;
     }
     else if (PtInRect(&m_footLink, pt))
         hover = kFootLinkId;
@@ -2600,6 +2714,8 @@ void SuiteWindow::OnClick(int, int)
     }
     else if (pressed == kInfoCloseId)
         CloseInfo();
+    else if (pressed == kUninstId)
+        UninstallTool(m_infoTab);
     else if (pressed == 7)
         m_draft.autoCheck = !m_draft.autoCheck;
     else if (pressed == 8)
@@ -2839,6 +2955,8 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         HMENU menu = CreatePopupMenu();
         if (card >= 0)
             AppendMenuW(menu, MF_STRING | (visible <= 1 ? MF_GRAYED : 0), 1, L"Karte ausblenden");
+        if (card >= 0 && !m_tools[card].path.empty())
+            AppendMenuW(menu, MF_STRING, 3, L"Deinstallieren …");
         if (anyHidden)
             AppendMenuW(menu, MF_STRING, 2, L"Ausgeblendete Programme wieder anzeigen");
         POINT sp{};
@@ -2847,6 +2965,11 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN, sp.x, sp.y, 0, m_hwnd, nullptr);
         PostMessageW(m_hwnd, WM_NULL, 0, 0);
         DestroyMenu(menu);
+        if (cmd == 3 && card >= 0)
+        {
+            UninstallTool(card);
+            return 0;
+        }
         if (cmd == 1 && card >= 0)
         {
             m_settings.hiddenCards += (m_settings.hiddenCards.empty() ? L"" : L";") + std::wstring(m_tools[card].exe);
