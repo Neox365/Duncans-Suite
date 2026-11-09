@@ -28,6 +28,18 @@ int main()
     CHECK(l[0].title == L"Realtek - Sound - 6.0.9 999");            // Tab wird zu Leerzeichen
     CHECK(l[1].device == L"Gerät mit Umlaut äöü" && !l[1].ok && !l[1].restorePoint);
     CHECK(l[1].title == L"Zeile1 Zeile2" && l[1].oldVersion.empty());
+    CHECK(l[0].backupDir.empty() && l[1].backupDir.empty());
+    {   // Sicherungsordner: wird mit gespeichert; alte Zeilen mit sieben Feldern bleiben lesbar
+        Entry c; c.when = L"06.11.2026 10:00"; c.device = L"GPU"; c.ok = true; c.backupDir = L"C:\\Daten\\Sicherung\\20261106_100000\\GPU";
+        CHECK(Append(path, { c }));
+        std::vector<Entry> m = Load(path);
+        CHECK(!m.empty() && m.back().backupDir == c.backupDir && m.back().device == L"GPU");
+        CHECK(IsOemInf(L"oem12.inf") && IsOemInf(L"OEM3.INF") && !IsOemInf(L"oem.inf") && !IsOemInf(L"netrtl.inf") && !IsOemInf(L"oem1x.inf") && !IsOemInf(L"oem1.inf & calc"));
+        CHECK(SafeFolderName(L"NVIDIA GeForce RTX 4080") == L"NVIDIA GeForce RTX 4080");
+        CHECK(SafeFolderName(L"a/b:c*d?") == L"a_b_c_d_" && SafeFolderName(L"..") == L"Treiber" && SafeFolderName(L"").size() > 0);
+        DeleteFileW(path.c_str());
+        CHECK(Append(path, { a, b }));
+    }
 
     // Anhaengen behaelt die Reihenfolge, Beschnitt auf die neuesten
     std::vector<Entry> many;

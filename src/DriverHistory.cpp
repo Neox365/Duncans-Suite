@@ -119,6 +119,8 @@ std::vector<Entry> Load(const std::wstring& path)
         en.when = f[0]; en.device = f[1]; en.title = f[2]; en.oldVersion = f[3]; en.newDate = f[4];
         en.ok = f[5] == L"1";
         en.restorePoint = f[6] == L"1";
+        if (f.size() >= 8)
+            en.backupDir = f[7];            // aeltere Eintraege haben nur sieben Felder
         list.push_back(std::move(en));
     }
     return list;
@@ -135,8 +137,31 @@ bool Append(const std::wstring& path, const std::vector<Entry>& entries)
     std::wstring text;
     for (const Entry& e : all)
         text += Clean(e.when) + L'\t' + Clean(e.device) + L'\t' + Clean(e.title) + L'\t' + Clean(e.oldVersion) + L'\t' +
-                Clean(e.newDate) + L'\t' + (e.ok ? L"1" : L"0") + L'\t' + (e.restorePoint ? L"1" : L"0") + L"\r\n";
+                Clean(e.newDate) + L'\t' + (e.ok ? L"1" : L"0") + L'\t' + (e.restorePoint ? L"1" : L"0") + L'\t' + Clean(e.backupDir) + L"\r\n";
     return WriteAll(path, ToUtf8(text));
+}
+
+bool IsOemInf(const std::wstring& infName)
+{
+    if (infName.size() <= 7)
+        return false;
+    std::wstring inf = infName;
+    for (wchar_t& c : inf)
+        c = static_cast<wchar_t>(towlower(c));
+    return inf.rfind(L"oem", 0) == 0 && inf.compare(inf.size() - 4, 4, L".inf") == 0 &&
+           std::all_of(inf.begin() + 3, inf.end() - 4, [](wchar_t c) { return c >= L'0' && c <= L'9'; });
+}
+
+std::wstring SafeFolderName(const std::wstring& name)
+{
+    std::wstring out;
+    for (wchar_t c : name)
+        out += (c < 32 || wcschr(L"<>:\"/\\|?*", c)) ? L'_' : c;
+    while (!out.empty() && (out.back() == L' ' || out.back() == L'.'))
+        out.pop_back();
+    if (out.size() > 60)
+        out.resize(60);
+    return out.empty() ? std::wstring(L"Treiber") : out;
 }
 
 std::wstring NowText()
