@@ -3,8 +3,8 @@
 1 ICON "../assets/icon.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,8,6,0
-PRODUCTVERSION 1,8,6,0
+FILEVERSION 1,8,7,0
+PRODUCTVERSION 1,8,7,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -14,12 +14,12 @@ BEGIN
         BEGIN
             VALUE "CompanyName", "Duncan\0"
             VALUE "FileDescription", "Duncan's Tidy\0"
-            VALUE "FileVersion", "1.8.6.0\0"
+            VALUE "FileVersion", "1.8.7.0\0"
             VALUE "InternalName", "DuncansTidy\0"
             VALUE "LegalCopyright", "(c) 2026 Duncan. Alle Rechte vorbehalten.\0"
             VALUE "OriginalFilename", "DuncansTidy.exe\0"
             VALUE "ProductName", "Duncan's Tidy\0"
-            VALUE "ProductVersion", "1.8.6.0\0"
+            VALUE "ProductVersion", "1.8.7.0\0"
         END
     END
     BLOCK "VarFileInfo"
