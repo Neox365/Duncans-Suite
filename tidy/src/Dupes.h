@@ -88,4 +88,36 @@ inline std::vector<size_t> FindRedundant(const std::vector<File>& files, const s
     return out;
 }
 
+// Downloads, die es mit gleichem Inhalt schon an anderer Stelle gibt (refs, z. B. Dokumente, Bilder, Desktop). Nur Indizes aus files werden
+// geliefert; die Dateien in refs bleiben immer unberuehrt. Leere Dateien zaehlen nie. Gelesen wird nur, was eine gleich grosse Gegenstelle hat.
+inline std::vector<size_t> FindCoveredByRefs(const std::vector<File>& files, const std::vector<File>& refs,
+                                             const std::function<std::string(const std::wstring&)>& hashOf,
+                                             const std::function<bool()>& cancelled = nullptr) {
+    std::map<unsigned long long, std::vector<size_t>> refBySize;
+    for (size_t i = 0; i < refs.size(); ++i)
+        if (refs[i].size > 0) refBySize[refs[i].size].push_back(i);
+    std::map<unsigned long long, std::vector<std::string>> refHashes;   // je Groesse: Hashes der Gegenstellen (erst bei Bedarf berechnet)
+    std::vector<size_t> out;
+    for (size_t i = 0; i < files.size(); ++i) {
+        if (files[i].size == 0) continue;
+        auto it = refBySize.find(files[i].size);
+        if (it == refBySize.end()) continue;
+        if (cancelled && cancelled()) return {};
+        auto hs = refHashes.find(files[i].size);
+        if (hs == refHashes.end()) {
+            std::vector<std::string> v;
+            for (size_t r : it->second) {
+                if (cancelled && cancelled()) return {};
+                const std::string h = hashOf(refs[r].path);
+                if (!h.empty()) v.push_back(h);
+            }
+            hs = refHashes.emplace(files[i].size, std::move(v)).first;
+        }
+        if (hs->second.empty()) continue;
+        const std::string h = hashOf(files[i].path);
+        if (!h.empty() && std::find(hs->second.begin(), hs->second.end(), h) != hs->second.end()) out.push_back(i);
+    }
+    return out;
+}
+
 }  // namespace dupes

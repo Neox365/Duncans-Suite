@@ -109,6 +109,7 @@ bool ReadClipboardImage(std::string& png, int& width, int& height);   // als PNG
 bool WriteClipboardImage(const std::string& png, bool markPrivate = true);
 // Vorschaubild (Bitmap-Handle, vom Aufrufer mit DeleteObject freizugeben), eingepasst in maxW x maxH; 0 bei Fehler
 HBITMAP MakeThumbnail(const std::string& png, int maxW, int maxH, int& outW, int& outH);
+bool ClipboardHasRichText();                                 // liegt neben dem Text auch Formatierung (HTML, RTF) in der Zwischenablage?
 bool ClipboardIsExcluded();                                  // hat die Quelle die Aufnahme in Verlaeufe untersagt?
 std::wstring ClipboardOwnerExe();                            // EXE-Name (klein) des Programms, das zuletzt kopiert hat; leer = unbekannt
 void SendPasteKeys();                                        // sendet Strg+V an das aktive Fenster
@@ -133,6 +134,7 @@ struct Settings {
     int retention = 0;                                       // 0 = nie loeschen, 1 = nach 1 Stunde, 2 = nach 1 Tag
     bool captureSelection = true;                            // Markierung beim Oeffnen der Schnellauswahl automatisch uebernehmen
     bool hideIntro = false;                                  // Anleitungskarte "Was ist Clip?" ausgeblendet
+    bool plainText = false;                                  // Formatierung (HTML, RTF) beim Kopieren entfernen, nur reinen Text behalten (Menue "Mehr")
     bool cleanLinks = false;                                 // kopierte Links automatisch von Tracking saeubern (Menue "Mehr")
     std::vector<std::wstring> excludedExes;                  // Programme, aus denen Clip nie etwas aufnimmt (EXE-Namen klein)
 };

@@ -780,6 +780,10 @@ HBITMAP MakeThumbnail(const std::string& png, int maxW, int maxH, int& outW, int
     return hbm;
 }
 
+bool ClipboardHasRichText() {
+    return IsClipboardFormatAvailable(RegisterClipboardFormatW(L"HTML Format")) || IsClipboardFormatAvailable(RegisterClipboardFormatW(L"Rich Text Format"));
+}
+
 bool ClipboardIsExcluded() {
     if (IsClipboardFormatAvailable(RegisterClipboardFormatW(L"ExcludeClipboardContentFromMonitorProcessing"))) return true;
     bool excluded = false;
@@ -931,6 +935,7 @@ Settings LoadSettings() {
     s.captureSelection = GetPrivateProfileIntW(L"Settings", L"CaptureSelection", 1, f.c_str()) != 0;
     s.hideIntro = GetPrivateProfileIntW(L"Settings", L"HideIntro", 0, f.c_str()) != 0;
     s.cleanLinks = GetPrivateProfileIntW(L"Settings", L"CleanLinks", 0, f.c_str()) != 0;
+    s.plainText = GetPrivateProfileIntW(L"Settings", L"PlainText", 0, f.c_str()) != 0;
     wchar_t buf[4096] = {};
     GetPrivateProfileStringW(L"Settings", L"ExcludedApps", L"", buf, 4096, f.c_str());
     s.excludedExes = SplitExcluded(buf);
@@ -946,6 +951,7 @@ bool SaveSettings(const Settings& s) {
     ok &= WritePrivateProfileStringW(L"Settings", L"CaptureSelection", s.captureSelection ? L"1" : L"0", f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"HideIntro", s.hideIntro ? L"1" : L"0", f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"CleanLinks", s.cleanLinks ? L"1" : L"0", f.c_str()) != 0;
+    ok &= WritePrivateProfileStringW(L"Settings", L"PlainText", s.plainText ? L"1" : L"0", f.c_str()) != 0;
     ok &= WritePrivateProfileStringW(L"Settings", L"ExcludedApps", JoinExcluded(s.excludedExes).c_str(), f.c_str()) != 0;
     return ok;
 }

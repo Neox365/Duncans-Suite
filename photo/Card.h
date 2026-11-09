@@ -52,6 +52,8 @@ struct Spec {
     int gapPct = 2;       // Abstand zwischen den Fotos in % (0..10)
     int radiusPct = 0;    // runde Ecken, % der kuerzeren Zellkante (0..50)
     int borderPct = 0;    // weisser Fotorahmen in % der kuerzeren Seite (0..10)
+    bool photoShadow = false;   // weicher Schatten hinter jedem Foto
+    bool polaroid = false;      // Polaroid-Rahmen: weisser Rand mit breiterer Unterkante (mindestens 3 % Rand)
     int bgMode = 0;       // 0 Farbe, 1 Verlauf, 2 unscharfes erstes Foto
     COLORREF bg1 = RGB(255, 255, 255), bg2 = RGB(205, 220, 240);
     bool textBand = true;   // Schreibfeld unten: Fotos bleiben darueber

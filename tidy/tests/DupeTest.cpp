@@ -41,6 +41,23 @@ int main()
     bool cancelled = true;
     CHECK(dupes::FindRedundant(v, fake, [&] { return cancelled; }).empty());   // Abbruch liefert nichts
 
+    // Downloads, die es schon an anderer Stelle gibt
+    {
+        std::vector<File> dl = { {L"d1", 10, 1}, {L"d2", 10, 2}, {L"d3", 20, 3}, {L"d4", 30, 4}, {L"d5", 0, 5} };
+        std::vector<File> refs = { {L"r1", 10, 9}, {L"r2", 10, 9}, {L"r3", 30, 9}, {L"r4", 0, 9} };
+        auto fk = [](const std::wstring& p) -> std::string {
+            if (p == L"d1" || p == L"r1") return "H1";
+            if (p == L"d2" || p == L"r2") return "H2";
+            if (p == L"d4") return "H4";
+            if (p == L"r3") return "H3";
+            return "";
+        };
+        const std::vector<size_t> c = dupes::FindCoveredByRefs(dl, refs, fk);
+        CHECK((c == std::vector<size_t>{0, 1}));            // d1 = r1, d2 = r2; d3 hat keine Gegenstelle; d4 anderer Inhalt; d5 leer
+        CHECK(dupes::FindCoveredByRefs(dl, {}, fk).empty() && dupes::FindCoveredByRefs({}, refs, fk).empty());
+        CHECK(dupes::FindCoveredByRefs(dl, refs, fk, [] { return true; }).empty());
+    }
+
     // Echte Dateien
     wchar_t tmp[MAX_PATH];
     GetTempPathW(MAX_PATH, tmp);

@@ -36,7 +36,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.1"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.7.2"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
