@@ -78,6 +78,29 @@ int main() {
         }
     }
 
+    // Foto-Schatten und Polaroid-Rahmen
+    {
+        auto grab = [](const card::Spec& sp, int px, int py) {
+            auto b = card::Render(sp, 400, 300, [](const std::wstring&) { return std::shared_ptr<Gdiplus::Bitmap>(); });
+            Gdiplus::Color c(0);
+            if (b) b->GetPixel(px, py, &c);
+            return c;
+        };
+        card::Spec base;
+        base.layout = 0; base.landscape = true; base.marginPct = 10; base.gapPct = 0; base.radiusPct = 0; base.borderPct = 0;
+        base.bgMode = 0; base.bg1 = RGB(255, 255, 255); base.text.clear();
+        const Gdiplus::Color noShadow = grab(base, 200, 276);                 // unterhalb des Fotos: reiner Hintergrund
+        card::Spec sh = base; sh.photoShadow = true;
+        const Gdiplus::Color withShadow = grab(sh, 200, 276);
+        CHECK(noShadow.GetR() == 255 && withShadow.GetR() < 255);             // der Schatten dunkelt den Hintergrund ab
+        CHECK(grab(sh, 3, 3).GetR() == 255);                                 // weit weg vom Foto bleibt alles weiss
+        card::Spec pol = base; pol.polaroid = true;
+        const Gdiplus::Color inFrame = grab(pol, 200, 255);                    // breite Unterkante: weiss
+        const Gdiplus::Color plain = grab(base, 200, 255);                     // ohne Polaroid: Foto (grau)
+        CHECK(inFrame.GetR() == 255 && plain.GetR() < 255);
+        CHECK(card::Render(pol, 400, 300, [](const std::wstring&) { return std::shared_ptr<Gdiplus::Bitmap>(); }) != nullptr);
+    }
+
     card::Spec s;
     s.paper = 0;       // 10x15
     s.landscape = true;

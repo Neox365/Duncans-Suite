@@ -331,6 +331,22 @@ int main() {
         CHECK(SaveSettings(a) && !LoadSettings().cleanLinks);
     }
 
+    // ---- Formatierung erkennen ----
+    SetPlain(L"nur Text");
+    CHECK(!ClipboardHasRichText());
+    SetWithFormat(L"fett", L"HTML Format", false, 0);
+    CHECK(ClipboardHasRichText());
+    SetWithFormat(L"fett", L"Rich Text Format", false, 0);
+    CHECK(ClipboardHasRichText());
+    CHECK(WriteClipboardText(L"wieder rein", false) && !ClipboardHasRichText());
+    {
+        Settings pt; pt.plainText = true;
+        CHECK(SaveSettings(pt) && LoadSettings().plainText);
+        pt.plainText = false;
+        CHECK(SaveSettings(pt) && !LoadSettings().plainText);
+    }
+    if (hadText) SetPlain(original); else { OpenClipboard(nullptr); EmptyClipboard(); CloseClipboard(); }
+
     // ---- Autostart (nur, wenn er vorher aus war; danach wieder aus) ----
     if (!GetAutostart()) {
         CHECK(SetAutostart(true, L"C:\\Test\\DuncansClip.exe") && GetAutostart());

@@ -34,6 +34,7 @@ using std::max;
 #include <chrono>
 #include <atomic>
 #include <functional>
+#include <set>
 #include <vector>
 #include <cmath>
 #include <dwmapi.h>
@@ -952,7 +953,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.8.7";
+constexpr wchar_t kVersion[] = L"1.8.8";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -2583,7 +2584,7 @@ static const wchar_t* GroupNote(int cat, int g) {
     static const wchar_t* d[] = {L"PDF, Word, Excel, PowerPoint, Text …", L"JPG, PNG, GIF, WebP …", L"MP4, MKV, AVI, MOV …", L"MP3, WAV, FLAC, M4A …",
                                  L"ZIP, RAR, 7z, ISO …", L"Installer, EXE, MSI, Skripte …", L"Ganze Ordner im Downloads-Ordner",
                                  L"Alles andere, was sich nicht eindeutig zuordnen lässt",
-                                 L"Inhaltlich gleiche Dateien – die älteste Kopie bleibt, die übrigen kommen in den Papierkorb"};
+                                 L"Inhaltlich gleiche Dateien – eine Kopie bleibt (die älteste oder die in deinen Ordnern), die Download-Kopie kommt in den Papierkorb"};
     return Tr(cat == CAT_TEMP ? t[g] : cat == CAT_SYS ? s[g] : d[g]);
 }
 
@@ -2641,6 +2642,36 @@ static ListResult g_listTmp;
 static std::atomic<int> g_listGen{0};
 static std::atomic<bool> g_listLoading{false};
 
+// Dateien in Dokumenten, Bildern, Videos, Musik und auf dem Desktop (nur Groesse und Pfad, nichts wird gelesen), soweit eine Download-Datei
+// gleich gross ist. Cloud-Platzhalter (OneDrive "nur online") werden ausgelassen, damit nichts heruntergeladen wird.
+static std::vector<dupes::File> CollectReferenceFiles(const std::set<unsigned long long>& wantedSizes, const fs::path& downloads, const std::function<bool()>& cancelled) {
+    std::vector<dupes::File> out;
+    size_t seen = 0;
+    for (const KNOWNFOLDERID* id : {&FOLDERID_Documents, &FOLDERID_Pictures, &FOLDERID_Videos, &FOLDERID_Music, &FOLDERID_Desktop}) {
+        const fs::path root = KnownFolder(*id);
+        std::error_code ec;
+        if (root.empty() || !fs::is_directory(root, ec)) continue;
+        if (_wcsicmp(root.c_str(), downloads.c_str()) == 0) continue;
+        fs::recursive_directory_iterator it(root, fs::directory_options::skip_permission_denied, ec), end;
+        for (; !ec && it != end; it.increment(ec)) {
+            if (cancelled() || ++seen > 400000) return out;
+            if (!it->is_regular_file(ec) || it->is_symlink(ec)) continue;
+            const std::wstring p = it->path().wstring();
+            if (_wcsnicmp(p.c_str(), downloads.c_str(), downloads.wstring().size()) == 0) continue;   // Downloads liegt ggf. unter einem dieser Ordner
+            WIN32_FILE_ATTRIBUTE_DATA a;
+            if (!GetFileAttributesExW(p.c_str(), GetFileExInfoStandard, &a)) continue;
+            if (a.dwFileAttributes & (FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_OFFLINE | FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS | FILE_ATTRIBUTE_RECALL_ON_OPEN)) continue;
+            const unsigned long long size = (static_cast<unsigned long long>(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
+            if (!wantedSizes.count(size)) continue;
+            dupes::File f;
+            f.path = p;
+            f.size = size;
+            out.push_back(std::move(f));
+        }
+    }
+    return out;
+}
+
 static void StartListScan(HWND h, int cat) {
     const int gen = ++g_listGen;
     g_listLoading = true;
@@ -2666,8 +2697,18 @@ static void StartListScan(HWND h, int cat) {
                 fl.push_back(std::move(f));
                 idx.push_back(i);
             }
-            for (size_t k : dupes::FindRedundant(fl, [](const std::wstring& path) { return dupes::HashFile(path); }, [gen] { return g_listGen.load() != gen; }))
+            const auto hashOf = [](const std::wstring& path) { return dupes::HashFile(path); };
+            const auto cancelled = [gen] { return g_listGen.load() != gen; };
+            for (size_t k : dupes::FindRedundant(fl, hashOf, cancelled))
                 rows[idx[k]].group = 8;
+            // Downloads, die es schon in Dokumenten, Bildern, Videos, Musik oder auf dem Desktop gibt: nur die Download-Kopie wird angeboten
+            std::set<unsigned long long> sizes;
+            for (const dupes::File& f : fl) if (f.size > 0) sizes.insert(f.size);
+            if (!sizes.empty() && !cancelled()) {
+                const std::vector<dupes::File> refs = CollectReferenceFiles(sizes, KnownFolder(FOLDERID_Downloads), cancelled);
+                for (size_t k : dupes::FindCoveredByRefs(fl, refs, hashOf, cancelled))
+                    rows[idx[k]].group = 8;
+            }
         }
         std::sort(rows.begin(), rows.end(), [](const Row& a, const Row& b) {  // erst nach Gruppe, dann alphabetisch
             if (a.group != b.group) return a.group < b.group;
@@ -3541,7 +3582,7 @@ static void PaintWindow(HWND h) {
             L"Aus = dunkles Design (wie bisher), an = helles Design. Der Wechsel gilt sofort.",
             L"Der Besen in der Kopfzeile fegt beim Start und beim Aufräumen.",
             L"Nimmt bei den Systemdateien und beim Optimieren alles mit auf, was geht: Shader-Caches, Windows-Update- und Treiber-Installer-Reste, Fehlerberichte, Windows-Temp, App-Caches, Store-Reste und ETL-Protokolle. Auf der Seite Systemdateien kommen auf Wunsch DISM, Schattenkopien und Ereignisprotokolle dazu (jeweils mit Rückfrage und Administratorrechten). Vorher zeigt Tidy eine Vorschau. Auto-Clean und Schnell-Reinigung bleiben beim Standard.",
-            L"Sucht im Downloads-Ordner nach Dateien mit gleichem Inhalt (nicht nur gleichem Namen) und zeigt die überzähligen Kopien als eigene Gruppe „Doppelte Dateien“. Die älteste Kopie bleibt immer, die übrigen kommen wie alle Downloads in den Papierkorb. Große Downloads brauchen beim Öffnen der Seite etwas länger.",
+            L"Sucht nach Dateien mit gleichem Inhalt (nicht nur gleichem Namen): doppelte Downloads und Downloads, die du schon in Dokumenten, Bildern, Videos, Musik oder auf dem Desktop hast. Sie erscheinen als eigene Gruppe „Doppelte Dateien“. Deine Dateien in diesen Ordnern bleiben immer unberührt; nur die Kopie im Downloads-Ordner kommt wie alle Downloads in den Papierkorb (bei doppelten Downloads untereinander bleibt die älteste). Große Ordner brauchen beim Öffnen der Seite etwas länger.",
             L"Überschreibt Dateien vor dem endgültigen Löschen einmal mit Zufallsdaten, damit sie sich nicht wiederherstellen lassen. Gilt für alles, was Tidy endgültig löscht (Temp, Systemdateien, Browser-Daten, Auto-Clean), nicht für den Papierkorb. Dauert deutlich länger. Auf SSDs schützt es nur begrenzt, weil der Speicher Daten intern verschiebt; dort hilft Verschlüsselung (BitLocker) mehr.",
             L"Sprache der Oberfläche. Ein Klick öffnet die Auswahl."};
         static const wchar_t* kSetGlyph[kSettings] = {L"\xE7E8", L"\xE73F", L"\xE777", L"\xE706", L"\xE768", L"\xE74D", L"\xE8C8", L"\xE72E", L"\xE774"};  // E706 = Sonne, E768 = Play, E8C8 = Kopie

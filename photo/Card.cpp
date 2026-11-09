@@ -201,12 +201,23 @@ void DrawPhotoCell(Graphics& g, const Spec& s, const RectF& cell, float border, 
     const float rad = shortEdge * s.radiusPct / 100.f;
     GraphicsPath outer;
     RoundedPath(outer, cell, rad);
+    if (s.photoShadow) {                // weicher Schatten: mehrere duenne, nach unten versetzte Ebenen
+        const float spread = std::max(2.f, shortEdge * 0.02f);
+        for (int k = 6; k >= 1; --k) {
+            const float grow = spread * k / 3.f;
+            GraphicsPath sh;
+            RoundedPath(sh, RectF(cell.X - grow + spread * 0.4f, cell.Y - grow + spread * 1.2f, cell.Width + 2 * grow - spread * 0.8f, cell.Height + 2 * grow - spread * 0.8f), rad + grow);
+            SolidBrush br(Color(16, 0, 0, 0));
+            g.FillPath(&br, &sh);
+        }
+    }
     if (border > 0.5f) {
         SolidBrush white(Color(255, 255, 255, 255));
         g.FillPath(&white, &outer);
     }
-    const float b = std::min(border, shortEdge / 4);
-    RectF inner(cell.X + b, cell.Y + b, cell.Width - 2 * b, cell.Height - 2 * b);
+    const float b = std::min(border, shortEdge / 4);   // Polaroid-Mindestrand setzt Render
+    const float bottom = s.polaroid ? std::min(b * 3.5f, shortEdge / 3) : b;   // Polaroid: breitere Unterkante
+    RectF inner(cell.X + b, cell.Y + b, cell.Width - 2 * b, cell.Height - b - bottom);
     if (inner.Width < 2 || inner.Height < 2) return;
     GraphicsPath clip;
     RoundedPath(clip, inner, std::max(0.f, rad - b));
@@ -264,7 +275,8 @@ std::unique_ptr<Bitmap> Render(const Spec& s, UINT w, UINT h, const PhotoLoader&
     const float shortSide = static_cast<float>(std::min(w, h));
     const float margin = shortSide * std::clamp(s.marginPct, 0, 15) / 100.f;
     const float gap = shortSide * std::clamp(s.gapPct, 0, 10) / 100.f;
-    const float border = shortSide * std::clamp(s.borderPct, 0, 10) / 100.f;
+    float border = shortSide * std::clamp(s.borderPct, 0, 10) / 100.f;
+    if (s.polaroid) border = std::max(border, shortSide * 0.03f);
     RectF area(margin, margin, w - 2 * margin, h - 2 * margin);
     RectF band;
     if (s.textBand && !s.text.empty()) {

@@ -30,7 +30,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.5.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -230,12 +230,19 @@ void OnClipboardChanged() {
             return;
         }
         if (why != clip::SkipReason::None) return;
-        if (g.cfg.cleanLinks) {                         // Link von Tracking saeubern und die Zwischenablage durch die saubere Fassung ersetzen
-            const std::wstring cleaned = clip::CleanLink(text);
-            if (!cleaned.empty()) {
-                g.suppressUntil = GetTickCount() + 1500;
-                if (clip::WriteClipboardText(cleaned, false)) { text = cleaned; SetStatus(L"Link gesäubert: Tracking entfernt.", kGreen); }
-            }
+        std::wstring rewrite;                           // soll die Zwischenablage durch eine bereinigte Fassung ersetzt werden?
+        std::wstring why2;
+        if (g.cfg.cleanLinks) {                         // Link von Tracking saeubern
+            rewrite = clip::CleanLink(text);
+            if (!rewrite.empty()) why2 = L"Link gesäubert: Tracking entfernt.";
+        }
+        if (rewrite.empty() && g.cfg.plainText && clip::ClipboardHasRichText()) {   // Formatierung entfernen: nur der Text bleibt
+            rewrite = text;
+            why2 = L"Formatierung entfernt: nur reiner Text.";
+        }
+        if (!rewrite.empty()) {
+            g.suppressUntil = GetTickCount() + 1500;
+            if (clip::WriteClipboardText(rewrite, false)) { text = rewrite; SetStatus(why2, kGreen); }
         }
         changed = clip::AddHistory(g.store, text);
     } else if (clip::ClipboardHasImage() && !clip::IsPasswordManagerExe(owner) && !clip::IsExcludedExe(g.cfg.excludedExes, owner)) {
@@ -490,6 +497,13 @@ void ToggleCleanLinks() {
                                : L"Links werden wieder unverändert gelassen.", kGreen);
 }
 
+void TogglePlainText() {
+    g.cfg.plainText = !g.cfg.plainText;
+    clip::SaveSettings(g.cfg);
+    SetStatus(g.cfg.plainText ? L"Beim Kopieren bleibt nur reiner Text (ohne Formatierung). Achtung: Auch Tabellen aus Excel kommen dann ohne Zellen an."
+                              : L"Kopierter Text behält wieder seine Formatierung.", kGreen);
+}
+
 void ExportPromptsToFile() {
     wchar_t file[MAX_PATH] = L"Clip-Prompts.txt";
     OPENFILENAMEW ofn{};
@@ -524,6 +538,7 @@ void ExportImportMenu() {
     AppendMenuW(m, MF_STRING, 2, L"Prompts importieren …");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (g.cfg.cleanLinks ? MF_CHECKED : 0), 4, L"Links beim Kopieren säubern (Tracking entfernen)");
+    AppendMenuW(m, MF_STRING | (g.cfg.plainText ? MF_CHECKED : 0), 5, L"Beim Kopieren nur reinen Text behalten (ohne Formatierung)");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     const bool canBlock = !g.lastOwner.empty() && !clip::IsExcludedExe(g.cfg.excludedExes, g.lastOwner) && !clip::IsPasswordManagerExe(g.lastOwner);
     AppendMenuW(m, canBlock ? MF_STRING : MF_STRING | MF_GRAYED, 3,
@@ -537,6 +552,7 @@ void ExportImportMenu() {
     if (cmd == 1) ExportPromptsToFile();
     else if (cmd == 2) ImportPromptsFromFile();
     else if (cmd == 4) ToggleCleanLinks();
+    else if (cmd == 5) TogglePlainText();
     else if (cmd == 3 && clip::AddExcludedExe(g.cfg.excludedExes, g.lastOwner)) {
         clip::SaveSettings(g.cfg);
         SetStatus(g.lastOwner + L" ist gesperrt: daraus nimmt Clip nichts mehr auf.", kGreen);

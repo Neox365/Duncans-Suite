@@ -21,7 +21,7 @@ namespace {
 
 enum Id {
     ID_PRESET = 99, ID_LIST = 100, ID_ADD, ID_REMOVE, ID_UP, ID_DOWN, ID_PAPER, ID_LAND, ID_LAYOUT, ID_MARGIN, ID_GAP, ID_RADIUS, ID_BORDER,
-    ID_BG, ID_COL1, ID_COL2, ID_TEXT, ID_FONT, ID_SIZE, ID_BOLD, ID_ITALIC, ID_SHADOW, ID_COLT, ID_BAND, ID_SAVE, ID_CLOSE,
+    ID_BG, ID_COL1, ID_COL2, ID_TEXT, ID_FONT, ID_SIZE, ID_BOLD, ID_ITALIC, ID_SHADOW, ID_COLT, ID_BAND, ID_PSHADOW, ID_POLAROID, ID_SAVE, ID_CLOSE,
 };
 
 const wchar_t kClass[] = L"DuncansCardDesigner";
@@ -56,7 +56,7 @@ struct Designer {
     HBRUSH brBg = nullptr, brCard = nullptr;
     HWND preset = nullptr, list = nullptr, paper = nullptr, land = nullptr, layout = nullptr, bg = nullptr, text = nullptr, fontCb = nullptr, status = nullptr;
     HWND sMargin = nullptr, sGap = nullptr, sRadius = nullptr, sBorder = nullptr, sSize = nullptr;
-    HWND bold = nullptr, italic = nullptr, shadow = nullptr, band = nullptr;
+    HWND bold = nullptr, italic = nullptr, shadow = nullptr, band = nullptr, pshadow = nullptr, polaroid = nullptr;
     std::vector<HWND> all;
     std::vector<HWND> labels;
 
@@ -167,6 +167,8 @@ void Designer::Create() {
     bold = Make(L"BUTTON", L"Fett", BS_AUTOCHECKBOX | WS_TABSTOP, ID_BOLD);
     italic = Make(L"BUTTON", L"Kursiv", BS_AUTOCHECKBOX | WS_TABSTOP, ID_ITALIC);
     shadow = Make(L"BUTTON", L"Schatten", BS_AUTOCHECKBOX | WS_TABSTOP, ID_SHADOW);
+    pshadow = Make(L"BUTTON", L"Foto-Schatten", BS_AUTOCHECKBOX | WS_TABSTOP, ID_PSHADOW);
+    polaroid = Make(L"BUTTON", L"Polaroid-Rahmen", BS_AUTOCHECKBOX | WS_TABSTOP, ID_POLAROID);
     bColT = Make(L"BUTTON", L"Textfarbe", BS_OWNERDRAW | WS_TABSTOP, ID_COLT);
     band = Make(L"BUTTON", L"Schreibfeld unten", BS_AUTOCHECKBOX | WS_TABSTOP, ID_BAND);
     lHint = Label(L"Doppelklick auf die Karte setzt den Text zurück.");
@@ -213,7 +215,9 @@ void Designer::Layout() {
         put(s, x + lw, y, w - lw, S(26));
         y += S(28);
     }
-    y += S(6);
+    put(pshadow, x + lw, y, (w - lw) / 2, S(24));
+    put(polaroid, x + lw + (w - lw) / 2, y, (w - lw) / 2, S(24));
+    y += S(30);
     put(lBg, x, y + S(4), lw, S(18));
     put(bg, x + lw, y, S(130), S(200));
     put(bCol1, x + lw + S(138), y, S(36), rowH);
@@ -263,6 +267,8 @@ void Designer::Push() {
     SendMessageW(bold, BM_SETCHECK, spec.bold ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(italic, BM_SETCHECK, spec.italic ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(shadow, BM_SETCHECK, spec.shadow ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(pshadow, BM_SETCHECK, spec.photoShadow ? BST_CHECKED : BST_UNCHECKED, 0);
+    SendMessageW(polaroid, BM_SETCHECK, spec.polaroid ? BST_CHECKED : BST_UNCHECKED, 0);
     SendMessageW(band, BM_SETCHECK, spec.textBand ? BST_CHECKED : BST_UNCHECKED, 0);
 }
 
@@ -282,6 +288,8 @@ void Designer::Pull() {
     spec.bold = chk(bold);
     spec.italic = chk(italic);
     spec.shadow = chk(shadow);
+    spec.photoShadow = chk(pshadow);
+    spec.polaroid = chk(polaroid);
     spec.textBand = chk(band);
     const int fi = sel(fontCb);
     if (fi >= 0) {
@@ -528,7 +536,7 @@ LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 case ID_TEXT: if (code == EN_CHANGE) { d->Pull(); d->Redraw(); } break;
                 default:
                     if (id == ID_PAPER || id == ID_LAYOUT || id == ID_BG || id == ID_FONT) { if (code == CBN_SELCHANGE) { d->Pull(); d->Redraw(); } }
-                    else if (id == ID_LAND || id == ID_BOLD || id == ID_ITALIC || id == ID_SHADOW || id == ID_BAND) { d->Pull(); d->Redraw(); }
+                    else if (id == ID_LAND || id == ID_BOLD || id == ID_ITALIC || id == ID_SHADOW || id == ID_BAND || id == ID_PSHADOW || id == ID_POLAROID) { d->Pull(); d->Redraw(); }
                     break;
             }
             return 0;
