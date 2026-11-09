@@ -451,6 +451,8 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansQuickConvert.exe]
+## 0.4.1 | 2026-11-09
+- Behoben: Im leeren Ablagefeld klebte die Überschrift „Dateien hierher ziehen“ am oberen Rand und der Hinweis am unteren. Beide stehen jetzt als Block in der Mitte des Feldes.
 ## 0.4.0 | 2026-11-06
 - Neu: Zielformat FLAC (verlustfrei, deutlich kleiner als WAV) in der Audio/Video-Leiste. FLAC braucht den Windows-Baustein dafür; auf Rechnern ohne ihn meldet das Programm einen Fehler statt eine kaputte Datei zu schreiben.
 - Neu: „Max. Größe“ (Aus, 10, 16, 25 oder 50 MB). Jede Datei wird auf höchstens diese Größe gebracht, z. B. 16 MB für WhatsApp oder 10 MB für Discord. Bilder (JPG, WEBP, HEIC, PNG, GIF, BMP): das Programm sucht die höchste Qualität, die noch passt, und verkleinert bei Bedarf das Bild. Audio (MP3, M4A): die höchste Bitrate, die passt. Video (MP4, MKV): Bitrate und bei Bedarf die Auflösung werden nach der Länge des Videos berechnet; ist ein Video dafür zu lang, steht das als Fehler in der Liste. Bei WAV und FLAC geht kein Limit (verlustfrei); bei PDF gilt es nicht.
