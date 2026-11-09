@@ -478,7 +478,8 @@ static std::vector<AppBase> AppCacheBases() {
         static const R kRoaming[] = {{L"discord", L"Discord"}, {L"discordcanary", L"Discord Canary"}, {L"discordptb", L"Discord PTB"},
                                      {L"Code", L"VS Code"}, {L"Code - Insiders", L"VS Code Insiders"}, {L"Cursor", L"Cursor"},
                                      {L"Slack", L"Slack"}, {L"Signal", L"Signal"}, {L"Notion", L"Notion"}, {L"obsidian", L"Obsidian"},
-                                     {L"GitHub Desktop", L"GitHub Desktop"}, {L"Claude", L"Claude"}};
+                                     {L"GitHub Desktop", L"GitHub Desktop"}, {L"Claude", L"Claude"},
+                                     {L"CurseForge", L"CurseForge"}, {L"r2modman", L"r2modman"}};
         for (const R& r : kRoaming) b.push_back({ra / r.dir, r.label});
         b.push_back({ra / L"Adobe" / L"Common" / L"Media Cache Files", L"Adobe Media Cache", true});
         b.push_back({ra / L"Adobe" / L"Common" / L"Media Cache", L"Adobe Media Cache", true});
@@ -488,6 +489,9 @@ static std::vector<AppBase> AppCacheBases() {
         b.push_back({lad / L"Spotify" / L"Browser", L"Spotify"});
         b.push_back({lad / L"Ubisoft Game Launcher" / L"cache", L"Ubisoft Connect", true});
         b.push_back({lad / L"GOG.com" / L"Galaxy" / L"webcache", L"GOG Galaxy", true});
+        b.push_back({lad / L"Overwolf" / L"BrowserCache", L"Overwolf", true});
+        b.push_back({lad / L"UnrealEngine" / L"Common" / L"DerivedDataCache", L"Unreal Engine (Derived Data Cache)", true});
+        b.push_back({lad / L"Unity" / L"cache", L"Unity (Cache)", true});
         b.push_back({lad / L"Microsoft" / L"Office" / L"16.0" / L"OfficeFileCache", L"Microsoft Office", true});
         b.push_back({lad / L"Steam" / L"htmlcache", L"Steam"});
         b.push_back({lad / L"Steam" / L"htmlcache" / L"Default", L"Steam"});
@@ -917,7 +921,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.8.3";
+constexpr wchar_t kVersion[] = L"1.8.5";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;

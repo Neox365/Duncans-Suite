@@ -67,6 +67,8 @@
 
 
 [DuncansTidy.exe]
+## 1.8.5 | 2026-11-09
+- Verbessert: Die Ultra-Tiefenreinigung räumt zusätzlich die Zwischenspeicher von Unreal Engine (Derived Data Cache), Unity, CurseForge, r2modman und Overwolf auf. Es werden nur Cache-Ordner geleert, nie Projekte, Mods, Anmeldung oder Einstellungen; Unreal und Unity bauen den Cache beim nächsten Öffnen neu auf, das dauert dann etwas länger. Vorher zeigt Tidy wie immer die Vorschau.
 ## 1.8.3 | 2026-11-09
 - Behoben: Beim Eintrag „Mehr“ in der Seitenleiste erschienen vor dem Text wirre Zeichen statt eines Pfeils.
 ## 1.8.2 | 2026-11-09
