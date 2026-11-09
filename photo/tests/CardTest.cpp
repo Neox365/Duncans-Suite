@@ -58,6 +58,26 @@ int main() {
         }
     }
 
+    // Vorlagen: Eigene Einstellungen aendert nichts, die uebrigen setzen Stil und Text, Fotos/Papier/Layout bleiben
+    CHECK(card::PresetCount() >= 7);
+    {
+        card::Spec p;
+        p.photos = {L"a.jpg", L"b.jpg"};
+        p.layout = 3; p.paper = 2; p.landscape = false; p.text = L"mein Text";
+        card::Spec before = p;
+        card::ApplyPreset(p, 0);
+        CHECK(p.text == before.text && p.bgMode == before.bgMode);
+        for (int i = 1; i < card::PresetCount(); ++i) {
+            card::Spec q = before;
+            card::ApplyPreset(q, i);
+            CHECK(q.photos == before.photos && q.layout == 3 && q.paper == 2 && !q.landscape);
+            CHECK(!q.text.empty() && q.textSizePct >= 2 && q.textSizePct <= 25 && q.marginPct <= 15 && q.gapPct <= 10 && q.radiusPct <= 50 && q.borderPct <= 10);
+            CHECK(q.textY < 0);
+            auto bmp = card::Render(q, 400, 600, [](const std::wstring&) { return std::shared_ptr<Gdiplus::Bitmap>(); });
+            CHECK(bmp != nullptr);
+        }
+    }
+
     card::Spec s;
     s.paper = 0;       // 10x15
     s.landscape = true;

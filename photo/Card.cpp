@@ -40,6 +40,54 @@ const Layout kLayouts[] = {
 
 }  // namespace
 
+namespace {
+struct Preset {
+    const wchar_t* name;
+    int bgMode;                    // 0 Farbe, 1 Verlauf
+    COLORREF bg1, bg2;
+    const wchar_t* text;
+    const wchar_t* font;           // muss in der Schriftliste des Fensters vorkommen (CardDesigner.cpp)
+    int sizePct;
+    COLORREF textColor;
+    bool bold, italic, shadow;
+    int margin, gap, radius, border;
+};
+const Preset kPresets[] = {
+    {L"Eigene Einstellungen", 0, RGB(255, 255, 255), RGB(205, 220, 240), L"", L"Georgia", 8, RGB(40, 40, 50), false, false, false, 4, 2, 0, 0},
+    {L"Geburtstag", 1, RGB(255, 205, 90), RGB(225, 85, 110), L"Alles Gute zum Geburtstag!", L"Segoe Script", 7, RGB(255, 255, 255), true, false, true, 5, 2, 6, 2},
+    {L"Weihnachten", 1, RGB(22, 91, 51), RGB(10, 50, 30), L"Frohe Weihnachten", L"Georgia", 9, RGB(255, 230, 160), false, true, true, 5, 2, 4, 2},
+    {L"Hochzeit", 0, RGB(250, 245, 238), RGB(250, 245, 238), L"Wir haben Ja gesagt", L"Palatino Linotype", 8, RGB(120, 90, 70), false, true, false, 6, 3, 0, 3},
+    {L"Einladung", 0, RGB(24, 32, 56), RGB(24, 32, 56), L"Du bist eingeladen!", L"Georgia", 9, RGB(255, 255, 255), true, false, false, 5, 2, 8, 0},
+    {L"Urlaubsgruß", 1, RGB(64, 170, 220), RGB(20, 100, 160), L"Liebe Grüße aus dem Urlaub!", L"Segoe Script", 7, RGB(255, 255, 255), false, false, true, 4, 2, 0, 3},
+    {L"Danke", 0, RGB(240, 250, 240), RGB(240, 250, 240), L"Danke!", L"Candara", 10, RGB(60, 120, 80), true, false, false, 5, 2, 12, 2},
+    {L"Baby", 1, RGB(255, 228, 236), RGB(220, 236, 255), L"Willkommen, kleiner Schatz", L"Segoe Script", 8, RGB(140, 110, 140), false, false, false, 5, 3, 20, 2},
+};
+}  // namespace
+
+int PresetCount() { return static_cast<int>(sizeof(kPresets) / sizeof(kPresets[0])); }
+const wchar_t* PresetName(int i) { return kPresets[std::clamp(i, 0, PresetCount() - 1)].name; }
+void ApplyPreset(Spec& s, int i) {
+    if (i <= 0 || i >= PresetCount()) return;
+    const Preset& p = kPresets[i];
+    s.bgMode = p.bgMode;
+    s.bg1 = p.bg1;
+    s.bg2 = p.bg2;
+    s.text = p.text;
+    s.font = p.font;
+    s.textSizePct = p.sizePct;
+    s.textColor = p.textColor;
+    s.bold = p.bold;
+    s.italic = p.italic;
+    s.shadow = p.shadow;
+    s.marginPct = p.margin;
+    s.gapPct = p.gap;
+    s.radiusPct = p.radius;
+    s.borderPct = p.border;
+    s.textBand = true;
+    s.textX = 0.5f;
+    s.textY = -1.f;   // Text wieder automatisch im Schreibfeld
+}
+
 int PaperCount() { return static_cast<int>(sizeof(kPapers) / sizeof(kPapers[0])); }
 const Paper& GetPaper(int i) { return kPapers[std::clamp(i, 0, PaperCount() - 1)]; }
 int LayoutCount() { return static_cast<int>(sizeof(kLayouts) / sizeof(kLayouts[0])); }
