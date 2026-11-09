@@ -917,7 +917,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.8.2";
+constexpr wchar_t kVersion[] = L"1.8.3";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -2757,7 +2757,7 @@ static void DrawButton(const DRAWITEMSTRUCT* d) {
         RECT rg{18, 0, 50, rc.bottom}, rt{54, 0, rc.right, rc.bottom};
         SelectObject(dc, g_fIcon);
         SetTextColor(dc, sel ? RGB(79, 140, 255) : col);
-        DrawTextW(dc, id == ID_MORE ? (g_navMore ? L"ç0E" : L"ç0D") : kNavGlyphBase[id - ID_NAV0], -1, &rg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawTextW(dc, id == ID_MORE ? (g_navMore ? L"\xE70E" : L"\xE70D") : kNavGlyphBase[id - ID_NAV0], -1, &rg, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         SelectObject(dc, g_fNav);
         SetTextColor(dc, col);
         DrawTextW(dc, text, -1, &rt, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -6216,6 +6216,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
     if (autoMode && !dryRun && !permanent && ok > 0) AskEmptyRecycleBin(nullptr);
     return failed ? 2 : 0;
 }
+
 
 
 

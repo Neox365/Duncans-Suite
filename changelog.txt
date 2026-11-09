@@ -67,6 +67,8 @@
 
 
 [DuncansTidy.exe]
+## 1.8.3 | 2026-11-09
+- Behoben: Beim Eintrag „Mehr“ in der Seitenleiste erschienen vor dem Text wirre Zeichen statt eines Pfeils.
 ## 1.8.2 | 2026-11-09
 - Verbessert: Die Ultra-Tiefenreinigung räumt zusätzlich die Zwischenspeicher von Ubisoft Connect, GOG Galaxy, Microsoft Office (Office-Dateicache) und Adobe (Media Cache von Premiere und After Effects) auf. Es werden nur Cache-Ordner geleert, nie Anmeldung, Einstellungen oder Spielstände; die Programme bauen den Cache neu auf. Vorher zeigt Tidy wie immer die Vorschau.
 ## 1.8.1 | 2026-11-09
