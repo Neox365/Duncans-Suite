@@ -22,7 +22,7 @@
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.0"
+#define APP_VERSION L"0.4.1"
 #endif
 
 namespace {
@@ -518,9 +518,10 @@ void PaintDropZone(HDC dc) {
     FillRound(dc, z, g.S(14), kCtrl);
 
     if (g.items.empty()) {
-        Text(dc, g.fTitle, kText, {z.left, z.top, z.right, (z.top + z.bottom) / 2}, L"Dateien hierher ziehen", DT_CENTER | DT_BOTTOM);
-        Text(dc, g.fBody, kDim, {z.left, (z.top + z.bottom) / 2 + g.S(6), z.right, z.bottom},
-             L"Bilder, Audio und Video – oder „Hinzufügen“ wählen", DT_CENTER | DT_TOP);
+        const int mid = (z.top + z.bottom) / 2;   // Titel und Hinweis als Block in der Mitte (Text() zentriert senkrecht selbst)
+        Text(dc, g.fTitle, kText, {z.left, mid - g.S(50), z.right, mid - g.S(6)}, L"Dateien hierher ziehen", DT_CENTER);
+        Text(dc, g.fBody, kDim, {z.left, mid + g.S(2), z.right, mid + g.S(38)},
+             L"Bilder, Audio und Video – oder „Hinzufügen“ wählen", DT_CENTER);
     } else {
         const int save = SaveDC(dc);
         IntersectClipRect(dc, z.left + g.S(2), z.top + g.S(6), z.right - g.S(2), z.bottom - g.S(6));
