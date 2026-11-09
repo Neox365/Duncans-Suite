@@ -56,6 +56,8 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.5.0 | 2026-11-09
+- Neu: Fadenkreuz. Unter „Fadenkreuz (optional)“ blendet Boost ein kleines Fadenkreuz in der Bildschirmmitte ein (standardmäßig aus). Form (Kreuz mit Lücke, Kreuz, Punkt, Kreuz mit Punkt, Kreis), Farbe und Größe wechseln per Klick. Es erscheint nur über den angehakten Spielen (ist keines angehakt, immer) und als Vorschau über Boost selbst. Es ist ein normales, durchklickbares Fenster ohne Eingriff in das Spiel, sichtbar im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.
 ## 0.4.0 | 2026-11-09
 - Neu: Ton nach Fokus. Unter „Automatik (optional)“ gibt es zwei Schalter (beide standardmäßig aus), die für die angehakten Spiele gelten. „Andere Programme leiser“ stellt Browser, Musik & Co. auf 40 %, solange das Spiel im Vordergrund ist, und danach wieder zurück; Discord, TeamSpeak, Teams & Co. bleiben unverändert, und wenn du einen Regler selbst bewegst, arbeitet Boost nicht dagegen. „Spiel stumm, wenn ich es verlasse“ schaltet das Spiel bei Alt+Tab stumm und beim Zurückwechseln wieder ein. Boost nutzt nur die normale Lautstärkemischung von Windows (wie der Lautstärkemixer), greift nicht in Spiele ein und stellt beim Beenden alles zurück.
 ## 0.3.1 | 2026-11-09

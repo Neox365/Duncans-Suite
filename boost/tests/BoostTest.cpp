@@ -2,6 +2,7 @@
 // g++ -std=c++17 -DUNICODE -D_UNICODE -I.. BoostTest.cpp ../BoostLogic.cpp ../AudioFocus.cpp -o BoostTest.exe -lole32 -lpowrprof -lpsapi -ldwmapi -lshell32 -luser32 -ladvapi32 -static
 #include "../BoostLogic.h"
 #include "../AudioFocus.h"
+#include "../Crosshair.h"
 
 #include <shellapi.h>
 
@@ -122,6 +123,29 @@ static void AudioTests() {
     CHECK(!r.Get(L"g")->muted);
 
     CHECK(IsNeverDucked(L"discord.exe") && IsNeverDucked(L"ts3client_win64.exe") && !IsNeverDucked(L"chrome.exe"));
+}
+
+static void CrosshairTests() {
+    CrosshairSpec s; s.on = true;
+    const std::vector<std::wstring> games = { L"game.exe" };
+    CHECK(CrosshairVisible(s, games, L"game.exe", L"duncansboost.exe"));
+    CHECK(!CrosshairVisible(s, games, L"chrome.exe", L"duncansboost.exe"));          // nicht ueber dem Browser
+    CHECK(CrosshairVisible(s, games, L"duncansboost.exe", L"duncansboost.exe"));     // Vorschau beim Einstellen
+    CHECK(!CrosshairVisible(s, games, L"", L"duncansboost.exe"));
+    CHECK(CrosshairVisible(s, {}, L"chrome.exe", L"duncansboost.exe"));              // kein Spiel angehakt: immer
+    s.on = false;
+    CHECK(!CrosshairVisible(s, games, L"game.exe", L"duncansboost.exe") && !CrosshairVisible(s, {}, L"x.exe", L""));
+    CrosshairSpec bad; bad.style = 99; bad.color = -5; bad.size = 7;
+    bad = ClampCrosshair(bad);
+    CHECK(bad.style == CrosshairStyleCount() - 1 && bad.color == 0 && bad.size == CrosshairSizeCount() - 1);
+    CHECK(CrosshairStyleCount() >= 4 && CrosshairColorCount() >= 4 && CrosshairSizeCount() == 3);
+    CHECK(CrosshairSizePx(0) < CrosshairSizePx(1) && CrosshairSizePx(1) < CrosshairSizePx(2));
+    CHECK(CrosshairColorValue(0) != CrosshairColorValue(1) && std::wstring(CrosshairColorName(2)) == L"Weiß");
+    // Einstellungen speichern und laden
+    Settings st; st.optCross = true; st.crossStyle = 3; st.crossColor = 4; st.crossSize = 2;
+    CHECK(SaveSettings(st));
+    const Settings back = LoadSettings();
+    CHECK(back.optCross && back.crossStyle == 3 && back.crossColor == 4 && back.crossSize == 2);
 }
 
 int main() {
@@ -251,6 +275,7 @@ int main() {
     CHECK(IsEqualGUID(fin, original));
 
     AudioTests();
+    CrosshairTests();
     std::printf("%d bestanden, %d fehlgeschlagen\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

@@ -72,6 +72,8 @@ struct Settings {
     bool optRestart = true;               // beendete Programme nach dem Zock-Modus wieder starten
     bool optDuck = false;                 // Ton: andere Programme leiser, solange ein angehaktes Spiel im Vordergrund ist
     bool optMuteGame = false;             // Ton: Spiel stumm, solange es nicht im Vordergrund ist
+    bool optCross = false;                // Fadenkreuz-Overlay
+    int crossStyle = 0, crossColor = 0, crossSize = 1;
 };
 
 // Zustand waehrend aktivem Zock-Modus (ueberlebt Abstuerze: beim naechsten Start laesst sich alles wiederherstellen)
