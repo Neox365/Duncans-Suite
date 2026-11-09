@@ -20,7 +20,7 @@ namespace card {
 namespace {
 
 enum Id {
-    ID_LIST = 100, ID_ADD, ID_REMOVE, ID_UP, ID_DOWN, ID_PAPER, ID_LAND, ID_LAYOUT, ID_MARGIN, ID_GAP, ID_RADIUS, ID_BORDER,
+    ID_PRESET = 99, ID_LIST = 100, ID_ADD, ID_REMOVE, ID_UP, ID_DOWN, ID_PAPER, ID_LAND, ID_LAYOUT, ID_MARGIN, ID_GAP, ID_RADIUS, ID_BORDER,
     ID_BG, ID_COL1, ID_COL2, ID_TEXT, ID_FONT, ID_SIZE, ID_BOLD, ID_ITALIC, ID_SHADOW, ID_COLT, ID_BAND, ID_SAVE, ID_CLOSE,
 };
 
@@ -54,7 +54,7 @@ struct Designer {
     UINT dpi = 96;
     HFONT font = nullptr;
     HBRUSH brBg = nullptr, brCard = nullptr;
-    HWND list = nullptr, paper = nullptr, land = nullptr, layout = nullptr, bg = nullptr, text = nullptr, fontCb = nullptr, status = nullptr;
+    HWND preset = nullptr, list = nullptr, paper = nullptr, land = nullptr, layout = nullptr, bg = nullptr, text = nullptr, fontCb = nullptr, status = nullptr;
     HWND sMargin = nullptr, sGap = nullptr, sRadius = nullptr, sBorder = nullptr, sSize = nullptr;
     HWND bold = nullptr, italic = nullptr, shadow = nullptr, band = nullptr;
     std::vector<HWND> all;
@@ -105,7 +105,7 @@ struct Designer {
     RECT area{};   // Vorschaubereich
 
     // Beschriftungen und ihre Steuerelemente in Zeilen, siehe Layout()
-    HWND lPhotos = nullptr, lPaper = nullptr, lLayout = nullptr, lMargin = nullptr, lGap = nullptr, lRadius = nullptr, lBorder = nullptr, lBg = nullptr,
+    HWND lPreset = nullptr, lPhotos = nullptr, lPaper = nullptr, lLayout = nullptr, lMargin = nullptr, lGap = nullptr, lRadius = nullptr, lBorder = nullptr, lBg = nullptr,
          lText = nullptr, lFont = nullptr, lSize = nullptr, lHint = nullptr;
     HWND bAdd = nullptr, bRemove = nullptr, bUp = nullptr, bDown = nullptr, bCol1 = nullptr, bCol2 = nullptr, bColT = nullptr, bSave = nullptr, bClose = nullptr;
 };
@@ -119,6 +119,10 @@ void Designer::Create() {
     BOOL dark = TRUE;
     DwmSetWindowAttribute(hwnd, 20, &dark, sizeof(dark));
 
+    lPreset = Label(L"Vorlage");
+    preset = Make(L"COMBOBOX", L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, ID_PRESET);
+    for (int i = 0; i < PresetCount(); ++i) SendMessageW(preset, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(PresetName(i)));
+    SendMessageW(preset, CB_SETCURSEL, 0, 0);
     lPhotos = Label(L"Fotos (die Reihenfolge entspricht den Feldern)");
     list = Make(L"LISTBOX", L"", LBS_NOTIFY | WS_VSCROLL | WS_BORDER | WS_TABSTOP, ID_LIST);
     bAdd = Make(L"BUTTON", L"Hinzufügen …", BS_PUSHBUTTON | WS_TABSTOP, ID_ADD);
@@ -181,10 +185,13 @@ void Designer::Layout() {
     int y = pad;
     auto put = [&](HWND h, int px, int py, int pw_, int ph) { SetWindowPos(h, nullptr, px, py, pw_, ph, SWP_NOZORDER); };
     const int rowH = S(26), lw = S(86);
+    put(lPreset, x, y + S(4), lw, S(18));
+    put(preset, x + lw, y, w - lw, S(260));
+    y += rowH + S(6);
     put(lPhotos, x, y, w, S(18));
     y += S(20);
-    put(list, x, y, w, S(92));
-    y += S(98);
+    put(list, x, y, w, S(70));
+    y += S(76);
     {
         const int g = S(6), bw = (w - 3 * g - 2 * S(34)) / 2;
         put(bAdd, x, y, bw, S(28));
@@ -506,6 +513,15 @@ LRESULT CALLBACK Proc(HWND h, UINT m, WPARAM wp, LPARAM lp) {
                 case ID_COL1: d->PickColor(d->spec.bg1); break;
                 case ID_COL2: d->PickColor(d->spec.bg2); break;
                 case ID_COLT: d->PickColor(d->spec.textColor); break;
+                case ID_PRESET:
+                    if (code == CBN_SELCHANGE) {   // Vorlage: Stil und Text setzen, Fotos/Papier/Layout bleiben
+                        d->Pull();
+                        ApplyPreset(d->spec, static_cast<int>(SendMessageW(d->preset, CB_GETCURSEL, 0, 0)));
+                        d->Push();
+                        SetWindowTextW(d->text, d->spec.text.c_str());
+                        d->Redraw();
+                    }
+                    break;
                 case ID_SAVE: d->SaveCard(); break;
                 case ID_CLOSE:
                 case IDCANCEL: d->closed = true; DestroyWindow(h); break;

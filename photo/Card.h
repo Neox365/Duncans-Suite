@@ -63,6 +63,12 @@ struct Spec {
     float textX = 0.5f, textY = -1.f;   // Mittelpunkt, normiert; textY < 0: automatisch (im Schreibfeld bzw. unten)
 };
 
+// Fertige Vorlagen fuer Anlaesse: setzen Hintergrund, Rahmen, Ecken, Text und Schrift. Fotos, Papier, Layout und Hoch-/Querformat
+// bleiben unveraendert. Index 0 ist "Eigene Einstellungen" und aendert nichts.
+int PresetCount();
+const wchar_t* PresetName(int i);
+void ApplyPreset(Spec& s, int i);
+
 // Pixelgroesse der Karte bei dpi
 void CanvasSize(const Spec& s, UINT dpi, UINT& w, UINT& h);
 
