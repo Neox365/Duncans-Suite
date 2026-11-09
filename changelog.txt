@@ -67,6 +67,8 @@
 
 
 [DuncansTidy.exe]
+## 1.8.0 | 2026-11-09
+- Neu: Große vergessene Dateien. Im Fenster „Größte Dateien“ (Klick auf eine Laufwerks-Karte oder „Ordner analysieren“) wechselt der neue Knopf „Vergessene suchen (über 1 Jahr)“ auf die 20 größten Dateien ab 50 MB, die seit über einem Jahr weder geändert noch benutzt wurden, jeweils mit dem Datum der letzten Änderung. Übersprungen werden Windows, Programm- und AppData-Ordner und Spiele-Bibliotheken (Steam, Epic u. a.), weil dort „alt“ nicht „vergessen“ heißt. Tidy löscht dabei nichts: Ein Klick zeigt die Datei im Explorer, du entscheidest. Ob Windows die Zugriffszeit führt, hängt vom System ab; im Zweifel zählt das Änderungsdatum.
 ## 1.7.0 | 2026-11-08
 - Neu: Browser-Seite mit Verlauf und Cookies je Browser. Zusätzlich zum Cache gibt es für Chrome, Edge, Brave und Opera GX je eine Karte „Verlauf“ (besuchte Seiten, Favoriten-Symbole, Top-Sites) und „Cookies“, für Firefox eine Karte „Cookies“ (den Firefox-Verlauf fasst Tidy nicht an, er liegt dort zusammen mit den Lesezeichen). Die neuen Karten sind standardmäßig aus, der Schalter „Alle“ wählt sie nie mit, und vor dem Löschen steht, was passiert (Cookies: Du wirst bei Webseiten abgemeldet). Passwörter und Lesezeichen bleiben erhalten; laufende Browser bietet Tidy wie bisher vorher zu schließen an.
 - Neu: Einstellung „Sicher löschen (überschreiben)“. Ist sie an, überschreibt Tidy Dateien vor dem endgültigen Löschen einmal mit Zufallsdaten (Temp, Systemdateien, Browser-Daten, Auto-Clean; der Papierkorb ist nicht betroffen). Das dauert länger, und auf SSDs schützt es nur begrenzt, weil der Speicher Daten intern verschiebt.
