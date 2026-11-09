@@ -1,4 +1,4 @@
-#include "ImageOps.h"
+﻿#include "ImageOps.h"
 #include "ByteStrip.h"
 #include "WicCompat.h"
 
@@ -757,8 +757,27 @@ bool ReadImageInfo(const std::wstring& path, ImageInfo& info) {
     return true;
 }
 
-bool StripMetadata(const std::wstring& src, const std::wstring& dst, std::wstring* err) {
+bool IsHeic(const std::wstring& path) {
+    const std::wstring e = LowerExt(path);
+    return e == L"heic" || e == L"heif";
+}
+
+bool StripMetadata(const std::wstring& src, const std::wstring& dst, std::wstring* err, std::wstring* outPath) {
+    if (outPath) *outPath = dst;
     std::wstring ext = LowerExt(src);
+    if (IsHeic(src)) {   // WIC kann HEIC nicht schreiben: als JPEG ohne Metadaten ablegen
+        std::wstring base = dst;
+        const size_t dot = base.find_last_of(L'.');
+        if (dot != std::wstring::npos && dot > base.find_last_of(L"\\/") + 1) base.erase(dot);
+        std::wstring target = base + L".jpg";
+        for (int i = 2; GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES && i < 1000; ++i) target = base + L"_" + std::to_wstring(i) + L".jpg";
+        if (!ConvertImage(src, target, OutFormat::Jpeg, err)) {
+            if (err && *err == L"Datei konnte nicht gelesen werden") *err = L"HEIC kann nicht gelesen werden (Windows-Erweiterung \"HEIF-Bildererweiterungen\" aus dem Microsoft Store fehlt?)";
+            return false;
+        }
+        if (outPath) *outPath = target;
+        return true;
+    }
     if (IsJpegExt(ext)) {
         // Rotations-Tag? Dann muss die Drehung in die Pixel, sonst wirkt das Bild nach dem Strippen gekippt.
         int orientation = 1;
@@ -811,14 +830,14 @@ bool StripMetadata(const std::wstring& src, const std::wstring& dst, std::wstrin
         }
         return true;
     }
-    SetErr(err, L"Format wird nicht unterstuetzt (GIF, HEIC)");
+    SetErr(err, L"Format wird nicht unterstuetzt (GIF)");
     return false;
 }
 
 bool CanStripMetadata(const std::wstring& path) {
     const std::wstring e = LowerExt(path);
     return IsJpegExt(e) || e == L"png" || e == L"tif" || e == L"tiff" || e == L"jxr" || e == L"wdp" || e == L"webp" ||
-           e == L"bmp";
+           e == L"bmp" || e == L"heic" || e == L"heif";
 }
 
 bool CanReencode(const std::wstring& path) {

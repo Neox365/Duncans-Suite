@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 // Bild-Metadaten lesen, EXIF/GPS entfernen, drehen. Alle Funktionen sind
 // thread-sicher, setzen aber voraus, dass der aufrufende Thread COM
 // initialisiert hat (CoInitializeEx).
@@ -72,8 +72,11 @@ WICBitmapTransformOptions OrientationToTransform(int orientation);
 //  - JPEG mit Rotations-Tag / PNG / TIFF: Re-Encode ueber WIC (JPEG Qualitaet 95),
 //    die Drehung wird dabei in die Pixel eingebrannt.
 //  - WebP: verlustfrei, EXIF-/XMP-Chunks werden entfernt. BMP: hat keine Metadaten, wird nur kopiert.
-//  - GIF/HEIC: false + Fehlertext (nicht unterstuetzt).
-bool StripMetadata(const std::wstring& src, const std::wstring& dst, std::wstring* err = nullptr);
+//  - HEIC/HEIF: wird in ein JPEG (ohne Metadaten) umgewandelt, weil WIC HEIC nicht schreiben kann; das JPEG liegt neben dst
+//    (Endung .jpg, bei Namensgleichheit mit _2, _3 ...), das Original bleibt. outPath bekommt den tatsaechlichen Pfad.
+//  - GIF: false + Fehlertext (nicht unterstuetzt, die Animation ginge verloren).
+bool StripMetadata(const std::wstring& src, const std::wstring& dst, std::wstring* err = nullptr, std::wstring* outPath = nullptr);
+bool IsHeic(const std::wstring& path);
 
 // Formate, die StripMetadata bzw. die Re-Encode-Funktionen (Drehen, Zuschneiden, Verkleinern) verarbeiten.
 bool CanStripMetadata(const std::wstring& path);
