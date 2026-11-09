@@ -50,7 +50,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.42"
+#define SUITE_VERSION L"1.1.43"
 #endif
 
 namespace
@@ -119,7 +119,17 @@ namespace
         bool ctxTidy = false;         // Explorer-Kontextmenue "Mit Duncan's Tidy analysieren"
         bool autoRestorePoint = true; // Privacy Shield / Driver Updater legen vor kritischen Aktionen einen Wiederherstellungspunkt an
         std::wstring downloadDir;     // leer = Standard (%LOCALAPPDATA%\DuncansSuite\update)
+        std::wstring hiddenCards;     // ausgeblendete Karten: EXE-Namen, durch ";" getrennt (nur die Anzeige, es wird nichts entfernt)
     };
+
+    // Steht die EXE in der Liste der ausgeblendeten Karten? (Gross-/Kleinschreibung egal)
+    inline bool CardHiddenIn(const std::wstring& list, const wchar_t* exe)
+    {
+        std::wstring l = L";" + list + L";", e = std::wstring(L";") + exe + L";";
+        for (auto& c : l) c = static_cast<wchar_t>(towlower(c));
+        for (auto& c : e) c = static_cast<wchar_t>(towlower(c));
+        return l.find(e) != std::wstring::npos;
+    }
 
     const wchar_t* kRunKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
     const wchar_t* kRunValue = L"DuncansSuite";
@@ -185,6 +195,9 @@ namespace
             GetPrivateProfileStringW(L"Allgemein", L"DownloadOrdner", L"", dir, MAX_PATH * 2, ini.c_str());
             if (IsUsableDir(dir))
                 s.downloadDir = dir;
+            wchar_t hidden[512] = {};
+            GetPrivateProfileStringW(L"Allgemein", L"AusgeblendeteKarten", L"", hidden, 512, ini.c_str());
+            s.hiddenCards = hidden;
         }
         s.autostart = IsAutostartEnabled();   // die Registry ist die Wahrheit, nicht die INI
         s.ctxPdf = VerbExists(kPdfVerb);
@@ -203,6 +216,7 @@ namespace
                WritePrivateProfileStringW(L"Allgemein", L"TrayBeimProgrammstart", s.trayOnLaunch ? L"1" : L"0", ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"DownloadOrdner", s.downloadDir.c_str(), ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"AutoWiederherstellungspunkt", s.autoRestorePoint ? L"1" : L"0", ini.c_str()) &&
+               WritePrivateProfileStringW(L"Allgemein", L"AusgeblendeteKarten", s.hiddenCards.c_str(), ini.c_str()) &&
                WritePrivateProfileStringW(L"Allgemein", L"Autostart", s.autostart ? L"1" : L"0", ini.c_str());
     }
 
@@ -1323,9 +1337,16 @@ void SuiteWindow::Layout()
     constexpr int kCols = 4, kRows = (kToolCount + kCols - 1) / kCols;
     const int h = (bottom - top - (kRows - 1) * gap) / kRows;
     const int w = (width - (kCols - 1) * gap) / kCols;
+    int slot = 0;   // ausgeblendete Karten bekommen kein Rechteck und ruecken nicht ins Raster; die uebrigen ruecken auf
     for (int i = 0; i < kToolCount; ++i)
     {
-        const int col = i % kCols, row = i / kCols;
+        if (CardHiddenIn(m_settings.hiddenCards, m_tools[i].exe))
+        {
+            m_tools[i].rect = {};
+            continue;
+        }
+        const int col = slot % kCols, row = slot / kCols;
+        ++slot;
         m_tools[i].rect = { m + col * (w + gap), top + row * (h + gap), m + col * (w + gap) + w, top + row * (h + gap) + h };
     }
 }
@@ -1595,6 +1616,9 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     if (!m_note.empty())
         DrawLabel(dc, m_fontSmall, kText, { noteLeft, m_footer.top + S(13), m_footer.right - S(16), m_footer.bottom },
                   m_note, DT_CENTER);
+    else if (!m_settings.hiddenCards.empty())
+        DrawLabel(dc, m_fontSmall, Blend(kBackground, kTextDim, 70), { noteLeft, m_footer.top + S(13), m_footer.right - S(16), m_footer.bottom },
+                  L"Es sind Programme ausgeblendet: Rechtsklick auf eine freie Stelle zeigt sie wieder", DT_CENTER | DT_END_ELLIPSIS);
     else if (!suite_safety::IsElevated())     // dezenter Hinweis: die Suite selbst braucht keine Adminrechte, zwei Programme schon
         DrawLabel(dc, m_fontSmall, Blend(kBackground, kTextDim, 70), { noteLeft, m_footer.top + S(13), m_footer.right - S(16), m_footer.bottom },
                   L"Privacy Shield und Driver Updater fragen beim Start nach Administratorrechten", DT_CENTER | DT_END_ELLIPSIS);
@@ -2691,6 +2715,7 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         CreateFonts();
         FindTools();
         m_settings = LoadSettings();
+        Layout();   // nach dem Laden der Einstellungen: ausgeblendete Karten ruecken auf
         if (m_settings.autoCheck)
             StartUpdateCheck();
         {
@@ -2793,6 +2818,52 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         else
             m_changesFetched = false;   // beim naechsten Oeffnen noch einmal versuchen
         InvalidateRect(m_hwnd, nullptr, FALSE);
+        return 0;
+    }
+    case WM_RBUTTONUP:   // Rechtsklick auf eine Karte: ausblenden; auf eine freie Stelle: Ausgeblendete wieder anzeigen
+    {
+        if (m_modal || m_settingsOpen || m_infoOpen)
+            return 0;
+        const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        int card = -1, visible = 0;
+        for (int i = 0; i < kToolCount; ++i)
+        {
+            if (!CardHiddenIn(m_settings.hiddenCards, m_tools[i].exe))
+                ++visible;
+            if (PtInRect(&m_tools[i].rect, pt))
+                card = i;
+        }
+        const bool anyHidden = !m_settings.hiddenCards.empty();
+        if (card < 0 && !anyHidden)
+            return 0;
+        HMENU menu = CreatePopupMenu();
+        if (card >= 0)
+            AppendMenuW(menu, MF_STRING | (visible <= 1 ? MF_GRAYED : 0), 1, L"Karte ausblenden");
+        if (anyHidden)
+            AppendMenuW(menu, MF_STRING, 2, L"Ausgeblendete Programme wieder anzeigen");
+        POINT sp{};
+        GetCursorPos(&sp);
+        SetForegroundWindow(m_hwnd);
+        const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN, sp.x, sp.y, 0, m_hwnd, nullptr);
+        PostMessageW(m_hwnd, WM_NULL, 0, 0);
+        DestroyMenu(menu);
+        if (cmd == 1 && card >= 0)
+        {
+            m_settings.hiddenCards += (m_settings.hiddenCards.empty() ? L"" : L";") + std::wstring(m_tools[card].exe);
+            SetNote(std::wstring(m_tools[card].title) + L" ist ausgeblendet");
+        }
+        else if (cmd == 2)
+        {
+            m_settings.hiddenCards.clear();
+            SetNote(L"Alle Programme werden wieder angezeigt");
+        }
+        else
+            return 0;
+        SaveSettings(m_settings);
+        m_hover = -1;
+        m_press = -1;
+        Layout();
+        InvalidateRect(m_hwnd, nullptr, TRUE);
         return 0;
     }
     case WM_LBUTTONDOWN:
