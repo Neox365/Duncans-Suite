@@ -469,7 +469,7 @@ static void AddDeepItems(std::vector<fs::path>& v) {
 }
 // Ultra-Tiefenreinigung: Cache-Ordner der Electron-/CEF-Apps. Nur diese Unterordner, nie Cookies, Anmeldung, Einstellungen oder Offline-Medien.
 static const wchar_t* const kAppCacheSubs[] = {L"Cache", L"Code Cache", L"GPUCache", L"DawnGraphiteCache", L"DawnWebGPUCache", L"GrShaderCache", L"ShaderCache"};
-struct AppBase { fs::path path; const wchar_t* label; };
+struct AppBase { fs::path path; const wchar_t* label; bool whole = false; };  // whole: der Ordner selbst ist der Cache (statt Cache-Unterordner)
 static std::vector<AppBase> AppCacheBases() {
     std::vector<AppBase> b;
     const fs::path ra = KnownFolder(FOLDERID_RoamingAppData), lad = KnownFolder(FOLDERID_LocalAppData);
@@ -480,10 +480,15 @@ static std::vector<AppBase> AppCacheBases() {
                                      {L"Slack", L"Slack"}, {L"Signal", L"Signal"}, {L"Notion", L"Notion"}, {L"obsidian", L"Obsidian"},
                                      {L"GitHub Desktop", L"GitHub Desktop"}, {L"Claude", L"Claude"}};
         for (const R& r : kRoaming) b.push_back({ra / r.dir, r.label});
+        b.push_back({ra / L"Adobe" / L"Common" / L"Media Cache Files", L"Adobe Media Cache", true});
+        b.push_back({ra / L"Adobe" / L"Common" / L"Media Cache", L"Adobe Media Cache", true});
         b.push_back({ra / L"Microsoft" / L"Teams", L"Teams"});
     }
     if (!lad.empty()) {
         b.push_back({lad / L"Spotify" / L"Browser", L"Spotify"});
+        b.push_back({lad / L"Ubisoft Game Launcher" / L"cache", L"Ubisoft Connect", true});
+        b.push_back({lad / L"GOG.com" / L"Galaxy" / L"webcache", L"GOG Galaxy", true});
+        b.push_back({lad / L"Microsoft" / L"Office" / L"16.0" / L"OfficeFileCache", L"Microsoft Office", true});
         b.push_back({lad / L"Steam" / L"htmlcache", L"Steam"});
         b.push_back({lad / L"Steam" / L"htmlcache" / L"Default", L"Steam"});
         b.push_back({lad / L"Packages" / L"MSTeams_8wekyb3d8bbwe" / L"LocalCache" / L"Microsoft" / L"MSTeams" / L"EBWebView" / L"Default", L"Teams"});
@@ -517,12 +522,14 @@ static std::vector<fs::path> DevCacheDirs() {
 }
 static void AddUltraItems(std::vector<fs::path>& v) {
     std::error_code ec;
-    for (const AppBase& ab : AppCacheBases())
+    for (const AppBase& ab : AppCacheBases()) {
+        if (ab.whole) { if (fs::is_directory(ab.path, ec)) v.push_back(ab.path); ec.clear(); continue; }
         for (const wchar_t* sub : kAppCacheSubs) {
             const fs::path c = ab.path / sub;
             if (fs::is_directory(c, ec)) v.push_back(c);
             ec.clear();
         }
+    }
     const fs::path lad = KnownFolder(FOLDERID_LocalAppData), pd = KnownFolder(FOLDERID_ProgramData), win = KnownFolder(FOLDERID_Windows);
     if (!lad.empty()) {  // Microsoft Store: zwischengespeicherte und voruebergehende Downloads
         const fs::path st = lad / L"Packages" / L"Microsoft.WindowsStore_8wekyb3d8bbwe";
@@ -910,7 +917,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.8.1";
+constexpr wchar_t kVersion[] = L"1.8.2";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
