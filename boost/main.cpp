@@ -31,7 +31,7 @@ using std::min;
 #include "LiveStats.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.3.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.3.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER

@@ -54,6 +54,14 @@ struct ToastState { bool exists = false; DWORD value = 1; };
 ToastState GetToast();
 bool SetToast(const ToastState& s);       // exists = false loescht den Wert
 
+// Spiel-Einstellungen von Windows (HKCU): Spielmodus an, Hintergrundaufzeichnung der Xbox Game Bar aus. Der Zock-Modus stellt sie um und beim
+// Ausschalten auf den vorherigen Wert zurueck (ein Eintrag, der vorher fehlte, wird wieder geloescht).
+constexpr int kGameTweaks = 3;
+struct RegDword { bool exists = false; DWORD value = 0; };
+RegDword GetGameTweak(int index);
+bool SetGameTweak(int index, const RegDword& v);   // exists = false loescht den Wert
+DWORD GameTweakWanted(int index);                  // Zielwert beim Zock-Modus
+
 // ---- Persistenz (INI-Dateien unter %LOCALAPPDATA%\DuncansBoost) ----
 struct Settings {
     std::vector<std::wstring> closeApps;  // zu beendende Programme
@@ -72,6 +80,8 @@ struct State {
     GUID prevScheme{};
     bool toastChanged = false;
     ToastState prevToast;
+    unsigned gameMask = 0;                // Bit i gesetzt: Spiel-Einstellung i wurde umgestellt
+    RegDword prevGame[kGameTweaks];       // vorheriger Wert je Spiel-Einstellung
     std::vector<std::wstring> closedPaths;
 };
 

@@ -278,6 +278,38 @@ bool SetToast(const ToastState& s) {
     return r == ERROR_SUCCESS || (!s.exists && r == ERROR_FILE_NOT_FOUND);
 }
 
+namespace {
+    struct GameTweakSpec { const wchar_t* key; const wchar_t* name; DWORD wanted; };
+    const GameTweakSpec kGameTweaks3[kGameTweaks] = {
+        { L"Software\\Microsoft\\GameBar", L"AutoGameModeEnabled", 1 },                     // Windows-Spielmodus an
+        { L"Software\\Microsoft\\Windows\\CurrentVersion\\GameDVR", L"AppCaptureEnabled", 0 },  // Hintergrundaufnahme aus
+        { L"System\\GameConfigStore", L"GameDVR_Enabled", 0 },                              // Game-Bar-Aufzeichnung aus
+    };
+}
+
+DWORD GameTweakWanted(int i) { return (i >= 0 && i < kGameTweaks) ? kGameTweaks3[i].wanted : 0; }
+
+RegDword GetGameTweak(int i) {
+    RegDword r;
+    if (i < 0 || i >= kGameTweaks) return r;
+    HKEY k = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, kGameTweaks3[i].key, 0, KEY_QUERY_VALUE, &k) != ERROR_SUCCESS) return r;
+    DWORD type = 0, v = 0, size = sizeof v;
+    if (RegQueryValueExW(k, kGameTweaks3[i].name, nullptr, &type, reinterpret_cast<BYTE*>(&v), &size) == ERROR_SUCCESS && type == REG_DWORD) { r.exists = true; r.value = v; }
+    RegCloseKey(k);
+    return r;
+}
+
+bool SetGameTweak(int i, const RegDword& v) {
+    if (i < 0 || i >= kGameTweaks) return false;
+    HKEY k = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, kGameTweaks3[i].key, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &k, nullptr) != ERROR_SUCCESS) return false;
+    LONG r = v.exists ? RegSetValueExW(k, kGameTweaks3[i].name, 0, REG_DWORD, reinterpret_cast<const BYTE*>(&v.value), sizeof v.value)
+                      : RegDeleteValueW(k, kGameTweaks3[i].name);
+    RegCloseKey(k);
+    return r == ERROR_SUCCESS || (!v.exists && r == ERROR_FILE_NOT_FOUND);
+}
+
 // ---- Persistenz ----
 std::wstring DataDir() {
     if (!g_dataDir.empty()) return g_dataDir;
@@ -355,6 +387,11 @@ State LoadState() {
     s.toastChanged = ReadIni(f, L"State", L"ToastChanged", L"0") == L"1";
     s.prevToast.exists = ReadIni(f, L"State", L"PrevToastExists", L"0") == L"1";
     s.prevToast.value = static_cast<DWORD>(wcstoul(ReadIni(f, L"State", L"PrevToast", L"1").c_str(), nullptr, 10));
+    s.gameMask = static_cast<unsigned>(wcstoul(ReadIni(f, L"State", L"GameMask", L"0").c_str(), nullptr, 10));
+    for (int i = 0; i < kGameTweaks; ++i) {
+        s.prevGame[i].exists = ReadIni(f, L"State", (L"PrevGameExists" + std::to_wstring(i)).c_str(), L"0") == L"1";
+        s.prevGame[i].value = static_cast<DWORD>(wcstoul(ReadIni(f, L"State", (L"PrevGame" + std::to_wstring(i)).c_str(), L"0").c_str(), nullptr, 10));
+    }
     s.closedPaths = Split(ReadIni(f, L"State", L"ClosedPaths"));
     return s;
 }
@@ -368,6 +405,11 @@ bool SaveState(const State& s) {
     ok &= WriteIni(f, L"State", L"ToastChanged", s.toastChanged ? L"1" : L"0");
     ok &= WriteIni(f, L"State", L"PrevToastExists", s.prevToast.exists ? L"1" : L"0");
     ok &= WriteIni(f, L"State", L"PrevToast", std::to_wstring(s.prevToast.value));
+    ok &= WriteIni(f, L"State", L"GameMask", std::to_wstring(s.gameMask));
+    for (int i = 0; i < kGameTweaks; ++i) {
+        ok &= WriteIni(f, L"State", (L"PrevGameExists" + std::to_wstring(i)).c_str(), s.prevGame[i].exists ? L"1" : L"0");
+        ok &= WriteIni(f, L"State", (L"PrevGame" + std::to_wstring(i)).c_str(), std::to_wstring(s.prevGame[i].value));
+    }
     ok &= WriteIni(f, L"State", L"ClosedPaths", Join(s.closedPaths));
     return ok;
 }
@@ -383,6 +425,7 @@ bool Activate(const Settings& cfg, bool autoTriggered, std::wstring& note) {
     bool havePerf = false;
     if (cfg.optPower && GetActiveScheme(s.prevScheme)) havePerf = FindPerformanceScheme(target);
     s.prevToast = GetToast();
+    for (int i = 0; i < kGameTweaks; ++i) s.prevGame[i] = GetGameTweak(i);   // vorher sichern, auch wenn sie nicht gesetzt werden
     SaveState(s);                                       // Marker zuerst: bricht das Programm ab, laesst sich alles wiederherstellen
     Log(std::wstring(L"Zock-Modus an") + (autoTriggered ? L" (Spiel erkannt)" : L""));
 
@@ -396,6 +439,14 @@ bool Activate(const Settings& cfg, bool autoTriggered, std::wstring& note) {
             else if (SetActiveScheme(target)) { s.powerChanged = true; add(L"Höchstleistung aktiv"); }
             else add(L"Energiesparplan nicht umgestellt");
         } else add(L"Höchstleistung nicht verfügbar");
+        SaveState(s);
+        // Spielmodus an, Hintergrundaufnahme aus: gehoert zur Spiel-Optimierung (wie Hoechstleistung immer dabei)
+        int changed = 0;
+        for (int i = 0; i < kGameTweaks; ++i) {
+            if (s.prevGame[i].exists && s.prevGame[i].value == GameTweakWanted(i)) continue;   // steht schon richtig
+            if (SetGameTweak(i, { true, GameTweakWanted(i) })) { s.gameMask |= 1u << i; ++changed; }
+        }
+        if (changed) add(L"Spielmodus an, Hintergrundaufnahme aus");
         SaveState(s);
     }
     if (cfg.optToast) {
@@ -424,6 +475,14 @@ bool Deactivate(const Settings& cfg, std::wstring& note) {
 
     if (s.powerChanged) {
         if (SetActiveScheme(s.prevScheme)) add(L"Energiesparplan wiederhergestellt"); else { ok = false; add(L"Energiesparplan konnte nicht wiederhergestellt werden"); }
+    }
+    {
+        bool gameOk = true;
+        for (int i = 0; i < kGameTweaks; ++i)
+            if (s.gameMask & (1u << i)) gameOk &= SetGameTweak(i, s.prevGame[i]);
+        if (s.gameMask) {
+            if (gameOk) add(L"Spiel-Einstellungen wiederhergestellt"); else { ok = false; add(L"Spiel-Einstellungen konnten nicht wiederhergestellt werden"); }
+        }
     }
     if (s.toastChanged) {
         if (SetToast(s.prevToast)) add(L"Benachrichtigungen wiederhergestellt"); else { ok = false; add(L"Benachrichtigungen konnten nicht wiederhergestellt werden"); }
