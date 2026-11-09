@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <filesystem>
 #include <set>
 #include <memory>
 #include <thread>
@@ -434,6 +435,7 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
                 e.oldVersion = p.oldVersion;
                 e.newDate = p.newDate;
                 e.restorePoint = r.restorePointCreated;
+                e.backupDir = p.backupDir;
                 e.ok = std::find(r.installedTitles.begin(), r.installedTitles.end(), p.title) != r.installedTitles.end();
                 entries.push_back(std::move(e));
             }
@@ -1449,6 +1451,54 @@ bool MainWindow::RelaunchElevated()
     return true;
 }
 
+namespace
+{
+    // Sicherungen des vorherigen Treibers: %LOCALAPPDATA%\DuncansDriverUpdater\Sicherung\<JJJJMMTT_HHMMSS>\<Geraet> (je Geraet ein Ordner)
+    std::wstring BackupRoot()
+    {
+        const std::wstring hist = drvhistory::FilePath();
+        const size_t slash = hist.find_last_of(L'\\');
+        return slash == std::wstring::npos ? std::wstring() : hist.substr(0, slash) + L"\\Sicherung";
+    }
+
+    bool IsStampName(const std::wstring& n)   // JJJJMMTT_HHMMSS
+    {
+        return n.size() == 15 && n[8] == L'_' && std::all_of(n.begin(), n.end(), [](wchar_t c) { return (c >= L'0' && c <= L'9') || c == L'_'; });
+    }
+
+    // Behaelt die neuesten Sicherungs-Ordner (Treiber koennen mehrere hundert MB gross sein); nur Ordner mit Zeitstempel-Namen werden angefasst.
+    void PruneBackups(const std::wstring& root, size_t keep)
+    {
+        std::error_code ec;
+        std::vector<std::wstring> names;
+        for (const auto& e : std::filesystem::directory_iterator(root, ec))
+            if (e.is_directory(ec) && IsStampName(e.path().filename().wstring()))
+                names.push_back(e.path().filename().wstring());
+        std::sort(names.begin(), names.end());
+        for (size_t i = 0; i + keep < names.size(); ++i)
+            std::filesystem::remove_all(std::filesystem::path(root) / names[i], ec);
+    }
+
+    // pnputil /export-driver in einen vorhandenen Ordner; wartet hoechstens 30 s
+    bool ExportDriver(const std::wstring& infName, const std::wstring& dir)
+    {
+        std::wstring cmd = L"pnputil.exe /export-driver " + infName + L" \"" + dir + L"\"";
+        STARTUPINFOW si{};
+        si.cb = sizeof(si);
+        PROCESS_INFORMATION pi{};
+        DWORD code = 1;
+        if (!CreateProcessW(nullptr, &cmd[0], nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi))
+            return false;
+        if (WaitForSingleObject(pi.hProcess, 30000) == WAIT_OBJECT_0)
+            GetExitCodeProcess(pi.hProcess, &code);
+        else
+            TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        return code == 0;
+    }
+}
+
 void MainWindow::StartInstall(std::vector<std::wstring> ids)
 {
     if (ids.empty())
@@ -1464,9 +1514,38 @@ void MainWindow::StartInstall(std::vector<std::wstring> ids)
         for (const auto& d : m_drivers)
             if (d.updateId == id)
             {
-                m_pending.push_back({ d.deviceName, d.updateTitle, d.driverVersion, d.updateDate });
+                m_pending.push_back({ d.deviceName, d.updateTitle, d.driverVersion, d.updateDate, d.infName, L"" });
                 break;
             }
+
+    // Den bisherigen Treiber vor dem Update sichern (nur veroeffentlichte oemNN.inf; Windows-Standardtreiber gehen nicht).
+    // Scheitert eine Sicherung, laeuft die Installation trotzdem weiter.
+    if (m_isAdmin)
+    {
+        const std::wstring root = BackupRoot();
+        if (!root.empty())
+        {
+            SYSTEMTIME st;
+            GetLocalTime(&st);
+            wchar_t stamp[32];
+            swprintf(stamp, 32, L"%04d%02d%02d_%02d%02d%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+            const std::wstring session = root + L"\\" + stamp;
+            for (PendingInstall& p : m_pending)
+            {
+                if (!drvhistory::IsOemInf(p.infName))
+                    continue;
+                const std::wstring dir = session + L"\\" + drvhistory::SafeFolderName(p.device);
+                if (SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr) != ERROR_SUCCESS && GetFileAttributesW(dir.c_str()) == INVALID_FILE_ATTRIBUTES)
+                    continue;
+                if (ExportDriver(p.infName, dir))
+                    p.backupDir = dir;
+                else
+                    RemoveDirectoryW(dir.c_str());   // leeren Ordner wieder entfernen
+            }
+            RemoveDirectoryW(session.c_str());       // nichts gesichert: kein leerer Sitzungsordner
+            PruneBackups(root, 5);
+        }
+    }
 
     m_installStage = StageRestorePoint;
     m_installing = m_installer.StartAsync(m_hwnd, std::move(ids));
@@ -1508,6 +1587,7 @@ void MainWindow::ShowHistory()
             if (!it->newDate.empty())
                 v += L", neuer Treiber vom " + it->newDate;
             v += it->restorePoint ? L"  ·  mit Wiederherstellungspunkt" : L"";
+            v += it->backupDir.empty() ? L"" : L"\nbisheriger Treiber gesichert in " + it->backupDir;
         }
         else
             v += L"\nnicht installiert";
@@ -1519,14 +1599,24 @@ void MainWindow::ShowHistory()
     std::wstring text;
     if (rows.empty())
         text = L"Noch keine Treiber über den Driver Updater installiert. Installierte Updates erscheinen hier.\n\n";
-    text += L"Zurücksetzen geht über Windows: Vor jeder Installation legt das Programm einen Wiederherstellungspunkt an. "
-            L"Ein einzelner Treiber lässt sich im Geräte-Manager unter Eigenschaften › Treiber › „Vorheriger Treiber“ zurücksetzen.";
-    ShowModal(L"Verlauf", text, std::move(rows), { L"Wiederherstellungspunkt öffnen", L"Geräte-Manager öffnen", L"Schließen" }, 0, [this](int button)
+    text += L"Zurücksetzen geht über Windows: Vor jeder Installation legt das Programm einen Wiederherstellungspunkt an "
+            L"und sichert den bisherigen Treiber (die letzten fünf Sicherungen bleiben erhalten; Windows-Standardtreiber lassen sich nicht sichern). "
+            L"Ein einzelner Treiber lässt sich im Geräte-Manager unter Eigenschaften › Treiber › „Vorheriger Treiber“ zurücksetzen, "
+            L"oder über „Treiber aktualisieren“ › „Auf dem Computer suchen“ mit dem Sicherungsordner.";
+    ShowModal(L"Verlauf", text, std::move(rows), { L"Wiederherstellungspunkt öffnen", L"Geräte-Manager öffnen", L"Sicherungen öffnen", L"Schließen" }, 0, [this](int button)
     {
         if (button == 0)
             ShellExecuteW(m_hwnd, L"open", L"rstrui.exe", nullptr, nullptr, SW_SHOWNORMAL);
         else if (button == 1)
             ShellExecuteW(m_hwnd, L"open", L"devmgmt.msc", nullptr, nullptr, SW_SHOWNORMAL);
+        else if (button == 2)
+        {
+            const std::wstring root = BackupRoot();
+            if (!root.empty() && GetFileAttributesW(root.c_str()) != INVALID_FILE_ATTRIBUTES)
+                ShellExecuteW(m_hwnd, L"open", root.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+            else
+                ShowToast(L"Es gibt noch keine Sicherungen", 1);
+        }
     });
 }
 

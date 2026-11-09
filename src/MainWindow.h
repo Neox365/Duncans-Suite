@@ -188,7 +188,7 @@ private:
     RECT m_sortRect{};
     RECT m_exportRect{};
     RECT m_historyRect{};
-    struct PendingInstall { std::wstring device, title, oldVersion, newDate; };
+    struct PendingInstall { std::wstring device, title, oldVersion, newDate, infName, backupDir; };
     std::vector<PendingInstall> m_pending;      // Updates der laufenden Installation (fuer den Verlauf)
     std::wstring m_lastUpdateText;              // Datum der letzten erfolgreichen Installation oder leer
     int  m_hoverAction = 0;         // Quick-Action unter der Maus (siehe HitAction)

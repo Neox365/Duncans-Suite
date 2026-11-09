@@ -19,7 +19,14 @@ struct Entry {
     std::wstring newDate;       // Datum des neuen Treibers (TT.MM.JJJJ), kann leer sein
     bool ok = false;            // wirklich installiert
     bool restorePoint = false;  // vorher wurde ein Wiederherstellungspunkt erstellt
+    std::wstring backupDir;     // Ordner mit der automatischen Sicherung des vorherigen Treibers (leer = keine)
 };
+
+// "oem<Zahl>.inf": nur solche veroeffentlichten Treiber lassen sich mit pnputil sichern (der Name geht unquotiert in die Kommandozeile)
+bool IsOemInf(const std::wstring& infName);
+
+// Ordnername fuer ein Geraet: Zeichen, die in Dateinamen nicht erlaubt sind, werden zu "_", Laenge begrenzt
+std::wstring SafeFolderName(const std::wstring& name);
 
 constexpr size_t kMaxEntries = 200;
 
