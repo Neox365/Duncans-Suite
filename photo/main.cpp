@@ -1,4 +1,4 @@
-// Duncan's Photo Commander (Win32 + Direct2D/DirectWrite + WIC)
+﻿// Duncan's Photo Commander (Win32 + Direct2D/DirectWrite + WIC)
 //
 // Aufbau: Topbar | Ordnerbaum | Thumbnail-Grid | Detail-Panel | Statusleiste.
 // Doppelklick/Enter oeffnet den Bildbetrachter (Zoom, Verschieben, Zuschneiden, Blaettern).
@@ -36,7 +36,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.0"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.6.0"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -2423,6 +2423,17 @@ void App::FinishWrite(const std::wstring& src, const std::wstring& dst, const st
     }
 }
 
+// Verschiebt eine Datei in den Papierkorb (rueckholbar).
+static bool RecycleFile(const std::wstring& path) {
+    std::wstring from = path;
+    from.push_back(L'\0');
+    SHFILEOPSTRUCTW op{};
+    op.wFunc = FO_DELETE;
+    op.pFrom = from.c_str();
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
+    return SHFileOperationW(&op) == 0 && !op.fAnyOperationsAborted;
+}
+
 void App::StripSelected() {
     if (m_sel < 0) return;
     if (!m_viewer && SelCount() > 1) {
@@ -2435,13 +2446,16 @@ void App::StripSelected() {
                                           L"Alle Metadaten (inkl. Kamera und GPS) im ORIGINAL unwiderruflich entfernen?",
                                           L"EXIF entfernen");
     if (dst.empty()) return;
-    if (!imgops::StripMetadata(src, dst, &err)) {
+    std::wstring outPath;
+    if (!imgops::StripMetadata(src, dst, &err, &outPath)) {
         SetStatus(L"EXIF entfernen fehlgeschlagen: " + err);
         return;
     }
+    const bool heicMoved = imgops::IsHeic(src) && _wcsicmp(dst.c_str(), src.c_str()) == 0;   // HEIC im Original ersetzen: das JPEG tritt an seine Stelle
+    if (heicMoved) RecycleFile(src);
     imgops::ImageInfo check;   // Gegenprobe: sind die Standortdaten wirklich weg?
-    const bool gpsLeft = imgops::ReadImageInfo(dst, check) && check.hasGps;
-    FinishWrite(src, dst,
+    const bool gpsLeft = imgops::ReadImageInfo(outPath, check) && check.hasGps;
+    FinishWrite(src, outPath,
                 gpsLeft ? L"Achtung: Standortdaten sind noch vorhanden: " + name : L"Metadaten entfernt: " + name,
                 gpsLeft ? L"Achtung: Standortdaten sind in der Kopie noch vorhanden: " + dst
                         : L"Bereinigte Kopie erstellt (ohne Kamera- und GPS-Daten): " + FileNameOf(dst));
@@ -2647,8 +2661,10 @@ void App::StartBatch(BatchKind kind) {
                     if (!imgops::CanStripMetadata(src)) { skipped = true; break; }
                     imgops::ImageInfo before, after;
                     if (imgops::ReadImageInfo(src, before) && before.hasGps) ++m_bGps;
-                    ok = imgops::StripMetadata(src, dst, &err);
-                    if (ok && imgops::ReadImageInfo(dst, after) && after.hasGps) {  // Gegenprobe
+                    std::wstring outPath;
+                    ok = imgops::StripMetadata(src, dst, &err, &outPath);
+                    if (ok && imgops::IsHeic(src) && _wcsicmp(dst.c_str(), src.c_str()) == 0) RecycleFile(src);   // HEIC ersetzen: Original in den Papierkorb
+                    if (ok && imgops::ReadImageInfo(outPath, after) && after.hasGps) {  // Gegenprobe
                         ok = false;
                         err = L"Standortdaten nach dem Bereinigen noch vorhanden";
                     }

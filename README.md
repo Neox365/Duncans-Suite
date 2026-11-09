@@ -34,7 +34,7 @@ Start mit Ordner oder Bild als Argument (`DuncansPhotoCommander.exe "C:\Fotos\a.
 - **Diashow:** Knopf „Vollbild“ in der Topbar, `F5` oder `F` startet sie ab dem gewählten Bild im echten Vollbild (ohne Ränder und Panels, am Ordnerende geht es von vorn los). Standard 4 s pro Bild (Zahnrad: 2 / 4 / 6 / 10 s). Leertaste/`P` pausiert, ←/→ springen, Esc beendet und bringt dich zurück. Bei Mausbewegung blendet unten eine Steuerleiste (Zurück, Play/Pause, Weiter, Schließen) ein und nach 2 s wieder aus, der Mauszeiger verschwindet mit ihr. Im Betrachter gilt `F5`, dort bleibt `F` = Einpassen und der Vollbild-Knopf der unteren Leiste schaltet nur das Vollbild um.
 - **Einstellungen:** Zahnrad: Thumbnail-Größe, Sortierung, Standort-Filter, „Original überschreiben“; gespeichert in `%LOCALAPPDATA%\DuncansPhotoCommander\settings.ini` (inklusive zuletzt geöffnetem Ordner).
 - **Release:** Download/Update über das Release `modules` im Suite-Repo (`tools\PublishModule.ps1 -Module Photo`), Karte im Launcher, im Komplett-Installer enthalten.
-- **Stand:** Der GitHub-Workflow `Windows-Build` baut alle Programme mit MSVC und testet die Byte-Bereinigung (`photo/tests`). HEIC/GIF werden nicht bearbeitet.
+- **Stand:** Der GitHub-Workflow `Windows-Build` baut alle Programme mit MSVC und testet die Byte-Bereinigung (`photo/tests`). GIF wird nicht bearbeitet; HEIC nur beim EXIF-Entfernen (Ergebnis ist ein JPG, WIC kann kein HEIC schreiben).
 
 ## Oggys Docs-Files
 

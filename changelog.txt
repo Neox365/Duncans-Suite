@@ -285,6 +285,8 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.6.0 | 2026-11-09
+- Neu: „EXIF entfernen“ geht jetzt auch für HEIC-Fotos (z. B. vom iPhone), einzeln und im Stapel. Weil Windows HEIC nicht schreiben kann, entsteht eine JPG-Kopie ohne Kamera- und GPS-Daten (neben dem Original, bei Namensgleichheit mit _2, _3 …); das Original bleibt unverändert. Ist „Original überschreiben“ an, wandert das HEIC-Original in den Papierkorb und das JPG tritt an seine Stelle. Dafür braucht Windows die Erweiterung „HEIF-Bildererweiterungen“ aus dem Microsoft Store; fehlt sie, meldet Photo das. GIF bleibt ausgenommen, weil die Animation verloren ginge.
 ## 0.5.0 | 2026-11-08
 - Neu: Karte gestalten (Stapelverarbeitung > Karte gestalten). Aus den markierten Fotos entsteht eine Grußkarte, Einladung oder Collage: acht Layouts von einem bis sechs Fotos, Papierformate 10 × 15, 13 × 18, A6, A5, A4 und Quadrat (hoch oder quer), einstellbarer Rand, Abstand, runde Ecken und weißer Fotorahmen. Der Hintergrund ist eine Farbe, ein Farbverlauf oder das erste Foto unscharf. Dazu kommt ein Text mit Schriftart, Größe, Farbe, Fett, Kursiv und Schatten, der sich in der Vorschau mit der Maus verschieben lässt (Doppelklick setzt ihn zurück), auf Wunsch in einem Schreibfeld unter den Fotos. Gespeichert wird als JPG oder PNG in Druckauflösung (300 dpi). Die Vorlagen sind eigene Layouts, es gibt keine Clipart-Sammlung.
 ## 0.4.0 | 2026-11-06
