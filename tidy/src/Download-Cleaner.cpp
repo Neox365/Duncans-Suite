@@ -910,7 +910,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.7.0";
+constexpr wchar_t kVersion[] = L"1.8.0";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -1380,18 +1380,35 @@ constexpr ULONG_PTR kAnalyzeMagic = 0x7D7A0001;  // WM_COPYDATA eines zweiten St
 static std::wstring g_pendingAnalyze;
 static std::atomic<bool> g_topBusy{false};
 static std::wstring g_topLabel = L"C:";  // Anzeigename des gerade durchsuchten Laufwerks/Ordners
-struct TopEntry { unsigned long long size = 0; std::wstring name, dir, full; };
+struct TopEntry { unsigned long long size = 0; std::wstring name, dir, full; FILETIME mt{}; };
+static std::wstring g_topRoot;           // zuletzt durchsuchte Wurzel (fuer den Umschalter im Ergebnisfenster)
+static bool g_topForgotten = false;      // true = nur grosse Dateien, die lange niemand angefasst hat
 static std::vector<TopEntry> g_topList;
 static std::wstring g_topTitle, g_topSub;  // Ergebnis, vom Thread vor WM_TOP_DONE gesetzt
 static std::mutex g_topMx;
 
 // root: "C:" (Laufwerk) oder voller Ordnerpfad ohne abschliessenden Backslash; label: Anzeigename fuer Titel und Statuszeile
-static void StartTopFilesAt(HWND h, std::wstring root, std::wstring label) {
+// forgotten: nur Dateien ab 50 MB, die seit ueber einem Jahr weder geaendert noch benutzt wurden (Datei-Zugriffszeit, wenn Windows sie fuehrt);
+// Programmordner, Windows, AppData und Spiele-Bibliotheken werden dabei uebersprungen (dort ist "alt" nicht "vergessen")
+static void StartTopFilesAt(HWND h, std::wstring root, std::wstring label, bool forgotten = false) {
     if (g_topBusy.exchange(true)) return;
     g_topLabel = label;
+    g_topRoot = root;
+    g_topForgotten = forgotten;
     InvalidateRect(h, nullptr, FALSE);
-    Bg([h, root, label] {
-        struct F { unsigned long long size; std::wstring path; };
+    Bg([h, root, label, forgotten] {
+        struct F { unsigned long long size; std::wstring path; FILETIME mt; };
+        ULARGE_INTEGER cutoff{};
+        {
+            FILETIME nowFt;
+            GetSystemTimeAsFileTime(&nowFt);
+            ULARGE_INTEGER n;
+            n.LowPart = nowFt.dwLowDateTime; n.HighPart = nowFt.dwHighDateTime;
+            cutoff.QuadPart = n.QuadPart - 365ull * 24 * 3600 * 10000000ull;
+        }
+        constexpr unsigned long long kForgotMin = 50ull * 1048576ull;
+        static const wchar_t* const kSkipDirs[] = {L"Windows", L"Program Files", L"Program Files (x86)", L"ProgramData", L"$Recycle.Bin", L"System Volume Information", L"AppData",
+                                                   L"steamapps", L"Epic Games", L"WindowsApps", L"GOG Galaxy", L"Ubisoft Game Launcher", L"Riot Games"};
         std::vector<F> top;  // absteigend nach Groesse, hoechstens 20
         unsigned long long sum = 0;
         // \\?\-Praefix: auch sehr lange Pfade; Netzwerkpfade werden zu \\?\UNC\...
@@ -1415,14 +1432,26 @@ static void StartTopFilesAt(HWND h, std::wstring root, std::wstring label) {
                 const std::wstring full = dir + L"\\" + name;
                 if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
                     if (dir == base && _wcsicmp(name.c_str(), L"Windows") == 0) continue;  // Windows selbst: nichts, was man loeschen sollte
+                    if (forgotten) {
+                        bool skip = false;
+                        for (const wchar_t* sk : kSkipDirs) if (_wcsicmp(name.c_str(), sk) == 0) skip = true;
+                        if (skip) continue;
+                    }
                     stack.push_back(full);
                     continue;
                 }
                 if (_wcsicmp(name.c_str(), L"pagefile.sys") == 0 || _wcsicmp(name.c_str(), L"hiberfil.sys") == 0 || _wcsicmp(name.c_str(), L"swapfile.sys") == 0) continue;
                 const unsigned long long sz = ((unsigned long long)fd.nFileSizeHigh << 32) | fd.nFileSizeLow;
+                if (forgotten) {
+                    if (sz < kForgotMin) continue;
+                    ULARGE_INTEGER lw, la;
+                    lw.LowPart = fd.ftLastWriteTime.dwLowDateTime; lw.HighPart = fd.ftLastWriteTime.dwHighDateTime;
+                    la.LowPart = fd.ftLastAccessTime.dwLowDateTime; la.HighPart = fd.ftLastAccessTime.dwHighDateTime;
+                    if (std::max(lw.QuadPart, la.QuadPart) >= cutoff.QuadPart) continue;   // vor kurzem geaendert oder benutzt
+                }
                 sum += sz;
                 if (top.size() < 20 || sz > top.back().size) {
-                    top.push_back({sz, display(full)});
+                    top.push_back({sz, display(full), fd.ftLastWriteTime});
                     std::sort(top.begin(), top.end(), [](const F& a, const F& b) { return a.size > b.size; });
                     if (top.size() > 20) top.resize(20);
                 }
@@ -1432,12 +1461,13 @@ static void StartTopFilesAt(HWND h, std::wstring root, std::wstring label) {
         std::vector<TopEntry> list;
         for (const auto& e : top) {
             const fs::path p = e.path;
-            list.push_back({e.size, p.filename().wstring(), p.parent_path().wstring(), e.path});
+            list.push_back({e.size, p.filename().wstring(), p.parent_path().wstring(), e.path, e.mt});
         }
         {
             std::lock_guard<std::mutex> lk(g_topMx);
-            g_topTitle = Tr(L"Größte Dateien auf ") + label;
-            g_topSub = top.empty() ? std::wstring(Tr(L"Keine Dateien gefunden.")) : Tr(L"Die 20 größten  ·  zusammen ") + FormatSize(sum);
+            g_topTitle = (forgotten ? std::wstring(Tr(L"Vergessene Dateien auf ")) : std::wstring(Tr(L"Größte Dateien auf "))) + label;
+            g_topSub = top.empty() ? std::wstring(forgotten ? Tr(L"Nichts gefunden: keine Datei über 50 MB, die über ein Jahr unberührt ist.") : Tr(L"Keine Dateien gefunden."))
+                                   : std::wstring(forgotten ? Tr(L"Größte, über 1 Jahr unberührt  ·  zusammen ") : Tr(L"Die 20 größten  ·  zusammen ")) + FormatSize(sum);
             g_topList = std::move(list);
         }
         g_topBusy = false;
@@ -4182,7 +4212,7 @@ static bool ShowUpdateDialog(HWND owner, const std::wstring& title, const std::w
 }
 
 // ---- Fenster "Groesste Dateien": zweizeilige Karten (Name gross, Pfad klein), Klick zeigt die Datei im Explorer ----
-constexpr int ID_TOP_OK = 242, kTopRow = 62, kTopGap = 10;
+constexpr int ID_TOP_OK = 242, ID_TOP_MODE = 243, kTopRow = 62, kTopGap = 10;
 static bool g_topOpen = false;
 static HWND g_topListWnd;
 static int g_topScroll = 0, g_topHover = -1;
@@ -4241,7 +4271,18 @@ static LRESULT CALLBACK TopListProc(HWND h, UINT m, WPARAM w, LPARAM l) {
             RECT sr{W - 2 - 130, top + 10, W - 2 - 18, top + 36};
             DrawTextW(dc, FormatSize(e.size).c_str(), -1, &sr, DT_RIGHT | DT_SINGLELINE | DT_NOPREFIX);
             DrawFit(dc, g_fMed, kStrong, 20, top + 10, W - 2 - 140, e.name);
-            DrawFit(dc, g_fSm, kMuted, 20, top + 36, W - 2 - 20, e.dir);
+            std::wstring dirLine = e.dir;
+            if (g_topForgotten && (e.mt.dwLowDateTime || e.mt.dwHighDateTime)) {   // wann zuletzt geaendert
+                SYSTEMTIME st{};
+                FILETIME lf;
+                FileTimeToLocalFileTime(&e.mt, &lf);
+                if (FileTimeToSystemTime(&lf, &st)) {
+                    wchar_t d[48];
+                    swprintf_s(d, L"%02d.%02d.%04d", (int)st.wDay, (int)st.wMonth, (int)st.wYear);
+                    dirLine = std::wstring(Tr(L"zuletzt geändert ")) + d + L"  ·  " + e.dir;
+                }
+            }
+            DrawFit(dc, g_fSm, kMuted, 20, top + 36, W - 2 - 20, dirLine);
         }
         ResetLogical(dc);
         BitBlt(wdc, 0, 0, cr.right, cr.bottom, dc, 0, 0, SRCCOPY);
@@ -4294,9 +4335,12 @@ static LRESULT CALLBACK TopDlgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         g_topListWnd = CreateWindowW(L"TidyTopList", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL, D(28), D(140), D(kW - 56), D(kH - 140 - 100), h, nullptr,
                                      GetModuleHandleW(nullptr), nullptr);
         SetWindowTheme(g_topListWnd, ThemeName(), nullptr);
-        HWND b = CreateWindowW(L"BUTTON", Tr(L"Schließen"), WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, D((kW - 220) / 2), D(kH - 62), D(220), D(46), h,
+        HWND b = CreateWindowW(L"BUTTON", Tr(L"Schließen"), WS_CHILD | WS_VISIBLE | BS_OWNERDRAW, D(kW / 2 + 8), D(kH - 62), D(180), D(46), h,
                                (HMENU)(INT_PTR)ID_TOP_OK, nullptr, nullptr);
         SetWindowSubclass(b, ButtonProc, (UINT_PTR)ID_TOP_OK, 0);
+        HWND bm = CreateWindowW(L"BUTTON", g_topForgotten ? Tr(L"Alle größten zeigen") : Tr(L"Vergessene suchen (über 1 Jahr)"), WS_CHILD | WS_VISIBLE | BS_OWNERDRAW,
+                                D(kW / 2 - 8 - 300), D(kH - 62), D(300), D(46), h, (HMENU)(INT_PTR)ID_TOP_MODE, nullptr, nullptr);
+        SetWindowSubclass(bm, ButtonProc, (UINT_PTR)ID_TOP_MODE, 0);
         UpdateTopScroll();
         return 0;
     }
@@ -4332,6 +4376,12 @@ static LRESULT CALLBACK TopDlgProc(HWND h, UINT m, WPARAM w, LPARAM l) {
         return TRUE;
     case WM_COMMAND:
         if (LOWORD(w) == ID_TOP_OK) DestroyWindow(h);
+        else if (LOWORD(w) == ID_TOP_MODE && !g_topBusy) {   // zwischen "groesste Dateien" und "gross und lange unberuehrt" wechseln: Fenster zu, neue Suche, Ergebnis kommt wieder per WM_TOP_DONE
+            const std::wstring root = g_topRoot, label = g_topLabel;
+            const bool next = !g_topForgotten;
+            DestroyWindow(h);
+            StartTopFilesAt(g_main, root, label, next);
+        }
         return 0;
     case WM_CLOSE:
         DestroyWindow(h);
