@@ -483,6 +483,9 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.6.0 | 2026-11-10
+- Neu: Excel-Dateien (.xlsx) in Sheets. „Öffnen“ liest jetzt auch .xlsx (das erste Tabellenblatt): Zahlen, Text, Formeln samt Ergebnis, Prozent- und Währungsformat und Hintergrundfarben. „Speichern“ schreibt .xlsx, das Excel und LibreOffice öffnen können (Formeln mit englischen Namen, gespeichertes Ergebnis, Formate und Farben). Neue Tabellen werden jetzt als .xlsx vorgeschlagen; wer eine CSV öffnet, bekommt weiter CSV.
+- Hinweis zu Excel-Dateien: Was Sheets nicht kann, wird beim Öffnen gemeldet. Das sind weitere Tabellenblätter, Zellen außerhalb von A–Z und Zeile 1–100, Formeln mit Funktionen, die Sheets nicht kennt (diese bleiben als Ergebnis-Wert erhalten), und Datums-/Zeitzellen (werden Text). Hatte die Datei solche Inhalte, überschreibt „Speichern“ das Original nicht, sondern fragt nach einem neuen Namen (z. B. „Datei (bearbeitet).xlsx“).
 ## 0.5.0 | 2026-11-09
 - Neu: Diagramme in Sheets. Bereich markieren und in der Leiste oben rechts auf das Säulen-Symbol klicken: Das Diagramm-Fenster zeigt den Bereich als Säulen oder Linien. Steht in der ersten Zeile Text, sind das die Namen der Reihen, steht in der ersten Spalte Text, sind das die Beschriftungen; jede weitere Spalte ist eine Reihe (bis zu 8 Reihen und 60 Werte). „Als Bild kopieren“ legt das Diagramm mit hellem Hintergrund in die Zwischenablage, zum Einfügen in Writer oder andere Programme.
 ## 0.4.0 | 2026-11-06
