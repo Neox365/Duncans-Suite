@@ -22,13 +22,14 @@ using std::min;
 #include <gdiplus.h>
 
 #include "PdfDocument.h"
+#include "Print.h"
 #include "Positions.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.5.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.6.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -51,7 +52,7 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
     C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS, C_CROP, C_UNCROP,
-    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE, C_STAMP, C_REDACT, C_SPLIT, C_EXTRACT, C_MORE, C_UNDO, C_REDO, C_NIGHT   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
+    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE, C_STAMP, C_REDACT, C_SPLIT, C_EXTRACT, C_MORE, C_UNDO, C_REDO, C_NIGHT, C_COPYTEXT, C_PRINT   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
 };
 
 struct Item {
@@ -108,6 +109,7 @@ struct App {
     bool selDrag = false;                  // Textauswahl beim Markieren laeuft
     bool eraseDrag = false;                // Radierer: Maustaste gedrueckt, Markierungen werden entfernt
     int selPage = -1, selA = -1, selB = -1;
+    bool keepSel = false;                  // Auswahl von "Text kopieren" bleibt sichtbar (Strg+C kopiert sie erneut)
     bool cropDrag = false;                 // Zuschnitt-Rahmen wird aufgezogen
     POINT cropA{}, cropB{};                // Eckpunkte in Canvas-Koordinaten (auch fuer den Schwaerzen-Rahmen)
     bool redDrag = false;                  // Schwaerzen-Rahmen wird aufgezogen
@@ -247,15 +249,17 @@ void BuildItems() {
     add(C_NONE, L"", 0, false);
     add(C_OPEN, L"Öffnen", 0, false);
     add(C_SAVE, L"Speichern", 0, true);
+    add(C_PRINT, L"Drucken", 0, true);
     add(C_MERGE, L"Merge", 0, true, false, false, 3);
-    add(C_SPLIT, L"Split", 0, true);
+    add(C_SPLIT, L"Split", 0, true, false, false, 3);
     add(C_FIND, L"Suchen", 0, true, false, false, 1);
     add(C_HILITE, L"Marker", 0, true, false, false, 2);
+    add(C_COPYTEXT, L"Kopieren", 0, true, false, false, 2);   // Text auswaehlen und in die Zwischenablage kopieren
     add(C_ERASE, L"⌫", 40, true, false, false, 5);   // Radierer: entfernt Markierungen
     add(C_NOTE, L"Notiz", 0, true, false, false, 6);
     add(C_CROP, L"Zuschnitt", 0, true, false, false, 4);
-    add(C_STAMP, L"Stempel", 0, true);
-    add(C_REDACT, L"Schwärzen", 0, true);
+    add(C_STAMP, L"Stempel", 0, true, false, false, 5);
+    add(C_REDACT, L"Schwärzen", 0, true, false, false, 5);
     add(C_NONE, L"", 0, false);
     add(C_ZOOMOUT, L"−", 40, true);
     add(C_ACTUAL, L"100 %", 64, true);
@@ -511,7 +515,7 @@ void DrawToolbar(HDC dc, int width) {
         const bool enabled = ItemEnabled(it);
         const bool hot = enabled && static_cast<int>(i) == g.hot;
         const bool pressed = hot && static_cast<int>(i) == g.down;
-        const bool active = (it.cmd == C_SIDE && g.sideVisible) || (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2) || (it.cmd == C_CROP && g.tool == 3) || (it.cmd == C_ERASE && g.tool == 4) || (it.cmd == C_STAMP && g.tool == 5) || (it.cmd == C_REDACT && g.tool == 6);
+        const bool active = (it.cmd == C_SIDE && g.sideVisible) || (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_COPYTEXT && g.tool == 7) || (it.cmd == C_NOTE && g.tool == 2) || (it.cmd == C_CROP && g.tool == 3) || (it.cmd == C_ERASE && g.tool == 4) || (it.cmd == C_STAMP && g.tool == 5) || (it.cmd == C_REDACT && g.tool == 6);
         COLORREF fill = pressed ? RGB(28, 31, 39) : hot ? kCardHover : (it.cmd == C_OPEN ? kAccent : kCardRaised);
         COLORREF txt = !enabled ? RGB(95, 100, 112) : (it.cmd == C_OPEN && !hot) ? RGB(8, 20, 36) : kText;
         if (it.cmd == C_OPEN && hot) txt = kText;
@@ -532,7 +536,8 @@ int HitToolbar(POINT p) {
 const struct { int cmd; const wchar_t* label; } kTools[] = {
     { C_ROTL, L"Seite nach links drehen" }, { C_ROTR, L"Seite nach rechts drehen" },
     { C_DELETE, L"Seite(n) löschen" }, { C_FIND, L"Im Dokument suchen" },
-    { C_HILITE, L"Text markieren" }, { C_ERASE, L"Markierung entfernen" }, { C_NOTE, L"Notiz hinzufügen" }, { C_COMPRESS, L"Datei verkleinern …" },
+    { C_HILITE, L"Text markieren" }, { C_COPYTEXT, L"Text kopieren" }, { C_ERASE, L"Markierung entfernen" }, { C_NOTE, L"Notiz hinzufügen" }, { C_COMPRESS, L"Datei verkleinern …" },
+    { C_PRINT, L"Drucken … (Strg+P)" },
     { C_MERGE, L"PDF anhängen (Merge)" }, { C_SPLIT, L"PDF teilen (Split) …" }, { C_EXTRACT, L"Gewählte Seiten als neue PDF …" },
     { C_UNDO, L"Rückgängig (Strg+Z)" }, { C_REDO, L"Wiederholen (Strg+Y)" },
     { C_STAMP, L"Stempel & Unterschrift …" }, { C_REDACT, L"Schwärzen (dauerhaft)" }, { C_SAVE, L"Speichern unter …" },
@@ -1028,7 +1033,7 @@ void PaintCanvas(HDC dc, RECT cr) {
             outline.SetDashStyle(DashStyleDash);
             gr.DrawRectangle(&outline, Rect(sr.left, sr.top, sr.right - sr.left - 1, sr.bottom - sr.top - 1));
         }
-        if (g.selDrag && g.selPage == g.page) {      // laufende Textauswahl beim Markieren
+        if ((g.selDrag || g.keepSel) && g.selPage == g.page) {      // laufende Textauswahl beim Markieren bzw. beim Kopieren
             std::vector<RECT> rs;
             PdfDocument::TextHit th;
             th.page = g.page; th.start = std::min(g.selA, g.selB); th.count = std::abs(g.selB - g.selA) + 1;
@@ -2321,6 +2326,26 @@ void RunCommand(int cmd) {
         InvalidateToolbar();
         break;
     }
+    case C_COPYTEXT: {
+        if (!g.doc.IsOpen()) break;
+        g.tool = g.tool == 7 ? 0 : 7;
+        g.selDrag = g.keepSel = false;
+        InvalidateToolbar();
+        InvalidateRect(g.canvas, nullptr, FALSE);
+        if (g.tool == 7) ShowToast(L"Text kopieren: Text mit der Maus überstreichen, er landet sofort in der Zwischenablage (Esc beendet)");
+        SetFocus(g.canvas);
+        break;
+    }
+    case C_PRINT: {
+        if (!g.doc.IsOpen()) break;
+        bool cancelled = false;
+        std::wstring err;
+        const wchar_t* slash = wcsrchr(g.doc.Path().c_str(), L'\\');
+        const std::wstring job = slash ? slash + 1 : g.doc.Path();
+        if (pdfprint::PrintWithDialog(g.main, g.doc, job, cancelled, err)) ShowToast(L"An den Drucker gesendet");
+        else if (!cancelled) ShowToast(err.empty() ? L"Drucken ist fehlgeschlagen" : err, true);
+        break;
+    }
     case C_HILITE: case C_NOTE: case C_ERASE: {
         if (!g.doc.IsOpen()) break;
         const int want = cmd == C_HILITE ? 1 : (cmd == C_ERASE ? 4 : 2);
@@ -2393,6 +2418,8 @@ void RunCommand(int cmd) {
     }
 }
 
+bool CopySelectedText(bool announce);
+
 void HandleKey(UINT vk) {
     const bool ctrl = GetKeyState(VK_CONTROL) < 0, shift = GetKeyState(VK_SHIFT) < 0;
     {   // frei belegbare Tastenkuerzel (Einstellungen -> Tastenkuerzel)
@@ -2408,6 +2435,10 @@ void HandleKey(UINT vk) {
     if (ctrl) {
         switch (vk) {
         case 'M': RunCommand(C_MERGE); return;
+        case 'P': RunCommand(C_PRINT); return;
+        case 'C':   // Strg+C: die zuletzt mit "Text kopieren" ausgewaehlte Stelle noch einmal kopieren
+            if (g.doc.IsOpen()) CopySelectedText(false);
+            return;
         case 'D': RunCommand(C_NIGHT); return;
         case 'Z': RunCommand(C_UNDO); return;
         case 'Y': RunCommand(C_REDO); return;
@@ -2424,7 +2455,7 @@ void HandleKey(UINT vk) {
     if (!g.doc.IsOpen()) return;
     switch (vk) {
     case VK_ESCAPE:
-        if (g.tool) { g.tool = 0; g.selDrag = g.cropDrag = g.redDrag = false; g.stampHover = false; InvalidateToolbar(); InvalidateRect(g.canvas, nullptr, FALSE); }
+        if (g.tool) { g.tool = 0; g.selDrag = g.keepSel = g.cropDrag = g.redDrag = false; g.stampHover = false; InvalidateToolbar(); InvalidateRect(g.canvas, nullptr, FALSE); }
         else CloseSearch();
         break;
     case VK_F3: SearchStep(shift ? -1 : 1); break;
@@ -2504,6 +2535,20 @@ std::wstring ClipboardGet() {
     }
     CloseClipboard();
     return out;
+}
+
+// Text der Auswahl (selPage, selA..selB) in die Zwischenablage; announce: gerade ausgewaehlt (sonst muss die Auswahl noch stehen)
+bool CopySelectedText(bool announce) {
+    if (g.selPage < 0 || g.selA < 0 || g.selB < 0 || !(g.keepSel || announce)) {
+        ShowToast(L"Erst mit dem Knopf „Kopieren“ Text auswählen");
+        return false;
+    }
+    std::wstring t;
+    const int start = std::min(g.selA, g.selB), count = std::abs(g.selB - g.selA) + 1;
+    if (!g.doc.GetText(g.selPage, start, count, t) || t.empty()) { ShowToast(L"Dort gibt es keinen Text zum Kopieren", true); return false; }
+    ClipboardSet(t);
+    ShowToast(std::to_wstring(t.size()) + L" Zeichen kopiert");
+    return true;
 }
 
 // Taste an das fokussierte Formularfeld weiterreichen (true = behandelt)
@@ -2638,8 +2683,9 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 g.eraseDrag = true;
                 SetCapture(hwnd);
                 EraseAtPoint(p.x, p.y);
-            } else if (g.tool == 1) {
+            } else if (g.tool == 1 || g.tool == 7) {
                 const int c = g.doc.CharAt(g.page, g.pageW, g.pageH, dx, dy);
+                g.keepSel = false;
                 if (c >= 0) { g.selDrag = true; g.selPage = g.page; g.selA = g.selB = c; SetCapture(hwnd); InvalidateRect(hwnd, nullptr, FALSE); }
             } else {
                 std::wstring text;
@@ -2749,7 +2795,8 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g.selDrag = false;
             if (GetCapture() == hwnd) ReleaseCapture();
             const int start = std::min(g.selA, g.selB), count = std::abs(g.selB - g.selA) + 1;
-            if (g.doc.AddHighlight(g.selPage, start, count, g.hlColor)) { RefreshAfterEdit(g.selPage); ShowToast(L"Markierung hinzugefügt – noch nicht gespeichert"); }
+            if (g.tool == 7) { g.keepSel = true; CopySelectedText(true); InvalidateRect(hwnd, nullptr, FALSE); }
+            else if (g.doc.AddHighlight(g.selPage, start, count, g.hlColor)) { RefreshAfterEdit(g.selPage); ShowToast(L"Markierung hinzugefügt – noch nicht gespeichert"); }
             else { ShowToast(PdfDocument::LastError(), true); InvalidateRect(hwnd, nullptr, FALSE); }
         }
         return 0;
@@ -2758,7 +2805,7 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g.redDrag && reinterpret_cast<HWND>(lp) != hwnd) { g.redDrag = false; InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     case WM_SETCURSOR:
-        if (g.tool && LOWORD(lp) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, g.tool == 1 ? IDC_IBEAM : IDC_CROSS)); return TRUE; }
+        if (g.tool && LOWORD(lp) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, (g.tool == 1 || g.tool == 7) ? IDC_IBEAM : IDC_CROSS)); return TRUE; }
         if (!g.tool && LOWORD(lp) == HTCLIENT && g.doc.IsOpen() && g.doc.HasForms()) {     // Mauszeiger ueber Formularfeldern
             POINT cp; GetCursorPos(&cp); ScreenToClient(hwnd, &cp);
             int ox, oy; PageOrigin(ox, oy);

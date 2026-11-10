@@ -237,6 +237,10 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.6.0 | 2026-11-10
+- Neu: Drucken. Der Knopf „Drucken“ in der Leiste (oder Strg+P) öffnet den Windows-Druckdialog mit Drucker, Seitenbereich und Exemplaren. Gedruckt wird mit Markierungen, Stempeln und Notizen, jede Seite auf den bedruckbaren Bereich eingepasst (nur verkleinert, nie vergrößert) und mit höchstens 300 dpi. Der Nachtmodus wirkt nicht auf den Ausdruck. Bei Querformat-Seiten auf Hochformat-Papier im Druckdialog unter „Eigenschaften“ Querformat wählen.
+- Neu: Text kopieren. Der Knopf „Kopieren“ schaltet ein Werkzeug ein: Text mit der Maus überstreichen, und er landet sofort in der Zwischenablage (mit Hinweis, wie viele Zeichen). Die Auswahl bleibt sichtbar, Strg+C kopiert sie noch einmal, Esc beendet das Werkzeug. Bisher konnte man Text nur markieren (gelb), aber nicht kopieren.
+- Geändert: Die Reihenfolge, in der Knöpfe bei schmalem Fenster ins Menü „⋯“ rücken: Drucken bleibt sichtbar, Split, Stempel und Schwärzen rücken früher ins Menü.
 ## 1.5.0 | 2026-11-06
 - Neu: Weiterlesen. Das Programm merkt sich pro Datei die zuletzt gelesene Seite und springt beim nächsten Öffnen dorthin (kurzer Hinweis „Weiter bei Seite …“, Pos1 springt zum Anfang). Gemerkt werden die letzten 200 Dateien, nur als Hash des Dateipfads in positions.txt.
 - Neu: Nachtmodus. Der Knopf „Nacht“ (oder Strg+D) zeigt die Seiten mit umgekehrten Farben – schonender bei Dunkelheit. Die Datei selbst bleibt unverändert; die Wahl wird gemerkt. Bei schmalem Fenster steckt der Knopf im Menü „⋯“.

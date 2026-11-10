@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(DuncansDriverUpdater VERSION 1.4.1 LANGUAGES CXX RC)
 # Programmversionen unabhaengig voneinander (project VERSION oben = Driver Updater)
 set(SUITE_VER "1.1.44")
-set(PDF_VER "1.5.0")
+set(PDF_VER "1.6.0")
 set(PHOTO_VER "0.7.2")
 set(DOCS_VER "0.8.1")
 set(VAULT_VER "0.7.0")
@@ -92,6 +92,7 @@ target_link_libraries(DuncansSuite PRIVATE version psapi advapi32 user32 gdi32 s
 add_executable(DuncansPdfReader WIN32
     pdf/main.cpp
     pdf/PdfDocument.cpp
+    pdf/Print.cpp
     resources/pdf.rc
 )
 set_target_properties(DuncansPdfReader PROPERTIES OUTPUT_NAME DuncansPdf)
@@ -105,7 +106,7 @@ else()
     target_compile_options(DuncansPdfReader PRIVATE -Wall -Wextra -Wno-missing-field-initializers -Wno-cast-function-type -Os -ffunction-sections -fdata-sections)
     target_link_options(DuncansPdfReader PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
-target_link_libraries(DuncansPdfReader PRIVATE user32 gdi32 shell32 ole32 uuid dwmapi gdiplus comdlg32 uxtheme)
+target_link_libraries(DuncansPdfReader PRIVATE user32 gdi32 shell32 ole32 uuid dwmapi gdiplus comdlg32 uxtheme winspool)
 
 # pdfium.dll (pdf/third_party/get_pdfium.ps1) neben die EXEs in release/ kopieren, damit der PDF Reader und der Installer sie finden
 if(EXISTS "${CMAKE_SOURCE_DIR}/pdf/third_party/pdfium.dll")

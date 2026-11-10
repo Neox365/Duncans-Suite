@@ -50,6 +50,7 @@ public:
     bool MovePages(const std::vector<int>& indices, int insertBefore, std::vector<int>* newOrder = nullptr);
 
     // Text markieren / kommentieren. Koordinaten in Pixeln der gerenderten Seite (w x h, aktuelle Drehung).
+    bool GetText(int index, int startChar, int charCount, std::wstring& out) const;   // Text der Zeichen startChar .. startChar+charCount-1 (Zeilenumbrueche als \r\n)
     int CharAt(int index, int w, int h, int dx, int dy) const;                    // Zeichenindex an der Position oder -1
     bool AddHighlight(int index, int startChar, int charCount, unsigned long rgb = 0x00EBFF /* COLORREF: Gelb */);   // Hervorhebung in der Farbe rgb (COLORREF 0x00BBGGRR)
     bool RemoveHighlightAt(int index, int w, int h, int dx, int dy);              // Radierer: entfernt Markierungen unter dem Punkt (Pixel der gerenderten Seite)
