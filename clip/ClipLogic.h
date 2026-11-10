@@ -16,6 +16,7 @@ constexpr size_t kMaxHistory = 50;
 constexpr size_t kMaxTextLen = 100000;      // laengere Texte werden nicht in den Verlauf aufgenommen
 constexpr size_t kMaxImages = 10;           // hoechstens so viele Bilder im Verlauf (nur im Arbeitsspeicher)
 constexpr size_t kMaxImageBytes = 8u << 20; // groessere Bilder (als PNG) werden uebersprungen
+constexpr size_t kMaxPinned = 20;           // hoechstens so viele angepinnte Texte
 
 struct Prompt {
     std::wstring title;
@@ -30,6 +31,7 @@ struct HistoryItem {
     std::string png;                        // PNG-Bytes; leer = Textelement
     int width = 0, height = 0;
     unsigned long long time = 0;            // GetTickCount64 beim Aufnehmen (fuer die Aufbewahrung)
+    bool pinned = false;                    // angepinnt: steht ganz oben und bleibt (Aufbewahrung, "Verlauf leeren", Obergrenze); nur Text
     bool IsImage() const { return !png.empty(); }
 };
 
@@ -46,6 +48,14 @@ bool AddHistory(Store& s, const std::wstring& text, unsigned long long now = Get
 // Nimmt ein Bild (PNG-Bytes) auf; gleiche Bilder wandern nach vorn, aeltere Bilder ueber kMaxImages fliegen raus, zu grosse werden ignoriert.
 bool AddImage(Store& s, std::string png, int width, int height, unsigned long long now = GetTickCount64());
 bool RemoveHistory(Store& s, size_t index);
+// Anpinnen: angepinnte Texte stehen immer vorn, neue Eintraege kommen dahinter. Bilder lassen sich nicht anpinnen. false = nicht moeglich
+// (Bild, ungueltiger Index, schon kMaxPinned Pins).
+bool TogglePin(Store& s, size_t index);
+size_t PinnedCount(const Store& s);
+// Haengt einen gespeicherten Pin an das Ende der Pins (beim Start); false bei leerem/zu langem/doppeltem Text oder zu vielen Pins
+bool AddPinned(Store& s, const std::wstring& text);
+// Leert den Verlauf, nur Angepinntes bleibt. Rueckgabe: Anzahl entfernter Eintraege.
+size_t ClearHistory(Store& s);
 // Entfernt Eintraege, die aelter als maxAgeMs sind (0 = nichts entfernen). Rueckgabe: Anzahl entfernter Eintraege.
 size_t PurgeHistory(Store& s, unsigned long long maxAgeMs, unsigned long long now = GetTickCount64());
 
@@ -149,6 +159,8 @@ Settings LoadSettings();
 bool SaveSettings(const Settings& s);
 bool SavePrompts(const std::vector<Prompt>& p);              // mit Windows-Schluessel (DPAPI) verschluesselt
 std::vector<Prompt> LoadPrompts();
+bool SavePins(const std::vector<std::wstring>& pins);        // immer gespeichert (mit Windows-Schluessel), weil man sie bewusst anpinnt
+std::vector<std::wstring> LoadPins();
 bool SaveHistory(const std::vector<std::wstring>& h);        // nur Texte (Bilder werden nie gespeichert)
 std::vector<std::wstring> LoadHistory();
 void DeleteHistoryFile();

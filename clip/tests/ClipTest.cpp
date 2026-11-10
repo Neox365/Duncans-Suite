@@ -331,6 +331,47 @@ int main() {
         CHECK(SaveSettings(a) && !LoadSettings().cleanLinks);
     }
 
+    // ---- Anpinnen ----
+    {
+        Store p;
+        AddHistory(p, L"alt", 100); AddHistory(p, L"mitte", 200); AddHistory(p, L"neu", 300);        // neu, mitte, alt
+        CHECK(p.history.size() == 3 && p.history[0].text == L"neu");
+        CHECK(TogglePin(p, 2));                                                                       // "alt" anpinnen: kommt ganz nach oben
+        CHECK(p.history[0].text == L"alt" && p.history[0].pinned && PinnedCount(p) == 1);
+        AddHistory(p, L"frisch", 400);                                                                // neue Eintraege kommen hinter die Pins
+        CHECK(p.history[0].text == L"alt" && p.history[1].text == L"frisch");
+        AddHistory(p, L"alt", 500);                                                                   // Duplikat eines Pins: bleibt, wo es ist, kein zweiter Eintrag
+        CHECK(p.history.size() == 5 - 1 && p.history[0].text == L"alt" && PinnedCount(p) == 1);
+        CHECK(TogglePin(p, 3) && p.history[0].text == L"mitte" && PinnedCount(p) == 2);               // "mitte" (Index 3) kommt vor "alt"
+        CHECK(PurgeHistory(p, 10, 100000) == 2 && p.history.size() == 2 && PinnedCount(p) == 2);      // Aufbewahrung loescht nur Ungepinntes
+        AddHistory(p, L"x", 1);
+        CHECK(ClearHistory(p) == 1 && p.history.size() == 2 && p.history[0].pinned && p.history[1].pinned);   // "Verlauf leeren" laesst Pins stehen
+        CHECK(TogglePin(p, 0) && !p.history[1].pinned && p.history[1].text == L"mitte" && PinnedCount(p) == 1);   // Pin loesen: wandert hinter die Pins
+        CHECK(!TogglePin(p, 9));
+        // Obergrenze fuer den normalen Verlauf zaehlt ohne Pins
+        Store q;
+        for (size_t i = 0; i < kMaxPinned; ++i) CHECK(AddPinned(q, L"pin" + std::to_wstring(i)));
+        CHECK(!AddPinned(q, L"zuviel") && !AddPinned(q, L"pin0"));
+        for (size_t i = 0; i < kMaxHistory + 10; ++i) AddHistory(q, L"h" + std::to_wstring(i), 1000 + i);
+        CHECK(q.history.size() == kMaxPinned + kMaxHistory && PinnedCount(q) == kMaxPinned && q.history[0].text == L"pin0");
+        AddHistory(q, L"noch ein", 5000);
+        CHECK(q.history.size() == kMaxPinned + kMaxHistory && q.history[kMaxPinned].text == L"noch ein");
+        CHECK(!TogglePin(q, kMaxPinned));                                                             // 21. Pin geht nicht
+        // Bilder: nicht anpinnbar, stehen hinter den Pins
+        Store im;
+        AddHistory(im, L"t", 1);
+        AddImage(im, std::string("\x89PNG-fake", 9), 10, 10, 2);
+        CHECK(!TogglePin(im, 0));                                                                     // Index 0 ist das Bild
+        CHECK(TogglePin(im, 1) && im.history[0].pinned);
+        AddImage(im, std::string("\x89PNG-fake2", 10), 20, 20, 3);
+        CHECK(im.history[0].pinned && im.history[1].IsImage());
+        // Speichern und Laden (verschluesselt)
+        CHECK(SavePins({ L"eins", L"zwei \xE4" }));
+        const std::vector<std::wstring> lp = LoadPins();
+        CHECK(lp.size() == 2 && lp[0] == L"eins" && lp[1] == L"zwei \xE4");
+        CHECK(SavePins({}) && LoadPins().empty());
+    }
+
     // ---- Formatierung erkennen ----
     SetPlain(L"nur Text");
     CHECK(!ClipboardHasRichText());

@@ -9,7 +9,7 @@ set(VAULT_VER "0.7.0")
 set(OFFICE_VER "0.6.0")
 set(QUICKCONVERT_VER "0.4.1")
 set(BOOST_VER "0.6.1")
-set(CLIP_VER "0.5.2")
+set(CLIP_VER "0.6.0")
 set(EQUALIZER_VER "0.5.0")
 
 set(CMAKE_CXX_STANDARD 17)

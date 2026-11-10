@@ -30,7 +30,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.2"   // normalerweise aus CMake
+#define APP_VERSION L"0.6.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -62,6 +62,7 @@ enum HitId {
 };
 
 struct Row { size_t idx = 0; int top = 0, height = 0; };
+constexpr int kRowParts = 4;   // Treffer je Zeile: 0 Zeile (kopieren), 1 Stern/Stift, 2 Kreuz, 3 Pin
 
 struct EditState { bool open = false; int index = -1; };   // index -1 = neuer Prompt
 
@@ -173,10 +174,16 @@ void ForceForeground(HWND h) {
 }
 
 // ---------- Daten ----------
+void SavePinsNow() {                                  // Pins werden immer gespeichert (verschluesselt), der normale Verlauf nur auf Wunsch
+    std::vector<std::wstring> pins;
+    for (const clip::HistoryItem& h : g.store.history) if (h.pinned) pins.push_back(h.text);
+    clip::SavePins(pins);
+}
+
 void SaveHistoryIfWanted() {
     if (!g.cfg.saveHistory) return;
-    std::vector<std::wstring> texts;                  // Bilder werden nie gespeichert
-    for (const clip::HistoryItem& h : g.store.history) if (!h.IsImage()) texts.push_back(h.text);
+    std::vector<std::wstring> texts;                  // Bilder werden nie gespeichert, Pins stehen in ihrer eigenen Datei
+    for (const clip::HistoryItem& h : g.store.history) if (!h.IsImage() && !h.pinned) texts.push_back(h.text);
     clip::SaveHistory(texts);
 }
 
@@ -599,7 +606,14 @@ void ActivateRow(int rowIndex, int part) {
         const clip::HistoryItem& it = g.store.history[i];
         if (part == 0) { if (it.IsImage()) CopyImageToClipboard(it.png, L"Bild in die Zwischenablage kopiert."); else CopyToClipboard(it.text, L"In die Zwischenablage kopiert."); }
         else if (part == 1) { if (!it.IsImage()) { g.store.prompts.push_back(clip::MakePrompt(it.text)); SavePromptsNow(); SetStatus(L"Als Prompt gespeichert (Reiter „Prompts“).", kGreen); } }
-        else { clip::RemoveHistory(g.store, i); PruneThumbs(); SaveHistoryIfWanted(); Layout(); }
+        else if (part == 3) {
+            const bool was = it.pinned;
+            if (clip::TogglePin(g.store, i)) {
+                SavePinsNow(); SaveHistoryIfWanted(); Layout();
+                SetStatus(was ? L"Pin entfernt." : L"Angepinnt: bleibt oben, auch nach „Verlauf leeren“ und beim Neustart.", kGreen);
+            } else SetStatus(L"Mehr als " + std::to_wstring(clip::kMaxPinned) + L" Pins sind nicht möglich.", kOrange);
+        }
+        else { const bool wasPinned = it.pinned; clip::RemoveHistory(g.store, i); if (wasPinned) SavePinsNow(); PruneThumbs(); SaveHistoryIfWanted(); Layout(); }
     } else {
         if (part == 0) { CopyToClipboard(clip::Expand(g.store.prompts[i].text, CurrentClipText()), L"Prompt kopiert ({clip}, {datum} … ersetzt)."); MarkUsed(i); }
         else if (part == 1) OpenEditor(static_cast<int>(i));
@@ -674,10 +688,26 @@ void DrawPencil(HDC dc, const RECT& r, COLORREF c) {
     gr.ResetTransform();
 }
 
-void RowButtons(const RECT& card, RECT& b1, RECT& b2) {
+void RowButtons(const RECT& card, RECT& b1, RECT& b2, RECT* b3 = nullptr) {
     const int sz = S(32), pad = S(14);
     b2 = { card.right - pad - sz, card.top + (card.bottom - card.top - sz) / 2, card.right - pad, card.top + (card.bottom - card.top - sz) / 2 + sz };
     b1 = { b2.left - S(6) - sz, b2.top, b2.left - S(6), b2.bottom };
+    if (b3) *b3 = { b1.left - S(6) - sz, b1.top, b1.left - S(6), b1.bottom };   // Pin (nur Verlauf, nur Text)
+}
+
+// Pinnnadel: Kopf und Spitze; angepinnt = gefuellt in der Akzentfarbe
+void DrawPin(HDC dc, const RECT& r, COLORREF c, bool filled) {
+    Gdiplus::Graphics gr(dc);
+    gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    const float cx = (r.left + r.right) / 2.0f, cy = (r.top + r.bottom) / 2.0f, u = (r.right - r.left) / 32.0f;
+    Gdiplus::Pen pen(Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c)), 1.7f);
+    pen.SetStartCap(Gdiplus::LineCapRound); pen.SetEndCap(Gdiplus::LineCapRound); pen.SetLineJoin(Gdiplus::LineJoinRound);
+    Gdiplus::SolidBrush br(Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c)));
+    const Gdiplus::PointF head[4] = { { cx - 4.5f * u, cy - 9.0f * u }, { cx + 4.5f * u, cy - 9.0f * u }, { cx + 3.0f * u, cy + 1.0f * u }, { cx - 3.0f * u, cy + 1.0f * u } };
+    if (filled) gr.FillPolygon(&br, head, 4);
+    gr.DrawPolygon(&pen, head, 4);
+    gr.DrawLine(&pen, cx - 6.5f * u, cy + 1.0f * u, cx + 6.5f * u, cy + 1.0f * u);
+    gr.DrawLine(&pen, cx, cy + 1.0f * u, cx, cy + 9.5f * u);
 }
 
 void PaintEditor(HDC dc, const RECT& cr) {
@@ -755,12 +785,13 @@ void Paint(HDC dc, const RECT& cr) {
         const int top = g.list.top + r.top - g.scroll;
         if (top + r.height < g.list.top || top > g.list.bottom) continue;
         RECT card{ g.list.left, top, g.list.left + cardW, top + r.height };
-        RECT b1, b2;
-        RowButtons(card, b1, b2);
-        const int base = H_ROW_BASE + static_cast<int>(ri) * 3;
-        const bool hot = g.hover == base, h1 = g.hover == base + 1, h2 = g.hover == base + 2;
-        FillRound(dc, card, S(14), (hot || h1 || h2) ? kCardHover : kCard, (hot || h1 || h2) ? kBorderHot : kBorder);
-        const int tx = card.left + S(18), tr = b1.left - S(12);
+        RECT b1, b2, b3;
+        RowButtons(card, b1, b2, &b3);
+        const int base = H_ROW_BASE + static_cast<int>(ri) * kRowParts;
+        const bool hot = g.hover == base, h1 = g.hover == base + 1, h2 = g.hover == base + 2, h3 = g.hover == base + 3;
+        const bool pinnedRow = g.tab == T_HISTORY && g.store.history[r.idx].pinned;
+        FillRound(dc, card, S(14), (hot || h1 || h2 || h3) ? kCardHover : kCard, pinnedRow ? Blend(kBorder, kClip, 60) : (hot || h1 || h2 || h3) ? kBorderHot : kBorder);
+        const int tx = card.left + S(18), tr = (g.tab == T_HISTORY ? b3.left : b1.left) - S(12);
         if (g.tab == T_HISTORY) {
             const clip::HistoryItem& hi = g.store.history[r.idx];
             if (hi.IsImage()) {                                                         // Bild: Vorschau links, Beschriftung rechts daneben, kein Stern
@@ -774,6 +805,8 @@ void Paint(HDC dc, const RECT& cr) {
                 DrawText2(dc, g.fBody, kText, { tx, card.top + S(10), tr, card.bottom - S(10) }, clip::Preview(hi.text, 160), DT_LEFT | DT_VCENTER | DT_WORDBREAK | DT_END_ELLIPSIS);
                 FillRound(dc, b1, S(10), h1 ? kCardHover : kCard, h1 ? kBorderHot : kBorder);
                 DrawStar(dc, b1, h1 ? kClip : kTextDim, false);
+                FillRound(dc, b3, S(10), h3 ? kCardHover : kCard, (h3 || hi.pinned) ? kClip : kBorder);
+                DrawPin(dc, b3, (h3 || hi.pinned) ? kClip : kTextDim, hi.pinned);
             }
         } else {
             const clip::Prompt& p = g.store.prompts[r.idx];
@@ -837,10 +870,11 @@ int HitTest(POINT p) {
             const Row& r = g.rows[i];
             if (y < r.top || y >= r.top + r.height) continue;
             RECT card{ g.list.left, g.list.top + r.top - g.scroll, g.list.left + CardWidth(), g.list.top + r.top - g.scroll + r.height };
-            RECT b1, b2;
-            RowButtons(card, b1, b2);
-            const int base = H_ROW_BASE + static_cast<int>(i) * 3;
-            const bool image = g.tab == T_HISTORY && g.store.history[r.idx].IsImage();     // Bilder haben keinen Stern
+            RECT b1, b2, b3;
+            RowButtons(card, b1, b2, &b3);
+            const int base = H_ROW_BASE + static_cast<int>(i) * kRowParts;
+            const bool image = g.tab == T_HISTORY && g.store.history[r.idx].IsImage();     // Bilder haben weder Stern noch Pin
+            if (g.tab == T_HISTORY && !image && PtInRect(&b3, p)) return base + 3;
             if (PtInRect(&b1, p)) return image ? base : base + 1;
             if (PtInRect(&b2, p)) return base + 2;
             return base;
@@ -864,7 +898,11 @@ void Activate(int id) {
     else if (id == H_INTRO_OK) { g.cfg.hideIntro = true; clip::SaveSettings(g.cfg); Layout(); }
     else if (id == H_HELP) { g.cfg.hideIntro = !g.cfg.hideIntro; clip::SaveSettings(g.cfg); Layout(); }
     else if (id == H_ACTION) {
-        if (g.tab == T_HISTORY) { g.store.history.clear(); SaveHistoryIfWanted(); Layout(); SetStatus(L"Verlauf geleert.", kGreen); }
+        if (g.tab == T_HISTORY) {
+            clip::ClearHistory(g.store);
+            PruneThumbs(); SaveHistoryIfWanted(); Layout();
+            SetStatus(clip::PinnedCount(g.store) ? L"Verlauf geleert (angepinnte Einträge bleiben)." : L"Verlauf geleert.", kGreen);
+        }
         else OpenEditor(-1);
     }
     else if (id >= H_CHIP_BASE && id < H_CHIP_BASE + 50) {
@@ -881,7 +919,7 @@ void Activate(int id) {
         default: ExportImportMenu(); break;
         }
     }
-    else if (id >= H_ROW_BASE) ActivateRow((id - H_ROW_BASE) / 3, (id - H_ROW_BASE) % 3);
+    else if (id >= H_ROW_BASE) ActivateRow((id - H_ROW_BASE) / kRowParts, (id - H_ROW_BASE) % kRowParts);
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
 
@@ -1309,6 +1347,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     const bool firstRun = GetFileAttributesW((clip::DataDir() + L"\\settings.ini").c_str()) == INVALID_FILE_ATTRIBUTES;
     g.cfg = clip::LoadSettings();
     g.store.prompts = clip::LoadPrompts();
+    for (const std::wstring& pin : clip::LoadPins()) clip::AddPinned(g.store, pin);   // Pins zuerst (stehen vorn)
     if (g.cfg.saveHistory) {                         // gespeicherte Texte (neueste zuerst) wieder aufnehmen
         const std::vector<std::wstring> saved = clip::LoadHistory();
         for (size_t i = saved.size(); i-- > 0;) clip::AddHistory(g.store, saved[i]);
