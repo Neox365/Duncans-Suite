@@ -494,6 +494,7 @@ static std::vector<AppBase> AppCacheBases() {
         b.push_back({lad / L"UnrealEngine" / L"Common" / L"DerivedDataCache", L"Unreal Engine (Derived Data Cache)", true});
         b.push_back({lad / L"Unity" / L"cache", L"Unity (Cache)", true});
         b.push_back({lad / L"Microsoft" / L"Office" / L"16.0" / L"OfficeFileCache", L"Microsoft Office", true});
+        b.push_back({lad / L"Battle.net", L"Battle.net"});   // nur die Cache-Unterordner (Cache, GPUCache ...), nie Anmeldung oder Spiele
         b.push_back({lad / L"Steam" / L"htmlcache", L"Steam"});
         b.push_back({lad / L"Steam" / L"htmlcache" / L"Default", L"Steam"});
         b.push_back({lad / L"Packages" / L"MSTeams_8wekyb3d8bbwe" / L"LocalCache" / L"Microsoft" / L"MSTeams" / L"EBWebView" / L"Default", L"Teams"});
@@ -513,7 +514,7 @@ static std::wstring AppCacheLabel(const fs::path& p) {
     return L"";
 }
 // Zwischenspeicher von Entwickler-Werkzeugen (alles wird bei Bedarf neu geladen, das naechste Installieren/Bauen dauert dann nur laenger).
-// Bewusst nicht dabei: die NuGet-Paketablage (.nuget\\packages) und Gradle, weil Offline-Builds sonst brechen koennten.
+// Bewusst nicht dabei: die NuGet-Paketablage (.nuget\\packages), Gradle, Maven (.m2) und der Cargo-Registry-Ordner, weil Offline-Builds sonst brechen koennten.
 static std::vector<fs::path> DevCacheDirs() {
     std::vector<fs::path> d;
     const fs::path lad = KnownFolder(FOLDERID_LocalAppData);
@@ -523,6 +524,16 @@ static std::vector<fs::path> DevCacheDirs() {
     d.push_back(lad / L"NuGet" / L"v3-cache");
     d.push_back(lad / L"NuGet" / L"plugins-cache");
     d.push_back(lad / L"Yarn" / L"Cache");
+    d.push_back(lad / L"go-build");                        // Go: reiner Build-Cache
+    d.push_back(lad / L"Composer" / L"cache");             // PHP Composer
+    d.push_back(lad / L"pypoetry" / L"Cache");             // Python Poetry
+    d.push_back(lad / L"uv" / L"cache");                   // Python uv
+    std::error_code ec;                                    // JetBrains-IDEs: je Produkt und Version der Ordner "caches" (wird beim naechsten Start neu aufgebaut)
+    for (const auto& e : fs::directory_iterator(lad / L"JetBrains", fs::directory_options::skip_permission_denied, ec)) {
+        std::error_code e2;
+        const fs::path c = e.path() / L"caches";
+        if (e.is_directory(e2) && fs::is_directory(c, e2)) d.push_back(c);
+    }
     return d;
 }
 static void AddUltraItems(std::vector<fs::path>& v) {
@@ -953,7 +964,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.8.8";
+constexpr wchar_t kVersion[] = L"1.8.9";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -2556,7 +2567,7 @@ static const wchar_t* GroupName(int cat, int g) {
     static const wchar_t* s[] = {L"Vorschaubilder", L"Symbol-Cache", L"Absturzabbilder", L"Windows-Fehlerberichte", L"Sonstiges",
                                  L"Shader-Caches (DirectX, NVIDIA, AMD)", L"Windows-Update-Reste", L"Treiber-Installer-Reste", L"Setup-Reste (Windows-Temp)",
                                  L"App-Caches (Discord, Slack, Steam, VS Code …)", L"Microsoft-Store-Reste", L"Diagnose- und ETL-Protokolle",
-                                 L"Entwickler-Caches (npm, pip, NuGet, Yarn)"};
+                                 L"Entwickler-Caches (npm, pip, NuGet, Yarn, Go, JetBrains …)"};
     static const wchar_t* d[] = {L"Dokumente", L"Bilder", L"Videos", L"Musik", L"Archive", L"Programme und Installer", L"Ordner", L"Sonstiges", L"Doppelte Dateien"};
     return Tr(cat == CAT_TEMP ? t[g] : cat == CAT_SYS ? s[g] : d[g]);
 }
@@ -2580,7 +2591,7 @@ static const wchar_t* GroupNote(int cat, int g) {
                                  L"Zwischenspeicher von Discord, Slack, Steam, VS Code, Teams, Spotify und weiteren Programmen – Anmeldung und Einstellungen bleiben, die Programme bauen den Cache neu auf",
                                  L"Zwischengespeicherte und vorübergehende Downloads des Microsoft Store",
                                  L"Ablaufverfolgungs-Protokolle (.etl) und Wartungsprotokolle (CBS, DISM) von Windows. Von Windows benutzte Dateien bleiben (ohne Administratorrechte)",
-                                 L"Heruntergeladene Paket-Zwischenspeicher von npm, pip, NuGet und Yarn – werden bei Bedarf neu geladen, das nächste Installieren dauert dann etwas länger"};
+                                 L"Paket- und Build-Zwischenspeicher von npm, pip, NuGet, Yarn, Go, Composer, Poetry, uv und JetBrains-Programmen – werden bei Bedarf neu geladen oder aufgebaut, das nächste Installieren und Bauen dauert dann etwas länger"};
     static const wchar_t* d[] = {L"PDF, Word, Excel, PowerPoint, Text …", L"JPG, PNG, GIF, WebP …", L"MP4, MKV, AVI, MOV …", L"MP3, WAV, FLAC, M4A …",
                                  L"ZIP, RAR, 7z, ISO …", L"Installer, EXE, MSI, Skripte …", L"Ganze Ordner im Downloads-Ordner",
                                  L"Alles andere, was sich nicht eindeutig zuordnen lässt",
