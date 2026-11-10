@@ -100,6 +100,7 @@ struct PdfiumApi {
     int (*TextCountRects)(void* textPage, int startIndex, int count) = nullptr;
     FPDF_BOOL (*TextGetRect)(void* textPage, int rectIndex, double* left, double* top, double* right, double* bottom) = nullptr;
     int (*TextGetCharIndexAtPos)(void* textPage, double x, double y, double xTol, double yTol) = nullptr;
+    int (*TextGetText)(void* textPage, int startIndex, int count, unsigned short* result) = nullptr;   // liefert Zeichen inkl. abschliessendem NUL
     FPDF_BOOL (*DeviceToPage)(FPDF_PAGE, int sx, int sy, int sw, int sh, int rotate, int dx, int dy, double* px, double* py) = nullptr;
     // Seiten verschieben / neues Dokument
     FPDF_DOCUMENT (*CreateNewDocument)() = nullptr;

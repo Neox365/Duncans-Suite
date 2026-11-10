@@ -193,7 +193,8 @@ bool PdfDocument::InitLibrary() {
         && Load("FPDFPageObj_CreateNewRect", g_api.NewRectObj)
         && Load("FPDFPageObj_SetFillColor", g_api.PageObjSetFillColor)
         && Load("FPDFPath_SetDrawMode", g_api.PathSetDrawMode)
-        && Load("FPDFText_GetBoundedText", g_api.TextGetBoundedText);
+        && Load("FPDFText_GetBoundedText", g_api.TextGetBoundedText)
+        && Load("FPDFText_GetText", g_api.TextGetText);
     FPDF_LIBRARY_CONFIG cfg{};
     cfg.version = 2;
     g_api.InitLibraryWithConfig(&cfg);
@@ -446,6 +447,25 @@ int PdfDocument::CharAt(int index, int w, int h, int dx, int dy) const {
     }
     g_api.ClosePage(page);
     return result;
+}
+
+bool PdfDocument::GetText(int index, int startChar, int charCount, std::wstring& out) const {
+    out.clear();
+    if (!m_doc || startChar < 0 || charCount <= 0) return false;
+    void* page = g_api.LoadPage(m_doc, index);
+    if (!page) return false;
+    bool ok = false;
+    if (void* tp = g_api.TextLoadPage(page)) {
+        std::vector<unsigned short> buf(static_cast<size_t>(charCount) + 1, 0);
+        const int got = g_api.TextGetText(tp, startChar, charCount, buf.data());
+        if (got > 1) {                                   // got zaehlt das abschliessende NUL mit
+            out.assign(buf.begin(), buf.begin() + (got - 1));
+            ok = true;
+        }
+        g_api.TextClosePage(tp);
+    }
+    g_api.ClosePage(page);
+    return ok;
 }
 
 bool PdfDocument::AddHighlight(int index, int startChar, int charCount, unsigned long rgb) {
