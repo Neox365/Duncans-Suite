@@ -33,6 +33,8 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.6.0 | 2026-11-10
+- Neu: Anpinnen. Jeder Texteintrag im Verlauf hat links vom Stern einen Pin-Knopf. Angepinnte Einträge stehen immer ganz oben (mit farbigem Rand und gefüllter Nadel) und bleiben, auch wenn „Verlauf leeren“ gedrückt wird, die automatische Löschung („Verlauf löschen nach“) greift oder der Verlauf voll ist. Bis zu 20 Pins. Sie werden immer verschlüsselt (Windows-Schlüssel, nur auf diesem PC) gespeichert und sind nach einem Neustart wieder da, auch wenn „Verlauf speichern“ aus ist. Der Pin-Knopf löst den Pin wieder; das Kreuz löscht den Eintrag ganz. Bilder lassen sich nicht anpinnen.
 ## 0.5.2 | 2026-11-09
 - Behoben: Die Beschriftung des Knopfs „Mehr“ unten rechts war zu lang und wurde an beiden Seiten abgeschnitten. Sie heißt jetzt „Mehr: Prompts & Optionen“.
 ## 0.5.1 | 2026-11-09

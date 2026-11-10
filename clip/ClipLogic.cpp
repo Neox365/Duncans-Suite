@@ -215,35 +215,43 @@ namespace {
 }
 
 // ---- Verlauf ----
+size_t PinnedCount(const Store& s) {
+    size_t n = 0;
+    for (const HistoryItem& h : s.history) if (h.pinned) ++n;       // Pins stehen immer vorn
+    return n;
+}
+
 bool AddHistory(Store& s, const std::wstring& text, unsigned long long now) {
     if (IsBlank(text) || text.size() > kMaxTextLen) return false;
+    const size_t pins = PinnedCount(s);
     for (size_t i = 0; i < s.history.size(); ++i) {
         if (s.history[i].IsImage() || s.history[i].text != text) continue;
-        if (i == 0) { s.history[0].time = now; return false; }          // schon vorn
+        if (s.history[i].pinned || i == pins) { s.history[i].time = now; return false; }   // angepinnt oder schon vorn
         HistoryItem it = std::move(s.history[i]);
         it.time = now;
         s.history.erase(s.history.begin() + static_cast<std::ptrdiff_t>(i));
-        s.history.insert(s.history.begin(), std::move(it));             // nach vorn holen
+        s.history.insert(s.history.begin() + static_cast<std::ptrdiff_t>(pins), std::move(it));   // hinter die Pins holen
         return true;
     }
     HistoryItem it;
     it.id = s.nextId++;
     it.text = text;
     it.time = now;
-    s.history.insert(s.history.begin(), std::move(it));
-    while (s.history.size() > kMaxHistory) s.history.pop_back();
+    s.history.insert(s.history.begin() + static_cast<std::ptrdiff_t>(pins), std::move(it));
+    while (s.history.size() - pins > kMaxHistory) s.history.pop_back();   // Pins stehen vorn, hinten fliegt nur Ungepinntes raus
     return true;
 }
 
 bool AddImage(Store& s, std::string png, int width, int height, unsigned long long now) {
     if (png.empty() || png.size() > kMaxImageBytes) return false;
+    const size_t pins = PinnedCount(s);
     for (size_t i = 0; i < s.history.size(); ++i) {
         if (!s.history[i].IsImage() || s.history[i].png != png) continue;
-        if (i == 0) { s.history[0].time = now; return false; }
+        if (i == pins) { s.history[i].time = now; return false; }
         HistoryItem it = std::move(s.history[i]);
         it.time = now;
         s.history.erase(s.history.begin() + static_cast<std::ptrdiff_t>(i));
-        s.history.insert(s.history.begin(), std::move(it));
+        s.history.insert(s.history.begin() + static_cast<std::ptrdiff_t>(pins), std::move(it));
         return true;
     }
     HistoryItem it;
@@ -252,12 +260,12 @@ bool AddImage(Store& s, std::string png, int width, int height, unsigned long lo
     it.width = width; it.height = height;
     it.text = L"Bild " + std::to_wstring(width) + L" × " + std::to_wstring(height);
     it.time = now;
-    s.history.insert(s.history.begin(), std::move(it));
+    s.history.insert(s.history.begin() + static_cast<std::ptrdiff_t>(pins), std::move(it));
     size_t images = 0;
     for (const HistoryItem& h : s.history) if (h.IsImage()) ++images;
     for (size_t i = s.history.size(); images > kMaxImages && i-- > 0;)  // aelteste Bilder zuerst entfernen
         if (s.history[i].IsImage()) { s.history.erase(s.history.begin() + static_cast<std::ptrdiff_t>(i)); --images; }
-    while (s.history.size() > kMaxHistory) s.history.pop_back();
+    while (s.history.size() - pins > kMaxHistory) s.history.pop_back();
     return true;
 }
 
@@ -267,11 +275,47 @@ bool RemoveHistory(Store& s, size_t index) {
     return true;
 }
 
+bool TogglePin(Store& s, size_t index) {
+    if (index >= s.history.size() || s.history[index].IsImage()) return false;
+    if (!s.history[index].pinned && PinnedCount(s) >= kMaxPinned) return false;
+    HistoryItem it = std::move(s.history[index]);
+    s.history.erase(s.history.begin() + static_cast<std::ptrdiff_t>(index));
+    if (!it.pinned) {
+        it.pinned = true;
+        s.history.insert(s.history.begin(), std::move(it));              // neuer Pin ganz nach oben
+    } else {
+        it.pinned = false;
+        it.time = GetTickCount64();
+        s.history.insert(s.history.begin() + static_cast<std::ptrdiff_t>(PinnedCount(s)), std::move(it));   // wieder ganz vorn im normalen Verlauf
+    }
+    return true;
+}
+
+bool AddPinned(Store& s, const std::wstring& text) {
+    if (IsBlank(text) || text.size() > kMaxTextLen) return false;
+    const size_t pins = PinnedCount(s);
+    if (pins >= kMaxPinned) return false;
+    for (size_t i = 0; i < pins; ++i) if (s.history[i].text == text) return false;
+    HistoryItem it;
+    it.id = s.nextId++;
+    it.text = text;
+    it.time = GetTickCount64();
+    it.pinned = true;
+    s.history.insert(s.history.begin() + static_cast<std::ptrdiff_t>(pins), std::move(it));
+    return true;
+}
+
+size_t ClearHistory(Store& s) {
+    const size_t before = s.history.size();
+    s.history.erase(std::remove_if(s.history.begin(), s.history.end(), [](const HistoryItem& h) { return !h.pinned; }), s.history.end());
+    return before - s.history.size();
+}
+
 size_t PurgeHistory(Store& s, unsigned long long maxAgeMs, unsigned long long now) {
     if (maxAgeMs == 0) return 0;
     const size_t before = s.history.size();
     s.history.erase(std::remove_if(s.history.begin(), s.history.end(),
-                    [&](const HistoryItem& h) { return now > h.time && now - h.time > maxAgeMs; }), s.history.end());
+                    [&](const HistoryItem& h) { return !h.pinned && now > h.time && now - h.time > maxAgeMs; }), s.history.end());
     return before - s.history.size();
 }
 
@@ -1005,6 +1049,20 @@ std::vector<Prompt> LoadPrompts() {
         if (r.size() > 3) p.lastUsed = wcstoull(r[3].c_str(), nullptr, 10);
         out.push_back(std::move(p));
     }
+    return out;
+}
+
+bool SavePins(const std::vector<std::wstring>& pins) {
+    std::vector<std::vector<std::wstring>> recs;
+    for (const std::wstring& x : pins) recs.push_back({ x });
+    return SaveEncrypted(L"pins.dat", PackRecords(recs));
+}
+
+std::vector<std::wstring> LoadPins() {
+    std::vector<std::wstring> out;
+    std::vector<std::vector<std::wstring>> recs;
+    if (!LoadEncrypted(L"pins.dat", recs)) return out;
+    for (const auto& r : recs) if (r.size() == 1 && !r[0].empty() && out.size() < kMaxPinned) out.push_back(r[0]);
     return out;
 }
 
