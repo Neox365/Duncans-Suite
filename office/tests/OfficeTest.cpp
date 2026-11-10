@@ -8,6 +8,7 @@
 #include "../Codec.h"
 #include "../Docx.h"
 #include "../Sheet.h"
+#include "../Xlsx.h"
 
 namespace {
 int g_fail = 0, g_count = 0;
@@ -206,10 +207,116 @@ void ChartTests()
     CHECK(lo <= -3 && hi >= 4);
 }
 
+void XlsxTests()
+{
+    using namespace sheet;
+    auto Rgb = [](unsigned r, unsigned g, unsigned b) { return static_cast<std::uint32_t>(r | (g << 8) | (b << 16)); };
+    // Eine handgebaute Excel-Datei: gemeinsame Zeichenfolgen, Datum, Wahrheitswert, Fehler, gemeinsame Formel, fremde Funktion, Zellen ausserhalb
+    const std::string xml = "<?xml version=\"1.0\"?>";
+    const std::string sst = xml + "<sst xmlns=\"x\" count=\"3\"><si><t>Name</t></si><si><r><t>Ger</t></r><r><t xml:space=\"preserve\">\xC3\xA4t &amp; Co</t></r><rPh><t>XXX</t></rPh></si><si><t>01234</t></si></sst>";
+    const std::string styles = xml + "<styleSheet xmlns=\"x\"><numFmts count=\"2\"><numFmt numFmtId=\"164\" formatCode=\"dd\\.mm\\.yyyy\"/><numFmt numFmtId=\"165\" formatCode=\"#,##0.00\\ &quot;\xE2\x82\xAC&quot;\"/></numFmts>"
+        "<fills count=\"3\"><fill><patternFill patternType=\"none\"/></fill><fill><patternFill patternType=\"gray125\"/></fill><fill><patternFill patternType=\"solid\"><fgColor rgb=\"FF00FF80\"/></patternFill></fill></fills>"
+        "<cellXfs count=\"5\"><xf numFmtId=\"0\" fillId=\"0\"/><xf numFmtId=\"164\" fillId=\"0\"/><xf numFmtId=\"10\" fillId=\"0\"/><xf numFmtId=\"165\" fillId=\"2\"/><xf numFmtId=\"0\" fillId=\"2\"/></cellXfs></styleSheet>";
+    const std::string sheet1 = xml + "<worksheet xmlns=\"x\"><sheetData>"
+        "<row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c><c r=\"B1\" t=\"s\"><v>1</v></c><c r=\"C1\" t=\"s\"><v>2</v></c></row>"
+        "<row r=\"2\"><c r=\"A2\"><v>12.5</v></c><c r=\"B2\" s=\"1\"><v>45000</v></c><c r=\"C2\" s=\"2\"><v>0.125</v></c><c r=\"D2\" s=\"3\"><v>7</v></c><c r=\"E2\" s=\"4\"/></row>"
+        "<row r=\"3\"><c r=\"A3\"><f>SUM(A2:A2,2)</f><v>14.5</v></c><c r=\"B3\" t=\"b\"><v>1</v></c><c r=\"C3\" t=\"e\"><v>#DIV/0!</v></c>"
+        "<c r=\"D3\" t=\"str\"><f>CONCATENATE(A1,B1)</f><v>Treffer</v></c><c r=\"E3\"><f>IF(A2&gt;10,\"gro\xC3\x9F\",\"klein\")</f><v>0</v></c><c r=\"F3\"><f>Tabelle2!A1+1</f><v>99</v></c></row>"
+        "<row r=\"4\"><c r=\"A4\"><f t=\"shared\" ref=\"A4:A5\" si=\"0\">$A$2*2</f><v>25</v></c></row>"
+        "<row r=\"5\"><c r=\"A5\"><f t=\"shared\" si=\"0\"/><v>26</v></c><c r=\"AA5\"><v>5</v></c></row>"
+        "<row r=\"150\"><c r=\"A150\"><v>1</v></c></row>"
+        "<row r=\"6\"><c r=\"A6\" t=\"inlineStr\"><is><t>direkt</t></is></c></row></sheetData></worksheet>";
+    const std::string wb = xml + "<workbook xmlns=\"x\" xmlns:r=\"y\"><sheets><sheet name=\"Eins\" sheetId=\"1\" r:id=\"rId7\"/><sheet name=\"Zwei\" sheetId=\"2\" r:id=\"rId8\"/></sheets></workbook>";
+    const std::string rels = xml + "<Relationships><Relationship Id=\"rId7\" Type=\"t\" Target=\"worksheets/sheet1.xml\"/><Relationship Id=\"rId8\" Type=\"t\" Target=\"worksheets/sheet2.xml\"/></Relationships>";
+    const std::string file = zip::Write({ { "xl/workbook.xml", wb }, { "xl/_rels/workbook.xml.rels", rels }, { "xl/worksheets/sheet1.xml", sheet1 },
+                                          { "xl/worksheets/sheet2.xml", xml + "<worksheet xmlns=\"x\"/>" }, { "xl/sharedStrings.xml", sst }, { "xl/styles.xml", styles } });
+    Sheet s;
+    const xlsx::ReadResult rr = xlsx::Read(file, s);
+    CHECK(rr.ok);
+    CHECK(rr.extraSheets == 1);
+    CHECK(rr.droppedCells == 2);                                   // AA5 und A150
+    CHECK(s.raw[0][0] == L"Name");
+    CHECK(s.raw[0][1] == L"Ger\xE4t & Co");                        // Rich-Text zusammengesetzt, Lautschrift (rPh) ignoriert
+    CHECK(s.raw[0][2] == L"01234");
+    CHECK(s.raw[1][0] == L"12.5" && s.Display(1, 0) == L"12,5");
+    CHECK(s.raw[1][1] == L"15.03.2023" && rr.dateCells == 1);      // Datumsformat: als Text
+    CHECK(s.fmt[1][2] == FmtPercent && s.Display(1, 2) == L"12,5 %");
+    CHECK(s.fmt[1][3] == FmtCurrency && s.fill[1][3] == Rgb(0x00, 0xFF, 0x80));
+    CHECK(s.fill[1][4] == Rgb(0x00, 0xFF, 0x80) && s.raw[1][4].empty());   // leere Zelle mit Hintergrund
+    CHECK(s.raw[2][0] == L"=SUM(A2:A2;2)" && s.Display(2, 0) == L"14,5");   // Formel bleibt Formel (Trenner , -> ;)
+    CHECK(s.raw[2][1] == L"WAHR");
+    CHECK(s.raw[2][2] == L"#DIV/0!");
+    CHECK(s.raw[2][3] == L"Treffer");                              // CONCATENATE kann Sheets nicht: Ergebnis statt Formel
+    CHECK(s.raw[2][4] == L"=IF(A2>10;\"gro\xDF\";\"klein\")" && s.Display(2, 4) == L"gro\xDF");
+    CHECK(s.raw[2][5] == L"99");                                   // Bezug auf anderes Blatt: Ergebnis
+    CHECK(rr.replacedFormulas == 2);
+    CHECK(s.raw[3][0] == L"=A2*2" && s.Display(3, 0) == L"25");    // $ entfernt
+    CHECK(s.raw[4][0] == L"26");                                   // gemeinsame Formel ohne Text: gespeicherter Wert
+    CHECK(s.raw[5][0] == L"direkt");
+
+    // Datum: Seriennummern
+    CHECK(xlsx::detail::SerialToText(45000, false, true) == L"15.03.2023");
+    CHECK(xlsx::detail::SerialToText(45292.5, false, false) == L"01.01.2024 12:00");
+    CHECK(xlsx::detail::SerialToText(61, false, true) == L"01.03.1900");
+    CHECK(xlsx::detail::SerialToText(1, false, true) == L"01.01.1900");
+    CHECK(xlsx::detail::SerialToText(0.75, true, false) == L"18:00");
+
+    // Kaputte Dateien
+    Sheet bad;
+    CHECK(!xlsx::Read("kein ZIP", bad).ok);
+    CHECK(!xlsx::Read(zip::Write({ { "a.txt", "x" } }), bad).ok);
+    CHECK(!xlsx::Read(zip::Write({ { "xl/workbook.xml", wb } }), bad).ok);          // Blatt fehlt
+
+    // Schreiben und wieder lesen
+    Sheet w;
+    w.Set(0, 0, L"Text mit \"Anf\xFChrung\" & <Tag>");
+    w.Set(0, 1, L"12,5");
+    w.Set(0, 2, L"-3");
+    w.Set(1, 0, L"=SUMME(B1:C1)");
+    w.Set(1, 1, L"=WENN(B1>2;\"ja\";\"nein\")");
+    w.Set(1, 2, L"=B1*1,5");
+    w.Set(2, 0, L"=1/0");
+    w.Set(2, 1, L"=MITTELWERT(B1:C1)");
+    w.Set(2, 2, L"=ZAEHLENWENN(B1:C1;\">0\")");
+    w.Set(4, 0, L"=RUNDEN(B1;0)");
+    w.Set(3, 0, L"0,25");
+    w.fmt[3][0] = FmtPercent;
+    w.Set(3, 1, L"1234,5");
+    w.fmt[3][1] = FmtCurrency;
+    w.fill[3][1] = Rgb(255, 200, 0);
+    w.fill[4][4] = Rgb(1, 2, 3);
+    const std::string out = xlsx::Write(w);
+    std::vector<zip::Entry> ents;
+    CHECK(zip::ReadDirectory(out, ents) && ents.size() == 6);
+    std::string sheetXml, stylesXml;
+    CHECK(zip::ReadEntry(out, ents, "xl/worksheets/sheet1.xml", sheetXml) && zip::ReadEntry(out, ents, "xl/styles.xml", stylesXml));
+    CHECK(sheetXml.find("<f>SUM(B1:C1)</f><v>9.5</v>") != std::string::npos);
+    CHECK(sheetXml.find("<f>IF(B1&gt;2,&quot;ja&quot;,&quot;nein&quot;)</f>") != std::string::npos);
+    CHECK(sheetXml.find("<f>ROUND(B1,0)</f>") != std::string::npos);
+    CHECK(sheetXml.find("<f>B1*1.5</f><v>18.75</v>") != std::string::npos);         // Dezimalkomma -> Punkt
+    CHECK(sheetXml.find("<f>COUNTIF(B1:C1,&quot;&gt;0&quot;)</f>") != std::string::npos);
+    CHECK(sheetXml.find("t=\"e\"><f>1/0</f><v>#DIV/0!</v>") != std::string::npos);
+    CHECK(sheetXml.find("Text mit &quot;Anf\xC3\xBC" "hrung&quot; &amp; &lt;Tag&gt;") != std::string::npos);
+    CHECK(stylesXml.find("rgb=\"FFFFC800\"") != std::string::npos && stylesXml.find("numFmtId=\"10\"") != std::string::npos);
+    Sheet back;
+    const xlsx::ReadResult br = xlsx::Read(out, back);
+    CHECK(br.ok && br.replacedFormulas == 0 && br.droppedCells == 0 && br.extraSheets == 0);
+    for (int r = 0; r < 5; ++r)
+        for (int c = 0; c < 5; ++c) {
+            CHECK(back.Display(r, c) == w.Display(r, c));                           // gleiche Anzeige nach dem Hin und Zurueck
+            CHECK(back.fmt[r][c] == w.fmt[r][c] && back.fill[r][c] == w.fill[r][c]);
+        }
+    CHECK(back.raw[0][0] == w.raw[0][0] && back.raw[0][1] == L"12.5");
+    CHECK(back.raw[1][0] == L"=SUM(B1;C1)" || back.raw[1][0] == L"=SUM(B1:C1)");
+    Sheet empty;
+    CHECK(xlsx::Read(xlsx::Write(empty), back).ok && back.raw[0][0].empty());
+}
+
 int main()
 {
     DocxTests();
     ChartTests();
+    XlsxTests();
     using namespace sheet;
 
     // Zellbezuege

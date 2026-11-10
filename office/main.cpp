@@ -30,11 +30,12 @@
 #include "Codec.h"
 #include "Docx.h"
 #include "Sheet.h"
+#include "Xlsx.h"
 #include <gdiplus.h>
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.0"
+#define APP_VERSION L"0.6.0"
 #endif
 
 namespace {
@@ -373,6 +374,8 @@ private:
     sheet::Sheet m_sheet;
     std::wstring m_sPath;
     bool m_sDirty = false;
+    bool m_sLossy = false;                     // die geoeffnete Excel-Datei hatte Inhalt, den Sheets nicht uebernimmt: Speichern fragt nach einem neuen Namen
+    bool LoadSheetFile(const std::wstring& path, std::wstring& note);   // .xlsx oder .csv laden; false = fehlgeschlagen (note = Meldung)
     int m_selR = 0, m_selC = 0;
     int m_scrollX = 0, m_scrollY = 0;
     bool m_editDirty = false, m_ignoreChange = false;
@@ -435,14 +438,15 @@ bool App::Create(HINSTANCE inst, int show, const std::wstring& openPath)
     ShowWindow(m_hwnd, show);
     UpdateWindow(m_hwnd);
     if (!openPath.empty()) {
-        if (ExtOf(openPath) == L".csv") {
+        if (ExtOf(openPath) == L".csv" || ExtOf(openPath) == L".xlsx") {
             SwitchMode(Mode::Sheets);
-            m_sPath = openPath;
-            std::string bytes;
-            if (ReadAll(openPath, bytes)) {
-                sheet::FromCsv(m_sheet, codec::DecodeAuto(bytes));
+            std::wstring note;
+            if (LoadSheetFile(openPath, note)) {
+                m_sPath = openPath;
                 Select(0, 0);
+                UpdateTitle();
             }
+            if (!note.empty()) MessageBoxW(m_hwnd, note.c_str(), L"Duncan's Office", MB_ICONINFORMATION);
         }
         else {
             SwitchMode(Mode::Writer);
@@ -815,7 +819,7 @@ void App::DrawStart(HDC dc)
         RECT t1{ b.rc.left + S(28), b.rc.top + S(104), b.rc.right - S(20), b.rc.top + S(138) };
         Text(dc, m_fTitle, kText, t1, writer ? L"Duncan's Writer" : L"Duncan's Sheets");
         RECT t2{ b.rc.left + S(28), b.rc.top + S(140), b.rc.right - S(20), b.rc.bottom - S(16) };
-        Text(dc, m_fUi, kDim, t2, writer ? L"Texte schreiben und formatieren. Öffnen und Speichern als .docx, .rtf oder .txt, Export als PDF, Drucken." : L"Tabellen mit Formeln (SUMME, MITTELWERT, MIN, MAX). Öffnen und Speichern als .csv.",
+        Text(dc, m_fUi, kDim, t2, writer ? L"Texte schreiben und formatieren. Öffnen und Speichern als .docx, .rtf oder .txt, Export als PDF, Drucken." : L"Tabellen mit Formeln (SUMME, MITTELWERT, MIN, MAX). Öffnen und Speichern als .xlsx (Excel) oder .csv.",
              DT_WORDBREAK | DT_NOPREFIX);
     }
 }
@@ -1058,7 +1062,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
                 sp.tiles = {
                     {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
                     {L"Quellcode", L"github.com/Neox365/Duncans-Suite"}, {L"Teil von", L"Duncan's Suite"},
-                    {L"Funktionen", L"Writer (Texte, .docx, .rtf und .txt, PDF-Export, Drucken) und Sheets (Tabellen mit Formeln, .csv) in einem Programm.", true},
+                    {L"Funktionen", L"Writer (Texte, .docx, .rtf und .txt, PDF-Export, Drucken) und Sheets (Tabellen mit Formeln, .xlsx und .csv) in einem Programm.", true},
                     {L"Datenschutz", L"Deine Dokumente bleiben auf diesem Gerät. Das Programm überträgt nichts.", true},
                 };
                 aboutgdi::Draw(mem, rc, static_cast<int>(m_dpi), sp, m_about);
@@ -2561,6 +2565,7 @@ bool App::SheetsNew()
     if (!ConfirmSheets()) return false;
     m_sheet.Clear();
     m_sPath.clear();
+    m_sLossy = false;
     m_sDirty = false;
     m_scrollX = m_scrollY = 0;
     for (int& w : m_colW) w = 104;
@@ -2570,17 +2575,49 @@ bool App::SheetsNew()
     return true;
 }
 
+// Laedt .xlsx oder CSV/Text in m_sheet. note: Hinweis fuer den Nutzer (auch bei Erfolg, z. B. nicht uebernommene Teile).
+bool App::LoadSheetFile(const std::wstring& path, std::wstring& note)
+{
+    note.clear();
+    std::string bytes;
+    if (!ReadAll(path, bytes)) { note = L"Die Datei konnte nicht gelesen werden:\n" + path; return false; }
+    int dropped = 0;
+    std::vector<std::wstring> lines;
+    m_sLossy = false;
+    if (ExtOf(path) == L".xlsx") {
+        const xlsx::ReadResult r = xlsx::Read(bytes, m_sheet);
+        if (!r.ok) { note = r.error; return false; }
+        dropped = r.droppedCells;
+        if (r.extraSheets > 0) lines.push_back(std::to_wstring(r.extraSheets) + L" weitere Tabellenblätter werden nicht angezeigt (Sheets kennt nur ein Blatt).");
+        if (r.replacedFormulas > 0) lines.push_back(std::to_wstring(r.replacedFormulas) + L" Formeln mit Funktionen, die Sheets noch nicht kann (oder mit Bezug auf andere Blätter), wurden durch ihr zuletzt berechnetes Ergebnis ersetzt.");
+        if (r.dateCells > 0) lines.push_back(std::to_wstring(r.dateCells) + L" Datums- und Zeitzellen sind jetzt Text (z. B. 15.03.2023).");
+        m_sLossy = r.extraSheets > 0 || r.droppedCells > 0 || r.replacedFormulas > 0 || r.dateCells > 0;
+    }
+    else {
+        dropped = sheet::FromCsv(m_sheet, codec::DecodeAuto(bytes));
+    }
+    if (dropped > 0) {
+        lines.insert(lines.begin(), std::to_wstring(dropped) + L" Zellen lagen außerhalb des Rasters (A–Z, Zeilen 1–100) und wurden nicht übernommen.");
+        m_sLossy = m_sLossy || ExtOf(path) == L".xlsx";
+    }
+    if (!lines.empty()) {
+        for (const std::wstring& l : lines) note += L"• " + l + L"\n";
+        if (m_sLossy) note += L"\nDamit nichts verloren geht, fragt „Speichern“ nach einem neuen Namen und lässt die Originaldatei unverändert.";
+    }
+    return true;
+}
+
 bool App::SheetsOpen()
 {
     if (!ConfirmSheets()) return false;
-    const std::wstring path = PickOpen(L"CSV-Dateien (*.csv)\0*.csv\0Textdateien (*.txt)\0*.txt\0Alle Dateien (*.*)\0*.*\0");
+    const std::wstring path = PickOpen(L"Tabellen (*.xlsx;*.csv;*.txt)\0*.xlsx;*.csv;*.txt\0Excel-Arbeitsmappen (*.xlsx)\0*.xlsx\0CSV-Dateien (*.csv)\0*.csv\0Textdateien (*.txt)\0*.txt\0Alle Dateien (*.*)\0*.*\0");
     if (path.empty()) return false;
-    std::string bytes;
-    if (!ReadAll(path, bytes)) {
-        MessageBoxW(m_hwnd, (L"Die Datei konnte nicht gelesen werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
+    std::wstring note;
+    const bool ok = LoadSheetFile(path, note);
+    if (!ok) {
+        MessageBoxW(m_hwnd, note.c_str(), L"Duncan's Office", MB_ICONWARNING);
         return false;
     }
-    const int dropped = sheet::FromCsv(m_sheet, codec::DecodeAuto(bytes));
     m_sPath = path;
     m_sDirty = false;
     m_scrollX = m_scrollY = 0;
@@ -2590,9 +2627,7 @@ bool App::SheetsOpen()
     UpdateScroll();
     UpdateTitle();
     InvalidateRect(m_grid, nullptr, FALSE);
-    if (dropped > 0)
-        MessageBoxW(m_hwnd, (std::to_wstring(dropped) + L" Zellen lagen außerhalb des Rasters (A–Z, Zeilen 1–100) und wurden nicht übernommen.").c_str(),
-                    L"Duncan's Office", MB_ICONINFORMATION);
+    if (!note.empty()) MessageBoxW(m_hwnd, note.c_str(), L"Duncan's Office", MB_ICONINFORMATION);
     return true;
 }
 
@@ -2600,15 +2635,25 @@ bool App::SheetsSave(bool saveAs)
 {
     CommitFormula();
     std::wstring path = m_sPath;
-    if (saveAs || path.empty()) {
-        path = PickSave(L"CSV-Dateien (*.csv)\0*.csv\0", L"csv", m_sPath.empty() ? L"Tabelle" : FileNameOf(m_sPath));
+    const bool csvOrigin = !m_sPath.empty() && ExtOf(m_sPath) != L".xlsx";
+    if (saveAs || path.empty() || m_sLossy) {
+        std::wstring suggest = m_sPath.empty() ? L"Tabelle" : FileNameOf(m_sPath);
+        if (m_sLossy) {   // nicht das Original ueberschreiben (es hatte mehr Inhalt, als Sheets behalten kann)
+            const size_t dot = suggest.find_last_of(L'.');
+            suggest = (dot == std::wstring::npos ? suggest : suggest.substr(0, dot)) + L" (bearbeitet)";
+        }
+        // Neue Tabellen und Excel-Dateien: .xlsx zuerst; wer eine CSV geoeffnet hat, bekommt CSV zuerst
+        path = csvOrigin ? PickSave(L"CSV-Dateien (*.csv)\0*.csv\0Excel-Arbeitsmappe (*.xlsx)\0*.xlsx\0", L"csv", suggest)
+                         : PickSave(L"Excel-Arbeitsmappe (*.xlsx)\0*.xlsx\0CSV-Dateien (*.csv)\0*.csv\0", L"xlsx", suggest);
         if (path.empty()) return false;
     }
-    if (!WriteAtomic(path, codec::EncodeUtf8Bom(sheet::ToCsv(m_sheet)))) {
+    const bool asXlsx = ExtOf(path) == L".xlsx";
+    if (!WriteAtomic(path, asXlsx ? xlsx::Write(m_sheet) : codec::EncodeUtf8Bom(sheet::ToCsv(m_sheet)))) {
         MessageBoxW(m_hwnd, (L"Die Datei konnte nicht gespeichert werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
         return false;
     }
     m_sPath = path;
+    m_sLossy = false;
     m_sDirty = false;
     UpdateTitle();
     return true;
