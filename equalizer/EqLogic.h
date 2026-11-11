@@ -24,6 +24,7 @@ struct Settings {
     bool bass = false;          // zusaetzlicher Bass-Schub
     bool voice = false;         // Sprache klarer
     int  preamp = 0;            // Vorverstaerkung in dB (-12 ... +12), kommt zur automatischen Absenkung dazu
+    bool hotkeys = true;        // globale Tastenkuerzel: Strg+Alt+F9 an/aus, F10 naechstes, F8 voriges Profil
     bool keepRunning = true;    // Fenster schliessen = im Infobereich weiterlaufen (Profilwechsel pro Geraet, Symbol)
     std::vector<std::string> extra;   // eingelesene Filterzeilen (z. B. AutoEq-Kopfhoerer-Korrektur), nur "Preamp:"/"Filter:"
 };
@@ -61,6 +62,12 @@ std::string BuildConfig(const Settings& s);
 std::wstring ProfilesPath();
 bool LoadProfiles(std::vector<Profile>& list, int& active, const std::wstring& path);   // false: Datei fehlt (list bleibt leer, active = 0)
 bool SaveProfiles(const std::vector<Profile>& list, int active, const std::wstring& path);
+bool ParseProfiles(const std::string& data, std::vector<Profile>& list, int& active);   // Inhalt der Profildatei; false, wenn kein gueltiges Profil darin ist
+// Ein einzelnes Profil als Textdatei weitergeben (ohne Geraetebindung) und wieder einlesen. Nur das erste Profil der Datei zaehlt; zu grosse Dateien (> 64 KB) werden abgelehnt.
+std::string ProfileToText(const Profile& p);
+bool ProfileFromText(const std::string& text, Profile& out);
+// Name fuer ein eingelesenes Profil, der in list noch nicht vorkommt ("Name", "Name (2)", ...), auf kMaxNameLen gekuerzt
+std::wstring UniqueProfileName(const std::vector<Profile>& list, const std::wstring& wanted);
 std::wstring CleanName(std::wstring name);                                  // gekuerzt, ohne Steuer-/Sonderzeichen; leer = ungueltig
 int FindProfile(const std::vector<Profile>& list, const std::wstring& name);   // ohne Gross-/Kleinschreibung, -1 wenn nicht da
 int ProfileForDevice(const std::vector<Profile>& list, const std::wstring& device);   // -1 wenn keines gebunden

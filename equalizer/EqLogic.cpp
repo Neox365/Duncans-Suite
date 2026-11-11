@@ -217,7 +217,7 @@ std::wstring SettingsPath()
 
 bool SaveSettings(const Settings& s, const std::wstring& path)
 {
-    std::string t = std::string("enabled=") + (s.enabled ? "1" : "0") + "\r\nkeeprunning=" + (s.keepRunning ? "1" : "0") + "\r\nbass=" + (s.bass ? "1" : "0") +
+    std::string t = std::string("enabled=") + (s.enabled ? "1" : "0") + "\r\nkeeprunning=" + (s.keepRunning ? "1" : "0") + "\r\nhotkeys=" + (s.hotkeys ? "1" : "0") + "\r\nbass=" + (s.bass ? "1" : "0") +
                     "\r\nvoice=" + (s.voice ? "1" : "0") + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(s.gains[b]));
@@ -245,6 +245,7 @@ bool LoadSettings(Settings& s, const std::wstring& path)
         const std::string key = line.substr(0, eq), val = line.substr(eq + 1);
         if (key == "enabled") s.enabled = val == "1";
         else if (key == "keeprunning") s.keepRunning = val != "0";
+        else if (key == "hotkeys") s.hotkeys = val != "0";
         else if (key == "bass") s.bass = val == "1";
         else if (key == "voice") s.voice = val == "1";
         else if (key == "gains")
@@ -376,27 +377,66 @@ std::wstring ProfilesPath()
     return s == std::wstring::npos ? L"" : p.substr(0, s) + L"\\profiles.txt";
 }
 
+static std::string ProfileBlock(const Profile& p, bool withDevice)
+{
+    std::string t = "[profile]\r\nname=" + ToUtf8(p.name) + "\r\ndevice=" + (withDevice ? ToUtf8(p.device) : std::string()) + "\r\nbass=" + (p.s.bass ? "1" : "0") +
+                    "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\npreamp=" + Num(std::clamp(p.s.preamp, -kMaxGain, kMaxGain)) + "\r\ngains=";
+    for (int b = 0; b < kBands; ++b)
+        t += (b ? "," : "") + Num(ClampGain(p.s.gains[b]));
+    t += "\r\n";
+    size_t n = 0;
+    for (const std::string& l : p.s.extra)
+        if (n < kMaxExtraLines && IsSafeFilterLine(l))
+        {
+            t += "extra=" + l + "\r\n";
+            ++n;
+        }
+    return t;
+}
+
 bool SaveProfiles(const std::vector<Profile>& list, int active, const std::wstring& path)
 {
     std::string t;
     if (active >= 0 && active < static_cast<int>(list.size()))
         t += "active=" + ToUtf8(list[static_cast<size_t>(active)].name) + "\r\n";
     for (const Profile& p : list)
-    {
-        t += "[profile]\r\nname=" + ToUtf8(p.name) + "\r\ndevice=" + ToUtf8(p.device) + "\r\nbass=" + (p.s.bass ? "1" : "0") +
-             "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\npreamp=" + Num(std::clamp(p.s.preamp, -kMaxGain, kMaxGain)) + "\r\ngains=";
-        for (int b = 0; b < kBands; ++b)
-            t += (b ? "," : "") + Num(ClampGain(p.s.gains[b]));
-        t += "\r\n";
-        size_t n = 0;
-        for (const std::string& l : p.s.extra)
-            if (n < kMaxExtraLines && IsSafeFilterLine(l))
-            {
-                t += "extra=" + l + "\r\n";
-                ++n;
-            }
-    }
+        t += ProfileBlock(p, true);
     return WriteFileBytes(path, t) == 0;
+}
+
+std::string ProfileToText(const Profile& p)
+{
+    return "# Duncan's Equalizer - Profil (Textdatei, kann in Duncan's Equalizer unter \"Teilen\" geladen werden)\r\n" + ProfileBlock(p, false);
+}
+
+std::wstring UniqueProfileName(const std::vector<Profile>& list, const std::wstring& wanted)
+{
+    const std::wstring base = CleanName(wanted);
+    if (base.empty())
+        return base;
+    if (FindProfile(list, base) < 0)
+        return base;
+    for (int n = 2; n < 100; ++n)
+    {
+        const std::wstring suffix = L" (" + std::to_wstring(n) + L")";
+        std::wstring cand = (base.size() + suffix.size() > kMaxNameLen ? base.substr(0, kMaxNameLen - suffix.size()) : base) + suffix;
+        if (FindProfile(list, cand) < 0)
+            return cand;
+    }
+    return std::wstring();
+}
+
+bool ProfileFromText(const std::string& text, Profile& out)
+{
+    if (text.size() > 64 * 1024)
+        return false;
+    std::vector<Profile> list;
+    int active = 0;
+    if (!ParseProfiles(text, list, active) || list.empty())
+        return false;
+    out = list[0];
+    out.device.clear();
+    return true;
 }
 
 bool LoadProfiles(std::vector<Profile>& list, int& active, const std::wstring& path)
@@ -406,6 +446,13 @@ bool LoadProfiles(std::vector<Profile>& list, int& active, const std::wstring& p
     std::string data;
     if (!ReadFileBytes(path, data))
         return false;
+    return ParseProfiles(data, list, active);
+}
+
+bool ParseProfiles(const std::string& data, std::vector<Profile>& list, int& active)
+{
+    list.clear();
+    active = 0;
     std::wstring activeName;
     size_t pos = 0;
     while (pos < data.size())
