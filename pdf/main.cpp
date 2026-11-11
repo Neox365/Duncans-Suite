@@ -23,13 +23,14 @@ using std::min;
 
 #include "PdfDocument.h"
 #include "Print.h"
+#include "OcrRun.h"
 #include "Positions.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.7.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.8.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -52,7 +53,7 @@ const wchar_t* kAppTitle = L"Duncan's PDF";
 enum Cmd {
     C_NONE = 0, C_SIDE, C_OPEN, C_SAVE, C_MERGE, C_ZOOMOUT, C_ZOOMIN, C_ACTUAL, C_FITW,
     C_ROTL, C_ROTR, C_PREV, C_NEXT, C_FIND, C_DELETE, C_HILITE, C_NOTE, C_COMPRESS, C_CROP, C_UNCROP,
-    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE, C_STAMP, C_REDACT, C_SPLIT, C_EXTRACT, C_MORE, C_UNDO, C_REDO, C_NIGHT, C_COPYTEXT, C_PRINT   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
+    C_COL0, C_COL1, C_COL2, C_COL3, C_COL4, C_COL5, C_COLMORE, C_SETTINGS, C_ERASE, C_STAMP, C_REDACT, C_SPLIT, C_EXTRACT, C_MORE, C_UNDO, C_REDO, C_NIGHT, C_COPYTEXT, C_PRINT, C_OCR   // Markerfarben: 5 Voreinstellungen, eigene Farbe, "Weitere Farben ..."
 };
 
 struct Item {
@@ -260,6 +261,7 @@ void BuildItems() {
     add(C_CROP, L"Zuschnitt", 0, true, false, false, 4);
     add(C_STAMP, L"Stempel", 0, true, false, false, 5);
     add(C_REDACT, L"Schwärzen", 0, true, false, false, 5);
+    add(C_OCR, L"OCR", 0, true, false, false, 11);   // Texterkennung fuer gescannte Seiten
     add(C_NONE, L"", 0, false);
     add(C_ZOOMOUT, L"−", 40, true);
     add(C_ACTUAL, L"100 %", 64, true);
@@ -2229,6 +2231,31 @@ void RunCommand(int cmd) {
     if (cmd != C_NONE && g.about.open) aboutgdi::Close(g.about, g.canvas);
     if (cmd != C_NONE) ResetFormFocus();       // Feldinhalt uebernehmen, bevor etwas anderes passiert
     switch (cmd) {
+    case C_OCR: {
+        if (!g.doc.IsOpen()) break;
+        if (!g.doc.CanAddTextLayer()) { ShowToast(L"Die Texterkennung braucht eine neuere pdfium.dll (bitte die Suite aktualisieren).", true); break; }
+        CloseSearch();
+        HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
+        GetAsyncKeyState(VK_ESCAPE);   // alten Tastendruck verwerfen
+        const pdfocr::Summary r = pdfocr::Run(g.doc, [](int done, int total) {
+            ShowToast(L"Texterkennung: Seite " + std::to_wstring(done + 1) + L" von " + std::to_wstring(total) + L" … (Esc bricht ab)");
+            UpdateWindow(g.canvas);
+            return (GetAsyncKeyState(VK_ESCAPE) & 0x8000) == 0;
+        });
+        SetCursor(old);
+        UpdateTitle();
+        InvalidateRect(g.canvas, nullptr, FALSE);
+        if (!r.error.empty() && r.pages == 0) { ShowToast(r.error, true); break; }
+        if (r.pages == 0 && r.empty == 0 && !r.cancelled) { ShowToast(L"Alle Seiten haben schon Text – es gibt nichts zu erkennen."); break; }
+        std::wstring msg = r.pages == 0 ? L"Es wurde kein Text erkannt (leere Seiten oder Bilder ohne Schrift)."
+                                        : L"Texterkennung fertig: " + std::to_wstring(r.words) + L" Wörter auf " + std::to_wstring(r.pages) + (r.pages == 1 ? L" Seite" : L" Seiten") +
+                                          L" – jetzt durchsuchbar und kopierbar, noch nicht gespeichert";
+        if (r.cancelled) msg += L" (abgebrochen)";
+        if (!r.error.empty()) msg += L" – " + r.error;
+        if (r.skipped > 0 && r.pages > 0) msg += L"  ·  " + std::to_wstring(r.skipped) + L" Seite(n) hatten schon Text";
+        ShowToast(msg, !r.error.empty() && r.pages == 0);
+        break;
+    }
     case C_NIGHT:
         cfg.night = !cfg.night;
         SavePrefs();
@@ -2265,6 +2292,7 @@ void RunCommand(int cmd) {
             case C_ROTR: name = L"Seite nach rechts drehen"; break;
             case C_FITW: name = L"Auf Seitenbreite einpassen"; break;
             case C_NIGHT: name = L"Nachtmodus (Strg+D)"; break;
+            case C_OCR: name = L"Text erkennen (OCR)"; break;
             case C_NOTE: name = L"Notiz hinzufügen"; break;
             case C_ERASE: name = L"Markierung entfernen (Radierer)"; break;
             case C_CROP: name = L"Zuschnitt"; break;

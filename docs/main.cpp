@@ -31,6 +31,7 @@
 #include "Export.h"
 #include "Invoice.h"
 #include "InvoiceText.h"
+#include "OcrScan.h"
 #include "PdfText.h"
 #include "Store.h"
 #include "TextEdit.h"
@@ -38,7 +39,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.9.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.10.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -1796,7 +1797,8 @@ void App::ImportAuto(const std::vector<std::wstring>& files) {
     std::vector<std::wstring> known(knownSet.begin(), knownSet.end());
     std::set<std::wstring> imported;
     std::wstring last;
-    int dup = 0, fail = 0, scanned = 0, eInvoices = 0;
+    int dup = 0, fail = 0, scanned = 0, eInvoices = 0, scannedOcr = 0;
+    std::wstring ocrError;                            // erste Fehlermeldung der Texterkennung (z. B. fehlendes Windows-Sprachpaket)
     std::unique_ptr<docs::PdfText> pdfText;           // erst beim ersten PDF anlegen
     auto ensurePdf = [&]() {
         if (pdfText) return;
@@ -1850,12 +1852,22 @@ void App::ImportAuto(const std::vector<std::wstring>& files) {
             meta.tags = docs::EditTags(L"", L"E-Rechnung", L"");
             if (!ei.number.empty()) meta.note = docs::CleanField(L"Rechnungs-Nr. " + ei.number);
             ++eInvoices;
-        } else if (m_settings.readPdf && _wcsicmp(fs::path(target).extension().c_str(), L".pdf") == 0) {
-            ensurePdf();
-            const docs::ScannedInvoice si = docs::ScanInvoiceText(pdfText->Extract(target.wstring()));
+        } else if (m_settings.readPdf && (_wcsicmp(fs::path(target).extension().c_str(), L".pdf") == 0 || docs::IsScanImageExt(docs::Lower(fs::path(target).extension().wstring())))) {
+            const bool isPdf = _wcsicmp(fs::path(target).extension().c_str(), L".pdf") == 0;
+            std::wstring text;
+            if (isPdf) { ensurePdf(); text = pdfText->Extract(target.wstring()); }
+            bool viaOcr = false;
+            if (docs::TextTooShort(text)) {   // Scan oder Foto: keine eigene Textebene, also Texterkennung (nur die ersten zwei Seiten)
+                if (isPdf) ensurePdf();
+                std::wstring err;
+                text = docs::OcrFileText(target.wstring(), isPdf ? pdfText.get() : nullptr, isPdf, 2, err);
+                viaOcr = !text.empty();
+                if (!err.empty() && ocrError.empty()) ocrError = err;
+            }
+            const docs::ScannedInvoice si = docs::ScanInvoiceText(text);
             if (si.hasAmount) meta.cents = si.cents;
             if (si.hasDue) meta.due = si.dueIso;
-            if (si.hasAmount || si.hasDue) ++scanned;
+            if (si.hasAmount || si.hasDue) { ++scanned; if (viaOcr) ++scannedOcr; }
         }
         m_meta[rel] = meta;
         imported.insert(rel);
@@ -1880,6 +1892,8 @@ void App::ImportAuto(const std::vector<std::wstring>& files) {
     else if (imported.size() == 1) note += L"  ·  F2: Betrag und Fälligkeit ergänzen, Doppelklick: im PDF Reader öffnen";
     if (eInvoices) note += L"  ·  " + std::to_wstring(eInvoices) + (eInvoices == 1 ? L" E-Rechnung" : L" E-Rechnungen") + L" erkannt (Daten aus der Rechnung übernommen)";
     if (scanned) note += L"  ·  Betrag/Fälligkeit bei " + std::to_wstring(scanned) + L" aus dem PDF gelesen (bitte prüfen)";
+    if (scannedOcr) note += L"  ·  " + std::to_wstring(scannedOcr) + L" davon per Texterkennung aus einem Scan (Zahlen bitte besonders genau prüfen)";
+    if (!ocrError.empty() && scannedOcr == 0) note += L"  ·  " + ocrError;
     if (dup) note += L"  ·  " + std::to_wstring(dup) + L" schon vorhanden";
     if (fail) note += L"  ·  " + std::to_wstring(fail) + L" fehlgeschlagen";
     SetNote(note);
@@ -2266,7 +2280,7 @@ void App::ShowGearMenu() {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (m_settings.moveFiles ? MF_CHECKED : 0), M_MOVE, L"Beim Hinzufügen verschieben statt kopieren");
     AppendMenuW(m, MF_STRING | (m_settings.autoImport ? MF_CHECKED : 0), M_AUTOIMPORT, L"Beim Ablegen automatisch einsortieren (Umschalt = Dialog)");
-    AppendMenuW(m, MF_STRING | (m_settings.readPdf ? MF_CHECKED : 0) | (m_settings.autoImport ? 0 : MF_GRAYED), M_READPDF, L"Betrag und Fälligkeit aus dem PDF lesen");
+    AppendMenuW(m, MF_STRING | (m_settings.readPdf ? MF_CHECKED : 0) | (m_settings.autoImport ? 0 : MF_GRAYED), M_READPDF, L"Betrag und Fälligkeit aus PDF und Scans lesen (Texterkennung)");
     const bool haveReader = !FindPdfReader().empty();
     AppendMenuW(m, MF_STRING | (m_settings.pdfReader && haveReader ? MF_CHECKED : 0) | (haveReader ? 0 : MF_GRAYED), M_PDFREADER,
                 haveReader ? L"PDFs im Duncan's PDF Reader \u00F6ffnen" : L"PDFs im Duncan's PDF Reader \u00F6ffnen (nicht gefunden)");

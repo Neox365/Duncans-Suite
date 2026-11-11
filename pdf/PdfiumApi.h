@@ -170,6 +170,12 @@ struct PdfiumApi {
     FPDF_BOOL (*PageObjSetFillColor)(void* obj, unsigned R, unsigned G, unsigned B, unsigned A) = nullptr;
     FPDF_BOOL (*PathSetDrawMode)(void* path, int fillMode, FPDF_BOOL stroke) = nullptr;
     int (*TextGetBoundedText)(void* textPage, double left, double top, double right, double bottom, unsigned short* buffer, int count) = nullptr;
+    // Unsichtbarer Text fuer die Texterkennung; optional: fehlt eine Funktion, gibt es nur diese Funktion nicht
+    bool hasTextLayer = false;
+    void* (*NewTextObj)(FPDF_DOCUMENT, const char* font, float fontSize) = nullptr;
+    FPDF_BOOL (*TextObjSetText)(void* textObj, const unsigned short* text) = nullptr;
+    FPDF_BOOL (*TextObjSetRenderMode)(void* textObj, int mode) = nullptr;
+    int (*TextCountChars)(void* textPage) = nullptr;
 };
 
 enum { FPDF_PAGEOBJ_TEXT = 1, FPDF_PAGEOBJ_PATH = 2, FPDF_PAGEOBJ_FORM = 5 };

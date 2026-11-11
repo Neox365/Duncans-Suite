@@ -196,6 +196,10 @@ bool PdfDocument::InitLibrary() {
         && Load("FPDFPath_SetDrawMode", g_api.PathSetDrawMode)
         && Load("FPDFText_GetBoundedText", g_api.TextGetBoundedText)
         && Load("FPDFText_GetText", g_api.TextGetText);
+    g_api.hasTextLayer = Load("FPDFPageObj_NewTextObj", g_api.NewTextObj)
+        && Load("FPDFText_SetText", g_api.TextObjSetText)
+        && Load("FPDFTextObj_SetTextRenderMode", g_api.TextObjSetRenderMode)
+        && Load("FPDFText_CountChars", g_api.TextCountChars);
     FPDF_LIBRARY_CONFIG cfg{};
     cfg.version = 2;
     g_api.InitLibraryWithConfig(&cfg);
@@ -300,6 +304,90 @@ HBITMAP PdfDocument::RenderPage(int index, int w, int h) const {
     HBITMAP bmp = RenderImpl(page, index, w, h, false);
     g_api.ClosePage(page);
     return bmp;
+}
+
+void PdfDocument::MarkUndoPoint() {
+    m_lastPush = 0;   // nicht mit einer Aktion davor zusammenfassen
+    PushUndo(true);
+}
+
+bool PdfDocument::CanAddTextLayer() const { return g_api.hasEdit && g_api.hasTextLayer; }
+
+int PdfDocument::CountTextChars(int index) const {
+    if (!m_doc || !g_api.hasTextLayer) return -1;
+    void* page = g_api.LoadPage(m_doc, index);
+    if (!page) return -1;
+    int n = 0;
+    if (void* tp = g_api.TextLoadPage(page)) {
+        n = g_api.TextCountChars(tp);
+        g_api.TextClosePage(tp);
+    }
+    g_api.ClosePage(page);
+    return n;
+}
+
+bool PdfDocument::RenderPageBgra(int index, int longEdge, std::vector<unsigned char>& bgra, int& w, int& h) const {
+    double pw = 0, ph = 0;
+    if (!PageSize(index, pw, ph) || pw < 1 || ph < 1 || longEdge < 16) return false;
+    const double scale = static_cast<double>(longEdge) / std::max(pw, ph);
+    w = std::max(1, static_cast<int>(pw * scale));
+    h = std::max(1, static_cast<int>(ph * scale));
+    HBITMAP bmp = RenderPage(index, w, h);
+    if (!bmp) return false;
+    BITMAPINFO bi{};
+    bi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
+    bi.bmiHeader.biWidth = w;
+    bi.bmiHeader.biHeight = -h;
+    bi.bmiHeader.biPlanes = 1;
+    bi.bmiHeader.biBitCount = 32;
+    bi.bmiHeader.biCompression = BI_RGB;
+    bgra.assign(static_cast<size_t>(w) * h * 4, 0);
+    HDC dc = GetDC(nullptr);
+    const int got = GetDIBits(dc, bmp, 0, static_cast<UINT>(h), bgra.data(), &bi, DIB_RGB_COLORS);
+    ReleaseDC(nullptr, dc);
+    DeleteObject(bmp);
+    for (size_t i = 3; i < bgra.size(); i += 4) bgra[i] = 255;
+    return got == h;
+}
+
+int PdfDocument::AddTextLayer(int index, int imgW, int imgH, const std::vector<OcrWord>& words) {
+    if (!m_doc || !CanAddTextLayer() || imgW <= 0 || imgH <= 0) return -1;
+    void* page = g_api.LoadPage(m_doc, index);
+    if (!page) return -1;
+    const int rot = Rotation(index);
+    auto toPage = [&](double dx, double dy, double& px, double& py) { return g_api.DeviceToPage(page, 0, 0, imgW, imgH, rot, static_cast<int>(std::lround(dx)), static_cast<int>(std::lround(dy)), &px, &py) != 0; };
+    int written = 0;
+    for (const OcrWord& wd : words) {
+        if (wd.text.empty() || wd.w < 1 || wd.h < 1) continue;
+        double bx, by, rx, ry, tx, ty;   // links unten (Grundlinie), rechts unten, links oben des Wortrahmens in Seitenkoordinaten
+        const double baseY = wd.y + wd.h * 0.82;   // Grundlinie: Unterlaengen ragen unter den Rahmen
+        if (!toPage(wd.x, baseY, bx, by) || !toPage(wd.x + wd.w, baseY, rx, ry) || !toPage(wd.x, wd.y, tx, ty)) continue;
+        const double ux = rx - bx, uy = ry - by, vx = tx - bx, vy = ty - by;
+        const double ul = std::sqrt(ux * ux + uy * uy), vl = std::sqrt(vx * vx + vy * vy);
+        if (ul < 0.01 || vl < 0.01) continue;
+        const float fontSize = static_cast<float>(std::max(1.0, vl / 0.82 * 0.8));   // Hoehe des Rahmens ~ 80 % Schriftgroesse
+        void* obj = g_api.NewTextObj(m_doc, "Helvetica", fontSize);
+        if (!obj) continue;
+        std::vector<unsigned short> u16;
+        for (wchar_t ch : wd.text) u16.push_back(static_cast<unsigned short>(ch));
+        u16.push_back(0);
+        if (!g_api.TextObjSetText(obj, u16.data())) { g_api.PageObjDestroy(obj); continue; }
+        g_api.TextObjSetRenderMode(obj, 3 /* FPDF_TEXTRENDERMODE_INVISIBLE */);
+        float l = 0, b = 0, r = 0, t = 0;
+        if (!g_api.PageObjGetBounds(obj, &l, &b, &r, &t) || r - l < 0.01f) { g_api.PageObjDestroy(obj); continue; }
+        const double sx = ul / static_cast<double>(r - l);   // Wortbreite der Engine, nicht der Helvetica-Breite
+        FS_MATRIX m{static_cast<float>(ux / ul * sx), static_cast<float>(uy / ul * sx), static_cast<float>(vx / vl), static_cast<float>(vy / vl),
+                    static_cast<float>(bx - ux / ul * sx * l), static_cast<float>(by - uy / ul * sx * l)};
+        if (!g_api.PageObjSetMatrix(obj, &m)) { g_api.PageObjDestroy(obj); continue; }
+        g_api.PageInsertObject(page, obj);
+        ++written;
+    }
+    if (written > 0) {
+        g_api.PageGenerateContent(page);
+        m_modified = true;
+    }
+    g_api.ClosePage(page);
+    return written;
 }
 
 bool PdfDocument::Append(const std::wstring& otherPath) {

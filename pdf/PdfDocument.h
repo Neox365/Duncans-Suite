@@ -58,6 +58,17 @@ public:
     bool RemoveHighlightAt(int index, int w, int h, int dx, int dy);              // Radierer: entfernt Markierungen unter dem Punkt (Pixel der gerenderten Seite)
     bool AddNote(int index, int w, int h, int dx, int dy, const std::wstring& text);   // Notiz-Symbol mit Kommentar
 
+    // ---- Texterkennung: unsichtbarer Text ueber gescannten Seiten ----
+    struct OcrWord { std::wstring text; float x = 0, y = 0, w = 0, h = 0; };   // Rahmen in Pixeln des gerenderten Seitenbildes (links oben = 0,0)
+    void MarkUndoPoint();                                                       // ein Rueckgaengig-Schritt vor einer Folge von AddTextLayer-Aufrufen (alle Seiten zusammen)
+    bool CanAddTextLayer() const;                                               // PDFium kann unsichtbaren Text schreiben
+    int CountTextChars(int index) const;                                        // Zeichen im Text der Seite (0 = Scan oder leer), -1 bei Fehler
+    // Seite als Bild (BGRA, laengste Kante = longEdge) fuer die Erkennung; w/h = Bildgroesse in Pixeln
+    bool RenderPageBgra(int index, int longEdge, std::vector<unsigned char>& bgra, int& w, int& h) const;
+    // Schreibt jedes erkannte Wort als unsichtbaren Text (Render-Modus 3) an seine Stelle auf der Seite, auf Breite und Hoehe des Wortrahmens gestreckt.
+    // imgW/imgH: Groesse des Bildes, auf das sich die Rahmen beziehen. Rueckgabe: Anzahl geschriebener Woerter, -1 bei Fehler. Aendert das Dokument (Rueckgaengig moeglich).
+    int AddTextLayer(int index, int imgW, int imgH, const std::vector<OcrWord>& words);
+
     struct CompressStats { unsigned long long before = 0, after = 0; int images = 0, recompressed = 0; };
     // Speichert eine verkleinerte Kopie: Bilder auf maxDpi herunterrechnen und als JPEG neu kodieren,
     // nur erreichbare Objekte uebernehmen. Das offene Dokument bleibt unveraendert. Lesezeichen/Formulare gehen verloren.

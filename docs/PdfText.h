@@ -57,6 +57,44 @@ public:
         return out;
     }
 
+    // Seite pageIndex als Bild (BGRA, weisser Hintergrund, laengste Kante = longEdge Pixel) fuer die Texterkennung; false, wenn es die Seite nicht gibt
+    bool RenderPageBgra(const std::wstring& path, int pageIndex, int longEdge, std::vector<unsigned char>& bgra, int& w, int& h) const {
+        if (!m_ok || !m_pageW || !m_pageH || !m_bmpCreate || !m_bmpFill || !m_bmpBuf || !m_bmpStride || !m_bmpDestroy || !m_render || pageIndex < 0) return false;
+        std::ifstream in(std::filesystem::path(path), std::ios::binary);
+        if (!in) return false;
+        std::vector<char> data((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (data.empty() || data.size() > 128u * 1024 * 1024) return false;
+        void* doc = m_load(data.data(), static_cast<int>(data.size()), nullptr);
+        if (!doc) return false;
+        bool ok = false;
+        if (pageIndex < m_count(doc)) {
+            if (void* page = m_page(doc, pageIndex)) {
+                const float pw = m_pageW(page), ph = m_pageH(page);
+                if (pw > 1 && ph > 1) {
+                    const float scale = static_cast<float>(longEdge) / std::max(pw, ph);
+                    w = std::max(1, static_cast<int>(pw * scale));
+                    h = std::max(1, static_cast<int>(ph * scale));
+                    if (void* bmp = m_bmpCreate(w, h, 0)) {
+                        m_bmpFill(bmp, 0, 0, w, h, 0xFFFFFFFFul);
+                        m_render(bmp, page, 0, 0, w, h, 0, 0x01 /* FPDF_ANNOT */);
+                        const unsigned char* src = static_cast<const unsigned char*>(m_bmpBuf(bmp));
+                        const int stride = m_bmpStride(bmp);
+                        if (src && stride >= w * 4) {
+                            bgra.resize(static_cast<size_t>(w) * h * 4);
+                            for (int y = 0; y < h; ++y) std::copy(src + static_cast<size_t>(y) * stride, src + static_cast<size_t>(y) * stride + static_cast<size_t>(w) * 4, bgra.begin() + static_cast<size_t>(y) * w * 4);
+                            for (size_t i = 3; i < bgra.size(); i += 4) bgra[i] = 255;
+                            ok = true;
+                        }
+                        m_bmpDestroy(bmp);
+                    }
+                }
+                m_closePage(page);
+            }
+        }
+        m_close(doc);
+        return ok;
+    }
+
     // Text der ersten maxPages Seiten (UTF-16); leer bei Fehler oder verschluesselter/gescannter PDF
     std::wstring Extract(const std::wstring& path, int maxPages = 3) const {
         std::wstring out;
@@ -107,6 +145,14 @@ private:
         Get("FPDFDoc_GetAttachment", m_att);
         Get("FPDFAttachment_GetName", m_attName);
         Get("FPDFAttachment_GetFile", m_attFile);
+        Get("FPDF_GetPageWidthF", m_pageW);          // optional: nur fuer die Texterkennung gescannter PDFs
+        Get("FPDF_GetPageHeightF", m_pageH);
+        Get("FPDFBitmap_Create", m_bmpCreate);
+        Get("FPDFBitmap_FillRect", m_bmpFill);
+        Get("FPDF_RenderPageBitmap", m_render);
+        Get("FPDFBitmap_GetBuffer", m_bmpBuf);
+        Get("FPDFBitmap_GetStride", m_bmpStride);
+        Get("FPDFBitmap_Destroy", m_bmpDestroy);
         if (m_ok) { Config cfg{}; cfg.version = 2; init(&cfg); }
     }
     HMODULE m_mod = nullptr;
@@ -124,6 +170,14 @@ private:
     void* (*m_att)(void*, int) = nullptr;
     unsigned long (*m_attName)(void*, unsigned short*, unsigned long) = nullptr;
     int (*m_attFile)(void*, void*, unsigned long, unsigned long*) = nullptr;
+    float (*m_pageW)(void*) = nullptr;
+    float (*m_pageH)(void*) = nullptr;
+    void* (*m_bmpCreate)(int, int, int) = nullptr;
+    void (*m_bmpFill)(void*, int, int, int, int, unsigned long) = nullptr;
+    void (*m_render)(void*, void*, int, int, int, int, int, int) = nullptr;
+    void* (*m_bmpBuf)(void*) = nullptr;
+    int (*m_bmpStride)(void*) = nullptr;
+    void (*m_bmpDestroy)(void*) = nullptr;
 };
 
 }  // namespace docs
