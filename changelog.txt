@@ -5,6 +5,11 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.6.0 | 2026-11-11
+- Neu: Tastenkürzel für den ganzen PC, auch im Spiel oder Vollbild: Strg+Alt+F9 schaltet den Equalizer an/aus, Strg+Alt+F10 wählt das nächste und Strg+Alt+F8 das vorige Profil (nach dem letzten kommt wieder das erste). Eine kurze Meldung am Symbol im Infobereich bestätigt es. Die Kürzel lassen sich im Menü des Symbols (Rechtsklick) abschalten; ist eines von einem anderen Programm belegt, steht das in der Statuszeile. Es sind F-Tasten, weil Strg+Alt auf deutschen Tastaturen AltGr ist (€, @ bleiben tippbar).
+- Neu: Profile weitergeben. „Teilen …“ im Profilbereich speichert das aktuelle Profil als Datei (.eqprofil, Textdatei: Regler, Preamp, Bass, Sprache, Filter; ohne Gerätebindung) oder lädt eine solche Datei als neues Profil (bei gleichem Namen wird „(2)“ angehängt; nur wenn noch Platz unter den sechs Profilen ist). Werte werden begrenzt und unsichere Filterzeilen verworfen. So lassen sich Profile sichern, auf einen anderen PC übertragen oder teilen.
+- Geändert: Die Knöpfe im Profilbereich heißen jetzt „An Gerät binden“ und „Wirklich?“ (beim Löschen), damit die neue Schaltfläche in dieselbe Reihe passt.
+- Nicht enthalten: eigene Tastenkürzel (frei wählbar), Mono, Balance und Verzögerung.
 ## 0.5.0 | 2026-11-08
 - Neu: Frequenzkurve. Über den Reglern liegt jetzt eine Linie, die die Gesamtwirkung zeigt: Regler, Bass-Schub, „Sprache klarer“ und alle Filter zusammen (ohne Vorverstärkung). Die Kurve wird aus genau der Konfiguration berechnet, die an Equalizer APO geschrieben wird; sie ist eine Orientierung, kein Messergebnis.
 - Neu: „Filter & Korrektur …“ (ersetzt „Kopfhörer-Korrektur laden“). Das Fenster zeigt die Kurve groß mit Frequenz- und dB-Achse und lässt eigene Filter bauen: Glocke, Tiefen- und Höhen-Shelf, Hochpass, Tiefpass und Kerbfilter mit Frequenz, Verstärkung und Güte (Q) per Regler und Live-Vorschau, einzeln ein- und ausschaltbar. Dazu „Datei laden …“ für Korrekturdateien (zum Beispiel von AutoEq; die Zeilen werden angehängt) und „Alle entfernen“. Die Filter gehören wie die Regler zum Profil, bis zu 40 Zeilen.

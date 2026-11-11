@@ -30,7 +30,7 @@ using std::min;
 #include "FilterEditor.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.5.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.6.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -58,7 +58,7 @@ enum HitId {
     H_AUTOSTART = 220, H_KEEP = 221,
     H_PRESET = 10,      // 10 .. 10 + Anzahl Voreinstellungen
     H_PROFILE = 200,    // 200 .. 205: Profil waehlen
-    H_PROFNEW = 210, H_BIND = 211, H_IMPORT = 212, H_PROFDEL = 213,
+    H_PROFNEW = 210, H_BIND = 211, H_IMPORT = 212, H_PROFDEL = 213, H_SHARE = 214,
     H_BAND = 100,       // 100 .. 109 = Baender, 110 = Preamp
     H_RESET = 121
 };
@@ -77,7 +77,8 @@ struct App {
     int active = 0;                                // aktives Profil (Regler, Schalter und Korrektur werden darin gespeichert)
     std::wstring profilesPath;
     std::wstring lastDevice;                       // zuletzt gesehenes Standard-Ausgabegeraet
-    RECT profCard{}, profChip[eq::kMaxProfiles]{}, profNew{}, btnBind{}, btnImport{}, btnDel{}, nameRect{};
+    RECT profCard{}, profChip[eq::kMaxProfiles]{}, profNew{}, btnBind{}, btnImport{}, btnShare{}, btnDel{}, nameRect{};
+    bool hotkeysOk = false;                        // globale Tastenkuerzel sind registriert
     HWND nameEdit = nullptr;                       // Eingabefeld fuer den Namen eines neuen Profils
     WNDPROC nameOldProc = nullptr;
     RECT btnAuto{}, btnKeep{};
@@ -222,6 +223,36 @@ void UpdateTray() {
     Shell_NotifyIconW(NIM_MODIFY, &g.nid);
 }
 
+// ---------- Globale Tastenkuerzel: Strg+Alt+F9 an/aus, F10 naechstes Profil, F8 voriges Profil ----------
+// F-Tasten statt Buchstaben: Strg+Alt ist auf deutschen Tastaturen AltGr, und AltGr+E (Euro) oder AltGr+Q (@) soll weiter tippbar bleiben.
+constexpr int kHkToggle = 1, kHkNext = 2, kHkPrev = 3;
+
+void Toast(const std::wstring& text) {              // kurze Meldung neben dem Symbol im Infobereich, damit man auch ohne Fenster sieht, was passiert ist
+    if (!g.nid.hWnd) return;
+    g.nid.uFlags = NIF_INFO;
+    wcscpy_s(g.nid.szInfoTitle, L"Duncan's Equalizer");
+    wcsncpy_s(g.nid.szInfo, text.c_str(), _TRUNCATE);
+    g.nid.dwInfoFlags = NIIF_INFO | NIIF_NOSOUND;
+    Shell_NotifyIconW(NIM_MODIFY, &g.nid);
+}
+
+void UnregisterHotkeys() {
+    for (int id : { kHkToggle, kHkNext, kHkPrev }) UnregisterHotKey(g.hwnd, id);
+    g.hotkeysOk = false;
+}
+
+// Meldet die Kuerzel an; gibt die Namen der belegten zurueck (leer = alles in Ordnung oder ausgeschaltet)
+std::wstring RegisterHotkeys() {
+    UnregisterHotkeys();
+    if (!g.cfg.hotkeys) return L"";
+    std::wstring busy;
+    const struct { int id; UINT vk; const wchar_t* name; } keys[] = { { kHkToggle, VK_F9, L"Strg+Alt+F9" }, { kHkNext, VK_F10, L"Strg+Alt+F10" }, { kHkPrev, VK_F8, L"Strg+Alt+F8" } };
+    for (const auto& k : keys)
+        if (!RegisterHotKey(g.hwnd, k.id, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, k.vk)) busy += (busy.empty() ? L"" : L", ") + std::wstring(k.name);
+    g.hotkeysOk = busy.empty();
+    return busy;
+}
+
 void AddTray(HINSTANCE inst) {
     g.nid = NOTIFYICONDATAW{};
     g.nid.cbSize = sizeof(g.nid);
@@ -246,6 +277,7 @@ void TrayMenu() {
     for (size_t i = 0; i < g.profiles.size(); ++i)
         AppendMenuW(menu, MF_STRING | (static_cast<int>(i) == g.active ? MF_CHECKED : 0), static_cast<UINT_PTR>(100 + i), (L"Profil: " + g.profiles[i].name).c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | (g.cfg.hotkeys ? MF_CHECKED : 0), 4, L"Tastenkürzel: Strg+Alt+F9 an/aus, F10/F8 Profil");
     AppendMenuW(menu, MF_STRING, 3, L"Beenden");
     POINT pt; GetCursorPos(&pt);
     SetForegroundWindow(g.hwnd);
@@ -256,6 +288,27 @@ void TrayMenu() {
     else if (cmd == 2) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
     else if (cmd >= 100 && cmd < 100 + static_cast<int>(g.profiles.size())) SwitchProfile(cmd - 100, L"");
     else if (cmd == 3) { g.quitting = true; DestroyWindow(g.hwnd); }
+    else if (cmd == 4) {
+        g.cfg.hotkeys = !g.cfg.hotkeys;
+        SaveCfg();
+        const std::wstring busy = RegisterHotkeys();
+        if (!g.cfg.hotkeys) SetStatus(L"Tastenkürzel aus", kTextDim);
+        else if (!busy.empty()) SetStatus(L"Tastenkürzel schon von einem anderen Programm belegt: " + busy, kOrange);
+        else SetStatus(L"Tastenkürzel an: Strg+Alt+F9 an/aus, F10 nächstes, F8 voriges Profil", kGreen);
+    }
+}
+
+void HandleHotkey(int id) {
+    if (id == kHkToggle) {
+        g.cfg.enabled = !g.cfg.enabled;
+        Changed();
+        Toast(g.cfg.enabled ? L"Equalizer an" : L"Equalizer aus");
+    } else if (id == kHkNext || id == kHkPrev) {
+        const int n = static_cast<int>(g.profiles.size());
+        if (n < 2) { Toast(L"Es gibt nur ein Profil"); return; }
+        SwitchProfile((g.active + (id == kHkNext ? 1 : n - 1)) % n, L"");
+        Toast(L"Profil: " + g.profiles[static_cast<size_t>(g.active)].name);
+    }
 }
 
 // ---------- Profile ----------
@@ -332,6 +385,77 @@ void BindDevice() {
     p.device = g.lastDevice;
     SaveCfg();
     SetStatus(L"Wird jetzt automatisch gewählt, sobald „" + g.lastDevice + L"“ das Standardgerät ist", kGreen);
+}
+
+// ---------- Profil weitergeben (Datei) ----------
+void ExportProfile() {
+    SyncActive();
+    const eq::Profile& p = g.profiles[static_cast<size_t>(g.active)];
+    wchar_t file[MAX_PATH] = {};
+    wcsncpy_s(file, (p.name + L".eqprofil").c_str(), _TRUNCATE);
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g.hwnd;
+    ofn.lpstrFilter = L"Equalizer-Profil (*.eqprofil)\0*.eqprofil\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"eqprofil";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&ofn)) return;
+    const std::string text = eq::ProfileToText(p);
+    HANDLE h = CreateFileW(file, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    DWORD n = 0;
+    const bool ok = h != INVALID_HANDLE_VALUE && WriteFile(h, text.data(), static_cast<DWORD>(text.size()), &n, nullptr) && n == text.size();
+    if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    if (ok) SetStatus(L"Profil „" + p.name + L"“ gespeichert (ohne Gerätebindung)", kGreen);
+    else SetStatus(L"Die Datei konnte nicht geschrieben werden", kRed);
+}
+
+void ImportProfile() {
+    if (static_cast<int>(g.profiles.size()) >= eq::kMaxProfiles) { SetStatus(L"Es sind schon sechs Profile vorhanden – bitte erst eines löschen", kOrange); return; }
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g.hwnd;
+    ofn.lpstrFilter = L"Equalizer-Profil (*.eqprofil)\0*.eqprofil\0Alle Dateien\0*.*\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) return;
+    HANDLE h = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { SetStatus(L"Die Datei konnte nicht gelesen werden", kRed); return; }
+    std::string text;
+    char buf[8192];
+    DWORD n = 0;
+    while (text.size() <= 64 * 1024 && ReadFile(h, buf, sizeof(buf), &n, nullptr) && n) text.append(buf, n);
+    CloseHandle(h);
+    eq::Profile p;
+    if (!eq::ProfileFromText(text, p)) { SetStatus(L"Das ist keine gültige Profil-Datei", kOrange); return; }
+    const std::wstring name = eq::UniqueProfileName(g.profiles, p.name);
+    if (name.empty()) { SetStatus(L"Der Profilname ist ungültig", kOrange); return; }
+    p.name = name;
+    SyncActive();
+    g.profiles.push_back(p);
+    g.active = static_cast<int>(g.profiles.size()) - 1;
+    LoadActive();
+    g.delArmed = false;
+    SaveCfg();
+    Layout();
+    SetTimer(g.hwnd, kTimerApply, 150, nullptr);
+    SetStatus(L"Profil „" + name + L"“ geladen und ausgewählt", kGreen);
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
+void ShareMenu() {
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, 1, L"Aktuelles Profil als Datei speichern …");
+    AppendMenuW(menu, MF_STRING | (static_cast<int>(g.profiles.size()) >= eq::kMaxProfiles ? MF_GRAYED : 0), 2, L"Profil aus Datei laden …");
+    POINT pt{ g.btnShare.left, g.btnShare.bottom };
+    ClientToScreen(g.hwnd, &pt);
+    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, g.hwnd, nullptr);
+    DestroyMenu(menu);
+    if (cmd == 1) ExportProfile();
+    else if (cmd == 2) ImportProfile();
 }
 
 void EditFilters() {                                // Fenster mit Frequenzkurve, eigenen Filtern und Datei-Korrektur
@@ -442,11 +566,13 @@ void Layout() {
     g.nameRect = { ix, row1, ir, row1 + h1 };
     const int row2 = g.profCard.top + S(76), h2 = S(32);
     const bool hasDev = !g.profiles[static_cast<size_t>(g.active)].device.empty();
-    const int bw1 = TextWidth(dc, g.fBold, hasDev ? L"Gerät lösen" : L"An aktuelles Gerät binden") + S(28);
+    const int bw1 = TextWidth(dc, g.fBold, hasDev ? L"Gerät lösen" : L"An Gerät binden") + S(28);
     const int bw2 = TextWidth(dc, g.fBold, L"Filter & Korrektur …") + S(28);
-    const int bw3 = TextWidth(dc, g.fBold, g.delArmed ? L"Wirklich löschen?" : L"Löschen") + S(28);
+    const int bwS = TextWidth(dc, g.fBold, L"Teilen …") + S(28);
+    const int bw3 = TextWidth(dc, g.fBold, g.delArmed ? L"Wirklich?" : L"Löschen") + S(28);
     g.btnBind = { ix, row2, ix + bw1, row2 + h2 };
     g.btnImport = { g.btnBind.right + S(8), row2, g.btnBind.right + S(8) + bw2, row2 + h2 };
+    g.btnShare = { g.btnImport.right + S(8), row2, g.btnImport.right + S(8) + bwS, row2 + h2 };
     g.btnDel = { ir - bw3, row2, ir, row2 + h2 };
     y = g.profCard.bottom + S(14);
     const int cw = TextWidth(dc, g.fBold, L"Geräte auswählen") + S(36);
@@ -656,9 +782,10 @@ void Paint(HDC dc, const RECT& cr) {
             FillRound(dc, r, S(12), hot ? kCardHover : Blend(kCard, kBackground, 25), warn ? kOrange : (hot ? kBorderHot : kBorder));
             DrawText2(dc, g.fBold, warn ? kOrange : kText, r, t, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         };
-        smallBtn(g.btnBind, g.profiles[static_cast<size_t>(g.active)].device.empty() ? L"An aktuelles Gerät binden" : L"Gerät lösen", H_BIND, false);
+        smallBtn(g.btnBind, g.profiles[static_cast<size_t>(g.active)].device.empty() ? L"An Gerät binden" : L"Gerät lösen", H_BIND, false);
         smallBtn(g.btnImport, L"Filter & Korrektur …", H_IMPORT, false);
-        smallBtn(g.btnDel, g.delArmed ? L"Wirklich löschen?" : L"Löschen", H_PROFDEL, g.delArmed);
+        smallBtn(g.btnShare, L"Teilen …", H_SHARE, false);
+        smallBtn(g.btnDel, g.delArmed ? L"Wirklich?" : L"Löschen", H_PROFDEL, g.delArmed);
         DrawButton(dc, g.confBtn, L"Geräte auswählen", false, g.hover == H_CONFIGURATOR, g.press == H_CONFIGURATOR && g.hover == H_CONFIGURATOR);
         {
             auto pill = [&](const RECT& r, const std::wstring& t, bool on2, int id) {
@@ -699,6 +826,7 @@ int HitTest(POINT p) {
     }
     if (PtInRect(&g.btnBind, p)) return H_BIND;
     if (PtInRect(&g.btnImport, p)) return H_IMPORT;
+    if (PtInRect(&g.btnShare, p)) return H_SHARE;
     if (PtInRect(&g.btnDel, p)) return H_PROFDEL;
     return H_NONE;
 }
@@ -739,6 +867,7 @@ void Activate(int id) {
     else if (id == H_PROFNEW) BeginNewProfile();
     else if (id == H_BIND) BindDevice();
     else if (id == H_IMPORT) EditFilters();
+    else if (id == H_SHARE) ShareMenu();
     else if (id == H_PROFDEL) { DeleteProfile(); Layout(); }
     else if (id == H_DOWNLOAD) ShellExecuteW(g.hwnd, L"open", L"https://sourceforge.net/projects/equalizerapo/", nullptr, nullptr, SW_SHOWNORMAL);
     else if (id == H_RECHECK) { Recheck(); Layout(); }
@@ -837,6 +966,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == kTimerDisarm) { KillTimer(hwnd, kTimerDisarm); g.delArmed = false; Layout(); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     case WM_NAME_DONE: FinishNewProfile(wp == 1); return 0;
+    case WM_HOTKEY: HandleHotkey(static_cast<int>(wp)); return 0;
     case WM_TRAY:
         if (LOWORD(lp) == WM_LBUTTONUP || LOWORD(lp) == NIN_SELECT) ShowMain();
         else if (LOWORD(lp) == WM_RBUTTONUP || LOWORD(lp) == WM_CONTEXTMENU) TrayMenu();
@@ -855,6 +985,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_DESTROY:
+        UnregisterHotkeys();
         if (!g.installDir.empty()) ApplyNow();
         Shell_NotifyIconW(NIM_DELETE, &g.nid);
         PostQuitMessage(0);
@@ -941,6 +1072,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     if (!g.installDir.empty()) ApplyNow();      // beim Start die gespeicherten Einstellungen (neu) eintragen
     g.autostartOn = eq::GetAutostart();
     AddTray(inst);
+    {
+        const std::wstring busy = RegisterHotkeys();
+        if (!busy.empty()) SetStatus(L"Tastenkürzel schon von einem anderen Programm belegt: " + busy + L" (im Infobereich-Menü abschaltbar)", kOrange);
+    }
     ShowWindow(g.hwnd, background ? SW_HIDE : show);
     UpdateWindow(g.hwnd);
 

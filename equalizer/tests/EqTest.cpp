@@ -327,6 +327,41 @@ int main()
     for (const wchar_t* f : { L"/apo/config/config.txt", L"/apo/config/duncans-equalizer.txt", L"/s.txt", L"/kaputt.txt" }) DeleteFileW((dir + f).c_str());
     RemoveDirectoryW((apo + L"/config").c_str()); RemoveDirectoryW(apo.c_str()); RemoveDirectoryW(dir.c_str());
 
+    // Profil weitergeben (Export/Import) und Tastenkuerzel-Schalter
+    {
+        Profile p;
+        p.name = L"Kopfhörer Büro"; p.device = L"Realtek (R) Audio"; p.s.bass = true; p.s.voice = true; p.s.preamp = -3;
+        for (int b = 0; b < kBands; ++b) p.s.gains[b] = b - 5;
+        p.s.extra = {"Preamp: -4.5 dB", "Filter: ON PK Fc 105 Hz Gain -2.5 dB Q 0.7"};
+        const std::string t = ProfileToText(p);
+        CHECK(t.find("realtek") == std::string::npos && t.find("Realtek") == std::string::npos);       // Geraetebindung wird nicht weitergegeben
+        Profile q;
+        CHECK(ProfileFromText(t, q) && q.name == p.name && q.device.empty() && q.s.bass && q.s.voice && q.s.preamp == -3 && q.s.extra == p.s.extra);
+        for (int b = 0; b < kBands; ++b) CHECK(q.s.gains[b] == b - 5);
+        Profile r;
+        CHECK(!ProfileFromText("", r) && !ProfileFromText("nur muell\r\n", r) && !ProfileFromText("[profile]\r\nbass=1\r\n", r));   // ohne Namen kein Profil
+        CHECK(!ProfileFromText(std::string(70 * 1024, 'x'), r));                                       // zu gross
+        CHECK(ProfileFromText("[profile]\r\nname=X\r\ngains=99,-99,1\r\nextra=Include: boese.txt\r\nextra=Filter: ON PK Fc 1000 Hz Gain 1 dB Q 1\r\n", r) &&
+              r.s.gains[0] == kMaxGain && r.s.gains[1] == -kMaxGain && r.s.extra.size() == 1);          // Werte begrenzt, unsichere Zeile verworfen
+        CHECK(ProfileFromText("[profile]\r\nname=Erstes\r\n[profile]\r\nname=Zweites\r\n", r) && r.name == L"Erstes");   // nur das erste Profil
+        std::vector<Profile> list(2);
+        list[0].name = L"Kopfhörer"; list[1].name = L"Kopfhörer (2)";
+        CHECK(UniqueProfileName(list, L"Boxen") == L"Boxen");
+        CHECK(UniqueProfileName(list, L"kopfhörer") == L"kopfhörer (3)");
+        CHECK(UniqueProfileName(list, L"  ").empty());
+        list[0].name = L"123456789012345678901234";                                                     // 24 Zeichen = Hoechstlaenge
+        CHECK(UniqueProfileName(list, L"123456789012345678901234").size() <= kMaxNameLen && FindProfile(list, UniqueProfileName(list, L"123456789012345678901234")) < 0);
+        // Tastenkuerzel: Standard an, wird gespeichert
+        wchar_t tmp3[MAX_PATH]; GetTempPathW(MAX_PATH, tmp3);
+        const std::wstring sp3 = std::wstring(tmp3) + L"eqhk" + std::to_wstring(GetCurrentProcessId()) + L".txt";
+        Settings hk; CHECK(hk.hotkeys);
+        hk.hotkeys = false;
+        Settings hb; CHECK(SaveSettings(hk, sp3) && LoadSettings(hb, sp3) && !hb.hotkeys);
+        Put(sp3, "enabled=1\r\n");
+        CHECK(LoadSettings(hb, sp3) && hb.hotkeys);                                                      // alte Datei ohne den Eintrag: an
+        DeleteFileW(sp3.c_str());
+    }
+
     std::printf("%d Pruefungen, %d Fehler\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }
