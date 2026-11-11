@@ -18,6 +18,7 @@
 #include <winspool.h>
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <set>
 #include <mutex>
@@ -30,12 +31,13 @@
 #include "Codec.h"
 #include "Docx.h"
 #include "Sheet.h"
+#include "Spell.h"
 #include "Xlsx.h"
 #include <gdiplus.h>
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.0"
+#define APP_VERSION L"0.7.0"
 #endif
 
 namespace {
@@ -60,7 +62,7 @@ enum Cmd : int {
     C_WRITER = 101, C_SHEETS, C_NEW, C_OPEN, C_SAVE, C_SAVEAS, C_PDF, C_PRINT,
     C_BOLD, C_ITALIC, C_UNDER, C_SMALLER, C_BIGGER, C_SIZE, C_LEFT, C_CENTER, C_RIGHT,
     C_PICK_WRITER, C_PICK_SHEETS,
-    C_STRIKE, C_FONT, C_COLOR, C_BULLET, C_FIND, C_FINDNEXT, C_TABLE,
+    C_STRIKE, C_FONT, C_COLOR, C_BULLET, C_FIND, C_FINDNEXT, C_TABLE, C_SPELL,
     C_FMT_EUR, C_FMT_PCT, C_FILL, C_CHART,
     ID_RICH = 201, ID_FORMULA = 202,
     C_SIZE_BASE = 300,
@@ -71,9 +73,12 @@ enum Cmd : int {
     C_FILL_BASE = 740,      // bis 740 + Zahl der Fuellfarben
     C_TABLE_BASE = 800,     // bis 800 + Zahl der Tabellengroessen
     // Dialog "Suchen und Ersetzen"
-    ID_F_FIND = 501, ID_F_REPL, ID_F_CASE, ID_F_WORD, ID_F_NEXT, ID_F_REPLACE, ID_F_ALL, ID_F_CLOSE, ID_F_STATUS
+    ID_F_FIND = 501, ID_F_REPL, ID_F_CASE, ID_F_WORD, ID_F_NEXT, ID_F_REPLACE, ID_F_ALL, ID_F_CLOSE, ID_F_STATUS,
+    // Dialog "Rechtschreibung"
+    ID_S_WORD = 521, ID_S_CTX, ID_S_LIST, ID_S_CHANGE, ID_S_CHANGEALL, ID_S_IGNORE, ID_S_IGNOREALL, ID_S_ADD, ID_S_CLOSE, ID_S_STATUS
 };
 constexpr wchar_t kFindClass[] = L"DuncansOfficeFind";
+constexpr wchar_t kSpellClass[] = L"DuncansOfficeSpell";
 struct ColorPreset { const wchar_t* name; COLORREF c; };
 const ColorPreset kColors[] = {
     { L"Standard", kPaperText },          { L"Schwarz", RGB(0, 0, 0) },          { L"Grau", RGB(0x66, 0x66, 0x66) },
@@ -266,6 +271,11 @@ private:
     void SetTextColorRef(COLORREF c);
     void ToggleBullet();
     void ShowFindDialog();
+    void ShowSpellDialog();                        // Writer: Rechtschreibung pruefen (F7)
+    LRESULT SpellHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
+    void SpellNext();
+    void SpellApply(const std::wstring& replacement, bool all);
+    std::wstring RichPlainText();
     void ReadFindFields(HWND dlg);
     void SetFindStatus(const std::wstring& t);
     bool FindNext();
@@ -360,6 +370,13 @@ private:
     std::wstring m_findText, m_replText;
     bool m_findCase = false, m_findWord = false;
     HWND m_findDlg = nullptr;
+    // Rechtschreibpruefung (F7): Dialog, Pruefer und Zustand
+    HWND m_spellDlg = nullptr;
+    std::unique_ptr<spell::Checker> m_spell;
+    LONG m_spellPos = 0;                          // ab hier wird weitergeprueft
+    spell::Miss m_spellCur;                       // aktuell angezeigter Fehler
+    bool m_spellHave = false;
+    std::map<std::wstring, std::wstring> m_spellAll;   // "Alle aendern": Wort -> Ersetzung
     HBRUSH m_brPanel = nullptr;
     HFONT m_fS = nullptr;   // durchgestrichenes "S" fuer den Knopf
     int m_sizePt = 0;
@@ -432,6 +449,7 @@ bool App::Create(HINSTANCE inst, int show, const std::wstring& openPath)
         { FVIRTKEY | FCONTROL, 'U', C_UNDER },
         { FVIRTKEY | FCONTROL, 'F', C_FIND },            { FVIRTKEY | FCONTROL, 'H', C_FIND },
         { FVIRTKEY, VK_F3, C_FINDNEXT },
+        { FVIRTKEY, VK_F7, C_SPELL },
     };
     m_accel = CreateAcceleratorTableW(keys, static_cast<int>(sizeof keys / sizeof keys[0]));
 
@@ -522,6 +540,7 @@ void App::Layout()
         std::vector<std::pair<int, std::wstring>> files = { { C_NEW, L"Neu" }, { C_OPEN, L"Öffnen" }, { C_SAVE, L"Speichern" }, { C_SAVEAS, L"Speichern unter" } };
         if (m_mode == Mode::Writer) {
             files.push_back({ C_FIND, L"Suchen" });
+            files.push_back({ C_SPELL, L"Rechtschreibung" });
             files.push_back({ C_PDF, L"PDF" });
             files.push_back({ C_PRINT, L"Drucken" });
         }
@@ -969,6 +988,7 @@ void App::Command(int id)
         case C_BULLET: if (writer) ToggleBullet(); break;
         case C_TABLE: if (writer) ShowTableMenu(); break;
         case C_FIND: if (writer) ShowFindDialog(); break;
+        case C_SPELL: if (writer) ShowSpellDialog(); break;
         case C_FINDNEXT: if (writer) { if (m_findText.empty()) ShowFindDialog(); else FindNext(); } break;
         case C_FMT_EUR: if (sheets) ToggleFormat(sheet::FmtCurrency); break;
         case C_FMT_PCT: if (sheets) ToggleFormat(sheet::FmtPercent); break;
@@ -1232,6 +1252,8 @@ void App::InitRich()
     SendMessageW(m_rich, EM_EXLIMITTEXT, 0, 0x7FFFFFF);
     SendMessageW(m_rich, EM_SETBKGNDCOLOR, 0, static_cast<LPARAM>(kPaper));
     SendMessageW(m_rich, EM_SETEVENTMASK, 0, ENM_CHANGE | ENM_SELCHANGE);
+    // Rechtschreibpruefung beim Tippen (rote Wellenlinie, Rechtsklick zeigt Vorschlaege). Rich Edit prueft nur getippten Text; fuer das ganze Dokument gibt es F7.
+    SendMessageW(m_rich, EM_SETLANGOPTIONS, 0, SendMessageW(m_rich, EM_GETLANGOPTIONS, 0, 0) | 0x0800 /* IMF_SPELLCHECKING */);
     SetDefaultFormat();
     SendMessageW(m_rich, EM_SETMODIFY, FALSE, 0);   // neues Dokument gilt als unveraendert
 }
@@ -1240,7 +1262,8 @@ void App::SetDefaultFormat()
 {
     CHARFORMAT2W cf{};
     cf.cbSize = sizeof cf;
-    cf.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_BOLD | CFM_ITALIC | CFM_UNDERLINE;
+    cf.dwMask = CFM_FACE | CFM_SIZE | CFM_COLOR | CFM_BOLD | CFM_ITALIC | CFM_UNDERLINE | CFM_LCID;
+    cf.lcid = MAKELCID(LANG_GERMAN, SORT_DEFAULT);   // Sprache fuer die Rechtschreibpruefung
     cf.yHeight = 11 * 20;
     cf.crTextColor = kPaperText;
     wcscpy_s(cf.szFaceName, L"Segoe UI");
@@ -3013,6 +3036,265 @@ LRESULT App::FindHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
             wchar_t t[64];
             GetWindowTextW(di->hwndItem, t, 64);
             Text(di->hDC, m_fUi, def ? RGB(0x1E, 0x1E, 0x2E) : kText, di->rcItem, t, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
+            return TRUE;
+        }
+        default: break;
+    }
+    return DefWindowProcW(hwnd, msg, wp, lp);
+}
+
+// ======================= Writer: Rechtschreibung =======================
+
+std::wstring App::RichPlainText()
+{
+    GETTEXTLENGTHEX gl{ GTL_DEFAULT, 1200 };
+    const LRESULT n = SendMessageW(m_rich, EM_GETTEXTLENGTHEX, reinterpret_cast<WPARAM>(&gl), 0);
+    if (n <= 0) return std::wstring();
+    std::wstring t(static_cast<size_t>(n) + 1, L'\0');
+    GETTEXTEX gt{ static_cast<DWORD>((n + 1) * sizeof(wchar_t)), GT_DEFAULT, 1200, nullptr, nullptr };
+    SendMessageW(m_rich, EM_GETTEXTEX, reinterpret_cast<WPARAM>(&gt), reinterpret_cast<LPARAM>(t.data()));
+    t.resize(wcslen(t.c_str()));
+    return t;   // Absatzenden sind einzelne \r: Stellen stimmen mit den Positionen von EM_EXSETSEL ueberein
+}
+
+// Sucht den naechsten Fehler ab m_spellPos, markiert ihn im Text und zeigt Wort, Umgebung und Vorschlaege im Dialog
+void App::SpellNext()
+{
+    if (!m_spellDlg || !IsWindow(m_spellDlg)) return;
+    HWND list = GetDlgItem(m_spellDlg, ID_S_LIST);
+    SendMessageW(list, LB_RESETCONTENT, 0, 0);
+    for (int guard = 0; guard < 200000; ++guard) {
+        const std::wstring text = RichPlainText();
+        const std::vector<spell::Miss> found = m_spell->Find(text, static_cast<size_t>(std::max<LONG>(0, m_spellPos)), 1);
+        if (found.empty()) {
+            m_spellHave = false;
+            SetDlgItemTextW(m_spellDlg, ID_S_WORD, L"");
+            SetDlgItemTextW(m_spellDlg, ID_S_CTX, L"");
+            SetDlgItemTextW(m_spellDlg, ID_S_STATUS, L"Fertig: keine weiteren Fehler gefunden.");
+            for (int id : { ID_S_CHANGE, ID_S_CHANGEALL, ID_S_IGNORE, ID_S_IGNOREALL, ID_S_ADD }) EnableWindow(GetDlgItem(m_spellDlg, id), FALSE);
+            SendMessageW(m_spellDlg, DM_SETDEFID, ID_S_CLOSE, 0);
+            SetFocus(GetDlgItem(m_spellDlg, ID_S_CLOSE));
+            InvalidateRect(m_spellDlg, nullptr, TRUE);
+            return;
+        }
+        const spell::Miss& ms = found[0];
+        const auto known = m_spellAll.find(ms.word);
+        if (known != m_spellAll.end() && !ms.repeated) {   // "Alle aendern" gilt fuer jedes weitere Vorkommen ohne Rueckfrage
+            CHARRANGE r{ ms.start, ms.start + ms.length };
+            SendMessageW(m_rich, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&r));
+            SendMessageW(m_rich, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(known->second.c_str()));
+            m_spellPos = ms.start + static_cast<LONG>(known->second.size());
+            continue;
+        }
+        m_spellCur = ms;
+        m_spellHave = true;
+        CHARRANGE r{ ms.start, ms.start + ms.length };
+        SendMessageW(m_rich, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&r));
+        SendMessageW(m_rich, EM_SCROLLCARET, 0, 0);
+        // Umgebung: bis zu 36 Zeichen davor und danach, ohne Zeilenumbrueche
+        const size_t a = static_cast<size_t>(ms.start) > 36 ? static_cast<size_t>(ms.start) - 36 : 0;
+        const size_t b = std::min(text.size(), static_cast<size_t>(ms.start + ms.length) + 36);
+        std::wstring ctx = (a > 0 ? L"…" : L"") + text.substr(a, static_cast<size_t>(ms.start) - a) + L"[" + ms.word + L"]" +
+                           text.substr(static_cast<size_t>(ms.start + ms.length), b - static_cast<size_t>(ms.start + ms.length)) + (b < text.size() ? L"…" : L"");
+        for (auto& c : ctx) if (c == L'\r' || c == L'\n' || c == L'\v' || c == L'\a') c = L' ';
+        SetDlgItemTextW(m_spellDlg, ID_S_WORD, ms.word.c_str());
+        SetDlgItemTextW(m_spellDlg, ID_S_CTX, ctx.c_str());
+        std::vector<std::wstring> sug;
+        if (ms.repeated) sug.push_back(L"(Doppeltes Wort löschen)");
+        else {
+            if (!ms.replacement.empty()) sug.push_back(ms.replacement);
+            for (const auto& s : m_spell->Suggest(ms.word, 8))
+                if (std::find(sug.begin(), sug.end(), s) == sug.end()) sug.push_back(s);
+        }
+        for (const auto& s : sug) SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s.c_str()));
+        if (!sug.empty()) SendMessageW(list, LB_SETCURSEL, 0, 0);
+        SetDlgItemTextW(m_spellDlg, ID_S_STATUS, sug.empty() ? L"Keine Vorschläge – du kannst das Wort im Text selbst ändern und hier „Ignorieren“ wählen." : L"");
+        EnableWindow(GetDlgItem(m_spellDlg, ID_S_CHANGE), !sug.empty());
+        EnableWindow(GetDlgItem(m_spellDlg, ID_S_CHANGEALL), !sug.empty() && !ms.repeated);
+        for (int id : { ID_S_IGNORE, ID_S_IGNOREALL, ID_S_ADD }) EnableWindow(GetDlgItem(m_spellDlg, id), TRUE);
+        EnableWindow(GetDlgItem(m_spellDlg, ID_S_ADD), !ms.repeated);
+        EnableWindow(GetDlgItem(m_spellDlg, ID_S_IGNOREALL), !ms.repeated);
+        SendMessageW(m_spellDlg, DM_SETDEFID, sug.empty() ? ID_S_IGNORE : ID_S_CHANGE, 0);
+        InvalidateRect(m_spellDlg, nullptr, TRUE);
+        return;
+    }
+}
+
+// Aktuellen Fehler durch replacement ersetzen (bei doppeltem Wort: loeschen samt einem Leerzeichen davor) und weiterpruefen
+void App::SpellApply(const std::wstring& replacement, bool all)
+{
+    if (!m_spellHave) return;
+    LONG start = m_spellCur.start, end = m_spellCur.start + m_spellCur.length;
+    std::wstring repl = replacement;
+    if (m_spellCur.repeated) {
+        repl.clear();
+        if (start > 0) {   // das Leerzeichen vor dem doppelten Wort mitnehmen
+            CHARRANGE prev{ start - 1, start };
+            SendMessageW(m_rich, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&prev));
+            wchar_t c[4]{};
+            SendMessageW(m_rich, EM_GETSELTEXT, 0, reinterpret_cast<LPARAM>(c));
+            if (c[0] == L' ') --start;
+        }
+    } else if (all) {
+        m_spellAll[m_spellCur.word] = repl;
+    }
+    CHARRANGE r{ start, end };
+    SendMessageW(m_rich, EM_EXSETSEL, 0, reinterpret_cast<LPARAM>(&r));
+    SendMessageW(m_rich, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(repl.c_str()));
+    m_spellPos = start + static_cast<LONG>(repl.size());
+    SpellNext();
+}
+
+void App::ShowSpellDialog()
+{
+    if (m_mode != Mode::Writer || (m_spellDlg && IsWindow(m_spellDlg))) return;
+    if (!m_spell) m_spell = std::make_unique<spell::Checker>(L"de-DE");
+    if (!m_spell->Ok()) {
+        MessageBoxW(m_hwnd, L"Windows hat auf diesem PC kein Wörterbuch für die Rechtschreibprüfung.\n\nEs lässt sich unter Einstellungen > Zeit und Sprache > Sprache und Region installieren (Deutsch hinzufügen).",
+                    L"Duncan's Office", MB_ICONINFORMATION);
+        return;
+    }
+    static bool registered = false;
+    if (!registered) {
+        WNDCLASSEXW wc{ sizeof wc };
+        wc.hInstance = m_inst;
+        wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+        wc.hbrBackground = m_brPanel;
+        wc.lpszClassName = kSpellClass;
+        wc.lpfnWndProc = [](HWND h, UINT m, WPARAM w, LPARAM l) -> LRESULT { return g_app->SpellHandle(h, m, w, l); };
+        RegisterClassExW(&wc);
+        registered = true;
+    }
+    m_spellPos = 0;
+    m_spellHave = false;
+    m_spellAll.clear();
+    RECT client{ 0, 0, S(520), S(404) };
+    AdjustWindowRectEx(&client, WS_POPUP | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
+    RECT own{};
+    GetWindowRect(m_hwnd, &own);
+    const int w = client.right - client.left, h = client.bottom - client.top;
+    m_spellDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kSpellClass, L"Rechtschreibung", WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
+                                 own.left + (own.right - own.left - w) / 2, own.top + S(100), w, h, m_hwnd, nullptr, m_inst, nullptr);
+    if (!m_spellDlg) return;
+    const BOOL dark = TRUE;
+    DwmSetWindowAttribute(m_spellDlg, 20, &dark, sizeof dark);
+    ShowWindow(m_spellDlg, SW_SHOW);
+    EnableWindow(m_hwnd, FALSE);   // modal: das Hauptfenster ruht, bis der Dialog zu ist
+    SpellNext();
+    SetFocus(GetDlgItem(m_spellDlg, ID_S_LIST));
+    MSG msg;
+    while (IsWindow(m_spellDlg)) {
+        const BOOL got = GetMessageW(&msg, nullptr, 0, 0);
+        if (got <= 0) {
+            if (got == 0) PostQuitMessage(static_cast<int>(msg.wParam));
+            break;
+        }
+        if (!IsDialogMessageW(m_spellDlg, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+    EnableWindow(m_hwnd, TRUE);
+    if (IsWindow(m_spellDlg)) DestroyWindow(m_spellDlg);
+    m_spellDlg = nullptr;
+    SetActiveWindow(m_hwnd);
+    SetFocus(m_rich);
+}
+
+LRESULT App::SpellHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+{
+    auto selected = [&]() {
+        HWND list = GetDlgItem(hwnd, ID_S_LIST);
+        const LRESULT i = SendMessageW(list, LB_GETCURSEL, 0, 0);
+        if (i < 0) return std::wstring();
+        const LRESULT n = SendMessageW(list, LB_GETTEXTLEN, static_cast<WPARAM>(i), 0);
+        std::wstring t(static_cast<size_t>(std::max<LRESULT>(n, 0)) + 1, L'\0');
+        SendMessageW(list, LB_GETTEXT, static_cast<WPARAM>(i), reinterpret_cast<LPARAM>(t.data()));
+        t.resize(wcslen(t.c_str()));
+        return t;
+    };
+    switch (msg) {
+        case WM_CREATE: {
+            auto label = [&](const wchar_t* t, int x, int y, int w, int h, int id) {
+                HWND c = CreateWindowExW(0, L"STATIC", t, WS_CHILD | WS_VISIBLE, S(x), S(y), S(w), S(h), hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
+                SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
+                return c;
+            };
+            auto button = [&](const wchar_t* t, int x, int y, int w, int id, bool def) {
+                HWND c = CreateWindowExW(0, L"BUTTON", t, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | (def ? BS_DEFPUSHBUTTON : 0), S(x), S(y), S(w), S(34), hwnd,
+                                         reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
+                SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
+                return c;
+            };
+            label(L"Unbekanntes Wort:", 20, 14, 480, 20, 0);
+            HWND word = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | ES_READONLY | ES_AUTOHSCROLL, S(20), S(36), S(480), S(26), hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_S_WORD)), m_inst, nullptr);
+            SendMessageW(word, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
+            label(L"", 20, 68, 480, 40, ID_S_CTX);
+            label(L"Vorschläge:", 20, 112, 300, 20, 0);
+            HWND list = CreateWindowExW(0, L"LISTBOX", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT, S(20), S(134), S(300), S(190), hwnd,
+                                        reinterpret_cast<HMENU>(static_cast<INT_PTR>(ID_S_LIST)), m_inst, nullptr);
+            SendMessageW(list, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
+            SetWindowTheme(list, L"DarkMode_Explorer", nullptr);
+            button(L"Ändern", 334, 134, 166, ID_S_CHANGE, true);
+            button(L"Alle ändern", 334, 176, 166, ID_S_CHANGEALL, false);
+            button(L"Ignorieren", 334, 218, 166, ID_S_IGNORE, false);
+            button(L"Alle ignorieren", 334, 260, 166, ID_S_IGNOREALL, false);
+            button(L"Zum Wörterbuch", 334, 302, 166, ID_S_ADD, false);
+            label(L"", 20, 336, 480, 22, ID_S_STATUS);
+            button(L"Schließen", 400, 360, 100, ID_S_CLOSE, false);
+            return 0;
+        }
+        case WM_COMMAND:
+            switch (LOWORD(wp)) {
+                case ID_S_LIST:
+                    if (HIWORD(wp) == LBN_DBLCLK) { const std::wstring s = selected(); if (!s.empty()) SpellApply(s, false); }
+                    return 0;
+                case IDOK:
+                    if (m_spellHave) { const std::wstring s = selected(); if (!s.empty()) SpellApply(s, false); else { m_spellPos = m_spellCur.start + m_spellCur.length; SpellNext(); } }
+                    else DestroyWindow(hwnd);
+                    return 0;
+                case ID_S_CHANGE: { const std::wstring s = selected(); if (!s.empty()) SpellApply(s, false); return 0; }
+                case ID_S_CHANGEALL: { const std::wstring s = selected(); if (!s.empty()) SpellApply(s, true); return 0; }
+                case ID_S_IGNORE: if (m_spellHave) { m_spellPos = m_spellCur.start + m_spellCur.length; SpellNext(); } return 0;
+                case ID_S_IGNOREALL: if (m_spellHave) { m_spell->Ignore(m_spellCur.word); m_spellPos = m_spellCur.start + m_spellCur.length; SpellNext(); } return 0;
+                case ID_S_ADD: if (m_spellHave) { m_spell->AddToDictionary(m_spellCur.word); m_spellPos = m_spellCur.start + m_spellCur.length; SpellNext(); } return 0;
+                case ID_S_CLOSE:
+                case IDCANCEL: DestroyWindow(hwnd); return 0;
+                default: break;
+            }
+            break;
+        case WM_CLOSE: DestroyWindow(hwnd); return 0;
+        case WM_DESTROY: PostMessageW(m_hwnd, WM_NULL, 0, 0); return 0;
+        case WM_CTLCOLOREDIT:
+        case WM_CTLCOLORLISTBOX:
+            SetTextColor(reinterpret_cast<HDC>(wp), kText);
+            SetBkColor(reinterpret_cast<HDC>(wp), kBg);
+            return reinterpret_cast<LRESULT>(m_brEdit);
+        case WM_CTLCOLORSTATIC:
+            if (GetDlgCtrlID(reinterpret_cast<HWND>(lp)) == ID_S_WORD) {   // schreibgeschuetztes Feld mit dem Fehlerwort: wie ein Eingabefeld
+                SetTextColor(reinterpret_cast<HDC>(wp), RGB(0xF3, 0x8B, 0xA8));
+                SetBkColor(reinterpret_cast<HDC>(wp), kBg);
+                return reinterpret_cast<LRESULT>(m_brEdit);
+            }
+            [[fallthrough]];
+        case WM_CTLCOLORBTN:
+            SetTextColor(reinterpret_cast<HDC>(wp), GetDlgCtrlID(reinterpret_cast<HWND>(lp)) == ID_S_STATUS ? kAccent : kText);
+            SetBkColor(reinterpret_cast<HDC>(wp), kPanel);
+            return reinterpret_cast<LRESULT>(m_brPanel);
+        case WM_DRAWITEM: {
+            const auto* di = reinterpret_cast<const DRAWITEMSTRUCT*>(lp);
+            if (di->CtlType != ODT_BUTTON) break;
+            HBRUSH back = CreateSolidBrush(kPanel);
+            FillRect(di->hDC, &di->rcItem, back);
+            DeleteObject(back);
+            const bool down = (di->itemState & ODS_SELECTED) != 0, disabled = (di->itemState & ODS_DISABLED) != 0, focus = (di->itemState & ODS_FOCUS) != 0;
+            const bool def = GetWindowLongPtrW(di->hwndItem, GWL_STYLE) & BS_DEFPUSHBUTTON;
+            COLORREF fill = def && !disabled ? kAccent : kHover;
+            if (down) fill = Mix(fill, kBg, 30);
+            RoundBox(di->hDC, di->rcItem, S(7), fill, focus ? kText : fill);
+            wchar_t t[64];
+            GetWindowTextW(di->hwndItem, t, 64);
+            Text(di->hDC, m_fUi, disabled ? Mix(kText, kBg, 60) : (def ? RGB(0x1E, 0x1E, 0x2E) : kText), di->rcItem, t, DT_SINGLELINE | DT_VCENTER | DT_CENTER | DT_NOPREFIX);
             return TRUE;
         }
         default: break;
