@@ -64,6 +64,35 @@ int main(int argc, char** argv)
     }
     CHECK(invoice::BuildPdf(d).compare(0, 8, "%PDF-1.4") == 0 && !Has(invoice::BuildPdf(d), "factur-x"));   // ohne XML unveraendert
 
+    // Leistungsdatum und Leistungszeitraum
+    {
+        std::wstring a, b;
+        CHECK(invoice::ParseServicePeriod(L"", a, b) && a.empty() && b.empty());
+        CHECK(invoice::ParseServicePeriod(L"15.10.2026", a, b) && a == L"2026-10-15" && b.empty());
+        CHECK(invoice::ParseServicePeriod(L"01.10.2026 - 31.10.2026", a, b) && a == L"2026-10-01" && b == L"2026-10-31");
+        CHECK(invoice::ParseServicePeriod(L"01.10.2026 – 31.10.2026", a, b) && a == L"2026-10-01" && b == L"2026-10-31");
+        CHECK(invoice::ParseServicePeriod(L"1.10.2026 bis 31.10.2026", a, b) && a == L"2026-10-01" && b == L"2026-10-31");
+        CHECK(invoice::ParseServicePeriod(L"05.10.2026 - 05.10.2026", a, b) && a == L"2026-10-05" && b.empty());   // gleiches Datum = Einzeldatum
+        CHECK(!invoice::ParseServicePeriod(L"31.10.2026 - 01.10.2026", a, b) && !invoice::ParseServicePeriod(L"gestern", a, b) && !invoice::ParseServicePeriod(L"01.10.2026 - ", a, b));
+        invoice::Data one = Sample();
+        one.serviceFromIso = L"2026-10-15";
+        const std::string ox = invoice::BuildEInvoiceXml(one);
+        CHECK(Has(ox, "<ram:ActualDeliverySupplyChainEvent><ram:OccurrenceDateTime><udt:DateTimeString format=\"102\">20261015") && !Has(ox, "BillingSpecifiedPeriod"));
+        invoice::Data per = Sample();
+        per.serviceFromIso = L"2026-10-01"; per.serviceToIso = L"2026-10-31";
+        const std::string px = invoice::BuildEInvoiceXml(per);
+        CHECK(Has(px, "<ram:StartDateTime><udt:DateTimeString format=\"102\">20261001") && Has(px, "<ram:EndDateTime><udt:DateTimeString format=\"102\">20261031") && !Has(px, "ActualDeliverySupplyChainEvent"));
+        CHECK(!Has(x, "BillingSpecifiedPeriod") && !Has(x, "ActualDeliverySupplyChainEvent"));   // ohne Angabe nichts
+        const std::string opdf = invoice::BuildPdf(one), ppdf = invoice::BuildPdf(per);
+        CHECK(Has(opdf, "(Leistungsdatum)") && Has(opdf, "(15.10.2026)") && Has(ppdf, "(Leistung von)") && Has(ppdf, "(Leistung bis)") && !Has(invoice::BuildPdf(d), "(Leistungsdatum)"));
+        invoice::Data back;
+        CHECK(invoice::ParseData(invoice::SerializeData(per), back) && back.serviceFromIso == L"2026-10-01" && back.serviceToIso == L"2026-10-31");
+        if (argc > 1) {
+            const std::string dir = argv[1];
+            struct { const char* name; const std::string* data; } fl[] = {{"leistung1.xml", &ox}, {"leistung2.xml", &px}};
+            for (auto& f : fl) { FILE* o = std::fopen((dir + "/" + f.name).c_str(), "wb"); if (o) { std::fwrite(f.data->data(), 1, f.data->size(), o); std::fclose(o); } }
+        }
+    }
     // Gutschrift / Storno: Typ 381, Bezug auf die Rechnung, Betraege positiv
     invoice::Data g = Sample();
     g.number = L"RE-2026-002"; g.cancels = L"RE-2026-001"; g.cancelsDateIso = L"2026-11-11"; g.dueIso.clear();
