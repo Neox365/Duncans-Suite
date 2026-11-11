@@ -353,10 +353,18 @@ int main() {
         CHECK(red && Near(PixelAt(red, 350, 450), 255, 0, 0));
         if (red) DeleteObject(red);
         CHECK(d.Undo());
+        {
+            std::vector<std::vector<char>> churn;
+            for (int i = 0; i < 64; ++i) churn.emplace_back(static_cast<size_t>(1) << (10 + i % 8), static_cast<char>(0xA5));
+        }
         HBITMAP plain = d.RenderPage(0, 595, 842);
         CHECK(plain && Near(PixelAt(plain, 350, 450), 255, 255, 255));
         if (plain) DeleteObject(plain);
         CHECK(d.Redo());
+        {   // Speicher wiederverwenden: Das Dokument nach Rueckgaengig/Wiederholen darf nicht aus freigegebenem Speicher lesen (frueher zufaellige Fehler)
+            std::vector<std::vector<char>> churn;
+            for (int i = 0; i < 64; ++i) churn.emplace_back(static_cast<size_t>(1) << (10 + i % 8), static_cast<char>(0x5A));
+        }
         HBITMAP red2 = d.RenderPage(0, 595, 842);
         CHECK(red2 && Near(PixelAt(red2, 350, 450), 255, 0, 0));
         if (red2) DeleteObject(red2);
