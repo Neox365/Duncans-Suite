@@ -30,7 +30,7 @@ using std::min;
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.8.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.8.1"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER

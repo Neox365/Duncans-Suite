@@ -880,12 +880,16 @@ void PdfDocument::PushUndo(bool content) {
 
 bool PdfDocument::Restore(const State& s) {
     if (!s.bytes || s.bytes->empty()) return false;
-    void* doc = g_api.LoadMemDocument(s.bytes->data(), static_cast<int>(s.bytes->size()), nullptr);
+    // PDFium liest waehrend der ganzen Lebensdauer des Dokuments direkt aus dem Puffer, den es beim Laden bekommt. Deshalb eine eigene Kopie laden
+    // und sie in m_data uebernehmen (ein verschobener vector behaelt seinen Speicher). Frueher wurde aus s.bytes geladen, das nach Rueckgaengig/Wiederholen
+    // freigegeben wird: das Dokument las dann aus freiem Speicher (zufaellig fehlende Stempel oder Aenderungen, im schlimmsten Fall ein Absturz).
+    std::vector<char> data(s.bytes->begin(), s.bytes->end());
+    void* doc = g_api.LoadMemDocument(data.data(), static_cast<int>(data.size()), nullptr);
     if (!doc) { g_error = L"Der Zustand konnte nicht wiederhergestellt werden."; return false; }
     CloseForm();
     g_api.CloseDocument(m_doc);
     m_doc = doc;
-    m_data.assign(s.bytes->begin(), s.bytes->end());       // PDFium liest direkt aus diesem Puffer
+    m_data = std::move(data);
     m_rot = s.rot;
     m_rot.resize(PageCount(), 0);
     m_sanitize = s.sanitize;

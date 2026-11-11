@@ -239,6 +239,8 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.8.1 | 2026-11-11
+- Behoben: Nach „Rückgängig“ oder „Wiederholen“ (Strg+Z, Strg+Y) las das Programm das Dokument aus bereits freigegebenem Speicher. Folgen waren zufällig fehlende Änderungen (z. B. ein Stempel, der nach „Wiederholen“ nicht mehr zu sehen war), beschädigte Anzeige oder im ungünstigen Fall ein Absturz. Seit dieser Version hält das Programm den Dokumentspeicher bis zum Schließen oder Wechseln des Dokuments. Betroffen waren alle Aktionen mit Rückgängig: Stempel, Unterschrift, Schwärzen, Markierungen, Notizen, Zuschnitt, Drehen, Seiten löschen, verschieben, anhängen und die Texterkennung. Wer nach Rückgängig/Wiederholen gespeichert hat, sollte die Datei prüfen.
 ## 1.8.0 | 2026-11-11
 - Neu: Texterkennung (OCR) für gescannte Seiten. Im Menü „⋯“ liest „Text erkennen (OCR)“ alle Seiten ohne eigenen Text mit der in Windows eingebauten Texterkennung (nichts wird hochgeladen) und legt das Ergebnis als unsichtbaren Text über die Seite. Danach lässt sich der Scan durchsuchen (Suchen, auch „Schwärzen“ über die Suche) und der Text mit dem Werkzeug „Kopieren“ übernehmen; das Bild bleibt unverändert. Der Fortschritt steht unten im Hinweis, Esc bricht ab, Strg+Z macht die Erkennung für alle Seiten auf einmal rückgängig, mit „Speichern“ wird sie Teil der Datei. Seiten, die schon Text haben, werden nicht angefasst.
 - Die Erkennung nutzt Deutsch, wenn Windows das Sprachpaket mit Texterkennung hat (sonst Englisch oder die Sprachen des Benutzerprofils). Fehlt jedes, erklärt das Programm, wo man es in den Windows-Einstellungen hinzufügt. Handschrift wird kaum erkannt, bei schlechten Scans bitte Zahlen und Namen prüfen.
