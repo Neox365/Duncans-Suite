@@ -370,6 +370,10 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.11.0 | 2026-11-11
+- Neu: E-Rechnung erzeugen. Jede im Rechnungs-Generator erstellte Rechnung enthält jetzt die Rechnungsdaten als ZUGFeRD / Factur-X (Profil EN 16931, XML „factur-x.xml“ im PDF eingebettet). Sieht die Rechnung aus wie bisher, kann Buchhaltungssoftware sie aber direkt einlesen. Kleinunternehmer (§ 19 UStG, Steuerkategorie E) und mehrere Steuersätze werden unterstützt, Abzüge als negative Menge.
+- Voraussetzung: Absender und Empfänger brauchen Straße und eine letzte Adresszeile „PLZ Ort“ (5-stellige deutsche Postleitzahl), der Absender eine Steuernummer oder USt-IdNr. Fehlt etwas, entsteht wie bisher eine normale PDF und die Meldung nennt den Grund.
+- Grenzen: Die Datei ist kein PDF/A-3 (Schriften nicht eingebettet) und keine XRechnung für Behörden (keine Leitweg-ID); Rechnungen nur in Euro an Empfänger in Deutschland. Gegen die offiziellen XSD-Schemas geprüft, aber nicht mit dem KoSIT-Prüftool; bitte vor dem Einsatz mit Ihrem Steuerberater oder einem E-Rechnungs-Prüfer testen.
 ## 0.10.0 | 2026-11-11
 - Neu: Gescannte Rechnungen und Fotos werden gelesen. Beim automatischen Einsortieren (Ziehen ins Fenster, „Senden an“, --auto) liest Docs-Files bei PDFs ohne eigenen Text (Scans) und bei Bildern (JPG, PNG, BMP, TIF) die ersten zwei Seiten mit der in Windows eingebauten Texterkennung (nichts wird hochgeladen) und übernimmt Betrag und Fälligkeit wie bei normalen PDFs. Ein Foto der Rechnung reicht also. Das Ergebnis steht in der Meldung als „per Texterkennung aus einem Scan“, bitte Zahlen dann besonders genau prüfen.
 - Die Texterkennung braucht ein Windows-Sprachpaket mit Texterkennung (Deutsch oder Englisch) und für Scan-PDFs die pdfium.dll der Suite. Fehlt etwas, bleibt der Beleg ohne Betrag und die Meldung nennt den Grund. Schalter wie bisher: Zahnrad > „Betrag und Fälligkeit aus PDF und Scans lesen (Texterkennung)“.

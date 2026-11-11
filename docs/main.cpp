@@ -29,6 +29,7 @@
 
 #include "EInvoice.h"
 #include "Export.h"
+#include "FacturX.h"
 #include "Invoice.h"
 #include "InvoiceText.h"
 #include "OcrScan.h"
@@ -39,7 +40,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.10.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.11.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -158,81 +159,156 @@ bool RemindAutostartOn() {
     return on;
 }
 
-// Zusaetzlich zum Run-Eintrag: eine Aufgabe in der Windows-Aufgabenplanung, die taeglich um 9 Uhr (und nachgeholt, wenn der PC dann aus war)
-// "--remind" startet. So kommt die Erinnerung auch, wenn der PC wochenlang im Ruhezustand laeuft. Das "hoechstens einmal am Tag" gilt weiter.
-const wchar_t* const kTaskName = L"OggysDocsFilesErinnerung";
-
-// Fuehrt schtasks.exe aus (ohne Fenster, hoechstens 15 s) und liefert dessen Exitcode, -1 bei Startfehler.
-int RunSchtasks(const std::wstring& args) {
-    wchar_t sys[MAX_PATH]{};
-    GetSystemDirectoryW(sys, MAX_PATH);
-    std::wstring cmd = std::wstring(L"\"") + sys + L"\\schtasks.exe\" " + args;
-    STARTUPINFOW si{sizeof si};
-    si.dwFlags = STARTF_USESHOWWINDOW;
-    si.wShowWindow = SW_HIDE;
-    PROCESS_INFORMATION pi{};
-    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return -1;
-    DWORD code = 0xFFFFFFFF;
-    if (WaitForSingleObject(pi.hProcess, 15000) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    return static_cast<int>(code);
-}
-
-std::wstring XmlEscape(const std::wstring& s) {
-    std::wstring o;
-    for (wchar_t c : s) {
-        switch (c) {
-            case L'&': o += L"&amp;"; break;
-            case L'<': o += L"&lt;"; break;
-            case L'>': o += L"&gt;"; break;
-            case L'"': o += L"&quot;"; break;
-            default: o += c;
-        }
-    }
-    return o;
-}
-
-bool RemindTaskExists() { return RunSchtasks(std::wstring(L"/Query /TN \"") + kTaskName + L"\"") == 0; }
-
-bool CreateRemindTask() {
-    wchar_t exe[MAX_PATH]{}, user[256]{}, domain[256]{}, tmpDir[MAX_PATH]{};
-    GetModuleFileNameW(nullptr, exe, MAX_PATH);
-    GetEnvironmentVariableW(L"USERNAME", user, 256);
-    GetEnvironmentVariableW(L"USERDOMAIN", domain, 256);
-    if (!GetTempPathW(MAX_PATH, tmpDir) || !user[0]) return false;
-    SYSTEMTIME st;
-    GetLocalTime(&st);
-    wchar_t start[40];
-    swprintf_s(start, L"%04d-%02d-%02dT09:00:00", st.wYear, st.wMonth, st.wDay);
-    const std::wstring account = XmlEscape(std::wstring(domain) + (domain[0] ? L"\\" : L"") + user);
-    const std::wstring xml =
-        L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n"
-        L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n"
-        L"  <RegistrationInfo><Description>Erinnert an faellige Rechnungen (Oggys Docs-Files).</Description></RegistrationInfo>\n"
-        L"  <Triggers><CalendarTrigger><StartBoundary>" + std::wstring(start) + L"</StartBoundary><Enabled>true</Enabled>"
-        L"<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger></Triggers>\n"
-        L"  <Principals><Principal id=\"Author\"><UserId>" + account + L"</UserId><LogonType>InteractiveToken</LogonType>"
-        L"<RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n"
-        L"  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
-        L"<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand>"
-        L"<Enabled>true</Enabled><Hidden>true</Hidden><ExecutionTimeLimit>PT2M</ExecutionTimeLimit></Settings>\n"
-        L"  <Actions Context=\"Author\"><Exec><Command>" + XmlEscape(exe) + L"</Command><Arguments>--remind</Arguments></Exec></Actions>\n"
-        L"</Task>\n";
-    const std::wstring file = std::wstring(tmpDir) + L"OggysDocsFilesTask.xml";
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, file.c_str(), L"wb") != 0 || !f) return false;
-    const unsigned char bom[2] = {0xFF, 0xFE};   // UTF-16 LE mit BOM, wie schtasks es erwartet
-    fwrite(bom, 1, 2, f);
-    fwrite(xml.data(), sizeof(wchar_t), xml.size(), f);
-    fclose(f);
-    const int rc = RunSchtasks(std::wstring(L"/Create /TN \"") + kTaskName + L"\" /XML \"" + file + L"\" /F");
-    DeleteFileW(file.c_str());
-    return rc == 0;
-}
-
-void DeleteRemindTask() { RunSchtasks(std::wstring(L"/Delete /TN \"") + kTaskName + L"\" /F"); }
-
+// Zusaetzlich zum Run-Eintrag: eine Aufgabe in der Windows-Aufgabenplanung, die taeglich um 9 Uhr (und nachgeholt, wenn der PC dann aus war)
+
+// "--remind" startet. So kommt die Erinnerung auch, wenn der PC wochenlang im Ruhezustand laeuft. Das "hoechstens einmal am Tag" gilt weiter.
+
+const wchar_t* const kTaskName = L"OggysDocsFilesErinnerung";
+
+
+
+// Fuehrt schtasks.exe aus (ohne Fenster, hoechstens 15 s) und liefert dessen Exitcode, -1 bei Startfehler.
+
+int RunSchtasks(const std::wstring& args) {
+
+    wchar_t sys[MAX_PATH]{};
+
+    GetSystemDirectoryW(sys, MAX_PATH);
+
+    std::wstring cmd = std::wstring(L"\"") + sys + L"\\schtasks.exe\" " + args;
+
+    STARTUPINFOW si{sizeof si};
+
+    si.dwFlags = STARTF_USESHOWWINDOW;
+
+    si.wShowWindow = SW_HIDE;
+
+    PROCESS_INFORMATION pi{};
+
+    if (!CreateProcessW(nullptr, cmd.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi)) return -1;
+
+    DWORD code = 0xFFFFFFFF;
+
+    if (WaitForSingleObject(pi.hProcess, 15000) == WAIT_OBJECT_0) GetExitCodeProcess(pi.hProcess, &code);
+
+    CloseHandle(pi.hThread);
+
+    CloseHandle(pi.hProcess);
+
+    return static_cast<int>(code);
+
+}
+
+
+
+std::wstring XmlEscape(const std::wstring& s) {
+
+    std::wstring o;
+
+    for (wchar_t c : s) {
+
+        switch (c) {
+
+            case L'&': o += L"&amp;"; break;
+
+            case L'<': o += L"&lt;"; break;
+
+            case L'>': o += L"&gt;"; break;
+
+            case L'"': o += L"&quot;"; break;
+
+            default: o += c;
+
+        }
+
+    }
+
+    return o;
+
+}
+
+
+
+bool RemindTaskExists() { return RunSchtasks(std::wstring(L"/Query /TN \"") + kTaskName + L"\"") == 0; }
+
+
+
+bool CreateRemindTask() {
+
+    wchar_t exe[MAX_PATH]{}, user[256]{}, domain[256]{}, tmpDir[MAX_PATH]{};
+
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+
+    GetEnvironmentVariableW(L"USERNAME", user, 256);
+
+    GetEnvironmentVariableW(L"USERDOMAIN", domain, 256);
+
+    if (!GetTempPathW(MAX_PATH, tmpDir) || !user[0]) return false;
+
+    SYSTEMTIME st;
+
+    GetLocalTime(&st);
+
+    wchar_t start[40];
+
+    swprintf_s(start, L"%04d-%02d-%02dT09:00:00", st.wYear, st.wMonth, st.wDay);
+
+    const std::wstring account = XmlEscape(std::wstring(domain) + (domain[0] ? L"\\" : L"") + user);
+
+    const std::wstring xml =
+
+        L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n"
+
+        L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\n"
+
+        L"  <RegistrationInfo><Description>Erinnert an faellige Rechnungen (Oggys Docs-Files).</Description></RegistrationInfo>\n"
+
+        L"  <Triggers><CalendarTrigger><StartBoundary>" + std::wstring(start) + L"</StartBoundary><Enabled>true</Enabled>"
+
+        L"<ScheduleByDay><DaysInterval>1</DaysInterval></ScheduleByDay></CalendarTrigger></Triggers>\n"
+
+        L"  <Principals><Principal id=\"Author\"><UserId>" + account + L"</UserId><LogonType>InteractiveToken</LogonType>"
+
+        L"<RunLevel>LeastPrivilege</RunLevel></Principal></Principals>\n"
+
+        L"  <Settings><MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy><DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>"
+
+        L"<StopIfGoingOnBatteries>false</StopIfGoingOnBatteries><StartWhenAvailable>true</StartWhenAvailable><AllowStartOnDemand>true</AllowStartOnDemand>"
+
+        L"<Enabled>true</Enabled><Hidden>true</Hidden><ExecutionTimeLimit>PT2M</ExecutionTimeLimit></Settings>\n"
+
+        L"  <Actions Context=\"Author\"><Exec><Command>" + XmlEscape(exe) + L"</Command><Arguments>--remind</Arguments></Exec></Actions>\n"
+
+        L"</Task>\n";
+
+    const std::wstring file = std::wstring(tmpDir) + L"OggysDocsFilesTask.xml";
+
+    FILE* f = nullptr;
+
+    if (_wfopen_s(&f, file.c_str(), L"wb") != 0 || !f) return false;
+
+    const unsigned char bom[2] = {0xFF, 0xFE};   // UTF-16 LE mit BOM, wie schtasks es erwartet
+
+    fwrite(bom, 1, 2, f);
+
+    fwrite(xml.data(), sizeof(wchar_t), xml.size(), f);
+
+    fclose(f);
+
+    const int rc = RunSchtasks(std::wstring(L"/Create /TN \"") + kTaskName + L"\" /XML \"" + file + L"\" /F");
+
+    DeleteFileW(file.c_str());
+
+    return rc == 0;
+
+}
+
+
+
+void DeleteRemindTask() { RunSchtasks(std::wstring(L"/Delete /TN \"") + kTaskName + L"\" /F"); }
+
+
+
 
 bool SetRemindAutostart(bool on) {
     HKEY k = nullptr;
@@ -2201,7 +2277,10 @@ void App::ApplyInvoice() {
         if (!d.exampleLoaded && docs::InvoiceNoTaken(names, data.number)) { d.error = L"Die Rechnungsnummer " + data.number + L" ist schon vergeben."; Invalidate(); return; }
         if (docs::ParseInvoiceNo(data.number, y, n) && y == yearNo) usedNo = n;
     }
-    const std::string pdf = invoice::BuildPdf(data);
+    // E-Rechnung: Factur-X/ZUGFeRD-Daten (EN 16931) ins PDF einbetten, wenn die Angaben dafuer reichen
+    const std::wstring eProblem = invoice::EInvoiceProblem(data);
+    const std::string eXml = eProblem.empty() ? invoice::BuildEInvoiceXml(data) : std::string();
+    const std::string pdf = invoice::BuildPdf(data, eXml.empty() ? nullptr : &eXml);
     if (usedNo > InvoiceCounter(yearNo)) SetInvoiceCounter(yearNo, usedNo);
     const std::wstring fname = L"Rechnung_" + data.number + L"_" + data.recipient + L".pdf";
     const fs::path target = docs::TargetPath(m_rootPath, year, data.issuer, fname);
@@ -2238,6 +2317,7 @@ void App::ApplyInvoice() {
     CloseDialog();
     Refresh();
     m_sel = {rel};
+    SetNote(eXml.empty() ? L"Rechnung erstellt (ohne E-Rechnungsdaten: " + eProblem + L")" : L"Rechnung erstellt, mit eingebetteten E-Rechnungsdaten (ZUGFeRD / Factur-X, EN 16931)");
     m_focusRel = m_anchorRel = rel;
     for (int i = 0; i < (int)m_view.size(); ++i)
         if (m_all[m_view[i]].rel == rel) { EnsureRowVisible(i); break; }
