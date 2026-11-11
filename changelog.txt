@@ -370,6 +370,9 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.14.0 | 2026-11-11
+- Neu: Kundenliste im Rechnungs-Generator. Der Knopf „Kunden“ über dem Feld „Empfänger“ öffnet die Liste; ein Klick trägt Name und Adresse des Empfängers ein. Jeder Empfänger wird beim Erstellen einer Rechnung automatisch gemerkt (hat sich die Adresse geändert, wird sie aktualisiert). Über „Kunde aus der Liste entfernen“ lässt sich ein Eintrag löschen; bereits erstellte Rechnungen bleiben unberührt. Beispielrechnungen legen keine Kunden an.
+- Die Liste liegt als Datei „.kunden.tsv“ im Rechnungsordner und wandert mit den Rechnungen.
 ## 0.13.0 | 2026-11-11
 - Neu: Leistungsdatum und Leistungszeitraum im Rechnungs-Generator (Feld „Leistung“ neben dem Rechnungsdatum). Eingabe als Datum („15.10.2026“) oder Zeitraum („01.10.2026 – 31.10.2026“, auch mit „-“ oder „bis“). Es steht im Rechnungskopf der PDF und in der E-Rechnung (Leistungsdatum bzw. Abrechnungszeitraum). Leer gelassen gilt wie bisher der Hinweis im Schlusstext, dass das Rechnungsdatum dem Leistungsdatum entspricht.
 - Hinweis: Die Pflichtangabe nach § 14 UStG ist damit erfüllbar; ob der Standardtext „entspricht dem Rechnungsdatum“ im Einzelfall genügt, klärt der Steuerberater.

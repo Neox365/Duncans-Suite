@@ -30,6 +30,7 @@
 #include "EInvoice.h"
 #include "Export.h"
 #include "AuditLog.h"
+#include "Customers.h"
 #include "FacturX.h"
 #include "Invoice.h"
 #include "InvoiceText.h"
@@ -41,7 +42,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.13.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.14.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -67,6 +68,7 @@ enum Id {
     D_SMALLBIZ = 61,                // Rechnungsdialog: "Kleinunternehmer nach § 19 UStG"
     D_PAGE0 = 62, D_PAGE1 = 63,     // Rechnungsdialog: Seite "Rechnung" / "Absender & Konto"
     D_EXAMPLE = 64, D_CLEAR = 65,   // Rechnungsdialog: "Beispiel laden" / "Felder leeren"
+    D_CUSTOMERS = 66,               // Rechnungsdialog: "Kunden" (Empfaenger aus der Kundenliste waehlen)
     D_TAGSUG0 = 70                  // 70..77 Tag-Vorschlaege im Tag-Dialog
 };
 constexpr int kMaxTagChips = 23;
@@ -524,6 +526,9 @@ private:
     bool WriteInvoiceFile(const invoice::Data& data, bool example, std::wstring& rel, std::wstring& err);
     void AppendLog(const std::wstring& action, const std::wstring& rel, const std::wstring& detail);
     void StornoSelected();
+    std::vector<docs::Customer> LoadCustomers() const;
+    void SaveCustomers(const std::vector<docs::Customer>& list) const;
+    void ShowCustomerMenu();
     void CheckLockedFiles();
     std::wstring m_invoiceNote;
     std::set<std::wstring> m_tamperLogged;   // schon protokollierte Veraenderungen (nur einmal melden)
@@ -1347,6 +1352,7 @@ void App::DrawInvoice() {
     } else {
     // Absender / Empfaenger nebeneinander
     place(0, x0, half, y);                 place(2, x0 + half + gap, half, y);
+    if (Field* rf = FieldById(2)) Button(D_CUSTOMERS, {rf->rc.right - 104 * k, rf->rc.top - 24 * k, rf->rc.right, rf->rc.top - 2 * k}, L"Kunden ▾", false);
     y += 24 * k + fh;
     place(1, x0, half, y);                 place(3, x0 + half + gap, half, y);
     y += 24 * k + fh;
@@ -1603,6 +1609,55 @@ void App::ShowInExplorer(const docs::Doc& d) {
 void App::CloseDialog() {
     m_dlg = Dialog{};
     m_focusId = kNoFocus;
+    Invalidate();
+}
+
+// ---- Kundenliste (.kunden.tsv im Rechnungsordner) ----
+
+std::vector<docs::Customer> App::LoadCustomers() const {
+    std::ifstream in(fs::path(m_rootPath) / L".kunden.tsv", std::ios::binary);
+    if (!in) return {};
+    return docs::ParseCustomers(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()));
+}
+
+void App::SaveCustomers(const std::vector<docs::Customer>& list) const {
+    const std::string data = docs::SerializeCustomers(list);
+    const fs::path path = fs::path(m_rootPath) / L".kunden.tsv";
+    const fs::path tmp = fs::path(path).concat(L".tmp");
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return;
+        out.write(data.data(), (std::streamsize)data.size());
+    }
+    MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
+}
+
+// Menue "Kunden": Auswahl traegt Name und Adresse des Empfaengers ein; "Entfernen" loescht einen Kunden aus der Liste (Rechnungen bleiben unberuehrt)
+void App::ShowCustomerMenu() {
+    if (m_dlg.kind != DlgKind::Invoice) return;
+    std::vector<docs::Customer> list = LoadCustomers();
+    HMENU m = CreatePopupMenu(), rm = CreatePopupMenu();
+    constexpr int kPick = 1000, kRemove = 2000, kMax = 400;
+    for (int i = 0; i < (int)list.size() && i < kMax; ++i) {
+        AppendMenuW(m, MF_STRING, kPick + i, list[i].name.c_str());
+        AppendMenuW(rm, MF_STRING, kRemove + i, list[i].name.c_str());
+    }
+    if (list.empty()) AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"Noch keine Kunden (werden beim Erstellen einer Rechnung gemerkt)");
+    else {
+        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+        AppendMenuW(m, MF_POPUP, (UINT_PTR)rm, L"Kunde aus der Liste entfernen");
+    }
+    POINT pt{};
+    GetCursorPos(&pt);
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(m);   // zerstoert das Untermenue mit
+    if (cmd >= kPick && cmd < kPick + kMax && cmd - kPick < (int)list.size()) {
+        const docs::Customer& c = list[cmd - kPick];
+        if (Field* fn = FieldById(2)) fn->ed.SetText(c.name);
+        if (Field* fa = FieldById(3)) fa->ed.SetText(c.address);
+    } else if (cmd >= kRemove && cmd < kRemove + kMax && cmd - kRemove < (int)list.size()) {
+        if (docs::RemoveCustomer(list, list[cmd - kRemove].name)) SaveCustomers(list);
+    }
     Invalidate();
 }
 
@@ -2449,6 +2504,10 @@ void App::ApplyInvoice() {
     if (usedNo > InvoiceCounter(yearNo)) SetInvoiceCounter(yearNo, usedNo);
     std::wstring rel, err;
     if (!WriteInvoiceFile(data, d.exampleLoaded, rel, err)) { d.error = err; Invalidate(); return; }
+    if (!d.exampleLoaded) {   // Empfaenger fuer die naechste Rechnung merken
+        std::vector<docs::Customer> customers = LoadCustomers();
+        if (docs::UpsertCustomer(customers, data.recipient, txt(3))) SaveCustomers(customers);
+    }
     // Absenderdaten als Standard fuer die naechsten Rechnungen merken (nur wenn die Checkbox gesetzt ist)
     const bool savedSender = d.saveSender && !d.exampleLoaded;   // Musterdaten nie als Standard-Absender merken
     if (savedSender) {
@@ -2728,6 +2787,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                 m_dlg.page = id == D_PAGE1 ? 1 : 0;
                 m_focusId = kNoFocus;
                 break;
+            case D_CUSTOMERS: ShowCustomerMenu(); break;
             case D_EXAMPLE: BeginInvoiceDialog(1); break;
             case D_CLEAR: BeginInvoiceDialog(2); break;
             case D_SMALLBIZ:
