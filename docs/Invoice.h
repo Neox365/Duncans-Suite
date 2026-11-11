@@ -32,6 +32,7 @@ struct Data {
     std::wstring bank, iban, bic;              // Bankverbindung (Fusszeile rechts)
     std::wstring taxNo;                        // Steuernummer oder USt-IdNr. des Absenders (leer = keine Angabe)
     bool smallBusiness = false;                // Kleinunternehmer nach § 19 UStG: keine Umsatzsteuer, Hinweistext auf der PDF
+    std::wstring serviceFromIso, serviceToIso; // Leistungsdatum (nur From) oder Leistungszeitraum (From bis To); leer = nicht angegeben
     std::wstring cancels, cancelsDateIso;      // gesetzt = Gutschrift/Storno zur Rechnung mit dieser Nummer und diesem Datum (Betraege bleiben positiv)
 };
 
@@ -45,6 +46,7 @@ inline std::string SerializeData(const Data& d)
     kv("number", d.number); kv("date", d.dateIso); kv("due", d.dueIso); kv("note", d.note); kv("vat", std::to_wstring(d.vatPercent));
     kv("owner", d.owner); kv("court", d.court); kv("phone", d.phone); kv("email", d.email); kv("web", d.web);
     kv("bank", d.bank); kv("iban", d.iban); kv("bic", d.bic); kv("taxNo", d.taxNo); kv("small", d.smallBusiness ? L"1" : L"0");
+    kv("serviceFrom", d.serviceFromIso); kv("serviceTo", d.serviceToIso);
     kv("cancels", d.cancels); kv("cancelsDate", d.cancelsDateIso);
     for (const Item& it : d.items) {
         char q[48];
@@ -85,6 +87,7 @@ inline bool ParseData(const std::string& text, Data& d)
             else if (k == "email") d.email = w(1); else if (k == "web") d.web = w(1); else if (k == "bank") d.bank = w(1);
             else if (k == "iban") d.iban = w(1); else if (k == "bic") d.bic = w(1); else if (k == "taxNo") d.taxNo = w(1);
             else if (k == "small") d.smallBusiness = f.size() > 1 && f[1] == "1";
+            else if (k == "serviceFrom") d.serviceFromIso = w(1); else if (k == "serviceTo") d.serviceToIso = w(1);
             else if (k == "cancels") d.cancels = w(1); else if (k == "cancelsDate") d.cancelsDateIso = w(1);
             else if (k == "item" && f.size() >= 5) {
                 Item it;
@@ -95,6 +98,25 @@ inline bool ParseData(const std::string& text, Data& d)
         } catch (...) { return false; }
     }
     return any && !d.items.empty();
+}
+
+// Eingabe "TT.MM.JJJJ" (Leistungsdatum) oder "TT.MM.JJJJ - TT.MM.JJJJ" / "... – ..." / "... bis ..." (Zeitraum); leer = keine Angabe.
+// Gibt false bei ungueltigem Datum oder umgekehrter Reihenfolge zurueck. Gleiches Anfangs- und Enddatum zaehlt als einzelnes Datum.
+inline bool ParseServicePeriod(const std::wstring& in, std::wstring& fromIso, std::wstring& toIso)
+{
+    fromIso.clear();
+    toIso.clear();
+    const std::wstring t = docs::Trim(in);
+    if (t.empty()) return true;
+    size_t cut = t.find(L"–"), len = 1;
+    if (cut == std::wstring::npos) { cut = t.find(L" - "); len = 3; }
+    if (cut == std::wstring::npos) { cut = t.find(L" bis "); len = 5; }
+    if (cut == std::wstring::npos) return docs::ParseDate(t, fromIso) && !fromIso.empty();
+    if (!docs::ParseDate(docs::Trim(t.substr(0, cut)), fromIso) || fromIso.empty()) return false;
+    if (!docs::ParseDate(docs::Trim(t.substr(cut + len)), toIso) || toIso.empty()) return false;
+    if (toIso < fromIso) return false;
+    if (toIso == fromIso) toIso.clear();
+    return true;
 }
 
 // Standard-Schlusstext; [Gesamtsumme] und [Fälligkeitsdatum] werden beim Erzeugen eingesetzt
@@ -284,6 +306,8 @@ inline std::string BuildPdf(const Data& d, const std::string* eInvoiceXml = null
     kv(credit ? L"Gutschriftsnr." : L"Rechnungsnr.", d.number);
     if (credit) kv(L"Storno zu", d.cancels + (d.cancelsDateIso.empty() ? L"" : L" vom " + docs::FormatDate(d.cancelsDateIso)));
     kv(L"Datum", docs::FormatDate(d.dateIso));
+    if (!d.serviceFromIso.empty() && d.serviceToIso.empty()) kv(L"Leistungsdatum", docs::FormatDate(d.serviceFromIso));
+    else if (!d.serviceFromIso.empty()) { kv(L"Leistung von", docs::FormatDate(d.serviceFromIso)); kv(L"Leistung bis", docs::FormatDate(d.serviceToIso)); }
     kv(L"Fällig am", docs::FormatDate(d.dueIso));
 
     // Empfaenger

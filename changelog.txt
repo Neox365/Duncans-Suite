@@ -370,6 +370,9 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.13.0 | 2026-11-11
+- Neu: Leistungsdatum und Leistungszeitraum im Rechnungs-Generator (Feld „Leistung“ neben dem Rechnungsdatum). Eingabe als Datum („15.10.2026“) oder Zeitraum („01.10.2026 – 31.10.2026“, auch mit „-“ oder „bis“). Es steht im Rechnungskopf der PDF und in der E-Rechnung (Leistungsdatum bzw. Abrechnungszeitraum). Leer gelassen gilt wie bisher der Hinweis im Schlusstext, dass das Rechnungsdatum dem Leistungsdatum entspricht.
+- Hinweis: Die Pflichtangabe nach § 14 UStG ist damit erfüllbar; ob der Standardtext „entspricht dem Rechnungsdatum“ im Einzelfall genügt, klärt der Steuerberater.
 ## 0.12.0 | 2026-11-11
 - Neu: Gesperrte Rechnungen (GoBD). Im Rechnungs-Generator erstellte Rechnungen sind ab dem Erstellen gesperrt: Sie lassen sich nicht löschen, und Gläubiger, Jahr, Betrag und Fälligkeit sind nicht mehr änderbar. Status, Tags, Notiz und Rate bleiben bearbeitbar. Das Programm merkt sich eine Prüfsumme (SHA-256) der PDF und meldet beim Start, wenn eine gesperrte Rechnung außerhalb des Programms verändert wurde. Beispielrechnungen bleiben ungesperrt.
 - Neu: Stornieren. Rechtsklick auf eine gesperrte Rechnung → „Stornieren …“ erstellt eine Gutschrift mit denselben Positionen und Bezug auf die Rechnung (eigene fortlaufende Nummer, als E-Rechnung Typ 381 mit Verweis auf die Rechnung). Die Rechnung bleibt unverändert erhalten, gilt als erledigt, und die Beträge heben sich in der Übersicht auf.

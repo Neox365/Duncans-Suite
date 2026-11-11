@@ -41,7 +41,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.12.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.13.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -1350,8 +1350,13 @@ void App::DrawInvoice() {
     y += 24 * k + fh;
     place(1, x0, half, y);                 place(3, x0 + half + gap, half, y);
     y += 24 * k + fh;
-    const float quarter = (fw - 3 * gap) / 4;
-    place(4, x0, quarter, y); place(5, x0 + (quarter + gap), quarter, y); place(6, x0 + 2 * (quarter + gap), quarter, y); place(7, x0 + 3 * (quarter + gap), quarter, y);
+    // Nummer | Rechnungsdatum | Leistungsdatum/-zeitraum (breiter) | Faellig am | USt-Satz
+    const float avail = fw - 4 * gap, wNo = avail * 0.17f, wDate = avail * 0.17f, wSvc = avail * 0.28f, wDue = avail * 0.17f, wVat = avail - wNo - wDate - wSvc - wDue;
+    place(4, x0, wNo, y);
+    place(5, x0 + wNo + gap, wDate, y);
+    place(18, x0 + wNo + wDate + 2 * gap, wSvc, y);
+    place(6, x0 + wNo + wDate + wSvc + 3 * gap, wDue, y);
+    place(7, x0 + wNo + wDate + wSvc + wDue + 4 * gap, wVat, y);
     if (Field* v = FieldById(7)) v->disabled = d.smallBiz;   // Kleinunternehmer: USt-Satz ausgegraut, nicht editierbar
     y += 24 * k + fh;
 
@@ -2313,6 +2318,7 @@ void App::BeginInvoiceDialog(int mode) {
     d.fields.push_back(MakeField(6, L"Fällig am", L"TT.MM.JJJJ", docs::FormatDate(docs::AddDaysIso(today, 14)), 12));
     d.fields.back().dateMask = true;
     d.fields.push_back(MakeField(7, d.smallBiz ? L"USt-Satz (entfällt)" : L"USt-Satz (%)", L"19", vat, 3));
+    d.fields.push_back(MakeField(18, L"Leistung (Datum / Zeitraum)", L"leer = Rechnungsdatum", L"", 30));
     d.itemRows = std::max<int>(3, (int)items.size());
     for (int i = 0; i < d.itemRows; ++i) {
         const bool have = i < (int)items.size();
@@ -2399,6 +2405,7 @@ void App::ApplyInvoice() {
     if (data.recipient.empty()) { d.error = L"Bitte den Empfänger eintragen."; Invalidate(); return; }
     if (!docs::ParseDate(txt(5), data.dateIso) || data.dateIso.empty()) { d.error = L"Das Rechnungsdatum ist ungültig (TT.MM.JJJJ)."; Invalidate(); return; }
     if (!docs::ParseDate(txt(6), data.dueIso)) { d.error = L"Das Fälligkeitsdatum ist ungültig (TT.MM.JJJJ)."; Invalidate(); return; }
+    if (!invoice::ParseServicePeriod(txt(18), data.serviceFromIso, data.serviceToIso)) { d.error = L"Das Leistungsdatum ist ungültig (TT.MM.JJJJ oder TT.MM.JJJJ – TT.MM.JJJJ, Ende nicht vor Anfang)."; Invalidate(); return; }
     try { data.vatPercent = std::stoi(txt(7).empty() ? L"0" : txt(7)); } catch (...) { data.vatPercent = -1; }
     if (d.smallBiz && (data.vatPercent < 0 || data.vatPercent > 100)) data.vatPercent = m_settings.vat;   // Satz entfaellt, Eingabe egal
     if (data.vatPercent < 0 || data.vatPercent > 100) { d.error = L"Der USt-Satz muss zwischen 0 und 100 liegen."; Invalidate(); return; }

@@ -154,7 +154,10 @@ inline std::string BuildEInvoiceXml(const Data& d)
     const bool vatId = std::wstring(TaxNoLabel(d.taxNo)) == L"USt-IdNr.";
     x += std::string("<ram:SpecifiedTaxRegistration><ram:ID schemeID=\"") + (vatId ? "VA" : "FC") + "\">" + Esc(d.taxNo) + "</ram:ID></ram:SpecifiedTaxRegistration></ram:SellerTradeParty>";
     x += "<ram:BuyerTradeParty><ram:Name>" + Esc(d.recipient) + "</ram:Name>" + AddrXml(ra) + "</ram:BuyerTradeParty></ram:ApplicableHeaderTradeAgreement>\n";
-    x += "<ram:ApplicableHeaderTradeDelivery/>\n";
+    if (IsoOk(d.serviceFromIso) && d.serviceToIso.empty())   // Leistungsdatum (BT-72)
+        x += "<ram:ApplicableHeaderTradeDelivery><ram:ActualDeliverySupplyChainEvent><ram:OccurrenceDateTime><udt:DateTimeString format=\"102\">" + Date(d.serviceFromIso) +
+             "</udt:DateTimeString></ram:OccurrenceDateTime></ram:ActualDeliverySupplyChainEvent></ram:ApplicableHeaderTradeDelivery>\n";
+    else x += "<ram:ApplicableHeaderTradeDelivery/>\n";
 
     // Zahlung und Summen
     x += "<ram:ApplicableHeaderTradeSettlement><ram:PaymentReference>" + Esc(d.number) + "</ram:PaymentReference><ram:InvoiceCurrencyCode>EUR</ram:InvoiceCurrencyCode>";
@@ -172,6 +175,9 @@ inline std::string BuildEInvoiceXml(const Data& d)
             x += "<ram:ApplicableTradeTax><ram:CalculatedAmount>" + Money(v.vat) + "</ram:CalculatedAmount><ram:TypeCode>VAT</ram:TypeCode><ram:BasisAmount>" + Money(v.net) +
                  "</ram:BasisAmount><ram:CategoryCode>" + (v.percent == 0 ? "Z" : "S") + "</ram:CategoryCode><ram:RateApplicablePercent>" + std::to_string(v.percent) + "</ram:RateApplicablePercent></ram:ApplicableTradeTax>";
     }
+    if (IsoOk(d.serviceFromIso) && IsoOk(d.serviceToIso))   // Leistungszeitraum (BT-73/BT-74)
+        x += "<ram:BillingSpecifiedPeriod><ram:StartDateTime><udt:DateTimeString format=\"102\">" + Date(d.serviceFromIso) + "</udt:DateTimeString></ram:StartDateTime><ram:EndDateTime><udt:DateTimeString format=\"102\">" +
+             Date(d.serviceToIso) + "</udt:DateTimeString></ram:EndDateTime></ram:BillingSpecifiedPeriod>";
     x += "<ram:SpecifiedTradePaymentTerms>";
     if (fx::IsoOk(d.dueIso)) x += "<ram:DueDateDateTime><udt:DateTimeString format=\"102\">" + Date(d.dueIso) + "</udt:DateTimeString></ram:DueDateDateTime>";
     else x += "<ram:Description>Zahlbar sofort ohne Abzug</ram:Description>";

@@ -5,7 +5,7 @@ Braucht: pip install factur-x"""
 import sys, os
 import facturx
 d = sys.argv[1]
-for name in ("rechnung.xml", "klein.xml", "gutschrift.xml"):
+for name in ("rechnung.xml", "klein.xml", "gutschrift.xml", "leistung1.xml", "leistung2.xml"):
     facturx.xml_check_xsd(open(os.path.join(d, name), "rb").read(), flavor="factur-x", level="en16931")
     print(name, "entspricht dem Factur-X-Schema (EN 16931)")
 fname, xml = facturx.get_xml_from_pdf(open(os.path.join(d, "rechnung.pdf"), "rb"), check_xsd=True)
