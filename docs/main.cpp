@@ -38,7 +38,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.8.1"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.9.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -50,6 +50,7 @@ constexpr UINT_PTR TIMER_CARET = 1;
 constexpr int kSearchId = 1000;     // Feld-Id der Suchleiste
 constexpr int kNoFocus = -1;        // kein Textfeld aktiv (Feld-Id 0 ist ein gueltiges Formularfeld)
 constexpr int kMaxItemRows = 10;    // Positionen im Rechnungsformular
+constexpr int kRowFields = 4;       // Felder je Position: Beschreibung, Menge, Einzelpreis, USt-Satz (Feld-IDs 100 + 4 * Zeile + 0..3)
 
 enum Id {
     B_ADD = 1, B_NEW, B_GEAR,
@@ -1270,11 +1271,12 @@ void App::DrawInvoice() {
     y += 24 * k + fh;
 
     // Positionen: Beschreibung | Menge | Einzelpreis | Summe
-    const float cDesc = fw * 0.50f, cQty = fw * 0.12f, cUnit = fw * 0.18f;
+    const float cDesc = fw * 0.40f, cQty = fw * 0.10f, cUnit = fw * 0.17f, cVat = fw * 0.11f;
     Txt(L"Beschreibung", {x0, y, x0 + cDesc, y + 18 * k}, fSmall.Get(), Theme::TextDim);
     Txt(L"Menge", {x0 + cDesc + gap, y, x0 + cDesc + cQty, y + 18 * k}, fSmall.Get(), Theme::TextDim);
     Txt(L"Einzelpreis (€)", {x0 + cDesc + cQty + gap, y, x0 + cDesc + cQty + cUnit, y + 18 * k}, fSmall.Get(), Theme::TextDim);
-    Txt(L"Summe", {x0 + cDesc + cQty + cUnit + gap, y, x0 + fw, y + 18 * k}, fRight.Get(), Theme::TextDim);
+    Txt(L"USt (%)", {x0 + cDesc + cQty + cUnit + gap, y, x0 + cDesc + cQty + cUnit + cVat, y + 18 * k}, fSmall.Get(), Theme::TextDim);
+    Txt(L"Summe", {x0 + cDesc + cQty + cUnit + cVat + gap, y, x0 + fw, y + 18 * k}, fRight.Get(), Theme::TextDim);
     y += 20 * k;
     invoice::Data data;
     data.vatPercent = 19;
@@ -1283,13 +1285,17 @@ void App::DrawInvoice() {
         try { data.vatPercent = std::clamp(std::stoi(v->ed.text), 0, 100); } catch (...) {}
     }
     for (int i = 0; i < d.itemRows; ++i) {
-        Field* fd = FieldById(100 + 3 * i);
-        Field* fq = FieldById(101 + 3 * i);
-        Field* fu = FieldById(102 + 3 * i);
-        if (!fd || !fq || !fu) continue;
+        Field* fd = FieldById(100 + kRowFields * i);
+        Field* fq = FieldById(101 + kRowFields * i);
+        Field* fu = FieldById(102 + kRowFields * i);
+        Field* fv = FieldById(103 + kRowFields * i);
+        if (!fd || !fq || !fu || !fv) continue;
         fd->rc = {x0, y, x0 + cDesc, y + fh};
         fq->rc = {x0 + cDesc + gap, y, x0 + cDesc + cQty, y + fh};
         fu->rc = {x0 + cDesc + cQty + gap, y, x0 + cDesc + cQty + cUnit, y + fh};
+        fv->rc = {x0 + cDesc + cQty + cUnit + gap, y, x0 + cDesc + cQty + cUnit + cVat, y + fh};
+        fv->disabled = d.smallBiz;   // Kleinunternehmer: keine Umsatzsteuer, auch nicht je Position
+        const std::wstring vtxt = docs::Trim(fv->ed.text);
         double q = 0;
         bool okU = false;
         const long long unit = docs::ParseAmountCents(fu->ed.text, okU);
@@ -1297,8 +1303,9 @@ void App::DrawInvoice() {
             invoice::Item it;
             it.qty = q;
             it.unitCents = unit;
+            if (!d.smallBiz && !vtxt.empty() && vtxt.find_first_not_of(L"0123456789") == std::wstring::npos && vtxt.size() <= 3) it.vatPercent = std::clamp(std::stoi(vtxt), 0, 100);
             data.items.push_back(it);
-            Txt(docs::FormatAmount(invoice::LineCents(it)), {x0 + cDesc + cQty + cUnit + gap, y, x0 + fw, y + fh}, fRight.Get(), Theme::Text);
+            Txt(docs::FormatAmount(invoice::LineCents(it)), {x0 + cDesc + cQty + cUnit + cVat + gap, y, x0 + fw, y + fh}, fRight.Get(), Theme::Text);
         }
         y += rowH;
     }
@@ -1307,9 +1314,11 @@ void App::DrawInvoice() {
     if (d.itemRows > 1) Button(D_DELROW, {addRow.right + 8 * k, y, addRow.right + 8 * k + 130 * k, y + 30 * k}, L"− Position", false);
     // Summen live
     const invoice::Totals t = invoice::Compute(data);
-    Txt(d.smallBiz ? std::wstring(L"Keine Umsatzsteuer (§ 19 UStG)")
-                   : L"Netto " + docs::FormatAmount(t.net) + L"   ·   USt " + std::to_wstring(data.vatPercent) + L" %: " + docs::FormatAmount(t.vat),
-        {x0 + fw * 0.4f, y, x0 + fw, y + 16 * k}, fRight.Get(), Theme::TextDim);
+    std::wstring sumLine = L"Netto " + docs::FormatAmount(t.net);
+    for (const auto& vl : t.vatLines) sumLine += L"   ·   USt " + std::to_wstring(vl.percent) + L" %: " + docs::FormatAmount(vl.vat);
+    if (t.vatLines.empty()) sumLine += L"   ·   USt " + std::to_wstring(data.vatPercent) + L" %: " + docs::FormatAmount(t.vat);
+    Txt(d.smallBiz ? std::wstring(L"Keine Umsatzsteuer (§ 19 UStG)") : sumLine,
+        {x0 + fw * 0.3f, y, x0 + fw, y + 16 * k}, fRight.Get(), Theme::TextDim);
     Txt(L"Gesamt " + docs::FormatAmount(t.gross), {x0 + fw * 0.4f, y + 16 * k, x0 + fw, y + 38 * k}, fTitleR.Get(), Theme::Text);
     y += 46 * k;
     place(8, x0, fw, y);
@@ -2099,9 +2108,10 @@ void App::BeginInvoiceDialog(int mode) {
     d.itemRows = std::max<int>(3, (int)items.size());
     for (int i = 0; i < d.itemRows; ++i) {
         const bool have = i < (int)items.size();
-        d.fields.push_back(MakeField(100 + 3 * i, L"", L"Leistung / Artikel", have ? items[i].desc : L"", 120));
-        d.fields.push_back(MakeField(101 + 3 * i, L"", L"1", have ? items[i].qty : (items.empty() && i == 0 ? L"1" : L""), 8));
-        d.fields.push_back(MakeField(102 + 3 * i, L"", L"0,00", have ? items[i].unit : L"", 14));
+        d.fields.push_back(MakeField(100 + kRowFields * i, L"", L"Leistung / Artikel", have ? items[i].desc : L"", 120));
+        d.fields.push_back(MakeField(101 + kRowFields * i, L"", L"1", have ? items[i].qty : (items.empty() && i == 0 ? L"1" : L""), 8));
+        d.fields.push_back(MakeField(102 + kRowFields * i, L"", L"0,00", have ? items[i].unit : L"", 14));
+        d.fields.push_back(MakeField(103 + kRowFields * i, L"", L"wie oben", L"", 3));
     }
     d.fields.push_back(MakeField(8, L"Schlusstext / Zahlungshinweis  ([Gesamtsumme] und [Fälligkeitsdatum] werden eingesetzt)", L"Standardtext", note, 600));
     d.fields.push_back(MakeField(9, L"Steuernummer / USt-IdNr.", L"z. B. 12/345/67890 oder DE123456789", tax, 30));
@@ -2141,9 +2151,17 @@ void App::ApplyInvoice() {
     if (d.smallBiz && (data.vatPercent < 0 || data.vatPercent > 100)) data.vatPercent = m_settings.vat;   // Satz entfaellt, Eingabe egal
     if (data.vatPercent < 0 || data.vatPercent > 100) { d.error = L"Der USt-Satz muss zwischen 0 und 100 liegen."; Invalidate(); return; }
     for (int i = 0; i < d.itemRows; ++i) {
-        const std::wstring desc = txt(100 + 3 * i), qty = txt(101 + 3 * i), unit = txt(102 + 3 * i);
+        const std::wstring desc = txt(100 + kRowFields * i), qty = txt(101 + kRowFields * i), unit = txt(102 + kRowFields * i), vatTxt = txt(103 + kRowFields * i);
         if (desc.empty() && unit.empty()) continue;   // leere Zeile
         invoice::Item it;
+        if (!d.smallBiz && !vatTxt.empty()) {   // eigener Steuersatz dieser Position (leer = Satz der Rechnung), z. B. 7 fuer Buecher, 0 fuer steuerfreie Auslagen
+            if (vatTxt.size() > 3 || vatTxt.find_first_not_of(L"0123456789") != std::wstring::npos || std::stoi(vatTxt) > 100) {
+                d.error = L"Position " + std::to_wstring(i + 1) + L": Der USt-Satz muss zwischen 0 und 100 liegen (leer = Satz der Rechnung).";
+                Invalidate();
+                return;
+            }
+            it.vatPercent = std::stoi(vatTxt);
+        }
         if (desc.empty()) { d.error = L"Position " + std::to_wstring(i + 1) + L": Bitte eine Beschreibung eintragen."; Invalidate(); return; }
         if (!qty.empty() && !invoice::ParseQuantity(qty, it.qty)) { d.error = L"Position " + std::to_wstring(i + 1) + L": Die Menge ist ungültig."; Invalidate(); return; }
         if (qty.empty()) it.qty = 1;
@@ -2482,15 +2500,15 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
                     const int i = m_dlg.itemRows++;
                     // neue Zeilenfelder vor das Feld "Zahlungshinweis" (id 8) einsetzen: Reihenfolge = Tab-Reihenfolge
                     auto it = std::find_if(m_dlg.fields.begin(), m_dlg.fields.end(), [](const Field& f) { return f.id == 8; });
-                    std::vector<Field> add = {MakeField(100 + 3 * i, L"", L"Leistung / Artikel", L"", 120), MakeField(101 + 3 * i, L"", L"1", L"", 8),
-                                              MakeField(102 + 3 * i, L"", L"0,00", L"", 14)};
+                    std::vector<Field> add = {MakeField(100 + kRowFields * i, L"", L"Leistung / Artikel", L"", 120), MakeField(101 + kRowFields * i, L"", L"1", L"", 8),
+                                              MakeField(102 + kRowFields * i, L"", L"0,00", L"", 14), MakeField(103 + kRowFields * i, L"", L"wie oben", L"", 3)};
                     m_dlg.fields.insert(it, add.begin(), add.end());
                 }
                 break;
             case D_DELROW:
                 if (m_dlg.itemRows > 1) {
                     const int i = --m_dlg.itemRows;
-                    m_dlg.fields.erase(std::remove_if(m_dlg.fields.begin(), m_dlg.fields.end(), [&](const Field& f) { return f.id >= 100 + 3 * i && f.id < 103 + 3 * i; }),
+                    m_dlg.fields.erase(std::remove_if(m_dlg.fields.begin(), m_dlg.fields.end(), [&](const Field& f) { return f.id >= 100 + kRowFields * i && f.id < 100 + kRowFields * (i + 1); }),
                                        m_dlg.fields.end());
                     if (FieldById(m_focusId) == nullptr) m_focusId = kNoFocus;
                 }

@@ -1,11 +1,14 @@
 #pragma once
 // Rechnungs-Vorlage: Daten -> Summen -> PDF (Seitenaufbau mit Absender, Rechnungskopf, Empfaenger, Positionstabelle mit
 // Seitenumbruch, Summen, Zahlungshinweis). Reine Logik, getrennt testbar.
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <vector>
 
+#include "GiroCode.h"
 #include "PdfWriter.h"
+#include "QrCode.h"
 #include "Store.h"
 
 namespace invoice {
@@ -14,6 +17,7 @@ struct Item {
     std::wstring desc;
     double qty = 1;
     long long unitCents = 0;
+    int vatPercent = -1;   // Umsatzsteuersatz dieser Position; -1 = Satz der Rechnung (Data::vatPercent)
 };
 
 struct Data {
@@ -59,26 +63,59 @@ inline const wchar_t* TaxNoLabel(const std::wstring& no)
     return no.size() > 2 && no[0] >= L'A' && no[0] <= L'Z' && no[1] >= L'A' && no[1] <= L'Z' ? L"USt-IdNr." : L"Steuernr.";
 }
 
+struct VatLine {
+    int percent = 0;
+    long long net = 0, vat = 0;   // Nettosumme aller Positionen mit diesem Satz und die darauf berechnete Steuer
+};
+
 struct Totals {
     long long net = 0, vat = 0, gross = 0;
     std::vector<long long> lines;   // Betrag je Position in Cent
+    std::vector<VatLine> vatLines;  // je Steuersatz (aufsteigend); bei Kleinunternehmern leer
 };
+
+inline int ItemVat(const Data& d, const Item& it) { return it.vatPercent >= 0 ? it.vatPercent : d.vatPercent; }
 
 inline long long LineCents(const Item& it)
 {
     return static_cast<long long>(std::llround(it.qty * static_cast<double>(it.unitCents)));
 }
 
+// Summen: Die Steuer wird je Steuersatz auf die Nettosumme dieses Satzes berechnet und kaufmaennisch gerundet (nicht je Position)
 inline Totals Compute(const Data& d)
 {
     Totals t;
     for (const Item& it : d.items) {
         t.lines.push_back(LineCents(it));
         t.net += t.lines.back();
+        if (d.smallBusiness) continue;
+        const int pct = ItemVat(d, it);
+        auto f = std::find_if(t.vatLines.begin(), t.vatLines.end(), [&](const VatLine& v) { return v.percent == pct; });
+        if (f == t.vatLines.end()) { VatLine v; v.percent = pct; t.vatLines.push_back(v); f = t.vatLines.end() - 1; }
+        f->net += t.lines.back();
     }
-    t.vat = d.smallBusiness ? 0 : static_cast<long long>(std::llround(static_cast<double>(t.net) * d.vatPercent / 100.0));
+    std::sort(t.vatLines.begin(), t.vatLines.end(), [](const VatLine& a, const VatLine& b) { return a.percent < b.percent; });
+    for (VatLine& v : t.vatLines) {
+        v.vat = static_cast<long long>(std::llround(static_cast<double>(v.net) * v.percent / 100.0));
+        t.vat += v.vat;
+    }
     t.gross = t.net + t.vat;
     return t;
+}
+
+// Zeichnet den QR-Code als schwarze Rechtecke (je Zeile zusammenhaengende Module zu einem Rechteck); (x, yTop) = linke obere Ecke, mod = Modulgroesse in Punkt
+inline void DrawQr(pdfw::Document& pdf, const qr::Code& c, double x, double yTop, double mod)
+{
+    for (int row = 0; row < c.size; ++row) {
+        int col = 0;
+        while (col < c.size) {
+            if (!c.Dark(col, row)) { ++col; continue; }
+            int end = col;
+            while (end < c.size && c.Dark(end, row)) ++end;
+            pdf.FillRect(x + col * mod, yTop - (row + 1) * mod, (end - col) * mod, mod + 0.04, 0.0);   // 0,04 pt Ueberlappung gegen helle Nahtlinien
+            col = end;
+        }
+    }
 }
 
 // "1,5" / "2" -> 1.5 / 2.0 (Komma oder Punkt); false bei Muell
@@ -201,13 +238,15 @@ inline std::string BuildPdf(const Data& d)
     }
 
     // Tabelle
-    const double cPos = L + 4, cDesc = L + 30, cQty = 360, cUnit = 450, cSum = R - 4;
+    const bool multiVat = tot.vatLines.size() > 1;   // mehrere Steuersaetze: eigene Spalte mit dem Satz je Position
+    const double cPos = L + 4, cDesc = L + 30, cQty = multiVat ? 340 : 360, cUnit = multiVat ? 415 : 450, cVat = 458, cSum = R - 4;
     auto header = [&](double hy) {
         pdf.FillRect(L, hy - 6, R - L, 20, 0.93);
         pdf.Text(cPos, hy, 9, true, L"Pos.");
         pdf.Text(cDesc, hy, 9, true, L"Beschreibung");
         pdf.TextRight(cQty, hy, 9, true, L"Menge");
         pdf.TextRight(cUnit, hy, 9, true, L"Einzelpreis");
+        if (multiVat) pdf.TextRight(cVat, hy, 9, true, L"USt");
         pdf.TextRight(cSum, hy, 9, true, L"Gesamt");
     };
     double ty = top - 250;
@@ -227,6 +266,7 @@ inline std::string BuildPdf(const Data& d)
         for (const auto& line : lines) { pdf.Text(cDesc, ly, 10, false, line); ly -= 13; }
         pdf.TextRight(cQty, ty, 10, false, FormatQuantity(d.items[i].qty));
         pdf.TextRight(cUnit, ty, 10, false, docs::FormatAmount(d.items[i].unitCents));
+        if (multiVat) pdf.TextRight(cVat, ty, 10, false, std::to_wstring(ItemVat(d, d.items[i])) + L" %", 0.3);
         pdf.TextRight(cSum, ty, 10, false, docs::FormatAmount(tot.lines[i]));
         ty -= h;
         pdf.Line(L, ty + 8, R, ty + 8, 0.3, 0.85);
@@ -239,8 +279,13 @@ inline std::string BuildPdf(const Data& d)
         pdf.Text(cUnit - 70, ty, 10, false, L"Zwischensumme (netto)", 0.3);
         pdf.TextRight(cSum, ty, 10, false, docs::FormatAmount(tot.net));
         ty -= 15;
-        pdf.Text(cUnit - 70, ty, 10, false, L"Umsatzsteuer " + std::to_wstring(d.vatPercent) + L" %", 0.3);
-        pdf.TextRight(cSum, ty, 10, false, docs::FormatAmount(tot.vat));
+        for (size_t vi = 0; vi < tot.vatLines.size(); ++vi) {
+            const VatLine& vl = tot.vatLines[vi];
+            if (multiVat) pdf.Text(300, ty, 9.5, false, L"Umsatzsteuer " + std::to_wstring(vl.percent) + L" % auf " + docs::FormatAmount(vl.net), 0.3);
+            else pdf.Text(cUnit - 70, ty, 10, false, L"Umsatzsteuer " + std::to_wstring(vl.percent) + L" %", 0.3);
+            pdf.TextRight(cSum, ty, 10, false, docs::FormatAmount(vl.vat));
+            if (vi + 1 < tot.vatLines.size()) ty -= 14;
+        }
     }
     ty -= 8;
     pdf.Line(cUnit - 72, ty, R, ty, 0.8, 0.3);
@@ -253,12 +298,32 @@ inline std::string BuildPdf(const Data& d)
     // Schlusstext / Zahlungshinweis (leer = Standardtext), danach der Hinweis nach § 19 UStG
     const std::wstring closing = ExpandNote(docs::Trim(d.note).empty() ? std::wstring(DefaultNote()) : d.note, tot.gross, d.dueIso);
     const double floorY = hasFooter ? 112 : 60;
-    for (const auto& line : Wrap(closing, R - L, 9.5)) {
+    // GiroCode: Banking-App liest Empfaenger, IBAN, Betrag und Verwendungszweck. Nur mit gueltiger IBAN und positivem Gesamtbetrag.
+    qr::Code qrCode;
+    bool giro = false;
+    const std::string epc = giro::EpcPayload(d.issuer, d.iban, d.bic, tot.gross, d.number.empty() ? L"Rechnung" : L"Rechnung " + d.number);
+    if (!epc.empty() && qr::Encode(epc, qrCode)) giro = true;
+    const double qrMod = 2.4, qrSize = giro ? qrCode.size * qrMod : 0;
+    bool qrBeside = false;
+    if (giro && ty + 4 - (qrSize + 24) >= floorY) {   // genug Platz neben dem Schlusstext
+        qrBeside = true;
+        DrawQr(pdf, qrCode, R - qrSize, ty + 10, qrMod);
+        pdf.Text(R - qrSize, ty + 10 - qrSize - 10, 8, true, L"GiroCode", 0.2);
+        pdf.Text(R - qrSize, ty + 10 - qrSize - 19, 7, false, L"mit der Banking-App scannen", 0.35);
+    }
+    for (const auto& line : Wrap(closing, R - L - (qrBeside ? qrSize + 24 : 0), 9.5)) {
         if (ty < floorY) break;
         pdf.Text(L, ty, 9.5, false, line, 0.15);
         ty -= 13;
     }
     if (d.smallBusiness && ty >= floorY) { ty -= 4; pdf.Text(L, ty, 9, true, SmallBusinessNote(), 0.2); ty -= 14; }
+    if (giro && !qrBeside) {   // kein Platz neben dem Text: der GiroCode kommt oben auf eine eigene Seite
+        pdf.NewPage();
+        const double qy = top - 10;
+        DrawQr(pdf, qrCode, R - qrSize, qy, qrMod);
+        pdf.Text(R - qrSize, qy - qrSize - 10, 8, true, L"GiroCode", 0.2);
+        pdf.Text(R - qrSize, qy - qrSize - 19, 7, false, L"mit der Banking-App scannen", 0.35);
+    }
 
     // Fusszeile mit drei Spalten (auf jeder Seite): Firma / Register / Steuer | Kontakt | Bank
     if (hasFooter) {
