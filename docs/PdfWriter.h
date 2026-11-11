@@ -128,9 +128,11 @@ public:
     }
 
     // Komplette PDF-Datei. title: Dokumenttitel (Info-Dictionary, UTF-16).
-    std::string Build(const std::wstring& title) const
+    // xml (optional): Factur-X/ZUGFeRD-Rechnungsdaten, werden unkomprimiert als "factur-x.xml" (AFRelationship Alternative) eingebettet, mit XMP-Angaben.
+    // Hinweis: Die Schriften (Standard-Helvetica) sind nicht eingebettet; die Datei ist daher kein PDF/A-3, die E-Rechnung steckt aber vollstaendig im XML.
+    std::string Build(const std::wstring& title, const std::string* xml = nullptr) const
     {
-        std::string out = "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+        std::string out = xml ? "%PDF-1.7\n%\xE2\xE3\xCF\xD3\n" : "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
         std::vector<size_t> offsets;   // Objekt n beginnt bei offsets[n-1]
         auto begin = [&](int n) {
             (void)n;
@@ -139,7 +141,12 @@ public:
         };
         const int pageBase = 6;   // Seite i: Objekt pageBase + 2i, Inhalt pageBase + 2i + 1
         begin(1);
-        out += "<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
+        const int extraBase = pageBase + 2 * static_cast<int>(m_pages.size());   // eingebettete Datei, Dateiangabe, XMP
+        if (xml) {
+            const std::string f = std::to_string(extraBase + 1), m = std::to_string(extraBase + 2);
+            out += "<< /Type /Catalog /Pages 2 0 R /Metadata " + m + " 0 R /AF [" + f + " 0 R] /Names << /EmbeddedFiles << /Names [(factur-x.xml) " + f + " 0 R] >> >> >>\nendobj\n";
+        }
+        else out += "<< /Type /Catalog /Pages 2 0 R >>\nendobj\n";
         begin(2);
         out += "<< /Type /Pages /Count " + std::to_string(m_pages.size()) + " /Kids [";
         for (size_t i = 0; i < m_pages.size(); ++i) out += std::to_string(pageBase + 2 * i) + " 0 R ";
@@ -164,6 +171,22 @@ public:
             out += "/Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents " + std::to_string(pageBase + 2 * i + 1) + " 0 R >>\nendobj\n";
             begin(0);
             out += "<< /Length " + std::to_string(m_pages[i].size()) + " >>\nstream\n" + m_pages[i] + "endstream\nendobj\n";
+        }
+        if (xml) {
+            begin(0);
+            out += "<< /Type /EmbeddedFile /Subtype /text#2Fxml /Params << /Size " + std::to_string(xml->size()) + " >> /Length " + std::to_string(xml->size()) + " >>\nstream\n" + *xml + "\nendstream\nendobj\n";
+            begin(0);
+            out += "<< /Type /Filespec /F (factur-x.xml) /UF (factur-x.xml) /Desc (Factur-X Rechnungsdaten) /AFRelationship /Alternative /EF << /F " +
+                   std::to_string(extraBase) + " 0 R /UF " + std::to_string(extraBase) + " 0 R >> >>\nendobj\n";
+            const std::string xmp =
+                "<?xpacket begin=\"\xEF\xBB\xBF\" id=\"W5M0MpCehiHzreSzNTczkc9d\"?>\n"
+                "<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"><rdf:RDF xmlns:rdf=\"http://www.w3.org/1999/02/22-rdf-syntax-ns#\">\n"
+                "<rdf:Description rdf:about=\"\" xmlns:fx=\"urn:factur-x:pdfa:CrossIndustryDocument:invoice:1p0#\">\n"
+                "<fx:DocumentType>INVOICE</fx:DocumentType><fx:DocumentFileName>factur-x.xml</fx:DocumentFileName>"
+                "<fx:Version>1.0</fx:Version><fx:ConformanceLevel>EN 16931</fx:ConformanceLevel>\n"
+                "</rdf:Description></rdf:RDF></x:xmpmeta>\n<?xpacket end=\"w\"?>";
+            begin(0);
+            out += "<< /Type /Metadata /Subtype /XML /Length " + std::to_string(xmp.size()) + " >>\nstream\n" + xmp + "\nendstream\nendobj\n";
         }
         const size_t xref = out.size();
         out += "xref\n0 " + std::to_string(offsets.size() + 1) + "\n0000000000 65535 f \n";

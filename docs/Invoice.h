@@ -191,7 +191,7 @@ inline std::vector<std::wstring> Wrap(const std::wstring& text, double width, do
     return lines;
 }
 
-inline std::string BuildPdf(const Data& d)
+inline std::string BuildPdf(const Data& d, const std::string* eInvoiceXml = nullptr)
 {
     using pdfw::Document;
     const double L = 56, R = pdfw::kPageW - 56, top = pdfw::kPageH - 52;
@@ -361,7 +361,7 @@ inline std::string BuildPdf(const Data& d)
     }
 
     pdf.Footer(L"Erstellt mit Oggys Docs-Files");
-    return pdf.Build(d.number.empty() ? L"Rechnung" : L"Rechnung " + d.number);
+    return pdf.Build(d.number.empty() ? L"Rechnung" : L"Rechnung " + d.number, eInvoiceXml);
 }
 
 }  // namespace invoice
