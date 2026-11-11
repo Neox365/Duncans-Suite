@@ -64,13 +64,15 @@ int main(int argc, char** argv)
     }
     CHECK(invoice::BuildPdf(d).compare(0, 8, "%PDF-1.4") == 0 && !Has(invoice::BuildPdf(d), "factur-x"));   // ohne XML unveraendert
 
-    if (argc > 1) {   // Dateien fuer die Gegenprobe mit externen Pruefern (tools/CheckFacturX.py) ablegen
-        const std::string dir = argv[1];
-        invoice::Data kk = Sample(); kk.smallBusiness = true; kk.taxNo = L"12/345/67890";
-        const std::string kxml = invoice::BuildEInvoiceXml(kk);
-        struct { const char* name; const std::string* data; } files[] = {{"rechnung.xml", &x}, {"rechnung.pdf", &pdf}, {"klein.xml", &kxml}};
-        for (auto& f : files) { FILE* o = std::fopen((dir + "/" + f.name).c_str(), "wb"); if (o) { std::fwrite(f.data->data(), 1, f.data->size(), o); std::fclose(o); } }
-    }
+    // Gutschrift / Storno: Typ 381, Bezug auf die Rechnung, Betraege positiv
+    invoice::Data g = Sample();
+    g.number = L"RE-2026-002"; g.cancels = L"RE-2026-001"; g.cancelsDateIso = L"2026-11-11"; g.dueIso.clear();
+    const std::string gx = invoice::BuildEInvoiceXml(g);
+    CHECK(Has(gx, "<ram:TypeCode>381</ram:TypeCode>") && !Has(gx, "<ram:TypeCode>380</ram:TypeCode>") && Has(gx, "<ram:IssuerAssignedID>RE-2026-001</ram:IssuerAssignedID>") && Has(gx, "<qdt:DateTimeString format=\"102\">20261111"));
+    docs::EInvoice ge;
+    CHECK(docs::ParseEInvoice(gx, ge) && ge.credit && ge.cents == -25344);
+    const std::string gpdf = invoice::BuildPdf(g, &gx);
+    CHECK(Has(gpdf, "GUTSCHRIFT") && Has(gpdf, "Storno zu") && Has(gpdf, "RE-2026-001") && !Has(invoice::BuildPdf(d), "GUTSCHRIFT"));
     // Kleinunternehmer: Kategorie E mit Begruendung, keine Steuer
     invoice::Data k = Sample();
     k.smallBusiness = true; k.taxNo = L"12/345/67890";
@@ -96,6 +98,13 @@ int main(int argc, char** argv)
     CHECK(bad([](invoice::Data& b) { b.items.clear(); }));
     CHECK(bad([](invoice::Data& b) { b.items[0].desc = L"  "; }));
 
+    if (argc > 1) {   // Dateien fuer die Gegenprobe mit externen Pruefern (tools/CheckFacturX.py) ablegen
+        const std::string dir = argv[1];
+        invoice::Data kk = Sample(); kk.smallBusiness = true; kk.taxNo = L"12/345/67890";
+        const std::string kxml = invoice::BuildEInvoiceXml(kk);
+        struct { const char* name; const std::string* data; } files[] = {{"rechnung.xml", &x}, {"rechnung.pdf", &pdf}, {"klein.xml", &kxml}, {"gutschrift.xml", &gx}};
+        for (auto& f : files) { FILE* o = std::fopen((dir + "/" + f.name).c_str(), "wb"); if (o) { std::fwrite(f.data->data(), 1, f.data->size(), o); std::fclose(o); } }
+    }
     std::printf("%d Pruefungen, %d Fehler\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

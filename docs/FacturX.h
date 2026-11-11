@@ -120,7 +120,7 @@ inline std::string BuildEInvoiceXml(const Data& d)
          "xmlns:xs=\"http://www.w3.org/2001/XMLSchema\">\n";
     x += "<rsm:ExchangedDocumentContext><ram:GuidelineSpecifiedDocumentContextParameter><ram:ID>urn:cen.eu:en16931:2017</ram:ID>"
          "</ram:GuidelineSpecifiedDocumentContextParameter></rsm:ExchangedDocumentContext>\n";
-    x += "<rsm:ExchangedDocument><ram:ID>" + Esc(d.number) + "</ram:ID><ram:TypeCode>380</ram:TypeCode><ram:IssueDateTime><udt:DateTimeString format=\"102\">" +
+    x += "<rsm:ExchangedDocument><ram:ID>" + Esc(d.number) + "</ram:ID><ram:TypeCode>" + std::string(d.cancels.empty() ? "380" : "381") + "</ram:TypeCode><ram:IssueDateTime><udt:DateTimeString format=\"102\">" +
          Date(d.dateIso) + "</udt:DateTimeString></ram:IssueDateTime>";
     x += "</rsm:ExchangedDocument>\n<rsm:SupplyChainTradeTransaction>\n";
 
@@ -179,6 +179,11 @@ inline std::string BuildEInvoiceXml(const Data& d)
     x += "<ram:SpecifiedTradeSettlementHeaderMonetarySummation><ram:LineTotalAmount>" + Money(t.net) + "</ram:LineTotalAmount><ram:TaxBasisTotalAmount>" + Money(t.net) +
          "</ram:TaxBasisTotalAmount><ram:TaxTotalAmount currencyID=\"EUR\">" + Money(t.vat) + "</ram:TaxTotalAmount><ram:GrandTotalAmount>" + Money(t.gross) +
          "</ram:GrandTotalAmount><ram:DuePayableAmount>" + Money(t.gross) + "</ram:DuePayableAmount></ram:SpecifiedTradeSettlementHeaderMonetarySummation>";
+    if (!d.cancels.empty()) {   // Bezug auf die stornierte Rechnung (BT-25 / BT-26)
+        x += "<ram:InvoiceReferencedDocument><ram:IssuerAssignedID>" + Esc(d.cancels) + "</ram:IssuerAssignedID>";
+        if (IsoOk(d.cancelsDateIso)) x += "<ram:FormattedIssueDateTime><qdt:DateTimeString format=\"102\">" + Date(d.cancelsDateIso) + "</qdt:DateTimeString></ram:FormattedIssueDateTime>";
+        x += "</ram:InvoiceReferencedDocument>";
+    }
     x += "</ram:ApplicableHeaderTradeSettlement>\n</rsm:SupplyChainTradeTransaction>\n</rsm:CrossIndustryInvoice>\n";
     return x;
 }
