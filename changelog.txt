@@ -370,6 +370,10 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.15.0 | 2026-11-11
+- Neu: Sicherung des Rechnungsordners. Zahnrad → „Sicherung des Rechnungsordners erstellen (ZIP) …“ packt alles in eine ZIP-Datei: PDFs, Index (Status, Beträge), Kundenliste, Rechnungsdaten für Stornos und das Änderungsprotokoll. Eine Anleitung zum Zurückspielen liegt bei (LIESMICH.txt).
+- Neu: Export für den Steuerberater. Zahnrad → „Export für den Steuerberater (Jahr wählen) …“ erzeugt eine ZIP mit der Belegliste des Jahres (CSV für Excel), den PDFs dieses Jahres (bei eigenen Rechnungen mit eingebetteten E-Rechnungsdaten), dem Änderungsprotokoll und einer kurzen Erklärung.
+- Grenzen: Die ZIP wird im Speicher gebaut und ist bis 1,5 GB möglich; bei größeren Ordnern bitte den Ordner im Explorer kopieren. Es gibt keine automatische oder zeitgesteuerte Sicherung und keine Verschlüsselung; die ZIP ist nicht komprimiert (PDFs sind es schon). Eine Sicherung auf demselben Laufwerk schützt nicht vor einem Festplattenschaden.
 ## 0.14.0 | 2026-11-11
 - Neu: Kundenliste im Rechnungs-Generator. Der Knopf „Kunden“ über dem Feld „Empfänger“ öffnet die Liste; ein Klick trägt Name und Adresse des Empfängers ein. Jeder Empfänger wird beim Erstellen einer Rechnung automatisch gemerkt (hat sich die Adresse geändert, wird sie aktualisiert). Über „Kunde aus der Liste entfernen“ lässt sich ein Eintrag löschen; bereits erstellte Rechnungen bleiben unberührt. Beispielrechnungen legen keine Kunden an.
 - Die Liste liegt als Datei „.kunden.tsv“ im Rechnungsordner und wandert mit den Rechnungen.

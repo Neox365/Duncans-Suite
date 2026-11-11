@@ -30,6 +30,7 @@
 #include "EInvoice.h"
 #include "Export.h"
 #include "AuditLog.h"
+#include "Backup.h"
 #include "Customers.h"
 #include "FacturX.h"
 #include "Invoice.h"
@@ -42,7 +43,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.14.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.15.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -73,7 +74,7 @@ enum Id {
 };
 constexpr int kMaxTagChips = 23;
 enum MenuId {
-    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND, M_EXPORT,
+    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND, M_EXPORT, M_BACKUP, M_TAXEXPORT,
     C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE, C_INCOME, C_EXPENSE, C_TAGS, C_STORNO
 };
 
@@ -541,6 +542,8 @@ private:
     void ChangeRoot();
     void ShowGearMenu();
     void ExportCsv();
+    void ExportBackup();
+    void ExportTaxYear();
     void ShowContextMenu(int x, int y);
     void OnDropFiles(HDROP drop);
     void SetNote(const std::wstring& s) { m_note = s; }
@@ -2559,6 +2562,98 @@ void App::ExportCsv() {
     SetNote(std::to_wstring(rows.size()) + L" Belege exportiert: " + fs::path(file).filename().wstring() + L"  \u00B7  Semikolon-getrennt, öffnet sich direkt in Excel");
 }
 
+// ---- Datensicherung und Steuerberater-Export (ZIP, siehe Backup.h) ----
+
+namespace {
+constexpr unsigned long long kMaxZipBytes = 1500ull * 1024 * 1024;   // ZIP wird im Speicher gebaut; ZIP32 hat ausserdem 4 GB als Grenze
+
+bool ReadFileBytes(const fs::path& p, std::string& out) {
+    std::ifstream in(p, std::ios::binary);
+    if (!in) return false;
+    out.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return true;
+}
+
+bool WriteBytesAtomic(const fs::path& path, const std::string& data) {
+    const fs::path tmp = fs::path(path).concat(L".tmp");
+    {
+        std::ofstream out(tmp, std::ios::binary | std::ios::trunc);
+        if (!out) return false;
+        out.write(data.data(), (std::streamsize)data.size());
+        if (!out) return false;
+    }
+    return MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+}
+
+bool AskZipPath(HWND owner, const std::wstring& defName, fs::path& out) {
+    wchar_t file[MAX_PATH]{};
+    wcsncpy_s(file, defName.c_str(), _TRUNCATE);
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = L"ZIP-Datei (*.zip)\0*.zip\0";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"zip";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetSaveFileNameW(&ofn)) return false;
+    out = file;
+    return true;
+}
+}  // namespace
+
+void App::ExportBackup() {
+    fs::path target;
+    if (!AskZipPath(m_hwnd, L"Rechnungen_Sicherung_" + TodayIso() + L".zip", target)) return;
+    SetCursor(LoadCursor(nullptr, IDC_WAIT));
+    const std::vector<std::wstring> rels = docs::CollectBackupFiles(m_rootPath, target);
+    unsigned long long total = 0;
+    std::error_code ec;
+    for (const auto& r : rels) total += fs::file_size(m_rootPath / r, ec);
+    if (total > kMaxZipBytes) { SetNote(L"Der Rechnungsordner ist mit " + std::to_wstring(total / (1024 * 1024)) + L" MB zu groß für eine einzelne Sicherung (Grenze 1,5 GB). Bitte den Ordner im Explorer kopieren."); return; }
+    docs::ZipFiles files;
+    int unreadable = 0;
+    for (const auto& r : rels) {
+        std::string data;
+        if (ReadFileBytes(m_rootPath / r, data)) files.push_back({docs::ZipName(r), std::move(data)});
+        else ++unreadable;
+    }
+    files.push_back({"LIESMICH.txt", docs::kBackupReadme});
+    if (!WriteBytesAtomic(target, zip::Write(files))) { SetNote(L"Die Sicherung konnte nicht geschrieben werden."); return; }
+    SetNote(L"Sicherung erstellt: " + target.filename().wstring() + L"  ·  " + std::to_wstring(files.size() - 1) + L" Dateien" + (unreadable ? L", " + std::to_wstring(unreadable) + L" nicht lesbar (fehlen in der Sicherung)" : L""));
+}
+
+void App::ExportTaxYear() {
+    std::set<std::wstring> years;
+    for (const auto& d : m_all)
+        if (!d.year.empty()) years.insert(d.year);
+    if (years.empty()) { SetNote(L"Es gibt noch keine Belege."); return; }
+    std::vector<std::wstring> list(years.rbegin(), years.rend());   // neuestes Jahr zuerst
+    HMENU m = CreatePopupMenu();
+    for (size_t i = 0; i < list.size() && i < 100; ++i) AppendMenuW(m, MF_STRING, 3000 + (UINT)i, (L"Jahr " + list[i]).c_str());
+    POINT pt{};
+    GetCursorPos(&pt);
+    const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
+    DestroyMenu(m);
+    if (cmd < 3000 || cmd >= 3000 + (int)list.size()) return;
+    const std::wstring year = list[cmd - 3000];
+    fs::path target;
+    if (!AskZipPath(m_hwnd, L"Rechnungen_" + year + L"_Steuerberater.zip", target)) return;
+    SetCursor(LoadCursor(nullptr, IDC_WAIT));
+    unsigned long long total = 0;
+    std::error_code ec;
+    for (const auto& d : m_all)
+        if (d.year == year) total += d.size;
+    if (total > kMaxZipBytes) { SetNote(L"Die Belege von " + year + L" sind zu groß für einen einzelnen Export (Grenze 1,5 GB)."); return; }
+    int missing = 0;
+    const docs::ZipFiles files = docs::BuildTaxExport(m_all, year, [&](const std::wstring& rel, std::string& out) { return ReadFileBytes(m_rootPath / rel, out); }, missing);
+    if (!WriteBytesAtomic(target, zip::Write(files))) { SetNote(L"Der Export konnte nicht geschrieben werden."); return; }
+    size_t n = 0;
+    for (const auto& d : m_all)
+        if (d.year == year) ++n;
+    SetNote(L"Export für den Steuerberater: " + target.filename().wstring() + L"  ·  " + std::to_wstring(n) + L" Belege aus " + year + L" mit Belegliste (CSV)" + (missing ? L", " + std::to_wstring(missing) + L" Datei(en) nicht lesbar" : L""));
+}
+
 void App::ShowGearMenu() {
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, M_ROOT, L"Rechnungsordner ändern …");
@@ -2573,6 +2668,8 @@ void App::ShowGearMenu() {
     AppendMenuW(m, MF_STRING | (RemindAutostartOn() ? MF_CHECKED : 0), M_REMIND, L"An fällige Rechnungen erinnern (beim Windows-Start und täglich um 9 Uhr)");
     AppendMenuW(m, MF_STRING, M_RESCAN, L"Neu einlesen (F5)");
     AppendMenuW(m, MF_STRING | (m_view.empty() ? MF_GRAYED : 0), M_EXPORT, L"Belege der aktuellen Ansicht als CSV exportieren …");
+    AppendMenuW(m, MF_STRING | (m_all.empty() ? MF_GRAYED : 0), M_TAXEXPORT, L"Export für den Steuerberater (Jahr wählen) …");
+    AppendMenuW(m, MF_STRING, M_BACKUP, L"Sicherung des Rechnungsordners erstellen (ZIP) …");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, M_ABOUT, L"Über Oggys Docs-Files");
     POINT pt{(LONG)rcTop.right - (LONG)(16 * k), (LONG)rcTop.bottom};
@@ -2592,6 +2689,8 @@ void App::ShowGearMenu() {
             break;
         case M_RESCAN: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); break;
         case M_EXPORT: ExportCsv(); break;
+        case M_TAXEXPORT: ExportTaxYear(); break;
+        case M_BACKUP: ExportBackup(); break;
         case M_ABOUT: aboutcard::Open(m_about, m_hwnd); break;
     }
     Invalidate();
