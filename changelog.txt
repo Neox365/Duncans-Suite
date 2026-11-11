@@ -365,6 +365,11 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.9.0 | 2026-11-11
+- Neu: GiroCode auf jeder Rechnung. Rechts neben dem Schlusstext steht ein QR-Code (EPC-Standard), den die Banking-App scannt und damit Empfänger, IBAN, Betrag und Verwendungszweck („Rechnung RE-2026-001“) einträgt. Er erscheint, sobald unter „Absender & Konto“ eine gültige IBAN steht (die Prüfziffer wird kontrolliert) und der Gesamtbetrag größer als 0 ist; die BIC ist optional. Bei Gutschriften gibt es keinen GiroCode. Reicht der Platz auf der Seite nicht, landet er oben auf einer eigenen Seite.
+- Neu: Steuersatz je Position. Neben dem Einzelpreis gibt es die Spalte „USt (%)“; leer gilt der Satz der Rechnung, eine Zahl überschreibt ihn (z. B. 7 für Bücher, 0 für durchlaufende Posten). Bei mehreren Sätzen zeigt die PDF eine Spalte „USt“ und führt die Umsatzsteuer je Satz auf („Umsatzsteuer 7 % auf 118,80 €“). Die Steuer wird je Satz auf die Nettosumme berechnet und gerundet, wie es auch üblich ist. Kleinunternehmer (§ 19 UStG) haben weiter keine Umsatzsteuer.
+- Rabatte: Eine Position mit negativem Einzelpreis (z. B. „Rabatt 10 %“ mit -100,00) wird abgezogen und vermindert die Steuer entsprechend. Eine eigene Rabatt-Zeile mit Prozentangabe gibt es noch nicht.
+- Hinweis: Das Programm prüft nur die IBAN-Prüfziffer, nicht ob das Konto existiert. Bitte den GiroCode einmal mit der eigenen Banking-App scannen, bevor Rechnungen verschickt werden.
 ## 0.8.1 | 2026-11-09
 - Verbessert: Die Erinnerung an fällige Rechnungen kommt jetzt auch, wenn der PC nicht neu gestartet wird. Zusätzlich zum Windows-Start prüft eine unsichtbare Aufgabe in der Windows-Aufgabenplanung täglich um 9 Uhr (und holt das nach, wenn der PC um 9 Uhr aus war). Es bleibt bei höchstens einer Erinnerung am Tag. Wer die Erinnerung schon an hatte, bekommt die Aufgabe beim nächsten Start des Programms automatisch; beim Ausschalten wird sie wieder entfernt.
 ## 0.8.0 | 2026-11-08
