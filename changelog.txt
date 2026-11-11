@@ -239,6 +239,9 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.7.0 | 2026-11-11
+- Neu: Passwortgeschützte PDFs lassen sich öffnen. Beim Öffnen (Knopf, Ziehen ins Fenster oder Doppelklick) fragt ein Dialog nach dem Passwort, die Eingabe ist verdeckt; bei falscher Eingabe gibt es bis zu drei Versuche. Das Passwort wird nur zum Öffnen benutzt und nirgends gespeichert. Das Benutzer- und das Besitzerpasswort funktionieren.
+- Beim Speichern bleibt der Passwortschutz der Datei erhalten. Neue Dateien aus einer geschützten PDF (Seitenauszug, Teilen, Verkleinern) bekommen dagegen keinen Passwortschutz; das Programm weist nach dem Speichern darauf hin. Ein Passwort neu setzen oder entfernen kann der Reader nicht.
 ## 1.6.0 | 2026-11-10
 - Neu: Drucken. Der Knopf „Drucken“ in der Leiste (oder Strg+P) öffnet den Windows-Druckdialog mit Drucker, Seitenbereich und Exemplaren. Gedruckt wird mit Markierungen, Stempeln und Notizen, jede Seite auf den bedruckbaren Bereich eingepasst (nur verkleinert, nie vergrößert) und mit höchstens 300 dpi. Der Nachtmodus wirkt nicht auf den Ausdruck. Bei Querformat-Seiten auf Hochformat-Papier im Druckdialog unter „Eigenschaften“ Querformat wählen.
 - Neu: Text kopieren. Der Knopf „Kopieren“ schaltet ein Werkzeug ein: Text mit der Maus überstreichen, und er landet sofort in der Zwischenablage (mit Hinweis, wie viele Zeichen). Die Auswahl bleibt sichtbar, Strg+C kopiert sie noch einmal, Esc beendet das Werkzeug. Bisher konnte man Text nur markieren (gelb), aber nicht kopieren.

@@ -17,6 +17,8 @@ public:
     // Laedt pdfium.dll (einmalig). Bei Fehler steht der Grund in LastError().
     static bool InitLibrary();
     static const std::wstring& LastError();
+    // true, wenn das letzte Open() an einem fehlenden oder falschen Passwort scheiterte (dann Open() mit Passwort erneut versuchen)
+    static bool NeedsPassword();
 
     bool Open(const std::wstring& path, const std::string& password = {});
     void Close();
@@ -79,6 +81,8 @@ public:
     bool Redact(int index, int pw, int ph, const std::vector<RECT>& rects, RedactResult& out);
     bool Redacted() const { return m_sanitize; }
     bool Modified() const { return m_modified; }
+    // true, wenn die Datei mit einem Passwort geoeffnet wurde. Speichern behaelt den Schutz; neue Dateien (Seitenauszug, Teilen, Verkleinern) sind ungeschuetzt.
+    bool PasswordProtected() const { return m_protected; }
 
     // Rueckgaengig / Wiederholen: vor jeder Aenderung wird das ganze Dokument als Schnappschuss im Speicher abgelegt (hoechstens 12, rund 400 MB).
     bool CanUndo() const { return !m_undo.empty(); }
@@ -136,5 +140,6 @@ private:
     std::wstring m_path;
     std::vector<int> m_rot;
     bool m_modified = false;
+    bool m_protected = false;     // mit Passwort geoeffnet
     bool m_sanitize = false;      // es wurde geschwaerzt: SaveCopy schreibt ein bereinigtes Dokument
 };

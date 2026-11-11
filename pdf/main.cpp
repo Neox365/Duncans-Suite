@@ -29,7 +29,7 @@ using std::min;
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.6.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.7.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -1119,6 +1119,7 @@ struct PromptState {
     std::wstring title, text, hint, okLabel;   // hint: Erklaerung ueber dem Eingabefeld; okLabel ersetzt "Hinzufuegen"
     bool about = false;             // "Ueber"-Fenster: Text statt Eingabefeld, Knoepfe "GitHub oeffnen" / "Schliessen"
     std::wstring body;
+    bool secret = false;            // Passworteingabe: einzeilig, Zeichen verdeckt, Enter bestaetigt
     bool done = false, ok = false;
     HWND edit = nullptr;
     RECT btnOk{}, btnCancel{};
@@ -1145,7 +1146,8 @@ void PromptLayout(HWND hwnd) {
     if (g_prompt->edit)
     {
         const int et = S(62) + (g_prompt->hint.empty() ? 0 : S(126));
-        MoveWindow(g_prompt->edit, pad + S(10), et, cr.right - 2 * pad - S(20), std::max(S(30), static_cast<int>(cr.bottom) - et - pad - bh - S(24)), TRUE);
+        MoveWindow(g_prompt->edit, pad + S(10), et, cr.right - 2 * pad - S(20),
+                   g_prompt->secret ? S(32) : std::max(S(30), static_cast<int>(cr.bottom) - et - pad - bh - S(24)), TRUE);
     }
 }
 
@@ -1155,7 +1157,9 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CREATE: {
         gfx::EnableDarkTitleBar(hwnd);
         if (g_prompt->about) return 0;
-        g_prompt->edit = CreateWindowExW(0, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
+        g_prompt->edit = CreateWindowExW(g_prompt->secret ? WS_EX_CLIENTEDGE : 0, L"EDIT", L"",
+                                         g_prompt->secret ? (WS_CHILD | WS_VISIBLE | ES_PASSWORD | ES_AUTOHSCROLL)
+                                                          : (WS_CHILD | WS_VISIBLE | WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN),
                                          0, 0, 10, 10, hwnd, reinterpret_cast<HMENU>(1), g.inst, nullptr);
         SendMessageW(g_prompt->edit, WM_SETFONT, reinterpret_cast<WPARAM>(g.font), TRUE);
         SendMessageW(g_prompt->edit, EM_SETLIMITTEXT, 2000, 0);
@@ -1232,8 +1236,9 @@ LRESULT CALLBACK PromptProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 // Zeigt den Dialog modal (verschachtelte Nachrichtenschleife). true = Text eingegeben und bestaetigt.
 bool PromptText(HWND owner, const wchar_t* title, std::wstring& text, const wchar_t* aboutBody = nullptr,
-                const wchar_t* hint = nullptr, const wchar_t* okLabel = nullptr) {
+                const wchar_t* hint = nullptr, const wchar_t* okLabel = nullptr, bool secret = false) {
     PromptState st;
+    st.secret = secret;
     st.title = title;
     st.text = text;
     if (hint) st.hint = hint;
@@ -1259,7 +1264,7 @@ bool PromptText(HWND owner, const wchar_t* title, std::wstring& text, const wcha
         if (r < 0) break;
         if (m.message == WM_KEYDOWN) {
             if (m.wParam == VK_ESCAPE || (st.about && m.wParam == VK_RETURN)) { st.done = true; continue; }
-            if (!st.about && m.wParam == VK_RETURN && GetKeyState(VK_CONTROL) < 0) { PromptCommit(hwnd); continue; }
+            if (!st.about && m.wParam == VK_RETURN && (st.secret || GetKeyState(VK_CONTROL) < 0)) { PromptCommit(hwnd); continue; }
         }
         TranslateMessage(&m);
         DispatchMessageW(&m);
@@ -1965,7 +1970,7 @@ void DoExtract() {
     HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
     const bool ok = g.doc.SavePages(p, t);
     SetCursor(old);
-    if (ok) ShowToast(std::to_wstring(t.size()) + L" Seite(n) gespeichert: " + FileName(p));
+    if (ok) ShowToast(std::to_wstring(t.size()) + L" Seite(n) gespeichert: " + FileName(p) + (g.doc.PasswordProtected() ? L" (ohne Passwortschutz)" : L""));
     else ShowToast(PdfDocument::LastError(), true);
 }
 
@@ -2088,7 +2093,7 @@ void DoSplit() {
         if (g.doc.SavePages(UniquePath(dir, name), pages)) ++ok; else err = PdfDocument::LastError();
     }
     SetCursor(old);
-    if (ok == static_cast<int>(parts.size())) ShowToast(std::to_wstring(ok) + L" Datei(en) erstellt in " + dir);
+    if (ok == static_cast<int>(parts.size())) ShowToast(std::to_wstring(ok) + L" Datei(en) erstellt in " + dir + (g.doc.PasswordProtected() ? L" (ohne Passwortschutz)" : L""));
     else ShowToast(std::to_wstring(ok) + L" von " + std::to_wstring(parts.size()) + L" Dateien erstellt – " + err, true);
 }
 
@@ -2149,9 +2154,40 @@ void RememberPosition() {
     pdfpos::Save(file, l);
 }
 
+std::string NarrowPassword(const std::wstring& pw, UINT codePage) {
+    if (pw.empty()) return std::string();
+    const int n = WideCharToMultiByte(codePage, 0, pw.c_str(), static_cast<int>(pw.size()), nullptr, 0, nullptr, nullptr);
+    std::string out(static_cast<size_t>(std::max(n, 0)), '\0');
+    if (n > 0) WideCharToMultiByte(codePage, 0, pw.c_str(), static_cast<int>(pw.size()), &out[0], n, nullptr, nullptr);
+    return out;
+}
+
+// Oeffnet die Datei; ist sie passwortgeschuetzt, fragt ein Dialog bis zu dreimal nach dem Passwort. cancelled: der Nutzer hat abgebrochen.
+bool OpenWithPassword(const std::wstring& path, bool& cancelled) {
+    cancelled = false;
+    if (g.doc.Open(path)) return true;
+    if (!PdfDocument::NeedsPassword()) return false;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        std::wstring pw;
+        const std::wstring hint = std::wstring(attempt == 0 ? L"Diese PDF ist mit einem Passwort geschützt." : L"Das Passwort stimmt nicht. Bitte noch einmal versuchen.")
+                                + L"\nDatei: " + FileName(path) + L"\nDas Passwort wird nicht gespeichert.\n\nPasswort:";
+        if (!PromptText(g.main, L"Passwort eingeben", pw, nullptr, hint.c_str(), L"Öffnen", true)) { cancelled = true; return false; }
+        std::string utf8 = NarrowPassword(pw, CP_UTF8), ansi = NarrowPassword(pw, 1252);   // neue PDFs erwarten UTF-8, aeltere Latin-1
+        SecureZeroMemory(&pw[0], pw.size() * sizeof(wchar_t));
+        bool ok = g.doc.Open(path, utf8);
+        if (!ok && ansi != utf8 && PdfDocument::NeedsPassword()) ok = g.doc.Open(path, ansi);
+        SecureZeroMemory(&utf8[0], utf8.size());
+        SecureZeroMemory(&ansi[0], ansi.size());
+        if (ok) return true;
+        if (!PdfDocument::NeedsPassword()) return false;   // anderer Fehler (kaputte Datei o. ae.)
+    }
+    return false;
+}
+
 void OpenPath(const std::wstring& path) {
     RememberPosition();   // die bisher offene Datei: Seite merken
-    if (!g.doc.Open(path)) { ShowToast(PdfDocument::LastError(), true); return; }
+    bool cancelled = false;
+    if (!OpenWithPassword(path, cancelled)) { if (!cancelled) ShowToast(PdfDocument::LastError(), true); return; }
     g.page = 0;
     int resumed = -1;
     if (const std::wstring pf = PositionsPath(); !pf.empty()) {
@@ -2378,7 +2414,8 @@ void RunCommand(int cmd) {
         wchar_t pct[32];
         swprintf(pct, 32, L"%d %%", st.before ? static_cast<int>(100.0 * (static_cast<double>(st.after) - static_cast<double>(st.before)) / static_cast<double>(st.before)) : 0);
         ShowToast(L"Verkleinert: " + FormatBytes(st.before) + L" → " + FormatBytes(st.after) + L" (" + pct + L"), "
-                  + std::to_wstring(st.recompressed) + L" von " + std::to_wstring(st.images) + L" Bildern neu kodiert");
+                  + std::to_wstring(st.recompressed) + L" von " + std::to_wstring(st.images) + L" Bildern neu kodiert"
+                  + (g.doc.PasswordProtected() ? L" – die Kopie hat keinen Passwortschutz" : L""));
         break;
     }
     case C_DELETE: {
