@@ -32,7 +32,70 @@ struct Data {
     std::wstring bank, iban, bic;              // Bankverbindung (Fusszeile rechts)
     std::wstring taxNo;                        // Steuernummer oder USt-IdNr. des Absenders (leer = keine Angabe)
     bool smallBusiness = false;                // Kleinunternehmer nach § 19 UStG: keine Umsatzsteuer, Hinweistext auf der PDF
+    std::wstring cancels, cancelsDateIso;      // gesetzt = Gutschrift/Storno zur Rechnung mit dieser Nummer und diesem Datum (Betraege bleiben positiv)
 };
+
+// Rechnungsdaten als Text ablegen (fuer Storno): je Zeile "Schluessel<TAB>Wert", Positionen "item<TAB>Text<TAB>Menge<TAB>Cent<TAB>USt"
+inline std::string SerializeData(const Data& d)
+{
+    auto clean = [](std::wstring s) { for (auto& c : s) if (c == L'\t' || c == L'\n' || c == L'\r') c = L' '; return docs::WideToUtf8(s); };
+    std::string o = "#Rechnungsdaten 1\n";
+    auto kv = [&](const char* k, const std::wstring& v) { o += std::string(k) + "\t" + clean(v) + "\n"; };
+    kv("issuer", d.issuer); kv("issuerAddress", d.issuerAddress); kv("recipient", d.recipient); kv("recipientAddress", d.recipientAddress);
+    kv("number", d.number); kv("date", d.dateIso); kv("due", d.dueIso); kv("note", d.note); kv("vat", std::to_wstring(d.vatPercent));
+    kv("owner", d.owner); kv("court", d.court); kv("phone", d.phone); kv("email", d.email); kv("web", d.web);
+    kv("bank", d.bank); kv("iban", d.iban); kv("bic", d.bic); kv("taxNo", d.taxNo); kv("small", d.smallBusiness ? L"1" : L"0");
+    kv("cancels", d.cancels); kv("cancelsDate", d.cancelsDateIso);
+    for (const Item& it : d.items) {
+        char q[48];
+        std::snprintf(q, sizeof q, "%.6f", it.qty);
+        o += "item\t" + clean(it.desc) + "\t" + q + "\t" + std::to_string(it.unitCents) + "\t" + std::to_string(it.vatPercent) + "\n";
+    }
+    return o;
+}
+
+inline bool ParseData(const std::string& text, Data& d)
+{
+    d = Data{};
+    bool any = false;
+    size_t p = 0;
+    while (p < text.size()) {
+        size_t nl = text.find('\n', p);
+        if (nl == std::string::npos) nl = text.size();
+        std::string line = text.substr(p, nl - p);
+        p = nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty() || line[0] == '#') continue;
+        std::vector<std::string> f;
+        size_t s = 0;
+        for (;;) {
+            const size_t t = line.find('\t', s);
+            if (t == std::string::npos) { f.push_back(line.substr(s)); break; }
+            f.push_back(line.substr(s, t - s));
+            s = t + 1;
+        }
+        auto w = [&](size_t i) { return i < f.size() ? changelog::Utf8ToWide(f[i]) : std::wstring(); };
+        const std::string& k = f[0];
+        try {
+            if (k == "issuer") d.issuer = w(1); else if (k == "issuerAddress") d.issuerAddress = w(1);
+            else if (k == "recipient") d.recipient = w(1); else if (k == "recipientAddress") d.recipientAddress = w(1);
+            else if (k == "number") d.number = w(1); else if (k == "date") d.dateIso = w(1); else if (k == "due") d.dueIso = w(1);
+            else if (k == "note") d.note = w(1); else if (k == "vat") d.vatPercent = std::stoi(f.size() > 1 ? f[1] : "19");
+            else if (k == "owner") d.owner = w(1); else if (k == "court") d.court = w(1); else if (k == "phone") d.phone = w(1);
+            else if (k == "email") d.email = w(1); else if (k == "web") d.web = w(1); else if (k == "bank") d.bank = w(1);
+            else if (k == "iban") d.iban = w(1); else if (k == "bic") d.bic = w(1); else if (k == "taxNo") d.taxNo = w(1);
+            else if (k == "small") d.smallBusiness = f.size() > 1 && f[1] == "1";
+            else if (k == "cancels") d.cancels = w(1); else if (k == "cancelsDate") d.cancelsDateIso = w(1);
+            else if (k == "item" && f.size() >= 5) {
+                Item it;
+                it.desc = w(1); it.qty = std::stod(f[2]); it.unitCents = std::stoll(f[3]); it.vatPercent = std::stoi(f[4]);
+                d.items.push_back(it);
+            }
+            any = true;
+        } catch (...) { return false; }
+    }
+    return any && !d.items.empty();
+}
 
 // Standard-Schlusstext; [Gesamtsumme] und [Fälligkeitsdatum] werden beim Erzeugen eingesetzt
 inline const wchar_t* DefaultNote()
@@ -208,7 +271,8 @@ inline std::string BuildPdf(const Data& d, const std::string* eInvoiceXml = null
         y -= 11;
     }
     // Rechnungskopf rechts
-    pdf.TextRight(R, top - 2, 24, true, L"RECHNUNG", 0.15);
+    const bool credit = !d.cancels.empty();
+    pdf.TextRight(R, top - 2, credit ? 20 : 24, true, credit ? L"GUTSCHRIFT" : L"RECHNUNG", 0.15);
     const double lx = 390;
     double ky = top - 30;
     auto kv = [&](const wchar_t* k, const std::wstring& v) {
@@ -217,7 +281,8 @@ inline std::string BuildPdf(const Data& d, const std::string* eInvoiceXml = null
         pdf.TextRight(R, ky, 10, true, v);
         ky -= 14;
     };
-    kv(L"Rechnungsnr.", d.number);
+    kv(credit ? L"Gutschriftsnr." : L"Rechnungsnr.", d.number);
+    if (credit) kv(L"Storno zu", d.cancels + (d.cancelsDateIso.empty() ? L"" : L" vom " + docs::FormatDate(d.cancelsDateIso)));
     kv(L"Datum", docs::FormatDate(d.dateIso));
     kv(L"Fällig am", docs::FormatDate(d.dueIso));
 
@@ -361,7 +426,7 @@ inline std::string BuildPdf(const Data& d, const std::string* eInvoiceXml = null
     }
 
     pdf.Footer(L"Erstellt mit Oggys Docs-Files");
-    return pdf.Build(d.number.empty() ? L"Rechnung" : L"Rechnung " + d.number, eInvoiceXml);
+    return pdf.Build(d.number.empty() ? L"Rechnung" : std::wstring(credit ? L"Gutschrift " : L"Rechnung ") + d.number, eInvoiceXml);
 }
 
 }  // namespace invoice

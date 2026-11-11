@@ -29,6 +29,7 @@
 
 #include "EInvoice.h"
 #include "Export.h"
+#include "AuditLog.h"
 #include "FacturX.h"
 #include "Invoice.h"
 #include "InvoiceText.h"
@@ -40,7 +41,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.11.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.12.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -71,7 +72,7 @@ enum Id {
 constexpr int kMaxTagChips = 23;
 enum MenuId {
     M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND, M_EXPORT,
-    C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE, C_INCOME, C_EXPENSE, C_TAGS
+    C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE, C_INCOME, C_EXPENSE, C_TAGS, C_STORNO
 };
 
 struct Settings {
@@ -520,6 +521,12 @@ private:
     void ApplyEdit();
     void BeginInvoiceDialog(int mode = 0);   // 0 = aus den Einstellungen, 1 = Beispieldaten, 2 = leere Maske
     void ApplyInvoice();
+    bool WriteInvoiceFile(const invoice::Data& data, bool example, std::wstring& rel, std::wstring& err);
+    void AppendLog(const std::wstring& action, const std::wstring& rel, const std::wstring& detail);
+    void StornoSelected();
+    void CheckLockedFiles();
+    std::wstring m_invoiceNote;
+    std::set<std::wstring> m_tamperLogged;   // schon protokollierte Veraenderungen (nur einmal melden)
     void CloseDialog();
     void SetStatusOfSelected(docs::Status s);
     void TrashSelected();
@@ -818,6 +825,7 @@ void App::Refresh() {
     m_sel.swap(keep);
     BuildTree();
     RebuildView();
+    CheckLockedFiles();
 }
 
 void App::BuildTree() {
@@ -1593,11 +1601,106 @@ void App::CloseDialog() {
     Invalidate();
 }
 
+// ---- Aenderungsprotokoll und Pruefung gesperrter Rechnungen (GoBD) ----
+
+// Haengt eine Zeile an <Rechnungsordner>\Protokoll.log an (Hash-Kette, siehe AuditLog.h)
+void App::AppendLog(const std::wstring& action, const std::wstring& rel, const std::wstring& detail) {
+    const fs::path path = fs::path(m_rootPath) / L"Protokoll.log";
+    std::string last;
+    {
+        std::ifstream in(path, std::ios::binary);
+        if (in) {
+            std::string all((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+            const std::vector<std::string> lines = docs::LogSplit(all);
+            if (!lines.empty()) last = lines.back();
+        }
+    }
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t ts[32];
+    swprintf_s(ts, L"%04d-%02d-%02d %02d:%02d:%02d", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    std::error_code ec;
+    fs::create_directories(path.parent_path(), ec);
+    std::ofstream out(path, std::ios::binary | std::ios::app);
+    if (out) out << docs::LogLine(ts, action, rel, detail, last) << "\n";
+}
+
+// Vergleicht gesperrte Rechnungen mit der Pruefsumme vom Erstellen und prueft die Kette des Protokolls; meldet Abweichungen einmal im Protokoll und in der Statuszeile
+void App::CheckLockedFiles() {
+    std::vector<std::wstring> changed;
+    for (const auto& d : m_all) {
+        if (!d.m.locked || d.m.hash.empty()) continue;
+        std::ifstream in(AbsPath(d.rel), std::ios::binary);
+        if (!in) continue;
+        const std::string bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        if (sha256::HexW(bytes) == d.m.hash) { m_tamperLogged.erase(d.rel); continue; }
+        changed.push_back(d.name);
+        if (m_tamperLogged.insert(d.rel).second) AppendLog(L"ACHTUNG: Datei verändert", d.rel, L"Prüfsumme stimmt nicht mit dem Stand beim Erstellen überein");
+    }
+    size_t bad = 0;
+    {
+        std::ifstream in(fs::path(m_rootPath) / L"Protokoll.log", std::ios::binary);
+        if (in) bad = docs::LogVerify(std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()));
+    }
+    if (!changed.empty()) SetNote(L"Achtung: " + std::to_wstring(changed.size()) + (changed.size() == 1 ? L" gesperrte Rechnung wurde" : L" gesperrte Rechnungen wurden") + L" außerhalb des Programms verändert: " + changed[0] + (changed.size() > 1 ? L" …" : L""));
+    else if (bad) SetNote(L"Achtung: Das Änderungsprotokoll (Protokoll.log) ist ab Zeile " + std::to_wstring(bad) + L" nicht mehr in Ordnung.");
+}
+
+// Storno: Gutschrift mit denselben Positionen und Bezug auf die Rechnung; die Rechnung bleibt unveraendert gesperrt
+void App::StornoSelected() {
+    const auto sel = SelectedDocs();
+    if (sel.size() != 1 || !sel[0]->m.locked) return;
+    const docs::Doc doc = *sel[0];
+    if (!doc.m.link.empty()) { SetNote(doc.m.link.rfind(L"Storno zu", 0) == 0 ? L"Eine Gutschrift lässt sich nicht stornieren." : L"Diese Rechnung ist schon storniert (" + doc.m.link + L")."); Invalidate(); return; }
+    // Rechnungsnummer aus dem Dateinamen: Rechnung_<Nummer>_<Empfaenger>.pdf
+    std::wstring number;
+    if (doc.name.rfind(L"Rechnung_", 0) == 0) {
+        const size_t u = doc.name.find(L'_', 9);
+        if (u != std::wstring::npos) number = doc.name.substr(9, u - 9);
+    }
+    invoice::Data orig;
+    std::ifstream in(fs::path(m_rootPath) / L".rechnungsdaten" / (number + L".dat"), std::ios::binary);
+    const std::string text = in ? std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()) : std::string();
+    if (number.empty() || !invoice::ParseData(text, orig)) {
+        MessageBoxW(m_hwnd, L"Für diese Rechnung sind keine Rechnungsdaten gespeichert (sie wurde nicht mit diesem Programm erstellt oder die Datei fehlt). Bitte eine Gutschrift über „Rechnung erstellen“ ausstellen.", L"Stornieren", MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    const std::wstring msg = L"Rechnung " + orig.number + L" stornieren?\n\nEs wird eine Gutschrift über " + docs::FormatAmount(invoice::Compute(orig).gross) +
+                             L" erstellt, die sich auf die Rechnung bezieht. Die Rechnung selbst bleibt unverändert erhalten. Das lässt sich nicht rückgängig machen.";
+    if (MessageBoxW(m_hwnd, msg.c_str(), L"Stornieren", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+    invoice::Data g = orig;
+    g.cancels = orig.number;
+    g.cancelsDateIso = orig.dateIso;
+    g.dateIso = TodayIso();
+    g.dueIso.clear();
+    g.note = L"Diese Gutschrift storniert die Rechnung " + orig.number + L" vom " + docs::FormatDate(orig.dateIso) + L". Bereits gezahlte Beträge werden erstattet oder verrechnet.";
+    std::vector<std::wstring> names;
+    for (const auto& x : m_all) names.push_back(x.name);
+    const int yearNo = std::stoi(g.dateIso.substr(0, 4));
+    const int no = docs::NextInvoiceNo(InvoiceCounter(yearNo), names, yearNo);
+    g.number = docs::FormatInvoiceNo(yearNo, no);
+    std::wstring rel, err;
+    if (!WriteInvoiceFile(g, false, rel, err)) { SetNote(err); Invalidate(); return; }
+    SetInvoiceCounter(yearNo, no);
+    docs::Meta o = doc.m;   // Original: bleibt gesperrt, gilt als erledigt, Verweis auf die Gutschrift
+    o.status = docs::Status::Paid;
+    o.link = L"Storniert durch " + g.number;
+    m_meta[doc.rel] = o;
+    AppendLog(L"Rechnung storniert", doc.rel, L"Gutschrift " + g.number);
+    SaveIndex();
+    Refresh();
+    m_sel = {rel};
+    m_focusRel = m_anchorRel = rel;
+    SetNote(L"Storniert: Gutschrift " + g.number + L" erstellt");
+    Invalidate();
+}
+
 void App::SetStatusOfSelected(docs::Status s) {
     int n = 0;
     for (const docs::Doc* d : SelectedDocs()) {
         docs::Meta m = d->m;
         m.status = s;
+        if (d->m.locked && d->m.status != s) AppendLog(L"Status geändert", d->rel, std::wstring(docs::StatusName(d->m.status)) + L" → " + docs::StatusName(s));
         m_meta[d->rel] = m;
         ++n;
     }
@@ -1611,6 +1714,12 @@ void App::SetStatusOfSelected(docs::Status s) {
 void App::TrashSelected() {
     const auto sel = SelectedDocs();
     if (sel.empty()) return;
+    for (const docs::Doc* d : sel)
+        if (d->m.locked) {   // GoBD: Rechnungen duerfen nach dem Erstellen nicht geloescht werden
+            AppendLog(L"Löschen abgelehnt", d->rel, L"gesperrte Rechnung");
+            MessageBoxW(m_hwnd, (L"„" + d->name + L"“ ist eine gesperrte Rechnung und kann nicht gelöscht werden (GoBD).\n\nFalsche Rechnung? Mit Rechtsklick → „Stornieren …“ wird eine Gutschrift erstellt.").c_str(), L"Löschen", MB_OK | MB_ICONINFORMATION);
+            return;
+        }
     const std::wstring msg = sel.size() == 1 ? L"„" + sel[0]->name + L"“ in den Papierkorb verschieben?"
                                              : std::to_wstring(sel.size()) + L" Rechnungen in den Papierkorb verschieben?";
     if (MessageBoxW(m_hwnd, msg.c_str(), L"Löschen", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
@@ -2124,6 +2233,15 @@ void App::ApplyEdit() {
     if (m.status != docs::Status::Installment) m.rate.clear();
     std::wstring rel = doc->rel;
     const std::wstring sc = docs::SanitizeName(cred, L"Sonstige"), sy = docs::SanitizeName(year, L"Unbekannt");
+    if (doc->m.locked) {   // GoBD: Inhalt der Rechnung bleibt, nur Status, Tags, Notiz und Rate sind aenderbar
+        if (sc != doc->creditor || sy != doc->year || m.cents != doc->m.cents || m.due != doc->m.due) {
+            d.error = L"Gesperrte Rechnung: Gläubiger, Jahr, Betrag und Fälligkeit lassen sich nicht ändern.";
+            Invalidate();
+            return;
+        }
+        m.locked = true; m.hash = doc->m.hash; m.link = doc->m.link; m.income = doc->m.income;
+        AppendLog(L"Angaben geändert", doc->rel, L"Status " + std::wstring(docs::StatusName(m.status)) + L", Tags/Notiz/Rate");
+    } else { m.link = doc->m.link; }
     if (sc != doc->creditor || sy != doc->year) {   // Glaeubiger/Jahr geaendert: Datei in den passenden Ordner verschieben
         const fs::path target = docs::TargetPath(m_rootPath, year, cred, doc->name);
         std::error_code ec;
@@ -2220,6 +2338,50 @@ void App::BeginInvoiceDialog(int mode) {
     Invalidate();
 }
 
+// Schreibt die Rechnungs-PDF (mit E-Rechnungsdaten, wenn die Angaben reichen), traegt sie in den Index ein und protokolliert sie.
+// Echte Rechnungen werden gesperrt (GoBD): Pruefsumme der Datei, Rechnungsdaten fuer einen spaeteren Storno, Eintrag im Aenderungsprotokoll.
+bool App::WriteInvoiceFile(const invoice::Data& data, bool example, std::wstring& rel, std::wstring& err) {
+    const bool credit = !data.cancels.empty();
+    const std::wstring eProblem = invoice::EInvoiceProblem(data);
+    const std::string eXml = eProblem.empty() ? invoice::BuildEInvoiceXml(data) : std::string();
+    const std::string pdf = invoice::BuildPdf(data, eXml.empty() ? nullptr : &eXml);
+    const std::wstring year = data.dateIso.substr(0, 4);
+    const std::wstring fname = std::wstring(credit ? L"Gutschrift_" : L"Rechnung_") + data.number + L"_" + data.recipient + L".pdf";
+    const fs::path target = docs::TargetPath(m_rootPath, year, data.issuer, fname);
+    std::error_code ec;
+    fs::create_directories(target.parent_path(), ec);
+    {
+        std::ofstream o(target, std::ios::binary | std::ios::trunc);
+        if (!o) { err = L"Die PDF-Datei konnte nicht geschrieben werden."; return false; }
+        o.write(pdf.data(), (std::streamsize)pdf.size());
+    }
+    rel = fs::relative(target, m_rootPath, ec).wstring();
+    std::replace(rel.begin(), rel.end(), L'/', L'\\');
+    docs::Meta m;
+    const long long gross = invoice::Compute(data).gross;
+    m.cents = credit ? -gross : gross;
+    m.due = data.dueIso;
+    m.status = (example || credit) ? docs::Status::Paid : docs::Status::Open;   // Beispiele und Gutschriften sollen die offenen Betraege nicht verfaelschen
+    m.income = !example;   // eigene Rechnung = Einnahme; Beispiele zaehlen nicht in die Finanz-Uebersicht
+    m.tags = docs::EditTags(L"", std::wstring(example ? L"Beispiel, " : L"") + (credit ? L"Gutschrift, " : L"eigene Rechnung, ") + data.recipient, L"");
+    if (credit) m.link = L"Storno zu " + data.cancels;
+    if (!example) {
+        m.locked = true;
+        m.hash = sha256::HexW(pdf);
+        std::error_code ec2;
+        fs::create_directories(fs::path(m_rootPath) / L".rechnungsdaten", ec2);
+        std::ofstream o2(fs::path(m_rootPath) / L".rechnungsdaten" / (data.number + L".dat"), std::ios::binary | std::ios::trunc);
+        const std::string ser = invoice::SerializeData(data);
+        if (o2) o2.write(ser.data(), (std::streamsize)ser.size());
+        AppendLog(credit ? L"Gutschrift erstellt" : L"Rechnung erstellt", rel, L"Betrag " + docs::FormatAmount(m.cents) + (eXml.empty() ? L", ohne E-Rechnungsdaten" : L", mit E-Rechnungsdaten"));
+    }
+    m_meta[rel] = m;
+    SaveIndex();
+    m_invoiceNote = std::wstring(credit ? L"Gutschrift" : L"Rechnung") + L" erstellt und gesperrt, " + (eXml.empty() ? L"ohne E-Rechnungsdaten (" + eProblem + L")" : L"mit eingebetteten E-Rechnungsdaten (ZUGFeRD / Factur-X, EN 16931)");
+    if (example) m_invoiceNote = L"Beispielrechnung erstellt (nicht gesperrt), " + (eXml.empty() ? L"ohne E-Rechnungsdaten (" + eProblem + L")" : std::wstring(L"mit E-Rechnungsdaten"));
+    return true;
+}
+
 void App::ApplyInvoice() {
     Dialog& d = m_dlg;
     auto txt = [&](int id) { const Field* f = FieldById(id); return f ? docs::Trim(f->ed.text) : std::wstring(); };
@@ -2277,30 +2439,9 @@ void App::ApplyInvoice() {
         if (!d.exampleLoaded && docs::InvoiceNoTaken(names, data.number)) { d.error = L"Die Rechnungsnummer " + data.number + L" ist schon vergeben."; Invalidate(); return; }
         if (docs::ParseInvoiceNo(data.number, y, n) && y == yearNo) usedNo = n;
     }
-    // E-Rechnung: Factur-X/ZUGFeRD-Daten (EN 16931) ins PDF einbetten, wenn die Angaben dafuer reichen
-    const std::wstring eProblem = invoice::EInvoiceProblem(data);
-    const std::string eXml = eProblem.empty() ? invoice::BuildEInvoiceXml(data) : std::string();
-    const std::string pdf = invoice::BuildPdf(data, eXml.empty() ? nullptr : &eXml);
     if (usedNo > InvoiceCounter(yearNo)) SetInvoiceCounter(yearNo, usedNo);
-    const std::wstring fname = L"Rechnung_" + data.number + L"_" + data.recipient + L".pdf";
-    const fs::path target = docs::TargetPath(m_rootPath, year, data.issuer, fname);
-    std::error_code ec;
-    fs::create_directories(target.parent_path(), ec);
-    {
-        std::ofstream o(target, std::ios::binary | std::ios::trunc);
-        if (!o) { d.error = L"Die PDF-Datei konnte nicht geschrieben werden."; Invalidate(); return; }
-        o.write(pdf.data(), (std::streamsize)pdf.size());
-    }
-    std::wstring rel = fs::relative(target, m_rootPath, ec).wstring();
-    std::replace(rel.begin(), rel.end(), L'/', L'\\');
-    docs::Meta m;
-    m.cents = invoice::Compute(data).gross;
-    m.due = data.dueIso;
-    m.status = d.exampleLoaded ? docs::Status::Paid : docs::Status::Open;   // Beispiele sollen die offenen Betraege nicht verfaelschen
-    m.income = !d.exampleLoaded;   // eigene Rechnung = Einnahme; Beispiele zaehlen nicht in die Finanz-Uebersicht
-    m.tags = docs::EditTags(L"", std::wstring(d.exampleLoaded ? L"Beispiel, " : L"") + L"eigene Rechnung, " + data.recipient, L"");
-    m_meta[rel] = m;
-    SaveIndex();
+    std::wstring rel, err;
+    if (!WriteInvoiceFile(data, d.exampleLoaded, rel, err)) { d.error = err; Invalidate(); return; }
     // Absenderdaten als Standard fuer die naechsten Rechnungen merken (nur wenn die Checkbox gesetzt ist)
     const bool savedSender = d.saveSender && !d.exampleLoaded;   // Musterdaten nie als Standard-Absender merken
     if (savedSender) {
@@ -2317,12 +2458,11 @@ void App::ApplyInvoice() {
     CloseDialog();
     Refresh();
     m_sel = {rel};
-    SetNote(eXml.empty() ? L"Rechnung erstellt (ohne E-Rechnungsdaten: " + eProblem + L")" : L"Rechnung erstellt, mit eingebetteten E-Rechnungsdaten (ZUGFeRD / Factur-X, EN 16931)");
     m_focusRel = m_anchorRel = rel;
     for (int i = 0; i < (int)m_view.size(); ++i)
         if (m_all[m_view[i]].rel == rel) { EnsureRowVisible(i); break; }
-    SetNote(L"Rechnung " + data.number + L" erstellt: " + target.filename().wstring() + (savedSender ? L"  \u00B7  Absender als Standard gespeichert" : L""));
-    OpenFile(target);
+    SetNote(L"Rechnung " + data.number + L": " + m_invoiceNote + (savedSender ? L"  \u00B7  Absender als Standard gespeichert" : L""));
+    OpenFile(AbsPath(rel));
     Invalidate();
 }
 
@@ -2453,6 +2593,7 @@ void App::ShowContextMenu(int x, int y) {
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING | (sel.size() == 1 ? 0 : MF_GRAYED), C_EDIT, L"Bearbeiten \u2026");
     AppendMenuW(m, MF_STRING, C_DELETE, L"L\u00F6schen");
+    if (sel.size() == 1 && sel[0]->m.locked && sel[0]->m.link.empty()) AppendMenuW(m, MF_STRING, C_STORNO, L"Stornieren (Gutschrift erstellen) \u2026");
     POINT pt{x, y};
     ClientToScreen(m_hwnd, &pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
@@ -2464,6 +2605,7 @@ void App::ShowContextMenu(int x, int y) {
     else if (cmd >= C_STATUS0 && cmd < C_STATUS0 + 4) SetStatusOfSelected((docs::Status)(cmd - C_STATUS0));
     else if (cmd == C_EDIT && sel.size() == 1) BeginEditDialog(*sel[0]);
     else if (cmd == C_DELETE) TrashSelected();
+    else if (cmd == C_STORNO) StornoSelected();
     else if (cmd == C_INCOME) SetKindOfSelected(true);
     else if (cmd == C_EXPENSE) SetKindOfSelected(false);
     else if (cmd == C_TAGS) BeginTagsDialog();

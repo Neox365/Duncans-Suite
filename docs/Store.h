@@ -277,6 +277,9 @@ struct Meta {
     std::wstring tags, note;
     std::wstring rate;            // Ratenzahlung: "Rate 3 von 12" / "50 € / Monat" (nur bei Status Ratenzahlung angezeigt)
     bool income = false;          // Einnahme (eigene Rechnung) statt Ausgabe; zaehlt in der Finanz-Uebersicht
+    bool locked = false;          // gesperrte eigene Rechnung (GoBD): nicht loeschbar, Inhalt nicht aenderbar
+    std::wstring hash;            // SHA-256 der PDF beim Erstellen (nur bei gesperrten Rechnungen)
+    std::wstring link;            // Bezug: "Storniert durch RE-..." bzw. "Storno zu RE-..."
 };
 using MetaMap = std::map<std::wstring, Meta>;   // Schluessel: relativer Pfad, Trenner '\'
 
@@ -301,7 +304,7 @@ inline std::string SerializeIndex(const MetaMap& map)
         const Meta& m = kv.second;
         out += CleanField(kv.first) + L"\t" + (m.cents == kUnknown ? L"" : std::to_wstring(m.cents)) + L"\t" + m.due + L"\t" +
                StatusName(m.status) + L"\t" + CleanField(m.tags) + L"\t" + CleanField(m.note) + L"\t" + CleanField(m.rate) + L"\t" +
-               (m.income ? L"Einnahme" : L"Ausgabe") + L"\n";
+               (m.income ? L"Einnahme" : L"Ausgabe") + L"\t" + (m.locked ? L"Gesperrt" : L"") + L"\t" + m.hash + L"\t" + CleanField(m.link) + L"\n";
     }
     return WideToUtf8(out);
 }
@@ -340,6 +343,9 @@ inline MetaMap ParseIndex(const std::string& utf8)
         if (f.size() > 5) m.note = f[5];
         if (f.size() > 6) m.rate = f[6];
         if (f.size() > 7) m.income = f[7] == L"Einnahme";
+        if (f.size() > 8) m.locked = f[8] == L"Gesperrt";
+        if (f.size() > 9) m.hash = f[9];
+        if (f.size() > 10) m.link = f[10];
         map[f[0]] = m;
     }
     return map;
