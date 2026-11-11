@@ -502,6 +502,10 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.8.0 | 2026-11-11
+- Neu: Sortieren in Sheets. Die Knöpfe „A↓“ und „Z↓“ sortieren die markierten Zeilen nach der Spalte der aktiven Zelle. Bei einer einzelnen Zelle wird die ganze Tabelle sortiert; eine Überschriftenzeile (Text über Zahlen) bleibt oben. Zahlen kommen vor Text, Text ohne Beachtung der Schreibweise, leere Zellen immer ans Ende. Formate und Farben wandern mit, Strg+Z macht die letzte Sortierung rückgängig.
+- Hinweis: Bereiche mit Formeln werden nicht sortiert (die Bezüge würden danach auf falsche Zeilen zeigen); das Programm sagt es in der Statuszeile.
+- Neu: Formeln MEDIAN, PRODUKT, REST, POTENZ, AUFRUNDEN, ABRUNDEN und VORZEICHEN (auch englisch, und sie bleiben beim Speichern als .xlsx in Excel lauffähig).
 ## 0.7.0 | 2026-11-11
 - Neu: Rechtschreibprüfung im Writer mit den Wörterbüchern von Windows (Deutsch bevorzugt, sonst Englisch; nichts verlässt den PC). Beim Tippen unterstreicht der Writer unbekannte Wörter rot; ein Rechtsklick darauf zeigt Vorschläge, „Zum Wörterbuch hinzufügen“ und „Ignorieren“ (die Beschriftung dieses Menüs folgt der Windows-Sprache).
 - Neu: Der Knopf „Rechtschreibung“ (oder F7) prüft das ganze Dokument, auch geöffnete Dateien: Der Dialog springt von Fehler zu Fehler, markiert das Wort im Text und bietet Vorschläge mit „Ändern“, „Alle ändern“, „Ignorieren“, „Alle ignorieren“ und „Zum Wörterbuch“ (Doppelklick auf einen Vorschlag ändert gleich). Zahlen, IBAN, Adressen und Rechnungsnummern werden nicht beanstandet. Die Formatierung des Textes bleibt beim Ändern erhalten.

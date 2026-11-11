@@ -544,7 +544,54 @@ int main()
     CHECK(Show(s, L"J4", L"=WURZEL(16)+1") == L"5");
     CHECK(Show(s, L"J5", L"=GANZZAHL(-2,5)") == L"-3");
     CHECK(Show(s, L"J6", L"=WURZEL(-1)") == L"#ZAHL!");
-    CHECK(Show(s, L"J7", L"=RUNDEN(2)") == L"#SYNTAX!");    // Zahlenformate und Hintergrundfarbe
+    CHECK(Show(s, L"J7", L"=RUNDEN(2)") == L"#SYNTAX!");
+    // MEDIAN, PRODUKT, REST, POTENZ, AUFRUNDEN, ABRUNDEN, VORZEICHEN
+    s.Clear();
+    s.Set(0, 0, L"5"); s.Set(1, 0, L"1"); s.Set(2, 0, L"9"); s.Set(3, 0, L"3");
+    CHECK(Show(s, L"C1", L"=MEDIAN(A1:A4)") == L"4");                      // gerade Anzahl: Mittel der beiden mittleren
+    CHECK(Show(s, L"C2", L"=MEDIAN(A1:A3)") == L"5");
+    CHECK(Show(s, L"C3", L"=PRODUKT(A1:A4)") == L"135");
+    CHECK(Show(s, L"C4", L"=PRODUCT(2;3;4)") == L"24");
+    CHECK(Show(s, L"C5", L"=REST(10;3)") == L"1");
+    CHECK(Show(s, L"C6", L"=MOD(-1;3)") == L"2");                          // Vorzeichen des Teilers
+    CHECK(Show(s, L"C7", L"=REST(5;0)") == L"#DIV/0!");
+    CHECK(Show(s, L"C8", L"=POTENZ(2;10)") == L"1024");
+    CHECK(Show(s, L"C9", L"=POWER(9;0,5)+1") == L"4");
+    CHECK(Show(s, L"C10", L"=AUFRUNDEN(2,341;2)") == L"2,35");
+    CHECK(Show(s, L"C11", L"=AUFRUNDEN(-2,341;2)") == L"-2,35");           // von null weg
+    CHECK(Show(s, L"C12", L"=ABRUNDEN(2,349;2)") == L"2,34");
+    CHECK(Show(s, L"C13", L"=ROUNDDOWN(-2,349;2)") == L"-2,34");
+    CHECK(Show(s, L"C14", L"=AUFRUNDEN(2,5;0)") == L"3");
+    CHECK(Show(s, L"C15", L"=AUFRUNDEN(2;0)") == L"2");                    // schon glatt
+    CHECK(Show(s, L"C16", L"=VORZEICHEN(-7)") == L"-1");
+    CHECK(Show(s, L"C17", L"=SIGN(0)") == L"0");
+    CHECK(Show(s, L"C18", L"=MEDIAN(B1:B2)") == L"#ZAHL!");                // leer
+    CHECK(Show(s, L"C19", L"=REST(5)") == L"#SYNTAX!");
+
+    // Sortieren
+    s.Clear();
+    s.Set(0, 0, L"Name"); s.Set(0, 1, L"Preis");
+    s.Set(1, 0, L"Kiwi"); s.Set(1, 1, L"3");
+    s.Set(2, 0, L"apfel"); s.Set(2, 1, L"12");
+    s.Set(3, 0, L"Birne"); s.Set(3, 1, L"1,5");
+    s.Set(4, 0, L"Dattel");
+    s.fill[1][0] = 0x112233; s.fmt[2][1] = FmtCurrency;
+    CHECK(s.SortRows(1, 0, 4, 1, 0, true));                                // nach Name aufsteigend (ohne Schreibweise), leere Preis-Zelle wandert mit
+    CHECK(s.raw[1][0] == L"apfel" && s.raw[1][1] == L"12" && s.raw[2][0] == L"Birne" && s.raw[3][0] == L"Dattel" && s.raw[3][1].empty() && s.raw[4][0] == L"Kiwi");
+    CHECK(s.fmt[1][1] == FmtCurrency && s.fill[4][0] == 0x112233 && s.fill[1][0] == kNoFill);   // Formate und Farben wandern mit
+    CHECK(s.raw[0][0] == L"Name");                                          // Kopfzeile ausserhalb des Bereichs bleibt
+    CHECK(s.SortRows(1, 0, 4, 1, 1, false));                                // Preis absteigend; leere Zelle zuletzt
+    CHECK(s.raw[1][1] == L"12" && s.raw[2][1] == L"3" && s.raw[3][1] == L"1,5" && s.raw[4][0] == L"Dattel");
+    CHECK(s.SortRows(1, 0, 4, 1, 1, true) && s.raw[1][1] == L"1,5" && s.raw[4][0] == L"Dattel");   // leer bleibt auch aufsteigend hinten
+    s.Set(1, 1, L"=A1");
+    const std::wstring before = s.raw[2][0];
+    CHECK(!s.SortRows(1, 0, 4, 1, 0, true) && s.raw[2][0] == before);       // Formeln: nichts veraendern
+    CHECK(!s.SortRows(1, 0, 4, 1, 3, true) && !s.SortRows(3, 0, 1, 1, 0, true));
+    s.Clear();
+    s.Set(0, 0, L"b"); s.Set(1, 0, L"2"); s.Set(2, 0, L"a"); s.Set(3, 0, L"1");
+    CHECK(s.SortRows(0, 0, 3, 0, 0, true) && s.raw[0][0] == L"1" && s.raw[1][0] == L"2" && s.raw[2][0] == L"a" && s.raw[3][0] == L"b");   // Zahlen vor Text
+    CHECK(s.SortRows(0, 0, 3, 0, 0, false) && s.raw[0][0] == L"b" && s.raw[3][0] == L"1");
+    // Zahlenformate und Hintergrundfarbe
     CHECK(FormatCurrency(1234.5) == L"1.234,50 \u20AC");
     CHECK(FormatCurrency(-0.5) == L"-0,50 \u20AC");
     CHECK(FormatCurrency(1234567.891) == L"1.234.567,89 \u20AC");

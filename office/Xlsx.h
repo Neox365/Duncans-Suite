@@ -474,6 +474,12 @@ inline std::string ToExcelFormula(const std::wstring& f)
                 else if (up == L"WURZEL") up = L"SQRT";
                 else if (up == L"GANZZAHL") up = L"INT";
                 else if (up == L"SVERWEIS") up = L"VLOOKUP";
+                else if (up == L"AUFRUNDEN") up = L"ROUNDUP";
+                else if (up == L"ABRUNDEN") up = L"ROUNDDOWN";
+                else if (up == L"REST") up = L"MOD";
+                else if (up == L"POTENZ") up = L"POWER";
+                else if (up == L"PRODUKT") up = L"PRODUCT";
+                else if (up == L"VORZEICHEN") up = L"SIGN";
                 out += up;
             }
             else out += name;

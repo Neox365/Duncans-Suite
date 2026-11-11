@@ -1,7 +1,7 @@
 #pragma once
 // Tabellen-Engine fuer Duncan's Office (Sheets): 26 Spalten (A-Z) x 100 Zeilen, Formeln und CSV.
 // Formeln: + - * / ^, Klammern, Zellbezuege (A1), Bereiche (A1:B5) und die Funktionen
-// SUMME, MITTELWERT, MIN, MAX, ANZAHL (englisch: SUM, AVERAGE, MIN, MAX, COUNT), ZAEHLENWENN (COUNTIF) und WENN (IF) mit
+// SUMME, MITTELWERT, MIN, MAX, ANZAHL, MEDIAN, PRODUKT, REST, POTENZ, AUFRUNDEN, ABRUNDEN, VORZEICHEN (englisch: SUM, AVERAGE, ...), ZAEHLENWENN (COUNTIF) und WENN (IF) mit
 // Vergleichen (= <> < > <= >=) und Text in Anfuehrungszeichen.
 // Argumente trennt ";" (oder ","; steht "," zwischen zwei Ziffern, ist es ein Dezimalkomma).
 // Reine Logik ohne Win32, damit sie getrennt testbar bleibt.
@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <cwctype>
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -182,6 +183,10 @@ public:
                 if (!raw[r][c].empty()) { rows = r + 1 > rows ? r + 1 : rows; cols = c + 1 > cols ? c + 1 : cols; }
         return rows > 0;
     }
+
+    // Sortiert die Zeilen r1..r2 (nur Spalten c1..c2) nach der Spalte key. Zahlen vor Text vor leeren Zellen; Zahlen nach Wert, Text ohne Beachtung der Schreibweise.
+    // Stabil. Gibt false zurueck (und aendert nichts), wenn der Bereich Formeln enthaelt: deren Bezuege wuerden nach dem Verschieben auf falsche Zeilen zeigen.
+    bool SortRows(int r1, int c1, int r2, int c2, int key, bool ascending);
 
 private:
     mutable unsigned char m_state[kRows][kCols];   // 0 offen, 1 wird berechnet, 2 fertig
@@ -726,7 +731,7 @@ struct Parser {
     {
         std::wstring name;
         for (wchar_t ch : nameIn) name.push_back(UpperName(ch));
-        enum { Sum, Avg, Min, Max, Count, CountIf, SumIf, Round, Abs, Sqrt, Int } fn;
+        enum { Sum, Avg, Min, Max, Count, CountIf, SumIf, Round, Abs, Sqrt, Int, RoundUp, RoundDown, Mod, Pow, Median, Product, Sign } fn;
         if (name == L"SUMME" || name == L"SUM") fn = Sum;
         else if (name == L"MITTELWERT" || name == L"AVERAGE") fn = Avg;
         else if (name == L"MIN") fn = Min;
@@ -738,12 +743,19 @@ struct Parser {
         else if (name == L"ABS") fn = Abs;
         else if (name == L"WURZEL" || name == L"SQRT") fn = Sqrt;
         else if (name == L"GANZZAHL" || name == L"INT") fn = Int;
+        else if (name == L"AUFRUNDEN" || name == L"ROUNDUP") fn = RoundUp;
+        else if (name == L"ABRUNDEN" || name == L"ROUNDDOWN") fn = RoundDown;
+        else if (name == L"REST" || name == L"MOD") fn = Mod;
+        else if (name == L"POTENZ" || name == L"POWER") fn = Pow;
+        else if (name == L"MEDIAN") fn = Median;
+        else if (name == L"PRODUKT" || name == L"PRODUCT") fn = Product;
+        else if (name == L"VORZEICHEN" || name == L"SIGN") fn = Sign;
         else Throw(L"#NAME?");
         if (!Eat(L'(')) Throw(L"#SYNTAX!");
-        if (fn == Round || fn == Abs || fn == Sqrt || fn == Int) {   // Funktionen mit einer Zahl (RUNDEN mit Stellen)
+        if (fn == Round || fn == Abs || fn == Sqrt || fn == Int || fn == RoundUp || fn == RoundDown || fn == Mod || fn == Pow || fn == Sign) {   // Funktionen mit einer Zahl (RUNDEN mit Stellen)
             const double x = Expr();
             double digits = 0;
-            if (fn == Round) {
+            if (fn == Round || fn == RoundUp || fn == RoundDown || fn == Mod || fn == Pow) {
                 if (!(Eat(L';') || Eat(L','))) Throw(L"#SYNTAX!");
                 digits = Expr();
             }
@@ -751,6 +763,18 @@ struct Parser {
             if (fn == Abs) return Check(std::fabs(x));
             if (fn == Int) return Check(std::floor(x));
             if (fn == Sqrt) { if (x < 0) Throw(L"#ZAHL!"); return Check(std::sqrt(x)); }
+            if (fn == Sign) return x > 0 ? 1.0 : x < 0 ? -1.0 : 0.0;
+            if (fn == Mod) {   // Ergebnis hat das Vorzeichen des Teilers (wie in Excel)
+                if (digits == 0) Throw(L"#DIV/0!");
+                return Check(x - digits * std::floor(x / digits));
+            }
+            if (fn == Pow) return Check(std::pow(x, digits));
+            if (fn == RoundUp || fn == RoundDown) {   // von null weg bzw. auf null zu
+                const double g = std::pow(10.0, std::floor(digits));
+                const double a = std::fabs(x) * g;
+                const double e = fn == RoundUp ? std::ceil(a - 1e-9) : std::floor(a + 1e-9);
+                return Check((x < 0 ? -e : e) / g);
+            }
             const double f = std::pow(10.0, std::floor(digits));   // RUNDEN: kaufmaennisch, .5 weg von null
             return Check(std::round(x * f) / f);
         }
@@ -822,12 +846,26 @@ struct Parser {
             case Count:
                 r = static_cast<double>(vals.size());
                 break;
+            case Product:
+                r = vals.empty() ? 0 : 1;
+                for (double v : vals) r *= v;
+                break;
+            case Median:
+                if (vals.empty()) Throw(L"#ZAHL!");
+                std::sort(vals.begin(), vals.end());
+                r = vals.size() % 2 ? vals[vals.size() / 2] : (vals[vals.size() / 2 - 1] + vals[vals.size() / 2]) / 2;
+                break;
             case CountIf:
             case SumIf:
             case Round:
             case Abs:
             case Sqrt:
             case Int:
+            case RoundUp:
+            case RoundDown:
+            case Mod:
+            case Pow:
+            case Sign:
                 break;   // oben behandelt
         }
         return Check(r);
@@ -835,6 +873,41 @@ struct Parser {
 };
 
 }  // namespace detail
+
+inline bool Sheet::SortRows(int r1, int c1, int r2, int c2, int key, bool ascending)
+{
+    if (r1 > r2 || c1 > c2 || key < c1 || key > c2) return false;
+    for (int r = r1; r <= r2; ++r)
+        for (int c = c1; c <= c2; ++c) {
+            const size_t a = raw[r][c].find_first_not_of(L" 	");
+            if (a != std::wstring::npos && raw[r][c][a] == L'=') return false;
+        }
+    struct Row { std::wstring cell[kCols]; unsigned char f[kCols]; std::uint32_t fl[kCols]; int kind; double num; std::wstring text; };
+    std::vector<Row> rows;
+    for (int r = r1; r <= r2; ++r) {
+        Row x;
+        for (int c = c1; c <= c2; ++c) { x.cell[c] = raw[r][c]; x.f[c] = fmt[r][c]; x.fl[c] = fill[r][c]; }
+        const Value v = Compute(r, key);
+        x.kind = v.kind == Value::Number ? 0 : v.kind == Value::Text ? 1 : 2;
+        x.num = v.num;
+        x.text = v.text;
+        rows.push_back(std::move(x));
+    }
+    std::stable_sort(rows.begin(), rows.end(), [&](const Row& a, const Row& b) {
+        if (a.kind == 2 || b.kind == 2) return a.kind < b.kind;   // leere Zellen immer ans Ende
+        if (a.kind != b.kind) return ascending ? a.kind < b.kind : a.kind > b.kind;
+        if (a.kind == 0) return ascending ? a.num < b.num : a.num > b.num;
+        const int cmp = detail::CompareText(a.text, b.text);
+        return ascending ? cmp < 0 : cmp > 0;
+    });
+    for (int r = r1; r <= r2; ++r)
+        for (int c = c1; c <= c2; ++c) {
+            const Row& x = rows[static_cast<size_t>(r - r1)];
+            raw[r][c] = x.cell[c]; fmt[r][c] = x.f[c]; fill[r][c] = x.fl[c];
+        }
+    Invalidate();
+    return true;
+}
 
 inline Value Sheet::Compute(int r, int c) const
 {

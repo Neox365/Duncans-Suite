@@ -37,7 +37,7 @@
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.0"
+#define APP_VERSION L"0.8.0"
 #endif
 
 namespace {
@@ -63,7 +63,7 @@ enum Cmd : int {
     C_BOLD, C_ITALIC, C_UNDER, C_SMALLER, C_BIGGER, C_SIZE, C_LEFT, C_CENTER, C_RIGHT,
     C_PICK_WRITER, C_PICK_SHEETS,
     C_STRIKE, C_FONT, C_COLOR, C_BULLET, C_FIND, C_FINDNEXT, C_TABLE, C_SPELL,
-    C_FMT_EUR, C_FMT_PCT, C_FILL, C_CHART,
+    C_FMT_EUR, C_FMT_PCT, C_FILL, C_CHART, C_SORT_ASC, C_SORT_DESC,
     ID_RICH = 201, ID_FORMULA = 202,
     C_SIZE_BASE = 300,
     C_PRINTER_BASE = 400,   // bis 400 + Zahl der Drucker
@@ -326,6 +326,9 @@ private:
     void Move(int dr, int dc, bool extend = false);
     void SelRange(int& r1, int& c1, int& r2, int& c2) const;
     void ToggleFormat(unsigned char f);
+    void SortSelection(bool ascending);
+    void UndoSort();
+    std::unique_ptr<sheet::Sheet> m_sortBackup;   // Stand vor der letzten Sortierung (Strg+Z)
     void ShowFillMenu();
     void SetFill(int index);
     void LoadFormula();
@@ -577,9 +580,11 @@ void App::Layout()
     else if (m_mode == Mode::Sheets) {
         m_addrRc = { S(16), by, S(16) + S(76), by + bh };
         m_fxRc = { m_addrRc.right + S(10), by, m_addrRc.right + S(40), by + bh };
-        m_formulaBox = { m_fxRc.right + S(4), by, W - S(16) - S(184), by + bh };
+        m_formulaBox = { m_fxRc.right + S(4), by, W - S(16) - S(184) - S(84), by + bh };
         const int bx0 = W - S(16) - S(130);
         add(C_CHART, { bx0 - S(46), by, bx0 - S(4), by + bh }, L"");
+        add(C_SORT_DESC, { bx0 - S(88), by, bx0 - S(50), by + bh }, L"");
+        add(C_SORT_ASC, { bx0 - S(130), by, bx0 - S(92), by + bh }, L"");
         add(C_FMT_EUR, { bx0, by, bx0 + S(38), by + bh }, L"");
         add(C_FMT_PCT, { bx0 + S(42), by, bx0 + S(80), by + bh }, L"");
         add(C_FILL, { bx0 + S(84), by, bx0 + S(130), by + bh }, L"");
@@ -726,6 +731,8 @@ void App::DrawBtn(HDC dc, int index)
             DeleteObject(br);
             break;
         }
+        case C_SORT_ASC: Text(dc, m_fB, kText, b.rc, L"A\u2193", center); break;   // A, Pfeil nach unten = aufsteigend
+        case C_SORT_DESC: Text(dc, m_fB, kText, b.rc, L"Z\u2193", center); break;  // Z, Pfeil nach unten = absteigend
         case C_FMT_EUR: Text(dc, m_fB, kText, b.rc, L"\u20AC", center); break;
         case C_FMT_PCT: Text(dc, m_fB, kText, b.rc, L"%", center); break;
         case C_FILL: {   // Farbfeld in der zuletzt gewaehlten Fuellung (leer = keine) mit Pfeil
@@ -838,7 +845,7 @@ void App::DrawStart(HDC dc)
         RECT t1{ b.rc.left + S(28), b.rc.top + S(104), b.rc.right - S(20), b.rc.top + S(138) };
         Text(dc, m_fTitle, kText, t1, writer ? L"Duncan's Writer" : L"Duncan's Sheets");
         RECT t2{ b.rc.left + S(28), b.rc.top + S(140), b.rc.right - S(20), b.rc.bottom - S(16) };
-        Text(dc, m_fUi, kDim, t2, writer ? L"Texte schreiben und formatieren. Öffnen und Speichern als .docx, .rtf oder .txt, Export als PDF, Drucken." : L"Tabellen mit Formeln (SUMME, MITTELWERT, MIN, MAX). Öffnen und Speichern als .xlsx (Excel) oder .csv.",
+        Text(dc, m_fUi, kDim, t2, writer ? L"Texte schreiben und formatieren. Öffnen und Speichern als .docx, .rtf oder .txt, Export als PDF, Drucken." : L"Tabellen mit Formeln (SUMME, MITTELWERT, MEDIAN, REST, …) und Sortieren. Öffnen und Speichern als .xlsx (Excel) oder .csv.",
              DT_WORDBREAK | DT_NOPREFIX);
     }
 }
@@ -994,6 +1001,8 @@ void App::Command(int id)
         case C_FMT_PCT: if (sheets) ToggleFormat(sheet::FmtPercent); break;
         case C_FILL: if (sheets) ShowFillMenu(); break;
         case C_CHART: if (sheets) ShowChartDialog(); break;
+        case C_SORT_ASC: if (sheets) SortSelection(true); break;
+        case C_SORT_DESC: if (sheets) SortSelection(false); break;
         case C_SMALLER: if (writer) StepSize(-1); break;
         case C_BIGGER: if (writer) StepSize(1); break;
         case C_SIZE: if (writer) ShowSizeMenu(); break;
@@ -2017,6 +2026,46 @@ void App::ClearCell()
     InvalidateRect(m_grid, nullptr, FALSE);
 }
 
+// Sortiert die markierten Zeilen nach der Spalte der aktiven Zelle. Bei einer einzelnen Zelle gilt der ganze benutzte Bereich;
+// eine Ueberschrift (Text ueber Zahlen) bleibt dann oben stehen. Strg+Z macht die letzte Sortierung rueckgaengig.
+void App::SortSelection(bool ascending)
+{
+    int r1, c1, r2, c2;
+    SelRange(r1, c1, r2, c2);
+    auto say = [&](const std::wstring& t) { m_status = t; InvalidateRect(m_hwnd, &m_statusRc, FALSE); };
+    if (r1 == r2 && c1 == c2) {
+        int rows = 0, cols = 0;
+        if (!m_sheet.Used(rows, cols) || m_selC >= cols) { say(L"Zum Sortieren erst eine Zelle in einer Spalte mit Werten wählen."); return; }
+        r1 = 0; r2 = rows - 1; c1 = 0; c2 = cols - 1;
+        if (r2 > r1 && m_sheet.Get(r1, m_selC).kind == sheet::Value::Text && m_sheet.Get(r1 + 1, m_selC).kind == sheet::Value::Number) ++r1;
+    }
+    if (m_selC < c1 || m_selC > c2) { say(L"Die aktive Zelle muss in der Spalte liegen, nach der sortiert wird."); return; }
+    auto backup = std::make_unique<sheet::Sheet>(m_sheet);
+    if (!m_sheet.SortRows(r1, c1, r2, c2, m_selC, ascending)) {
+        say(L"Bereiche mit Formeln werden nicht sortiert, weil die Bezüge danach auf falsche Zeilen zeigen würden.");
+        return;
+    }
+    m_sortBackup = std::move(backup);
+    m_sDirty = true;
+    LoadFormula();
+    UpdateTitle();
+    InvalidateRect(m_grid, nullptr, FALSE);
+    say(std::wstring(L"Sortiert nach Spalte ") + sheet::ColName(m_selC) + (ascending ? L" aufsteigend" : L" absteigend") + L"     Strg+Z macht es rückgängig");
+}
+
+void App::UndoSort()
+{
+    if (!m_sortBackup) return;
+    m_sheet = *m_sortBackup;
+    m_sortBackup.reset();
+    m_sheet.Invalidate();
+    m_sDirty = true;
+    LoadFormula();
+    UpdateTitle();
+    InvalidateRect(m_grid, nullptr, FALSE);
+    UpdateSheetStatus();
+}
+
 // Zahlenformat fuer alle markierten Zellen; ist es schon gesetzt, wird es wieder entfernt. (CSV speichert keine Formate.)
 void App::ToggleFormat(unsigned char f)
 {
@@ -2538,6 +2587,7 @@ LRESULT App::GridHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 case VK_BACK: ClearCell(); return 0;
                 case VK_F2: BeginEdit(0); return 0;
                 case 'A': if (ctrl) { SelectBlock(0, 0, sheet::kRows - 1, sheet::kCols - 1); return 0; } break;
+                case 'Z': if (ctrl && m_sortBackup) { UndoSort(); return 0; } break;
                 case 'C': if (ctrl) { CopyCell(false); return 0; } break;
                 case 'X': if (ctrl) { CopyCell(true); return 0; } break;
                 case 'V': if (ctrl) { PasteCells(); return 0; } break;
@@ -2587,6 +2637,7 @@ bool App::SheetsNew()
 {
     if (!ConfirmSheets()) return false;
     m_sheet.Clear();
+    m_sortBackup.reset();
     m_sPath.clear();
     m_sLossy = false;
     m_sDirty = false;
@@ -2602,6 +2653,7 @@ bool App::SheetsNew()
 bool App::LoadSheetFile(const std::wstring& path, std::wstring& note)
 {
     note.clear();
+    m_sortBackup.reset();
     std::string bytes;
     if (!ReadAll(path, bytes)) { note = L"Die Datei konnte nicht gelesen werden:\n" + path; return false; }
     int dropped = 0;
