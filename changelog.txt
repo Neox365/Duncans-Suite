@@ -239,6 +239,9 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.8.0 | 2026-11-11
+- Neu: Texterkennung (OCR) für gescannte Seiten. Im Menü „⋯“ liest „Text erkennen (OCR)“ alle Seiten ohne eigenen Text mit der in Windows eingebauten Texterkennung (nichts wird hochgeladen) und legt das Ergebnis als unsichtbaren Text über die Seite. Danach lässt sich der Scan durchsuchen (Suchen, auch „Schwärzen“ über die Suche) und der Text mit dem Werkzeug „Kopieren“ übernehmen; das Bild bleibt unverändert. Der Fortschritt steht unten im Hinweis, Esc bricht ab, Strg+Z macht die Erkennung für alle Seiten auf einmal rückgängig, mit „Speichern“ wird sie Teil der Datei. Seiten, die schon Text haben, werden nicht angefasst.
+- Die Erkennung nutzt Deutsch, wenn Windows das Sprachpaket mit Texterkennung hat (sonst Englisch oder die Sprachen des Benutzerprofils). Fehlt jedes, erklärt das Programm, wo man es in den Windows-Einstellungen hinzufügt. Handschrift wird kaum erkannt, bei schlechten Scans bitte Zahlen und Namen prüfen.
 ## 1.7.0 | 2026-11-11
 - Neu: Passwortgeschützte PDFs lassen sich öffnen. Beim Öffnen (Knopf, Ziehen ins Fenster oder Doppelklick) fragt ein Dialog nach dem Passwort, die Eingabe ist verdeckt; bei falscher Eingabe gibt es bis zu drei Versuche. Das Passwort wird nur zum Öffnen benutzt und nirgends gespeichert. Das Benutzer- und das Besitzerpasswort funktionieren.
 - Beim Speichern bleibt der Passwortschutz der Datei erhalten. Neue Dateien aus einer geschützten PDF (Seitenauszug, Teilen, Verkleinern) bekommen dagegen keinen Passwortschutz; das Programm weist nach dem Speichern darauf hin. Ein Passwort neu setzen oder entfernen kann der Reader nicht.
@@ -365,6 +368,10 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.10.0 | 2026-11-11
+- Neu: Gescannte Rechnungen und Fotos werden gelesen. Beim automatischen Einsortieren (Ziehen ins Fenster, „Senden an“, --auto) liest Docs-Files bei PDFs ohne eigenen Text (Scans) und bei Bildern (JPG, PNG, BMP, TIF) die ersten zwei Seiten mit der in Windows eingebauten Texterkennung (nichts wird hochgeladen) und übernimmt Betrag und Fälligkeit wie bei normalen PDFs. Ein Foto der Rechnung reicht also. Das Ergebnis steht in der Meldung als „per Texterkennung aus einem Scan“, bitte Zahlen dann besonders genau prüfen.
+- Die Texterkennung braucht ein Windows-Sprachpaket mit Texterkennung (Deutsch oder Englisch) und für Scan-PDFs die pdfium.dll der Suite. Fehlt etwas, bleibt der Beleg ohne Betrag und die Meldung nennt den Grund. Schalter wie bisher: Zahnrad > „Betrag und Fälligkeit aus PDF und Scans lesen (Texterkennung)“.
+- Verbessert: Typische Lesefehler der Texterkennung werden korrigiert (z. B. „1.200,oo“ statt „1.200,00“, „25.112026“ statt „25.11.2026“). Ein Datum am Satzende („zahlbar bis zum 05.12.2026.“) wird jetzt erkannt, und „bis zum …“ zählt auch, wenn „überweisen Sie den Rechnungsbetrag von …“ davorsteht.
 ## 0.9.0 | 2026-11-11
 - Neu: GiroCode auf jeder Rechnung. Rechts neben dem Schlusstext steht ein QR-Code (EPC-Standard), den die Banking-App scannt und damit Empfänger, IBAN, Betrag und Verwendungszweck („Rechnung RE-2026-001“) einträgt. Er erscheint, sobald unter „Absender & Konto“ eine gültige IBAN steht (die Prüfziffer wird kontrolliert) und der Gesamtbetrag größer als 0 ist; die BIC ist optional. Bei Gutschriften gibt es keinen GiroCode. Reicht der Platz auf der Seite nicht, landet er oben auf einer eigenen Seite.
 - Neu: Steuersatz je Position. Neben dem Einzelpreis gibt es die Spalte „USt (%)“; leer gilt der Satz der Rechnung, eine Zahl überschreibt ihn (z. B. 7 für Bücher, 0 für durchlaufende Posten). Bei mehreren Sätzen zeigt die PDF eine Spalte „USt“ und führt die Umsatzsteuer je Satz auf („Umsatzsteuer 7 % auf 118,80 €“). Die Steuer wird je Satz auf die Nettosumme berechnet und gerundet, wie es auch üblich ist. Kleinunternehmer (§ 19 UStG) haben weiter keine Umsatzsteuer.
