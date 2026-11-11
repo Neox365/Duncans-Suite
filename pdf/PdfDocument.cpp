@@ -16,6 +16,7 @@ namespace {
     PdfiumApi g_api;
     bool g_tried = false;
     std::wstring g_error;
+    bool g_needPassword = false;   // letztes Open() scheiterte am Passwort
 
     bool ReadFileBytes(const std::wstring& path, std::vector<char>& out) {
         HANDLE f = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
@@ -202,8 +203,10 @@ bool PdfDocument::InitLibrary() {
 }
 
 const std::wstring& PdfDocument::LastError() { return g_error; }
+bool PdfDocument::NeedsPassword() { return g_needPassword; }
 
 bool PdfDocument::Open(const std::wstring& path, const std::string& password) {
+    g_needPassword = false;
     if (!InitLibrary()) return false;
     std::vector<char> data;
     if (!ReadFileBytes(path, data)) {
@@ -214,7 +217,8 @@ bool PdfDocument::Open(const std::wstring& path, const std::string& password) {
                                       password.empty() ? nullptr : password.c_str());
     if (!doc) {
         unsigned long err = g_api.GetLastError();
-        g_error = err == 4 ? L"Die PDF ist passwortgeschützt (Passwortabfrage folgt in einer späteren Version)."
+        g_needPassword = err == 4;   // FPDF_ERR_PASSWORD: Passwort fehlt oder ist falsch
+        g_error = err == 4 ? (password.empty() ? L"Die PDF ist passwortgeschützt." : L"Das Passwort stimmt nicht.")
                            : L"Die Datei ist keine gültige PDF oder beschädigt.";
         return false;
     }
@@ -222,6 +226,7 @@ bool PdfDocument::Open(const std::wstring& path, const std::string& password) {
     m_doc = doc;
     m_data = std::move(data);
     m_path = path;
+    m_protected = !password.empty();
     m_rot.assign(PageCount(), 0);
     m_modified = false;
     return true;
@@ -235,6 +240,7 @@ void PdfDocument::Close() {
     m_path.clear();
     m_rot.clear();
     m_modified = false;
+    m_protected = false;
     m_sanitize = false;
     m_undo.clear();
     m_redo.clear();
@@ -659,7 +665,7 @@ bool PdfDocument::SaveCompressed(const std::wstring& path, int maxDpi, int jpegQ
     mw.version = 1;
     mw.WriteBlock = &MemWriteBlock;
     mw.buf = &snapshot;
-    if (!g_api.SaveAsCopy(m_doc, &mw, 0) || snapshot.empty()) { g_error = L"Der Dokumentstand konnte nicht gelesen werden."; return false; }
+    if (!g_api.SaveAsCopy(m_doc, &mw, 3 /* FPDF_REMOVE_SECURITY: der Schnappschuss wird gleich ohne Passwort wieder geladen */) || snapshot.empty()) { g_error = L"Der Dokumentstand konnte nicht gelesen werden."; return false; }
     stats.before = snapshot.size();
 
     // 2) Seiten in ein frisches Dokument uebernehmen: nur erreichbare Objekte kommen mit
