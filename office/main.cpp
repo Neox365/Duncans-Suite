@@ -34,10 +34,11 @@
 #include "Spell.h"
 #include "Xlsx.h"
 #include <gdiplus.h>
+#include "../common/ThemedBox.h"
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.8.0"
+#define APP_VERSION L"0.8.1"
 #endif
 
 namespace {
@@ -414,7 +415,7 @@ bool App::Create(HINSTANCE inst, int show, const std::wstring& openPath)
     m_inst = inst;
     g_app = this;
     if (!LoadLibraryW(L"Msftedit.dll")) {
-        MessageBoxW(nullptr, L"Das Rich-Edit-Steuerelement (Msftedit.dll) konnte nicht geladen werden.", L"Duncan's Office", MB_ICONERROR);
+        themedbox::Show(nullptr, L"Das Rich-Edit-Steuerelement (Msftedit.dll) konnte nicht geladen werden.", L"Duncan's Office", MB_ICONERROR);
         return false;
     }
     WNDCLASSEXW wc{ sizeof wc };
@@ -467,7 +468,7 @@ bool App::Create(HINSTANCE inst, int show, const std::wstring& openPath)
                 Select(0, 0);
                 UpdateTitle();
             }
-            if (!note.empty()) MessageBoxW(m_hwnd, note.c_str(), L"Duncan's Office", MB_ICONINFORMATION);
+            if (!note.empty()) themedbox::Show(m_hwnd, note.c_str(), L"Duncan's Office", MB_ICONINFORMATION);
         }
         else {
             SwitchMode(Mode::Writer);
@@ -934,7 +935,7 @@ int App::HitBtn(POINT pt) const
 bool App::Ask(const std::wstring& what, const std::wstring& name, bool& save)
 {
     const std::wstring msg = L"Änderungen an " + what + L" „" + name + L"“ speichern?";
-    const int r = MessageBoxW(m_hwnd, msg.c_str(), L"Duncan's Office", MB_YESNOCANCEL | MB_ICONQUESTION);
+    const int r = themedbox::Show(m_hwnd, msg.c_str(), L"Duncan's Office", MB_YESNOCANCEL | MB_ICONQUESTION);
     save = r == IDYES;
     return r != IDCANCEL;
 }
@@ -1435,14 +1436,14 @@ bool App::WriterOpen(const std::wstring& path)
 {
     std::string bytes;
     if (!ReadAll(path, bytes)) {
-        MessageBoxW(m_hwnd, (L"Die Datei konnte nicht gelesen werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
+        themedbox::Show(m_hwnd, (L"Die Datei konnte nicht gelesen werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
         return false;
     }
     std::wstring lossy;
     if (ExtOf(path) == L".docx" || bytes.compare(0, 4, "PK\x03\x04") == 0) {          // Word-Dokument: erst in RTF umwandeln, das Rich Edit laden kann
         const docx::ReadResult dr = docx::DocxToRtf(bytes);
         if (!dr.ok) {
-            MessageBoxW(m_hwnd, (dr.error + L"\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
+            themedbox::Show(m_hwnd, (dr.error + L"\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
             return false;
         }
         bytes = dr.rtf;
@@ -1456,7 +1457,7 @@ bool App::WriterOpen(const std::wstring& path)
         es.pfnCallback = StreamInCb;
         SendMessageW(m_rich, EM_STREAMIN, SF_RTF, reinterpret_cast<LPARAM>(&es));
         if (es.dwError) {
-            MessageBoxW(m_hwnd, L"Das RTF-Dokument konnte nicht gelesen werden.", L"Duncan's Office", MB_ICONWARNING);
+            themedbox::Show(m_hwnd, L"Das RTF-Dokument konnte nicht gelesen werden.", L"Duncan's Office", MB_ICONWARNING);
             return false;
         }
     }
@@ -1476,7 +1477,7 @@ bool App::WriterOpen(const std::wstring& path)
     UpdateTitle();
     SetFocus(m_rich);
     if (!lossy.empty())
-        MessageBoxW(m_hwnd, (L"Dieses Word-Dokument enthält " + lossy + L", die der Writer nicht anzeigen kann.\n\nBeim Speichern als .docx gehen diese Teile verloren. "
+        themedbox::Show(m_hwnd, (L"Dieses Word-Dokument enthält " + lossy + L", die der Writer nicht anzeigen kann.\n\nBeim Speichern als .docx gehen diese Teile verloren. "
                              L"Speichere am besten unter einem neuen Namen, damit das Original unverändert bleibt.").c_str(), L"Duncan's Office", MB_ICONINFORMATION);
     return true;
 }
@@ -1496,7 +1497,7 @@ bool App::WriterSave(bool saveAs)
         if (path.empty()) return false;
     }
     else if (ExtOf(path) == L".docx" && !m_docxLossy.empty()) {                   // Strg+S auf ein Word-Dokument, dessen Bilder o. ae. verloren gingen
-        if (MessageBoxW(m_hwnd, (L"Beim Speichern gehen " + m_docxLossy + L" dieses Dokuments verloren, weil der Writer sie nicht kennt.\n\nDas Original wirklich überschreiben?").c_str(),
+        if (themedbox::Show(m_hwnd, (L"Beim Speichern gehen " + m_docxLossy + L" dieses Dokuments verloren, weil der Writer sie nicht kennt.\n\nDas Original wirklich überschreiben?").c_str(),
                         L"Duncan's Office", MB_ICONWARNING | MB_YESNO | MB_DEFBUTTON2) != IDYES)
             return WriterSave(true);
         m_docxLossy.clear();
@@ -1517,20 +1518,20 @@ bool App::WriterSave(bool saveAs)
         es.pfnCallback = StreamOutCb;
         SendMessageW(m_rich, EM_STREAMOUT, SF_RTF, reinterpret_cast<LPARAM>(&es));
         if (es.dwError || data.empty()) {
-            MessageBoxW(m_hwnd, L"Das Dokument konnte nicht als RTF erzeugt werden.", L"Duncan's Office", MB_ICONWARNING);
+            themedbox::Show(m_hwnd, L"Das Dokument konnte nicht als RTF erzeugt werden.", L"Duncan's Office", MB_ICONWARNING);
             return false;
         }
         if (ExtOf(path) == L".docx") {                                             // RTF -> DOCX
             const docx::WriteResult wr = docx::RtfToDocx(data);
             if (!wr.ok) {
-                MessageBoxW(m_hwnd, (L"Das Dokument konnte nicht als Word-Dokument erzeugt werden.\n" + wr.error).c_str(), L"Duncan's Office", MB_ICONWARNING);
+                themedbox::Show(m_hwnd, (L"Das Dokument konnte nicht als Word-Dokument erzeugt werden.\n" + wr.error).c_str(), L"Duncan's Office", MB_ICONWARNING);
                 return false;
             }
             data = wr.bytes;
         }
     }
     if (!WriteAtomic(path, data)) {
-        MessageBoxW(m_hwnd, (L"Die Datei konnte nicht gespeichert werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
+        themedbox::Show(m_hwnd, (L"Die Datei konnte nicht gespeichert werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
         return false;
     }
     if (path != m_wPath) m_docxLossy.clear();
@@ -1606,7 +1607,7 @@ void App::WriterPdf()
         y -= kLead;
     }
     doc.Footer(L"Duncan's Office");
-    if (!WriteAtomic(path, doc.Build(base))) MessageBoxW(m_hwnd, L"Die PDF-Datei konnte nicht gespeichert werden.", L"Duncan's Office", MB_ICONWARNING);
+    if (!WriteAtomic(path, doc.Build(base))) themedbox::Show(m_hwnd, L"Die PDF-Datei konnte nicht gespeichert werden.", L"Duncan's Office", MB_ICONWARNING);
 }
 
 void App::StartPrinterScan()
@@ -1672,7 +1673,7 @@ void App::ShowPrinterMenu()
         def = m_printers->def;
     }
     if (names.empty()) {
-        MessageBoxW(m_hwnd, L"Es wurde kein Drucker gefunden. Bitte in Windows einen Drucker einrichten.", L"Duncan's Office", MB_ICONINFORMATION);
+        themedbox::Show(m_hwnd, L"Es wurde kein Drucker gefunden. Bitte in Windows einen Drucker einrichten.", L"Duncan's Office", MB_ICONINFORMATION);
         return;
     }
     HMENU menu = CreatePopupMenu();
@@ -1734,7 +1735,7 @@ bool App::PrintTo(const std::wstring& printer, const wchar_t* outFile, bool quie
         DeleteDC(hdc);
     }
     m_printing = false;
-    if (!ok && !quiet) MessageBoxW(m_hwnd, L"Der Druckauftrag ist fehlgeschlagen.", L"Duncan's Office", MB_ICONWARNING);
+    if (!ok && !quiet) themedbox::Show(m_hwnd, L"Der Druckauftrag ist fehlgeschlagen.", L"Duncan's Office", MB_ICONWARNING);
     return ok;
 }
 
@@ -2303,7 +2304,7 @@ void App::ShowChartDialog()
     SelRange(r1, c1, r2, c2);
     ChartWin w;
     w.d = chart::Extract(m_sheet, r1, c1, r2, c2);
-    if (!w.d.ok) { MessageBoxW(m_hwnd, w.d.error.c_str(), L"Diagramm", MB_OK | MB_ICONINFORMATION); return; }
+    if (!w.d.ok) { themedbox::Show(m_hwnd, w.d.error.c_str(), L"Diagramm", MB_OK | MB_ICONINFORMATION); return; }
     w.dpi = m_dpi;
     static bool reg = false;
     if (!reg) {
@@ -2691,7 +2692,7 @@ bool App::SheetsOpen()
     std::wstring note;
     const bool ok = LoadSheetFile(path, note);
     if (!ok) {
-        MessageBoxW(m_hwnd, note.c_str(), L"Duncan's Office", MB_ICONWARNING);
+        themedbox::Show(m_hwnd, note.c_str(), L"Duncan's Office", MB_ICONWARNING);
         return false;
     }
     m_sPath = path;
@@ -2703,7 +2704,7 @@ bool App::SheetsOpen()
     UpdateScroll();
     UpdateTitle();
     InvalidateRect(m_grid, nullptr, FALSE);
-    if (!note.empty()) MessageBoxW(m_hwnd, note.c_str(), L"Duncan's Office", MB_ICONINFORMATION);
+    if (!note.empty()) themedbox::Show(m_hwnd, note.c_str(), L"Duncan's Office", MB_ICONINFORMATION);
     return true;
 }
 
@@ -2725,7 +2726,7 @@ bool App::SheetsSave(bool saveAs)
     }
     const bool asXlsx = ExtOf(path) == L".xlsx";
     if (!WriteAtomic(path, asXlsx ? xlsx::Write(m_sheet) : codec::EncodeUtf8Bom(sheet::ToCsv(m_sheet)))) {
-        MessageBoxW(m_hwnd, (L"Die Datei konnte nicht gespeichert werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
+        themedbox::Show(m_hwnd, (L"Die Datei konnte nicht gespeichert werden:\n" + path).c_str(), L"Duncan's Office", MB_ICONWARNING);
         return false;
     }
     m_sPath = path;
@@ -3203,7 +3204,7 @@ void App::ShowSpellDialog()
     if (m_mode != Mode::Writer || (m_spellDlg && IsWindow(m_spellDlg))) return;
     if (!m_spell) m_spell = std::make_unique<spell::Checker>(L"de-DE");
     if (!m_spell->Ok()) {
-        MessageBoxW(m_hwnd, L"Windows hat auf diesem PC kein Wörterbuch für die Rechtschreibprüfung.\n\nEs lässt sich unter Einstellungen > Zeit und Sprache > Sprache und Region installieren (Deutsch hinzufügen).",
+        themedbox::Show(m_hwnd, L"Windows hat auf diesem PC kein Wörterbuch für die Rechtschreibprüfung.\n\nEs lässt sich unter Einstellungen > Zeit und Sprache > Sprache und Region installieren (Deutsch hinzufügen).",
                     L"Duncan's Office", MB_ICONINFORMATION);
         return;
     }
