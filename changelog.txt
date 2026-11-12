@@ -377,6 +377,9 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.17.0 | 2026-11-12
+- Geändert: Rückfragen und Hinweise erscheinen jetzt als Karte im Design des Programms statt als Windows-Meldungsfenster: „Löschen?“ (mit „In den Papierkorb“ in Warnfarbe), „Rechnung stornieren?“, „Gesperrte Rechnung“ und „Stornieren nicht möglich“. Enter bestätigt, Esc bricht ab; bei der Storno-Rückfrage ist „Abbrechen“ vorgewählt, damit Enter nichts Unumkehrbares auslöst. Die Karte lässt sich nicht wegklicken, die Frage muss beantwortet werden.
+- Hinweis: Die Windows-Dialoge zum Datei-Speichern und Ordner-Wählen bleiben, die kommen vom System.
 ## 0.16.0 | 2026-11-12
 - Neu: Hilfe und Kurzanleitung. F1 oder Zahnrad → „Hilfe und Kurzanleitung“ öffnet eine Übersicht: Rechnung schreiben, Belege ablegen, Fehler korrigieren (Storno), Status, Sicherung, Steuerberater-Export und die Tastenkürzel. Beim ersten Start nach diesem Update erscheint sie einmal von selbst (nicht beim Start mit Dateien, zum Beispiel per --auto).
 - Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen, Dateien oder Einstellungen und wird nirgends automatisch gesendet.
