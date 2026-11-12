@@ -2,6 +2,21 @@
 // Schluessel ist der deutsche Text; danach die Uebersetzungen in der Reihenfolge von kLangs ab Index 1: en, fr, es, pl, pt, ja, zh.
 // Platzhalter (%d, %s, %.0f, %%) und \n muessen in jeder Sprache erhalten bleiben; Leerzeichen am Anfang/Ende sind Teil des Satzbaus.
 static const Translation kTranslations[] = {
+    // Diagnose kopieren (1.9.0)
+    {L"Diagnose kopieren",
+     {L"Copy diagnostics", L"Copier le diagnostic", L"Copiar diagnóstico", L"Kopiuj dane diagnostyczne", L"Copiar diagnóstico", L"診断情報をコピー", L"複製診斷資訊"}},
+    {L"Kopiert Version, Windows-Version, Sprache und Skalierung in die Zwischenablage – für Support-Anfragen. Enthält keine Pfade, Dateien oder persönlichen Daten.",
+     {L"Copies version, Windows version, language and scaling to the clipboard – for support requests. Contains no paths, files or personal data.",
+      L"Copie la version, la version de Windows, la langue et la mise à l'échelle dans le presse-papiers – pour les demandes d'assistance. Ne contient ni chemins, ni fichiers, ni données personnelles.",
+      L"Copia la versión, la versión de Windows, el idioma y la escala al portapapeles, para consultas de soporte. No contiene rutas, archivos ni datos personales.",
+      L"Kopiuje do schowka wersję, wersję systemu Windows, język i skalowanie – na potrzeby zgłoszeń do pomocy technicznej. Nie zawiera ścieżek, plików ani danych osobowych.",
+      L"Copia a versão, a versão do Windows, o idioma e a escala para a área de transferência, para pedidos de suporte. Não contém caminhos, arquivos nem dados pessoais.",
+      L"バージョン、Windows のバージョン、言語、表示倍率をクリップボードにコピーします（サポートへの問い合わせ用）。パス、ファイル、個人情報は含まれません。",
+      L"將版本、Windows 版本、語言與縮放比例複製到剪貼簿，供支援請求使用。不含路徑、檔案或個人資料。"}},
+    {L"Kopieren",
+     {L"Copy", L"Copier", L"Copiar", L"Kopiuj", L"Copiar", L"コピー", L"複製"}},
+    {L"Kopiert \u2713",
+     {L"Copied \u2713", L"Copié \u2713", L"Copiado \u2713", L"Skopiowano \u2713", L"Copiado \u2713", L"コピーしました \u2713", L"已複製 \u2713"}},
     {L"Windows-Komponentenspeicher, Schattenkopien und Ereignisprotokolle – das kann bis zu einer halben Stunde dauern, Tidy bitte offen lassen …",
      {L"Windows component store, shadow copies and event logs – this can take up to half an hour, please keep Tidy open …", L"Magasin de composants Windows, clichés instantanés et journaux d'événements – cela peut durer jusqu'à une demi-heure, laissez Tidy ouvert …", L"Almacén de componentes de Windows, instantáneas y registros de eventos – puede tardar hasta media hora, deja Tidy abierto …", L"Magazyn składników systemu Windows, kopie w tle i dzienniki zdarzeń – może to potrwać do pół godziny, pozostaw Tidy otwarte …", L"Armazenamento de componentes do Windows, cópias de sombra e logs de eventos – pode levar até meia hora, mantenha o Tidy aberto …", L"Windows のコンポーネントストア、シャドウコピー、イベントログ（最大30分かかることがあります。Tidy を開いたままにしてください）…", L"Windows 元件存放區、陰影複製與事件記錄檔（最多可能需要半小時，請保持 Tidy 開啟）…"}},
     {L"Windows-Aktionen laufen …  %u:%02u Min.",

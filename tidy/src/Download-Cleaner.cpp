@@ -38,6 +38,7 @@ using std::max;
 #include <vector>
 #include <cmath>
 #include <dwmapi.h>
+#include "../../common/Diagnostics.h"   // Diagnose-Text fuer den Support (Einstellungen -> "Diagnose kopieren")
 #include <uxtheme.h>
 #include <commctrl.h>
 #include <cstdio>
@@ -964,7 +965,7 @@ static void AskEmptyRecycleBin(HWND owner) {
 
 // ---- Update ueber GitHub Releases ----
 // Im Repo-Release liegen: DuncansTidy.exe, DuncansTidy.exe.sha256, version.txt und changelog.txt.
-constexpr wchar_t kVersion[] = L"1.8.9";
+constexpr wchar_t kVersion[] = L"1.9.0";
 static const wchar_t* kRepo = L"Neox365/Duncans-Tidy-ToolSet";  // "Besitzer/Repository" auf GitHub
 constexpr UINT WM_UPDATE_FOUND = WM_APP + 1;
 constexpr UINT WM_SHOW_WHATSNEW = WM_APP + 2;
@@ -1224,7 +1225,9 @@ constexpr int kTiles = 8;  //Kacheln der Uebersicht: eine pro Seite ausser der U
 static_assert(kTiles == kPages - 2, "Eine Kachel pro Seite (ohne Uebersicht und Einstellungen)");
 constexpr int kShownTiles = CAT_N;  // auf der Uebersicht nur die vier Kernbereiche (Downloads, Temp, Systemdateien, Browser-Cache); der Rest ist ueber die Seitenleiste erreichbar
 static RECT g_tile[kTiles];
-constexpr int kSettings = 9;  // Schalter auf der Einstellungen-Seite
+constexpr int kSettings = 10;  // Zeilen auf der Einstellungen-Seite (Schalter, Sprache, Diagnose)
+constexpr int kSetLangRow = 8, kSetDiagRow = 9;   // Sprachauswahl und "Diagnose kopieren" (Schaltflaeche statt Schalter)
+static bool g_diagCopied = false;
 constexpr int kSetAutoRow = 2, kSetTextExtra = 36, kSetPillBar = 50, kSetExtra = kSetTextExtra + kSetPillBar;  // Auto-Clean-Zeile: Platz fuer 2 Textzeilen plus Leiste mit den Auswahlmenues (34 hoch, 16 Abstand unten)
 static RECT g_setRow[kSettings];
 static bool g_set[kSettings];
@@ -3045,6 +3048,7 @@ static void SetPage(HWND h, int p) {
     g_page = p;
     if (NavGrouped(p) && !g_navMore) { g_navMore = true; SetWindowTextW(GetDlgItem(h, ID_MORE), Tr(L"Weniger")); Layout(h); }
     g_setHot = -1;
+    g_diagCopied = false;
     if (p == kSettingsPage) LoadSettings();
     SetWindowTextW(GetDlgItem(h, ID_CLEAN), p == 0 ? Tr(L"Optimieren") : p == kAutoPage ? Tr(L"Änderungen übernehmen") : Tr(L"Clean Now"));
     SetWindowTextW(GetDlgItem(h, ID_TOGGLE), p == kUninstPage ? (g_unSortSize ? Tr(L"Sortieren: Größe") : Tr(L"Sortieren: Name")) : Tr(L"Alle / Keine"));
@@ -3585,7 +3589,7 @@ static void PaintWindow(HWND h) {
         }
     } else if (g_page == kSettingsPage) {
         static const wchar_t* kSetTitle[kSettings] = {L"Mit Windows starten", L"Im Hintergrund weiterlaufen", L"Downloads automatisch aufräumen",
-                                                          L"Helles Design", L"Besen-Animation", L"Ultra-Tiefenreinigung", L"Doppelte Downloads erkennen", L"Sicher löschen (überschreiben)", L"Sprache / Language"};
+                                                          L"Helles Design", L"Besen-Animation", L"Ultra-Tiefenreinigung", L"Doppelte Downloads erkennen", L"Sicher löschen (überschreiben)", L"Sprache / Language", L"Diagnose kopieren"};
         static const wchar_t* kSetText[kSettings] = {
             L"Startet beim Anmelden unsichtbar im System-Tray (neben der Uhr).",
             L"X minimiert in den Tray. Beenden über „Exit“ oder Rechtsklick auf das Symbol.",
@@ -3595,8 +3599,9 @@ static void PaintWindow(HWND h) {
             L"Nimmt bei den Systemdateien und beim Optimieren alles mit auf, was geht: Shader-Caches, Windows-Update- und Treiber-Installer-Reste, Fehlerberichte, Windows-Temp, App-Caches, Store-Reste und ETL-Protokolle. Auf der Seite Systemdateien kommen auf Wunsch DISM, Schattenkopien und Ereignisprotokolle dazu (jeweils mit Rückfrage und Administratorrechten). Vorher zeigt Tidy eine Vorschau. Auto-Clean und Schnell-Reinigung bleiben beim Standard.",
             L"Sucht nach Dateien mit gleichem Inhalt (nicht nur gleichem Namen): doppelte Downloads und Downloads, die du schon in Dokumenten, Bildern, Videos, Musik oder auf dem Desktop hast. Sie erscheinen als eigene Gruppe „Doppelte Dateien“. Deine Dateien in diesen Ordnern bleiben immer unberührt; nur die Kopie im Downloads-Ordner kommt wie alle Downloads in den Papierkorb (bei doppelten Downloads untereinander bleibt die älteste). Große Ordner brauchen beim Öffnen der Seite etwas länger.",
             L"Überschreibt Dateien vor dem endgültigen Löschen einmal mit Zufallsdaten, damit sie sich nicht wiederherstellen lassen. Gilt für alles, was Tidy endgültig löscht (Temp, Systemdateien, Browser-Daten, Auto-Clean), nicht für den Papierkorb. Dauert deutlich länger. Auf SSDs schützt es nur begrenzt, weil der Speicher Daten intern verschiebt; dort hilft Verschlüsselung (BitLocker) mehr.",
-            L"Sprache der Oberfläche. Ein Klick öffnet die Auswahl."};
-        static const wchar_t* kSetGlyph[kSettings] = {L"\xE7E8", L"\xE73F", L"\xE777", L"\xE706", L"\xE768", L"\xE74D", L"\xE8C8", L"\xE72E", L"\xE774"};  // E706 = Sonne, E768 = Play, E8C8 = Kopie
+            L"Sprache der Oberfläche. Ein Klick öffnet die Auswahl.",
+            L"Kopiert Version, Windows-Version, Sprache und Skalierung in die Zwischenablage – für Support-Anfragen. Enthält keine Pfade, Dateien oder persönlichen Daten."};
+        static const wchar_t* kSetGlyph[kSettings] = {L"\xE7E8", L"\xE73F", L"\xE777", L"\xE706", L"\xE768", L"\xE74D", L"\xE8C8", L"\xE72E", L"\xE774", L"\xE9D9"};  // E9D9 = Diagnose, E706 = Sonne, E768 = Play, E8C8 = Kopie
         for (int i = 0; i < kSettings; ++i) {
             const RECT& r = g_setRow[i];
             const int rh = r.bottom - r.top - (i == kSetAutoRow ? kSetExtra : 0);  // Hoehe ohne die Leiste mit den Auswahlmenues
@@ -3607,9 +3612,12 @@ static void PaintWindow(HWND h) {
             SetTextColor(dc, RGB(79, 140, 255));
             DrawTextW(dc, kSetGlyph[i], -1, &bd, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
             RECT sw{r.right - 24 - 56, r.top + (rh - 30) / 2, r.right - 24, r.top + (rh - 30) / 2 + 30};
-            if (i == kSettings - 1) {  // Sprache: Schaltflaeche mit dem Namen der aktuellen Sprache
+            if (i == kSetLangRow) {  // Sprache: Schaltflaeche mit dem Namen der aktuellen Sprache
                 sw = {r.right - 24 - 190, r.top + (rh - 34) / 2, r.right - 24, r.top + (rh - 34) / 2 + 34};
                 DrawPill(dc, sw, kLangs[g_lang].name, true);
+            } else if (i == kSetDiagRow) {  // Diagnose: Schaltflaeche statt Schalter
+                sw = {r.right - 24 - 150, r.top + (rh - 34) / 2, r.right - 24, r.top + (rh - 34) / 2 + 34};
+                DrawPill(dc, sw, g_diagCopied ? Tr(L"Kopiert \u2713") : Tr(L"Kopieren"), true, false);
             } else {
                 FillRound(dc, sw, g_set[i] ? RGB(34, 197, 94) : kSwitchOff, 30);
                 const int kx = g_set[i] ? sw.right - 4 - 22 : sw.left + 4;
@@ -5411,7 +5419,10 @@ static void ToggleSetting(HWND h, int i) {
                          kApp, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
         SetFlag(L"SecureDelete", on);
         g_secureDel = on ? 1 : 0;
-    } else if (i == kSettings - 1) {
+    } else if (i == kSetDiagRow) {
+        g_diagCopied = diag::CopyToClipboard(h, diag::Text(kApp, kVersion, GetDpiForWindow(h)));
+        InvalidateRect(h, nullptr, FALSE);
+    } else if (i == kSetLangRow) {
         const RECT& r = g_setRow[i];  // Auswahlfeld mit allen Sprachen (gleiche Lage wie beim Zeichnen)
         const int rh = r.bottom - r.top;
         const RECT pill{r.right - 24 - 190, r.top + (rh - 34) / 2, r.right - 24, r.top + (rh - 34) / 2 + 34};
@@ -6325,6 +6336,7 @@ int WINAPI WinMain(HINSTANCE inst, HINSTANCE, LPSTR, int) {
     if (autoMode && !dryRun && !permanent && ok > 0) AskEmptyRecycleBin(nullptr);
     return failed ? 2 : 0;
 }
+
 
 
 
