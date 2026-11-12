@@ -1288,6 +1288,7 @@ void ShowAbout() {
 void DrawAboutPanel(HDC dc, const RECT& cr) {
     aboutgdi::Spec sp;
     sp.name = L"Duncan's PDF Reader";
+    sp.diag = diag::Text(sp.name, APP_VERSION, GetDpiForSystem());
     sp.letter = L'P';
     sp.tiles = {
         {L"Version", std::wstring(L"v") + APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},

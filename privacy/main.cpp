@@ -820,6 +820,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g.about.open) {
             aboutgdi::Spec sp;
             sp.name = L"Duncan's Privacy Shield";
+            sp.diag = diag::Text(sp.name, APP_VERSION, GetDpiForSystem());
             sp.letter = L'S';
             sp.tiles = {
                 {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},

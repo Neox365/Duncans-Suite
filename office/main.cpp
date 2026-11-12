@@ -1087,6 +1087,7 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
                 aboutgdi::HideChildren(m_hwnd, m_about);
                 aboutgdi::Spec sp;
                 sp.name = L"Duncan's Office";
+                sp.diag = diag::Text(sp.name, APP_VERSION, GetDpiForSystem());
                 sp.letter = L'O';
                 sp.tiles = {
                     {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},

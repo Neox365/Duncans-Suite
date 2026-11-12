@@ -375,6 +375,10 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.16.0 | 2026-11-12
+- Neu: Hilfe und Kurzanleitung. F1 oder Zahnrad → „Hilfe und Kurzanleitung“ öffnet eine Übersicht: Rechnung schreiben, Belege ablegen, Fehler korrigieren (Storno), Status, Sicherung, Steuerberater-Export und die Tastenkürzel. Beim ersten Start nach diesem Update erscheint sie einmal von selbst (nicht beim Start mit Dateien, zum Beispiel per --auto).
+- Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen, Dateien oder Einstellungen und wird nirgends automatisch gesendet.
+- Hinweis: Die Über-Ansicht der übrigen Programme (Office, PDF Reader, Photo Commander, Privacy Shield, QuickConvert, Vault) hat den Knopf „Diagnose kopieren“ im Quelltext schon; er erscheint dort mit der jeweils nächsten Version.
 ## 0.15.0 | 2026-11-11
 - Neu: Sicherung des Rechnungsordners. Zahnrad → „Sicherung des Rechnungsordners erstellen (ZIP) …“ packt alles in eine ZIP-Datei: PDFs, Index (Status, Beträge), Kundenliste, Rechnungsdaten für Stornos und das Änderungsprotokoll. Eine Anleitung zum Zurückspielen liegt bei (LIESMICH.txt).
 - Neu: Export für den Steuerberater. Zahnrad → „Export für den Steuerberater (Jahr wählen) …“ erzeugt eine ZIP mit der Belegliste des Jahres (CSV für Excel), den PDFs dieses Jahres (bei eigenen Rechnungen mit eingebetteten E-Rechnungsdaten), dem Änderungsprotokoll und einer kurzen Erklärung.

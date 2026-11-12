@@ -821,6 +821,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             aboutgdi::HideChildren(hwnd, g_about);
             aboutgdi::Spec sp;
             sp.name = L"Duncan's QuickConvert";
+            sp.diag = diag::Text(sp.name, APP_VERSION, GetDpiForSystem());
             sp.letter = L'Q';
             sp.tiles = {
                 {L"Version", APP_VERSION}, {L"Entwickler", L"Duncan  ·  © 2026"},
