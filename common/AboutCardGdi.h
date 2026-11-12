@@ -13,6 +13,7 @@
 #include <string>
 #include <vector>
 
+#include "Diagnostics.h"
 #include "Theme.h"
 
 namespace aboutgdi {
@@ -27,12 +28,17 @@ struct Spec {
     wchar_t letter = L'D';
     COLORREF accent = theme::kAccent;
     std::vector<Tile> tiles;
+    std::wstring subtitle = L"Teil von Duncan's Suite";   // Zeile unter dem Namen
+    bool github = true;                                   // Knopf "GitHub oeffnen" zeigen
+    std::wstring diag;                                    // nicht leer: Knopf "Diagnose kopieren" kopiert diesen Text
 };
 
 struct State {
     bool open = false;
-    int hover = 0;            // 1 GitHub, 2 Schliessen
-    RECT card{}, github{}, close{};
+    int hover = 0;            // 1 GitHub, 2 Schliessen, 4 Diagnose
+    bool copied = false;
+    std::wstring diagText;
+    RECT card{}, github{}, close{}, diag{};
     std::vector<HWND> hidden;  // Kindfenster, die fuer die Dauer der Karte ausgeblendet sind
 };
 
@@ -44,10 +50,11 @@ inline void HideChildren(HWND hwnd, State& st) {
         st.hidden.push_back(c);
     }
 }
-inline void Open(State& st, HWND hwnd) { st.open = true; st.hover = 0; HideChildren(hwnd, st); InvalidateRect(hwnd, nullptr, FALSE); }
+inline void Open(State& st, HWND hwnd) { st.open = true; st.hover = 0; st.copied = false; HideChildren(hwnd, st); InvalidateRect(hwnd, nullptr, FALSE); }
 inline void Close(State& st, HWND hwnd) {
     st.open = false;
     st.hover = 0;
+    st.copied = false;
     for (HWND c : st.hidden) if (IsWindow(c)) ShowWindow(c, SW_SHOW);
     st.hidden.clear();
     InvalidateRect(hwnd, nullptr, FALSE);
@@ -143,7 +150,7 @@ inline void Draw(HDC dc, const RECT& area, int dpi, const Spec& s, State& st) {
     detail::Round(dc, logo, S(14), s.accent, s.accent);
     Text(dc, fLogo, RGB(255, 255, 255), logo, std::wstring(1, s.letter), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     Text(dc, fTitle, theme::kText, RECT{x0 + S(76), cy + S(4), st.card.right - pad, cy + S(38)}, s.name, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
-    Text(dc, fSub, theme::kTextDim, RECT{x0 + S(76), cy + S(38), st.card.right - pad, cy + S(62)}, L"Teil von Duncan's Suite", DT_LEFT | DT_TOP | DT_SINGLELINE);
+    Text(dc, fSub, theme::kTextDim, RECT{x0 + S(76), cy + S(38), st.card.right - pad, cy + S(62)}, s.subtitle, DT_LEFT | DT_TOP | DT_SINGLELINE);
     cy += headH + S(14);
 
     for (const Placed& p : placed) {
@@ -155,9 +162,20 @@ inline void Draw(HDC dc, const RECT& area, int dpi, const Spec& s, State& st) {
 
     const int by = st.card.bottom - pad - btnH;
     st.close = RECT{st.card.right - pad - S(130), by, st.card.right - pad, by + btnH};
-    st.github = RECT{st.close.left - S(10) - S(160), by, st.close.left - S(10), by + btnH};
-    detail::Round(dc, st.github, S(10), st.hover == 1 ? theme::kCardHover : theme::kCardRaised, st.hover == 1 ? theme::kBorderHover : theme::kBorder);
-    Text(dc, fBtn, theme::kText, st.github, L"GitHub öffnen", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    int nextRight = st.close.left - S(10);
+    st.github = st.diag = RECT{};
+    st.diagText = s.diag;
+    if (s.github) {
+        st.github = RECT{nextRight - S(160), by, nextRight, by + btnH};
+        nextRight = st.github.left - S(10);
+        detail::Round(dc, st.github, S(10), st.hover == 1 ? theme::kCardHover : theme::kCardRaised, st.hover == 1 ? theme::kBorderHover : theme::kBorder);
+        Text(dc, fBtn, theme::kText, st.github, L"GitHub öffnen", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    if (!s.diag.empty()) {
+        st.diag = RECT{nextRight - S(190), by, nextRight, by + btnH};
+        detail::Round(dc, st.diag, S(10), st.hover == 4 ? theme::kCardHover : theme::kCardRaised, st.hover == 4 ? theme::kBorderHover : theme::kBorder);
+        Text(dc, fBtn, theme::kText, st.diag, st.copied ? L"Kopiert \u2713" : L"Diagnose kopieren", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
     const COLORREF acc = st.hover == 2 ? RGB(96, 176, 255) : theme::kAccent;
     detail::Round(dc, st.close, S(10), acc, acc);
     Text(dc, fBtn, RGB(8, 20, 36), st.close, L"Schließen", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -169,11 +187,11 @@ inline void Draw(HDC dc, const RECT& area, int dpi, const Spec& s, State& st) {
 inline int HandleMessage(HWND hwnd, State& st, UINT msg, WPARAM wp, LPARAM lp, const wchar_t* url) {
     auto hit = [&](int x, int y) {
         const POINT p{x, y};
-        return PtInRect(&st.github, p) ? 1 : PtInRect(&st.close, p) ? 2 : PtInRect(&st.card, p) ? 3 : 0;
+        return PtInRect(&st.github, p) ? 1 : PtInRect(&st.close, p) ? 2 : PtInRect(&st.diag, p) ? 4 : PtInRect(&st.card, p) ? 3 : 0;
     };
     switch (msg) {
     case WM_MOUSEMOVE: {
-        const int h = hit(GET_X_LPARAM(lp), GET_Y_LPARAM(lp)), hv = h == 1 || h == 2 ? h : 0;
+        const int h = hit(GET_X_LPARAM(lp), GET_Y_LPARAM(lp)), hv = h == 1 || h == 2 || h == 4 ? h : 0;
         if (hv != st.hover) { st.hover = hv; InvalidateRect(hwnd, nullptr, FALSE); }
         return 1;
     }
@@ -181,6 +199,7 @@ inline int HandleMessage(HWND hwnd, State& st, UINT msg, WPARAM wp, LPARAM lp, c
     case WM_LBUTTONDBLCLK: {
         const int h = hit(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
         if (h == 1 && url) ShellExecuteW(hwnd, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+        else if (h == 4) { st.copied = diag::CopyToClipboard(hwnd, st.diagText); InvalidateRect(hwnd, nullptr, FALSE); }
         else if (h == 2 || h == 0) Close(st, hwnd);
         return 1;
     }

@@ -43,7 +43,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.15.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.16.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -74,7 +74,7 @@ enum Id {
 };
 constexpr int kMaxTagChips = 23;
 enum MenuId {
-    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND, M_EXPORT, M_BACKUP, M_TAXEXPORT,
+    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND, M_EXPORT, M_BACKUP, M_TAXEXPORT, M_HELP,
     C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE, C_INCOME, C_EXPENSE, C_TAGS, C_STORNO
 };
 
@@ -87,6 +87,7 @@ struct Settings {
     int vat = 19;
     std::wstring taxNo;                 // Steuernummer / USt-IdNr. des Absenders
     bool smallBiz = false;              // Kleinunternehmer nach § 19 UStG (keine USt auf der Rechnung)
+    bool helpSeen = false;              // Willkommens-Hilfe beim ersten Start schon gezeigt
     std::wstring owner, court, phone, email, web, bank, iban, bic;   // Absender-Profil fuer die 3-spaltige PDF-Fusszeile
     bool readPdf = true;                // Beim automatischen Einsortieren Betrag und Faelligkeit aus dem PDF-Text raten (braucht pdfium.dll der Suite)
     bool autoImport = true;             // Ablegen per Drag-and-Drop: Jahr/Glaeubiger automatisch bestimmen und einsortieren (Umschalt = Dialog)
@@ -371,6 +372,7 @@ void LoadSettings(Settings& st) {
     st.iban = IniString(ini, L"IBAN");
     st.bic = IniString(ini, L"BIC");
     st.smallBiz = GetPrivateProfileIntW(L"Allgemein", L"Kleinunternehmer", 0, ini.c_str()) != 0;
+    st.helpSeen = GetPrivateProfileIntW(L"Allgemein", L"HilfeGesehen", 0, ini.c_str()) != 0;
 }
 
 // Fortlaufender Rechnungszaehler je Jahr (zuletzt vergebene Nummer); wird nie zurueckgesetzt, damit keine Nummer doppelt vergeben wird
@@ -411,6 +413,7 @@ void SaveSettings(const Settings& st) {
     put(L"IBAN", st.iban);
     put(L"BIC", st.bic);
     put(L"Kleinunternehmer", st.smallBiz ? L"1" : L"0");
+    put(L"HilfeGesehen", st.helpSeen ? L"1" : L"0");
 }
 
 std::wstring ClipboardText() {
@@ -574,6 +577,7 @@ private:
     ComPtr<ID2D1HwndRenderTarget> rt;
     ComPtr<ID2D1SolidColorBrush> brush;
     aboutcard::State m_about;             // "Ueber"-Kachelansicht im Fenster (statt MessageBox)
+    aboutcard::State m_help;              // Kurzanleitung (F1, beim ersten Start automatisch)
     ComPtr<IDWriteTextFormat> fNormal, fSmall, fBold, fTitle, fTitleR, fLogo, fCenter, fRight, fBadge;
 
     D2D1_RECT_F rcTop{}, rcTree{}, rcList{}, rcStats{}, rcTags{}, rcHead{}, rcStatus{}, rcSearch{};
@@ -643,6 +647,11 @@ bool App::Create(HINSTANCE hi, int show, const std::vector<std::wstring>& startF
     m_search.hint = L"Suchen: Gläubiger, Dateiname, Tags …";
     m_search.ed.maxLen = 80;
     InitRoot();
+    if (!m_settings.helpSeen && startFiles.empty()) {   // Willkommens-Hilfe einmalig (nicht beim Start mit Dateien, z. B. --auto)
+        m_settings.helpSeen = true;
+        SaveSettings(m_settings);
+        aboutcard::Open(m_help, m_hwnd);
+    }
     SetWindowPos(m_hwnd, nullptr, 0, 0, (int)(1400 * k), (int)(860 * k), SWP_NOMOVE | SWP_NOZORDER);
     ShowWindow(m_hwnd, show);
     UpdateWindow(m_hwnd);
@@ -730,6 +739,7 @@ void App::Paint() {
         aboutcard::Spec sp;
         sp.name = L"Oggys Docs-Files";
         sp.version = APP_VERSION;
+        sp.diag = diag::Text(L"Oggys Docs-Files", APP_VERSION, GetDpiForWindow(m_hwnd));
         sp.letter = L'O';
         sp.accent = Theme::Accent;
         sp.tiles = {
@@ -740,6 +750,28 @@ void App::Paint() {
             {L"Datenschutz", L"Alle Daten werden zu 100 % lokal auf deinem Gerät gespeichert. Es erfolgt keine Übertragung personenbezogener Daten an externe Server.", true},
         };
         aboutcard::Draw(rt.Get(), brush.Get(), dw.Get(), k, acr, sp, m_about);
+    }
+    if (m_help.open) {
+        RECT hcr;
+        GetClientRect(m_hwnd, &hcr);
+        aboutcard::Spec hp;
+        hp.name = L"Hilfe";
+        hp.version = APP_VERSION;
+        hp.letter = L'?';
+        hp.accent = Theme::Accent;
+        hp.subtitle = L"Oggys Docs-Files – Kurzanleitung";
+        hp.github = false;
+        hp.tiles = {
+            {L"Rechnung schreiben", L"Oben „Rechnung erstellen“ (Strg+N). Empfänger über „Kunden“ wählen, Positionen eintragen, „PDF erzeugen“. Die Rechnung enthält E-Rechnungsdaten und ist danach gesperrt.", true},
+            {L"Belege ablegen", L"PDFs, Fotos oder ganze Ordner ins Fenster ziehen. Betrag und Fälligkeit werden vorgeschlagen – bitte kurz kontrollieren.", true},
+            {L"Fehler korrigieren", L"Gesperrte Rechnungen lassen sich nicht ändern oder löschen. Rechtsklick → „Stornieren …“ erstellt eine Gutschrift."},
+            {L"Status pflegen", L"Rechtsklick → Status: Bezahlt, Offen, Ratenzahlung oder Fixkosten."},
+            {L"Sichern", L"Zahnrad → „Sicherung des Rechnungsordners erstellen“. Regelmäßig machen, am besten auf einen anderen Datenträger."},
+            {L"Steuerberater", L"Zahnrad → „Export für den Steuerberater“: Belegliste und PDFs eines Jahres als ZIP."},
+            {L"Tastenkürzel", L"Strg+N neue Rechnung · Strg+O hinzufügen · Strg+F suchen · Strg+T Tags · F5 neu einlesen · F1 diese Hilfe", true},
+            {L"Gut zu wissen", L"Das Programm ersetzt keine Steuerberatung. Alle Daten bleiben lokal auf deinem PC.", true},
+        };
+        aboutcard::Draw(rt.Get(), brush.Get(), dw.Get(), k, hcr, hp, m_help);
     }
     if (rt->EndDraw() == static_cast<HRESULT>(D2DERR_RECREATE_TARGET)) {
         DiscardDevice();
@@ -2671,6 +2703,7 @@ void App::ShowGearMenu() {
     AppendMenuW(m, MF_STRING | (m_all.empty() ? MF_GRAYED : 0), M_TAXEXPORT, L"Export für den Steuerberater (Jahr wählen) …");
     AppendMenuW(m, MF_STRING, M_BACKUP, L"Sicherung des Rechnungsordners erstellen (ZIP) …");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(m, MF_STRING, M_HELP, L"Hilfe und Kurzanleitung\tF1");
     AppendMenuW(m, MF_STRING, M_ABOUT, L"Über Oggys Docs-Files");
     POINT pt{(LONG)rcTop.right - (LONG)(16 * k), (LONG)rcTop.bottom};
     ClientToScreen(m_hwnd, &pt);
@@ -2692,6 +2725,7 @@ void App::ShowGearMenu() {
         case M_TAXEXPORT: ExportTaxYear(); break;
         case M_BACKUP: ExportBackup(); break;
         case M_ABOUT: aboutcard::Open(m_about, m_hwnd); break;
+        case M_HELP: aboutcard::Open(m_help, m_hwnd); break;
     }
     Invalidate();
 }
@@ -2835,6 +2869,7 @@ void App::OnKey(WPARAM vk) {
         case VK_RETURN: if (const docs::Doc* d = FindDoc(m_focusRel)) OpenDoc(*d); break;
         case VK_DELETE: TrashSelected(); break;
         case VK_F5: LoadIndex(); Refresh(); SetNote(L"Neu eingelesen"); Invalidate(); break;
+        case VK_F1: aboutcard::Open(m_help, m_hwnd); break;
         case VK_F2: if (const docs::Doc* d = FindDoc(m_focusRel)) BeginEditDialog(*d); break;
         case VK_ESCAPE: m_sel.clear(); SetNote(L""); Invalidate(); break;
     }
@@ -2853,6 +2888,11 @@ LRESULT CALLBACK App::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
+    if (m_help.open) {
+        const int r = aboutcard::HandleMessage(m_hwnd, m_help, msg, wp, lp, nullptr);
+        if (r == 2) return TRUE;
+        if (r == 1) return 0;
+    }
     if (m_about.open) {
         const int r = aboutcard::HandleMessage(m_hwnd, m_about, msg, wp, lp, L"https://github.com/Neox365/Duncans-Suite");
         if (r == 2) return TRUE;

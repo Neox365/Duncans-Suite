@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 
+#include "Diagnostics.h"
 #include "Theme.h"
 
 namespace aboutcard {
@@ -32,13 +33,16 @@ struct Spec {
     wchar_t letter = L'V';    // Buchstabe im Logo-Quadrat
     unsigned accent = 0x409CFF;   // 0xRRGGBB
     std::vector<Tile> tiles;
+    std::wstring subtitle = L"Teil von Duncan's Suite";   // Zeile unter dem Namen
+    bool github = true;                                   // Knopf "GitHub oeffnen" zeigen
+    std::wstring diag;                                    // nicht leer: Knopf "Diagnose kopieren" kopiert diesen Text (diag::Text)
 };
 
-struct Layout { D2D1_RECT_F card{}, github{}, close{}; };
-struct State { bool open = false; int hover = 0; Layout lay; };   // hover: 1 GitHub, 2 Schliessen
+struct Layout { D2D1_RECT_F card{}, github{}, close{}, diag{}; };
+struct State { bool open = false; int hover = 0; bool copied = false; std::wstring diagText; Layout lay; };   // hover: 1 GitHub, 2 Schliessen, 4 Diagnose
 
-inline void Open(State& st, HWND hwnd) { st.open = true; st.hover = 0; InvalidateRect(hwnd, nullptr, FALSE); }
-inline void Close(State& st, HWND hwnd) { st.open = false; st.hover = 0; InvalidateRect(hwnd, nullptr, FALSE); }
+inline void Open(State& st, HWND hwnd) { st.open = true; st.hover = 0; st.copied = false; InvalidateRect(hwnd, nullptr, FALSE); }
+inline void Close(State& st, HWND hwnd) { st.open = false; st.hover = 0; st.copied = false; InvalidateRect(hwnd, nullptr, FALSE); }
 
 namespace detail {
 inline D2D1_COLOR_F Col(COLORREF c, float a = 1.f) { return D2D1::ColorF(GetRValue(c) / 255.f, GetGValue(c) / 255.f, GetBValue(c) / 255.f, a); }
@@ -138,7 +142,7 @@ inline void Draw(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, IDWriteFactory
     const std::wstring letter(1, s.letter);
     text(letter, logo, fLogo.Get(), Hex(0xFFFFFF));
     text(s.name, D2D1::RectF(x0 + 76 * k, cy + 6 * k, card.right - pad, cy + 38 * k), fTitle.Get(), Col(theme::kText));
-    text(L"Teil von Duncan's Suite", D2D1::RectF(x0 + 76 * k, cy + 38 * k, card.right - pad, cy + 62 * k), fSub.Get(), Col(theme::kTextDim));
+    text(s.subtitle, D2D1::RectF(x0 + 76 * k, cy + 38 * k, card.right - pad, cy + 62 * k), fSub.Get(), Col(theme::kTextDim));
     cy += headH + 14 * k;
 
     // Kacheln
@@ -153,10 +157,22 @@ inline void Draw(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, IDWriteFactory
     // Knoepfe
     const float by = card.bottom - pad - btnH;
     st.lay.close = D2D1::RectF(card.right - pad - 130 * k, by, card.right - pad, by + btnH);
-    st.lay.github = D2D1::RectF(st.lay.close.left - 10 * k - 160 * k, by, st.lay.close.left - 10 * k, by + btnH);
-    fill(st.lay.github, 10 * k, Col(st.hover == 1 ? theme::kCardHover : theme::kCardRaised));
-    stroke(st.lay.github, 10 * k, Col(st.hover == 1 ? theme::kBorderHover : theme::kBorder));
-    text(L"GitHub öffnen", st.lay.github, fBtn.Get(), Col(theme::kText));
+    float nextRight = st.lay.close.left - 10 * k;
+    st.lay.github = st.lay.diag = D2D1::RectF(0, 0, 0, 0);
+    st.diagText = s.diag;
+    if (s.github) {
+        st.lay.github = D2D1::RectF(nextRight - 160 * k, by, nextRight, by + btnH);
+        nextRight = st.lay.github.left - 10 * k;
+        fill(st.lay.github, 10 * k, Col(st.hover == 1 ? theme::kCardHover : theme::kCardRaised));
+        stroke(st.lay.github, 10 * k, Col(st.hover == 1 ? theme::kBorderHover : theme::kBorder));
+        text(L"GitHub öffnen", st.lay.github, fBtn.Get(), Col(theme::kText));
+    }
+    if (!s.diag.empty()) {
+        st.lay.diag = D2D1::RectF(nextRight - 190 * k, by, nextRight, by + btnH);
+        fill(st.lay.diag, 10 * k, Col(st.hover == 4 ? theme::kCardHover : theme::kCardRaised));
+        stroke(st.lay.diag, 10 * k, Col(st.hover == 4 ? theme::kBorderHover : theme::kBorder));
+        text(st.copied ? L"Kopiert \u2713" : L"Diagnose kopieren", st.lay.diag, fBtn.Get(), Col(theme::kText));
+    }
     fill(st.lay.close, 10 * k, st.hover == 2 ? Hex(0x60B0FF) : Col(theme::kAccent));
     text(L"Schließen", st.lay.close, fBtn.Get(), Hex(0x08141F));
 }
@@ -165,11 +181,11 @@ inline void Draw(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, IDWriteFactory
 // Rueckgabe: 0 = nicht behandelt, 1 = behandelt (Prozedur gibt 0 zurueck), 2 = Cursor gesetzt (Prozedur gibt TRUE zurueck)
 inline int HandleMessage(HWND hwnd, State& st, UINT msg, WPARAM wp, LPARAM lp, const wchar_t* url) {
     using namespace detail;
-    auto hit = [&](float x, float y) { return In(st.lay.github, x, y) ? 1 : In(st.lay.close, x, y) ? 2 : In(st.lay.card, x, y) ? 3 : 0; };
+    auto hit = [&](float x, float y) { return In(st.lay.github, x, y) ? 1 : In(st.lay.close, x, y) ? 2 : In(st.lay.diag, x, y) ? 4 : In(st.lay.card, x, y) ? 3 : 0; };
     switch (msg) {
     case WM_MOUSEMOVE: {
         const int h = hit(static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp)));
-        const int hv = h == 1 || h == 2 ? h : 0;
+        const int hv = h == 1 || h == 2 || h == 4 ? h : 0;
         if (hv != st.hover) { st.hover = hv; InvalidateRect(hwnd, nullptr, FALSE); }
         return 1;
     }
@@ -177,6 +193,7 @@ inline int HandleMessage(HWND hwnd, State& st, UINT msg, WPARAM wp, LPARAM lp, c
     case WM_LBUTTONDBLCLK: {
         const int h = hit(static_cast<float>(GET_X_LPARAM(lp)), static_cast<float>(GET_Y_LPARAM(lp)));
         if (h == 1 && url) ShellExecuteW(hwnd, L"open", url, nullptr, nullptr, SW_SHOWNORMAL);
+        else if (h == 4) { st.copied = diag::CopyToClipboard(hwnd, st.diagText); InvalidateRect(hwnd, nullptr, FALSE); }
         else if (h == 2 || h == 0) Close(st, hwnd);       // Klick neben die Karte schliesst sie
         return 1;
     }

@@ -889,6 +889,7 @@ void App::Paint() {
         GetClientRect(m_hwnd, &acr);
         aboutcard::Spec sp;
         sp.name = L"Duncan's Photo Commander";
+        sp.diag = diag::Text(sp.name, APP_VERSION, GetDpiForSystem());
         sp.version = APP_VERSION;
         sp.letter = L'P';
         sp.accent = Theme::Accent;
