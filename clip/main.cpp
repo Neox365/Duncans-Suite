@@ -25,12 +25,13 @@ using std::min;
 #include <gdiplus.h>
 
 #include "../src/Icons.h"
+#include "../common/ThemedBox.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.6.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -593,7 +594,7 @@ void CycleHotkey() {
 }
 
 void ConfirmDeletePrompt(size_t idx) {
-    if (MessageBoxW(g.hwnd, (L"Prompt „" + g.store.prompts[idx].title + L"“ löschen?").c_str(), kTitle, MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    if (themedbox::Show(g.hwnd, (L"Prompt „" + g.store.prompts[idx].title + L"“ löschen?").c_str(), kTitle, MB_YESNO | MB_ICONQUESTION) != IDYES) return;
     g.store.prompts.erase(g.store.prompts.begin() + static_cast<std::ptrdiff_t>(idx));
     SavePromptsNow();
     Layout();

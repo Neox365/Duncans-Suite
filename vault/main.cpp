@@ -27,12 +27,13 @@
 
 #include "../docs/TextEdit.h"
 #include "../docs/Theme.h"
+#include "../common/ThemedBox.h"
 #include "../common/AboutCard.h"
 #include "Audit.h"
 #include "Vault.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.0"   // normalerweise aus CMake (VAULT_VER)
+#define APP_VERSION L"0.7.1"   // normalerweise aus CMake (VAULT_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -1465,14 +1466,14 @@ void App::BeginUsbSetup() {
     if (m_screen != Screen::Main) return;
     const std::vector<vault::Stick> sticks = vault::ListSticks();
     if (sticks.empty()) {
-        MessageBoxW(m_hwnd, L"Es wurde kein USB-Stick gefunden.\n\nStecke einen USB-Stick ein und versuche es erneut. Erkannt werden Laufwerke vom Typ „Wechseldatenträger“ (die meisten USB-Sticks und Speicherkarten).",
+        themedbox::Show(m_hwnd, L"Es wurde kein USB-Stick gefunden.\n\nStecke einen USB-Stick ein und versuche es erneut. Erkannt werden Laufwerke vom Typ „Wechseldatenträger“ (die meisten USB-Sticks und Speicherkarten).",
                     L"USB-Vault-Key", MB_OK | MB_ICONINFORMATION);
         return;
     }
     const int i = PickStick(sticks);
     if (i < 0) return;
     if (sticks[i].hasKey &&
-        MessageBoxW(m_hwnd, L"Auf diesem Stick liegt schon ein Vault-Key (vielleicht von einem anderen Tresor).\n\nWenn du fortfährst, wird er ersetzt. Ein anderer Tresor, der diesen Stick nutzt, ist dann nur noch mit seinem Wiederherstellungscode erreichbar.\n\nFortfahren?",
+        themedbox::Show(m_hwnd, L"Auf diesem Stick liegt schon ein Vault-Key (vielleicht von einem anderen Tresor).\n\nWenn du fortfährst, wird er ersetzt. Ein anderer Tresor, der diesen Stick nutzt, ist dann nur noch mit seinem Wiederherstellungscode erreichbar.\n\nFortfahren?",
                     L"USB-Vault-Key", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
     m_usbSetupRoot = sticks[i].root;
     m_usbSetupHadKey = sticks[i].hasKey;
@@ -1523,7 +1524,7 @@ void App::ApplyUsbSetup() {
     const std::wstring text = L"Dein Wiederherstellungscode:\n\n" + code +
         L"\n\nNotiere ihn und bewahre ihn getrennt vom Stick auf (nicht in diesem Tresor). Er öffnet den Tresor auch ohne Stick, z. B. wenn der Stick verloren oder kaputt ist. "
         L"Er wird nur jetzt angezeigt.\n\nTipp: Strg+C kopiert diesen Text.";
-    MessageBoxW(m_hwnd, text.c_str(), L"Wiederherstellungscode", MB_OK | MB_ICONWARNING);
+    themedbox::Show(m_hwnd, text.c_str(), L"Wiederherstellungscode", MB_OK | MB_ICONWARNING);
     vault::Wipe(code);
     ClearClipboardIfOurs();
 }
@@ -1550,7 +1551,7 @@ void App::ApplyUsbRemove() {
     SetNote(L"USB-Schutz entfernt. Der Tresor öffnet jetzt mit dem neuen Master-Passwort.", true);
     Invalidate();
     UpdateWindow(m_hwnd);
-    if (!root.empty() && MessageBoxW(m_hwnd, L"Soll die Schlüsseldatei auf dem Stick gelöscht werden?\n\nSie wird für diesen Tresor nicht mehr gebraucht.", L"USB-Vault-Key", MB_YESNO | MB_ICONQUESTION) == IDYES)
+    if (!root.empty() && themedbox::Show(m_hwnd, L"Soll die Schlüsseldatei auf dem Stick gelöscht werden?\n\nSie wird für diesen Tresor nicht mehr gebraucht.", L"USB-Vault-Key", MB_YESNO | MB_ICONQUESTION) == IDYES)
         vault::DeleteKeyFile(root);
 }
 
@@ -1566,13 +1567,13 @@ void App::MakePortableCopy() {
         if (vault::ReadKeyFile(st.root, probe) && probe.id == id) mine.push_back(st);
         probe.Close();
     }
-    if (mine.empty()) { MessageBoxW(m_hwnd, L"Der zu diesem Tresor gehörende USB-Stick ist nicht angeschlossen.", L"Portable Kopie", MB_OK | MB_ICONINFORMATION); return; }
+    if (mine.empty()) { themedbox::Show(m_hwnd, L"Der zu diesem Tresor gehörende USB-Stick ist nicht angeschlossen.", L"Portable Kopie", MB_OK | MB_ICONINFORMATION); return; }
     const int i = mine.size() == 1 ? 0 : PickStick(mine);
     if (i < 0) return;
     const fs::path dir = fs::path(mine[i].root) / L"DuncansVault", data = dir / L"Data";
     std::error_code ec;
     if (fs::exists(data / L"vault.dat", ec) &&
-        MessageBoxW(m_hwnd, L"Auf dem Stick liegt schon eine portable Kopie.\n\nDer Tresor dort wird durch den aktuellen Stand ersetzt. Fortfahren?", L"Portable Kopie", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+        themedbox::Show(m_hwnd, L"Auf dem Stick liegt schon eine portable Kopie.\n\nDer Tresor dort wird durch den aktuellen Stand ersetzt. Fortfahren?", L"Portable Kopie", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
     fs::create_directories(data, ec);
     wchar_t exe[MAX_PATH]{};
     GetModuleFileNameW(nullptr, exe, MAX_PATH);
@@ -1865,7 +1866,7 @@ void App::ImportCsv() {
     SetNote(std::to_wstring(added) + L" Zugänge importiert, " + std::to_wstring(skipped) + L" schon vorhanden", true);
     Invalidate();
     UpdateWindow(m_hwnd);
-    if (MessageBoxW(m_hwnd, L"Die CSV-Datei enthält deine Passwörter im Klartext.\n\nJetzt überschreiben und löschen?\n\n(Auch im Browser-Export-Ordner, Papierkorb und Cloud-Ordnern können Kopien liegen.)", L"CSV-Datei löschen",
+    if (themedbox::Show(m_hwnd, L"Die CSV-Datei enthält deine Passwörter im Klartext.\n\nJetzt überschreiben und löschen?\n\n(Auch im Browser-Export-Ordner, Papierkorb und Cloud-Ordnern können Kopien liegen.)", L"CSV-Datei löschen",
                     MB_YESNO | MB_ICONWARNING) == IDYES)
         SetNote(ShredFile(name) ? L"Importiert; die CSV-Datei wurde überschrieben und gelöscht." : L"Importiert; die CSV-Datei konnte nicht gelöscht werden – bitte selbst löschen.", true);
     Invalidate();

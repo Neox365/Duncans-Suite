@@ -38,6 +38,8 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.6.1 | 2026-11-12
+- Geändert: Meldungen und Rückfragen erscheinen im dunklen Design des Programms statt als Windows-Meldungsfenster. Bedienung wie gewohnt: Enter bestätigt, Esc bricht ab, J/Ja und N/Nein als Tasten, Pfeiltasten und Tab wechseln die Schaltfläche.
 ## 0.6.0 | 2026-11-10
 - Neu: Anpinnen. Jeder Texteintrag im Verlauf hat links vom Stern einen Pin-Knopf. Angepinnte Einträge stehen immer ganz oben (mit farbigem Rand und gefüllter Nadel) und bleiben, auch wenn „Verlauf leeren“ gedrückt wird, die automatische Löschung („Verlauf löschen nach“) greift oder der Verlauf voll ist. Bis zu 20 Pins. Sie werden immer verschlüsselt (Windows-Schlüssel, nur auf diesem PC) gespeichert und sind nach einem Neustart wieder da, auch wenn „Verlauf speichern“ aus ist. Der Pin-Knopf löst den Pin wieder; das Kreuz löscht den Eintrag ganz. Bilder lassen sich nicht anpinnen.
 ## 0.5.2 | 2026-11-09
@@ -246,6 +248,9 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.8.2 | 2026-11-12
+- Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen oder Dateien und wird nirgends automatisch gesendet.
+- Geändert: Meldungen und Rückfragen erscheinen im dunklen Design des Programms statt als Windows-Meldungsfenster. Bedienung wie gewohnt: Enter bestätigt, Esc bricht ab, J/Ja und N/Nein als Tasten, Pfeiltasten und Tab wechseln die Schaltfläche.
 ## 1.8.1 | 2026-11-11
 - Behoben: Nach „Rückgängig“ oder „Wiederholen“ (Strg+Z, Strg+Y) las das Programm das Dokument aus bereits freigegebenem Speicher. Folgen waren zufällig fehlende Änderungen (z. B. ein Stempel, der nach „Wiederholen“ nicht mehr zu sehen war), beschädigte Anzeige oder im ungünstigen Fall ein Absturz. Seit dieser Version hält das Programm den Dokumentspeicher bis zum Schließen oder Wechseln des Dokuments. Betroffen waren alle Aktionen mit Rückgängig: Stempel, Unterschrift, Schwärzen, Markierungen, Notizen, Zuschnitt, Drehen, Seiten löschen, verschieben, anhängen und die Texterkennung. Wer nach Rückgängig/Wiederholen gespeichert hat, sollte die Datei prüfen.
 ## 1.8.0 | 2026-11-11
@@ -294,6 +299,8 @@
 - Der PDF Reader kommt als Programm in die Suite.
 
 [DuncansPrivacy.exe]
+## 0.12.1 | 2026-11-12
+- Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen oder Dateien und wird nirgends automatisch gesendet.
 ## 0.12.0 | 2026-11-08
 - Neu: „Geplante Telemetrie-Aufgaben abschalten“ (Gruppe Telemetrie & Diagnosedaten, empfohlen). Windows hat Aufgaben, die auch bei minimierter Telemetrie weiter Daten sammeln: Kompatibilitätsprüfung (Appraiser), Programm-Erfahrungsverbesserung (CEIP), Feedback-Erinnerungen, Datenträger-Diagnosesammlung und die SQM-Sammlung von Autochk. Der Schalter deaktiviert die auf deinem PC vorhandenen davon, merkt sich vorher, ob jede aktiv war, und stellt das beim Zurücknehmen wieder her. Mit „Schutz automatisch erneuern“ schaltet das Programm sie wieder ab, falls Windows sie nach einem Update neu einschaltet.
 - Neu: Gruppe „App-Berechtigungen“ mit vier Schaltern: Kamerazugriff für Apps sperren, Mikrofonzugriff für Apps sperren, Persönliche Daten für Apps sperren (Kontakte, Kalender, E-Mail, Nachrichten, Anrufliste, Kontoinfos) und Diagnoseinformationen anderer Apps nicht freigeben. Die ersten drei haben spürbare Nebenwirkungen (Videoanrufe, Windows Hello, Mail-App) und werden deshalb von „Alle schützen“ und „Empfohlen anwenden“ nicht mitgeschaltet; sie sind wie alles andere rückgängig zu machen.
@@ -330,6 +337,9 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.7.3 | 2026-11-12
+- Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen oder Dateien und wird nirgends automatisch gesendet.
+- Geändert: Meldungen und Rückfragen erscheinen im dunklen Design des Programms statt als Windows-Meldungsfenster. Bedienung wie gewohnt: Enter bestätigt, Esc bricht ab, J/Ja und N/Nein als Tasten, Pfeiltasten und Tab wechseln die Schaltfläche.
 ## 0.7.2 | 2026-11-09
 - Neu: In Karte gestalten gibt es zwei Kästchen unter den Reglern: „Foto-Schatten“ (weicher Schatten hinter jedem Foto) und „Polaroid-Rahmen“ (weißer Rand mit breiterer Unterkante).
 ## 0.7.1 | 2026-11-09
@@ -463,6 +473,9 @@
 - Rechnungs-Generator: Absender, Empfänger, Positionen, USt-Satz und Zahlungshinweis; erzeugt eine PDF nach Vorlage und legt sie im passenden Ordner ab.
 
 [DuncansVault.exe]
+## 0.7.1 | 2026-11-12
+- Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen oder Dateien und wird nirgends automatisch gesendet.
+- Geändert: Meldungen und Rückfragen erscheinen im dunklen Design des Programms statt als Windows-Meldungsfenster. Bedienung wie gewohnt: Enter bestätigt, Esc bricht ab, J/Ja und N/Nein als Tasten, Pfeiltasten und Tab wechseln die Schaltfläche.
 ## 0.7.0 | 2026-11-08
 - Neu: 2FA-Einmalcodes (TOTP). Im Eintrag lässt sich der 2FA-Schlüssel der Webseite (die Buchstabenfolge unter dem QR-Code, oder eine otpauth://-Adresse) hinterlegen. Die Detailansicht zeigt dann den 6-stelligen Code mit Restzeit-Balken, „Kopieren“ legt ihn für 15 Sekunden in die Zwischenablage. Unterstützt sind SHA-1, SHA-256 und SHA-512 mit 6 bis 8 Stellen und frei gewählter Periode; Steam Guard und Zähler-Codes (HOTP) gehören nicht dazu. Der Schlüssel liegt wie alles andere verschlüsselt im Tresor; ältere Tresordateien bleiben lesbar, ein älteres Programm würde den Schlüssel beim Speichern allerdings verwerfen. Beim Browser-Import wird die Spalte login_totp (Bitwarden) übernommen.
 - Neu: Passwort-Check (Zahnrad > Passwort-Check). Er zeigt häufig benutzte Passwörter (Liste und einfache Muster wie 123456 oder abcdefgh), schwache, mehrfach verwendete und seit über einem Jahr nicht geänderte Passwörter, jeweils mit Erklärung; ein Klick auf eine Zeile springt zum Eintrag. Die Detailansicht warnt außerdem, wenn dasselbe Passwort bei einem anderen Eintrag steht. Alles läuft im Tresor, es wird nichts ins Netz geschickt (ein Abgleich mit geleakten Passwörtern wäre nur online möglich und fehlt deshalb).
@@ -509,6 +522,8 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansQuickConvert.exe]
+## 0.4.2 | 2026-11-12
+- Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen oder Dateien und wird nirgends automatisch gesendet.
 ## 0.4.1 | 2026-11-09
 - Behoben: Im leeren Ablagefeld klebte die Überschrift „Dateien hierher ziehen“ am oberen Rand und der Hinweis am unteren. Beide stehen jetzt als Block in der Mitte des Feldes.
 ## 0.4.0 | 2026-11-06
@@ -535,6 +550,9 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.8.1 | 2026-11-12
+- Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen oder Dateien und wird nirgends automatisch gesendet.
+- Geändert: Meldungen und Rückfragen erscheinen im dunklen Design des Programms statt als Windows-Meldungsfenster. Bedienung wie gewohnt: Enter bestätigt, Esc bricht ab, J/Ja und N/Nein als Tasten, Pfeiltasten und Tab wechseln die Schaltfläche.
 ## 0.8.0 | 2026-11-11
 - Neu: Sortieren in Sheets. Die Knöpfe „A↓“ und „Z↓“ sortieren die markierten Zeilen nach der Spalte der aktiven Zelle. Bei einer einzelnen Zelle wird die ganze Tabelle sortiert; eine Überschriftenzeile (Text über Zahlen) bleibt oben. Zahlen kommen vor Text, Text ohne Beachtung der Schreibweise, leere Zellen immer ans Ende. Formate und Farben wandern mit, Strg+Z macht die letzte Sortierung rückgängig.
 - Hinweis: Bereiche mit Formeln werden nicht sortiert (die Bezüge würden danach auf falsche Zeilen zeigen); das Programm sagt es in der Statuszeile.

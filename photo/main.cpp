@@ -33,10 +33,11 @@
 #include "ImageOps.h"
 #include "Theme.h"
 #include "ThumbnailLoader.h"
+#include "../common/ThemedBox.h"
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.2"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.7.3"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -2412,7 +2413,7 @@ void App::ShowSettings() {
 // Zieldatei fuer "Kopie anlegen oder Original ersetzen" (Zahnrad-Einstellung). Leer = Nutzer hat abgebrochen.
 std::wstring App::ChooseOutput(const std::wstring& src, const wchar_t* suffix, const wchar_t* question, const wchar_t* title) {
     if (!m_settings.overwriteOriginals) return UniquePath(WithSuffix(src, suffix));
-    return MessageBoxW(m_hwnd, question, title, MB_YESNO | MB_ICONWARNING) == IDYES ? src : std::wstring();
+    return themedbox::Show(m_hwnd, question, title, MB_YESNO | MB_ICONWARNING) == IDYES ? src : std::wstring();
 }
 
 // Nach dem Schreiben: Original neu einlesen bzw. die neue Kopie in die Liste aufnehmen und auswaehlen.
@@ -2502,7 +2503,7 @@ void App::DeleteSelected() {
     if (idx.empty() || idx[0] < 0 || idx[0] >= (int)m_items.size()) return;
     std::wstring msg = idx.size() == 1 ? L"\u201e" + m_items[idx[0]].name + L"\u201c in den Papierkorb verschieben?"
                                        : std::to_wstring(idx.size()) + L" Bilder in den Papierkorb verschieben?";
-    if (MessageBoxW(m_hwnd, msg.c_str(), L"Löschen", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    if (themedbox::Show(m_hwnd, msg.c_str(), L"Löschen", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
 
     const int n = (int)m_items.size();
     std::vector<bool> del(n, false);
@@ -2542,7 +2543,7 @@ void App::OpenCardDesigner() {   // Karte gestalten mit den markierten Fotos (Kn
 
 void App::ShowBatchMenu() {
     if (m_batchRunning) {
-        if (MessageBoxW(m_hwnd, L"Die Stapelverarbeitung läuft noch. Abbrechen?", L"Stapelverarbeitung",
+        if (themedbox::Show(m_hwnd, L"Die Stapelverarbeitung läuft noch. Abbrechen?", L"Stapelverarbeitung",
                         MB_YESNO | MB_ICONQUESTION) == IDYES) {
             m_batchCancel = true;
             SetStatus(L"Stapelverarbeitung wird abgebrochen …");
@@ -2637,7 +2638,7 @@ void App::StartBatch(BatchKind kind) {
             break;
     }
     if ((!IsConvert(kind) || files.size() > 1) &&   // ein einzelnes Bild wird ohne Rueckfrage umgewandelt
-        MessageBoxW(m_hwnd, question.c_str(), L"Stapelverarbeitung",
+        themedbox::Show(m_hwnd, question.c_str(), L"Stapelverarbeitung",
                     MB_YESNO | (kind == BatchKind::StripOverwrite ? MB_ICONWARNING : MB_ICONQUESTION)) != IDYES)
         return;
     if (m_batch.joinable()) m_batch.join();
@@ -2753,7 +2754,7 @@ void App::RenameByDate() {
     const std::wstring q = std::to_wstring(jobs.size()) + L" Dateien nach ihrem Aufnahmedatum umbenennen?\n\nBeispiel:\n" +
                            FileNameOf(jobs[0].from) + L"\n→ " + jobs[0].name +
                            L"\n\nVorhandene Dateien werden nie überschrieben. Die Umbenennung lässt sich im Stapel-Menü rückgängig machen.";
-    if (MessageBoxW(m_hwnd, q.c_str(), L"Umbenennen", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    if (themedbox::Show(m_hwnd, q.c_str(), L"Umbenennen", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
 
     m_lastRename.clear();
     int failed = 0;

@@ -25,12 +25,13 @@ using std::min;
 #include "Print.h"
 #include "OcrRun.h"
 #include "Positions.h"
+#include "../common/ThemedBox.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.8.1"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.8.2"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -934,7 +935,7 @@ void RedactAllHits() {
         L"Der Text darunter wird aus den Seiten entfernt und durch schwarze Balken ersetzt. Nach dem Speichern lässt sich das nicht mehr rückgängig machen. "
         L"Lässt sich der Text nicht sauber herauslösen, wird die jeweilige Seite als Bild neu aufgebaut (ihr Text ist dann nicht mehr markierbar). "
         L"Beim Speichern entfallen Lesezeichen und Formularfelder.";
-    if (MessageBoxW(g.main, q.c_str(), kAppTitle, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
+    if (themedbox::Show(g.main, q.c_str(), kAppTitle, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES) return;
     HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
     int done = 0, flattened = 0, failed = 0;
     const std::vector<PdfDocument::TextHit> hits = g.hits;     // Redact aendert die Seiten; die Trefferliste wird danach verworfen
@@ -2078,10 +2079,10 @@ void DoSplit() {
         if (!PromptText(g.main, L"PDF teilen (Split)", spec, nullptr, hint.c_str(), L"Weiter …")) return;
         parts.clear();
         if (ParseSplit(spec, n, parts)) break;
-        MessageBoxW(g.main, (L"Die Eingabe passt nicht zu dieser PDF (Seiten 1 bis " + std::to_wstring(n) + L").\n\nBeispiele:  1-3, 4-7, 9   ·   je 5   ·   einzeln").c_str(), kAppTitle, MB_OK | MB_ICONWARNING);
+        themedbox::Show(g.main, (L"Die Eingabe passt nicht zu dieser PDF (Seiten 1 bis " + std::to_wstring(n) + L").\n\nBeispiele:  1-3, 4-7, 9   ·   je 5   ·   einzeln").c_str(), kAppTitle, MB_OK | MB_ICONWARNING);
     }
     if (parts.size() > 20 &&
-        MessageBoxW(g.main, (L"Es werden " + std::to_wstring(parts.size()) + L" Dateien erstellt. Fortfahren?").c_str(), kAppTitle, MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+        themedbox::Show(g.main, (L"Es werden " + std::to_wstring(parts.size()) + L" Dateien erstellt. Fortfahren?").c_str(), kAppTitle, MB_YESNO | MB_ICONQUESTION) != IDYES) return;
     std::wstring dir;
     if (!PickFolder(g.main, dir, DirName(g.doc.Path()))) return;
     while (dir.size() > 3 && (dir.back() == L'\\' || dir.back() == L'/')) dir.pop_back();
@@ -2426,7 +2427,7 @@ void RunCommand(int cmd) {
     }
     case C_COMPRESS: {
         if (!g.doc.IsOpen()) break;
-        if (MessageBoxW(g.main,
+        if (themedbox::Show(g.main,
                 L"Die Datei wird verkleinert: Bilder werden auf höchstens 150 dpi heruntergerechnet und mit JPEG-Qualität 70 neu gespeichert, ungenutzte Objekte entfallen.\n\n"
                 L"Lesezeichen und Formularfelder gehen dabei verloren. Das geöffnete Dokument bleibt unverändert; die verkleinerte Kopie wird unter neuem Namen gespeichert.\n\nFortfahren?",
                 kAppTitle, MB_YESNO | MB_ICONQUESTION) != IDYES) break;
@@ -2812,7 +2813,7 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 L"Der Text darunter wird aus der Seite entfernt und durch einen schwarzen Balken ersetzt. Nach dem Speichern lässt sich das nicht mehr rückgängig machen.\n\n"
                 L"Lässt sich der Text nicht sauber herauslösen (Bilder, Text, der über den Bereich hinausgeht), wird die ganze Seite als Bild neu aufgebaut; "
                 L"ihr Text ist dann nicht mehr markierbar. Beim Speichern entfallen außerdem Lesezeichen und Formularfelder, damit keine Reste in der Datei bleiben.";
-            if (MessageBoxW(g.main, q, kAppTitle, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
+            if (themedbox::Show(g.main, q, kAppTitle, MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
                 PdfDocument::RedactResult res;
                 HCURSOR old = SetCursor(LoadCursorW(nullptr, IDC_WAIT));
                 const bool ok = g.doc.Redact(g.page, g.pageW, g.pageH, { r }, res);
@@ -2847,7 +2848,7 @@ LRESULT CALLBACK CanvasProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             const std::wstring q = L"Auf diesen Ausschnitt zuschneiden?\n\nGilt für " + std::to_wstring(t.size()) + (t.size() == 1 ? L" Seite" : L" Seiten") +
                 L" (Auswahl in der Seitenleiste; Strg+A wählt alle). Der Seiteninhalt bleibt in der Datei erhalten, nur der sichtbare Bereich ändert sich – "
                 L"mit der Taste U lässt sich der Zuschnitt wieder aufheben.";
-            if (MessageBoxW(g.main, q.c_str(), kAppTitle, MB_YESNO | MB_ICONQUESTION) == IDYES) {
+            if (themedbox::Show(g.main, q.c_str(), kAppTitle, MB_YESNO | MB_ICONQUESTION) == IDYES) {
                 if (g.doc.CropPages(t, fx0, fy0, fx1, fy1)) {
                     g.tool = 0;
                     InvalidateToolbar();
@@ -3326,7 +3327,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_CLOSE:
         if (g.doc.IsOpen() && g.doc.Modified() &&
-            MessageBoxW(hwnd, L"Es gibt ungespeicherte Änderungen (gedrehte, gelöschte oder angehängte Seiten).\nTrotzdem schließen?",
+            themedbox::Show(hwnd, L"Es gibt ungespeicherte Änderungen (gedrehte, gelöschte oder angehängte Seiten).\nTrotzdem schließen?",
                         kAppTitle, MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES)
             return 0;
         DestroyWindow(hwnd);
