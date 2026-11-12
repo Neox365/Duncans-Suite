@@ -31,6 +31,7 @@
 #include "Export.h"
 #include "AuditLog.h"
 #include "Backup.h"
+#include "../common/NoticeCard.h"
 #include "Customers.h"
 #include "FacturX.h"
 #include "Invoice.h"
@@ -43,7 +44,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.16.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.17.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -530,6 +531,10 @@ private:
     bool WriteInvoiceFile(const invoice::Data& data, bool example, std::wstring& rel, std::wstring& err);
     void AppendLog(const std::wstring& action, const std::wstring& rel, const std::wstring& detail);
     void StornoSelected();
+    void DoStorno(const docs::Doc& doc, const invoice::Data& orig);
+    void DoTrash(const std::vector<std::wstring>& rels);
+    void Notice(const std::wstring& title, const std::wstring& text);
+    void Ask(const std::wstring& title, const std::wstring& text, const std::wstring& yes, const std::wstring& no, bool danger, std::function<void()> onYes, bool defaultYes = true);
     std::vector<docs::Customer> LoadCustomers() const;
     void SaveCustomers(const std::vector<docs::Customer>& list) const;
     void ShowCustomerMenu();
@@ -578,6 +583,9 @@ private:
     ComPtr<ID2D1SolidColorBrush> brush;
     aboutcard::State m_about;             // "Ueber"-Kachelansicht im Fenster (statt MessageBox)
     aboutcard::State m_help;              // Kurzanleitung (F1, beim ersten Start automatisch)
+    noticecard::State m_notice;           // Hinweis/Rueckfrage als Karte im Fenster (statt MessageBox)
+    noticecard::Spec m_noticeSpec;
+    std::function<void()> m_noticeYes;    // wird bei "Ja" ausgefuehrt
     ComPtr<IDWriteTextFormat> fNormal, fSmall, fBold, fTitle, fTitleR, fLogo, fCenter, fRight, fBadge;
 
     D2D1_RECT_F rcTop{}, rcTree{}, rcList{}, rcStats{}, rcTags{}, rcHead{}, rcStatus{}, rcSearch{};
@@ -772,6 +780,11 @@ void App::Paint() {
             {L"Gut zu wissen", L"Das Programm ersetzt keine Steuerberatung. Alle Daten bleiben lokal auf deinem PC.", true},
         };
         aboutcard::Draw(rt.Get(), brush.Get(), dw.Get(), k, hcr, hp, m_help);
+    }
+    if (m_notice.open) {
+        RECT ncr;
+        GetClientRect(m_hwnd, &ncr);
+        noticecard::Draw(rt.Get(), brush.Get(), dw.Get(), k, ncr, m_noticeSpec, m_notice);
     }
     if (rt->EndDraw() == static_cast<HRESULT>(D2DERR_RECREATE_TARGET)) {
         DiscardDevice();
@@ -1741,6 +1754,27 @@ void App::CheckLockedFiles() {
     else if (bad) SetNote(L"Achtung: Das Änderungsprotokoll (Protokoll.log) ist ab Zeile " + std::to_wstring(bad) + L" nicht mehr in Ordnung.");
 }
 
+// ---- Hinweis- und Rueckfrage-Karten (statt MessageBox) ----
+void App::Notice(const std::wstring& title, const std::wstring& text) {
+    m_noticeSpec = noticecard::Spec{};
+    m_noticeSpec.title = title;
+    m_noticeSpec.text = text;
+    m_noticeYes = nullptr;
+    noticecard::Open(m_notice, m_hwnd);
+}
+
+void App::Ask(const std::wstring& title, const std::wstring& text, const std::wstring& yes, const std::wstring& no, bool danger, std::function<void()> onYes, bool defaultYes) {
+    m_noticeSpec = noticecard::Spec{};
+    m_noticeSpec.title = title;
+    m_noticeSpec.text = text;
+    m_noticeSpec.yes = yes;
+    m_noticeSpec.no = no;
+    m_noticeSpec.danger = danger;
+    m_noticeSpec.defaultYes = defaultYes;
+    m_noticeYes = std::move(onYes);
+    noticecard::Open(m_notice, m_hwnd);
+}
+
 // Storno: Gutschrift mit denselben Positionen und Bezug auf die Rechnung; die Rechnung bleibt unveraendert gesperrt
 void App::StornoSelected() {
     const auto sel = SelectedDocs();
@@ -1757,12 +1791,15 @@ void App::StornoSelected() {
     std::ifstream in(fs::path(m_rootPath) / L".rechnungsdaten" / (number + L".dat"), std::ios::binary);
     const std::string text = in ? std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>()) : std::string();
     if (number.empty() || !invoice::ParseData(text, orig)) {
-        MessageBoxW(m_hwnd, L"Für diese Rechnung sind keine Rechnungsdaten gespeichert (sie wurde nicht mit diesem Programm erstellt oder die Datei fehlt). Bitte eine Gutschrift über „Rechnung erstellen“ ausstellen.", L"Stornieren", MB_OK | MB_ICONINFORMATION);
+        Notice(L"Stornieren nicht möglich", L"Für diese Rechnung sind keine Rechnungsdaten gespeichert (sie wurde nicht mit diesem Programm erstellt oder die Datei fehlt). Bitte eine Gutschrift über „Rechnung erstellen“ ausstellen.");
         return;
     }
     const std::wstring msg = L"Rechnung " + orig.number + L" stornieren?\n\nEs wird eine Gutschrift über " + docs::FormatAmount(invoice::Compute(orig).gross) +
                              L" erstellt, die sich auf die Rechnung bezieht. Die Rechnung selbst bleibt unverändert erhalten. Das lässt sich nicht rückgängig machen.";
-    if (MessageBoxW(m_hwnd, msg.c_str(), L"Stornieren", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+    Ask(L"Rechnung stornieren?", msg, L"Stornieren", L"Abbrechen", true, [this, doc, orig]() { DoStorno(doc, orig); }, false);
+}
+
+void App::DoStorno(const docs::Doc& doc, const invoice::Data& orig) {
     invoice::Data g = orig;
     g.cancels = orig.number;
     g.cancelsDateIso = orig.dateIso;
@@ -1812,15 +1849,20 @@ void App::TrashSelected() {
     for (const docs::Doc* d : sel)
         if (d->m.locked) {   // GoBD: Rechnungen duerfen nach dem Erstellen nicht geloescht werden
             AppendLog(L"Löschen abgelehnt", d->rel, L"gesperrte Rechnung");
-            MessageBoxW(m_hwnd, (L"„" + d->name + L"“ ist eine gesperrte Rechnung und kann nicht gelöscht werden (GoBD).\n\nFalsche Rechnung? Mit Rechtsklick → „Stornieren …“ wird eine Gutschrift erstellt.").c_str(), L"Löschen", MB_OK | MB_ICONINFORMATION);
+            Notice(L"Gesperrte Rechnung", L"„" + d->name + L"“ ist eine gesperrte Rechnung und kann nicht gelöscht werden (GoBD).\n\nFalsche Rechnung? Mit Rechtsklick → „Stornieren …“ wird eine Gutschrift erstellt.");
             return;
         }
     const std::wstring msg = sel.size() == 1 ? L"„" + sel[0]->name + L"“ in den Papierkorb verschieben?"
                                              : std::to_wstring(sel.size()) + L" Rechnungen in den Papierkorb verschieben?";
-    if (MessageBoxW(m_hwnd, msg.c_str(), L"Löschen", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    std::vector<std::wstring> rels;
+    for (const docs::Doc* d : sel) rels.push_back(d->rel);
+    Ask(L"Löschen?", msg + L"\n\nSie lassen sich dort wiederherstellen.", L"In den Papierkorb", L"Abbrechen", true, [this, rels]() { DoTrash(rels); });
+}
+
+void App::DoTrash(const std::vector<std::wstring>& rels) {
     std::wstring from;
-    for (const docs::Doc* d : sel) {
-        from += AbsPath(d->rel).wstring();
+    for (const std::wstring& rel : rels) {
+        from += AbsPath(rel).wstring();
         from.push_back(L'\0');
     }
     SHFILEOPSTRUCTW op{};
@@ -1831,10 +1873,10 @@ void App::TrashSelected() {
     if (SHFileOperationW(&op) != 0 || op.fAnyOperationsAborted) {
         SetNote(L"Löschen fehlgeschlagen oder abgebrochen.");
     } else {
-        for (const docs::Doc* d : sel) m_meta.erase(d->rel);
+        for (const std::wstring& rel : rels) m_meta.erase(rel);
         m_sel.clear();
         SaveIndex();
-        SetNote(std::to_wstring(sel.size()) + L" in den Papierkorb verschoben");
+        SetNote(std::to_wstring(rels.size()) + L" in den Papierkorb verschoben");
     }
     Refresh();
     Invalidate();
@@ -2888,6 +2930,18 @@ LRESULT CALLBACK App::WndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp) {
 }
 
 LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp) {
+    if (m_notice.open) {
+        const int r = noticecard::HandleMessage(m_hwnd, m_notice, m_noticeSpec, msg, wp, lp);
+        if (r == noticecard::kCursor) return TRUE;
+        if (r == noticecard::kYes || r == noticecard::kNo) {
+            noticecard::Close(m_notice, m_hwnd);
+            std::function<void()> act = std::move(m_noticeYes);
+            m_noticeYes = nullptr;
+            if (r == noticecard::kYes && act) act();
+            return 0;
+        }
+        if (r == noticecard::kHandled) return 0;
+    }
     if (m_help.open) {
         const int r = aboutcard::HandleMessage(m_hwnd, m_help, msg, wp, lp, nullptr);
         if (r == 2) return TRUE;
