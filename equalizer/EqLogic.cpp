@@ -217,7 +217,7 @@ std::wstring SettingsPath()
 
 bool SaveSettings(const Settings& s, const std::wstring& path)
 {
-    std::string t = std::string("enabled=") + (s.enabled ? "1" : "0") + "\r\nkeeprunning=" + (s.keepRunning ? "1" : "0") + "\r\nhotkeys=" + (s.hotkeys ? "1" : "0") + "\r\nbass=" + (s.bass ? "1" : "0") +
+    std::string t = std::string("enabled=") + (s.enabled ? "1" : "0") + "\r\nkeeprunning=" + (s.keepRunning ? "1" : "0") + "\r\nhotkeys=" + (s.hotkeys ? "1" : "0") + "\r\nspectrum=" + (s.spectrum ? "1" : "0") + "\r\nbass=" + (s.bass ? "1" : "0") +
                     "\r\nvoice=" + (s.voice ? "1" : "0") + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(s.gains[b]));
@@ -246,6 +246,7 @@ bool LoadSettings(Settings& s, const std::wstring& path)
         if (key == "enabled") s.enabled = val == "1";
         else if (key == "keeprunning") s.keepRunning = val != "0";
         else if (key == "hotkeys") s.hotkeys = val != "0";
+        else if (key == "spectrum") s.spectrum = val != "0";
         else if (key == "bass") s.bass = val == "1";
         else if (key == "voice") s.voice = val == "1";
         else if (key == "gains")
