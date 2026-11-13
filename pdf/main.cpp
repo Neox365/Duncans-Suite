@@ -29,9 +29,11 @@ using std::min;
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "../common/AboutCardGdi.h"
+#include "../common/Lang.h"
+#include "Lang_en.inc"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.8.2"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.9.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -185,7 +187,30 @@ void FillRound(HDC dc, RECT r, int rad, COLORREF fill, COLORREF border = CLR_INV
     if (border != CLR_INVALID) { Pen pen(Col(border), 1.0f); gr.DrawPath(&pen, &p); }
 }
 
-void DrawTextC(HDC dc, HFONT f, const std::wstring& t, RECT r, COLORREF c, UINT flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE) {
+// Menueeintrag mit uebersetztem Text
+BOOL AppendMenuT(HMENU m, UINT flags, UINT_PTR id, const wchar_t* text) {
+    if (!text || (flags & (MF_SEPARATOR | MF_OWNERDRAW | MF_BITMAP))) return AppendMenuW(m, flags, id, text);
+    const std::wstring t = lang::Tr(text);
+    return AppendMenuW(m, flags, id, t.c_str());
+}
+
+// Dateidialog-Filter "Beschreibung\0Muster\0...": die Beschreibungen uebersetzen
+std::wstring TrFilter(const wchar_t* f) {
+    std::wstring out;
+    bool desc = true;
+    while (*f) {
+        const std::wstring part = f;
+        out += desc ? lang::Tr(part) : part;
+        out.push_back(L'\0');
+        f += part.size() + 1;
+        desc = !desc;
+    }
+    out.push_back(L'\0');
+    return out;
+}
+
+void DrawTextC(HDC dc, HFONT f, const std::wstring& t0, RECT r, COLORREF c, UINT flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE) {
+    const std::wstring t = lang::Tr(t0);
     HGDIOBJ old = SelectObject(dc, f);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, c);
@@ -193,7 +218,8 @@ void DrawTextC(HDC dc, HFONT f, const std::wstring& t, RECT r, COLORREF c, UINT 
     SelectObject(dc, old);
 }
 
-int TextW(const std::wstring& t, HFONT f) {
+int TextW(const std::wstring& t0, HFONT f) {
+    const std::wstring t = lang::Tr(t0);
     HDC dc = GetDC(g.main);
     HGDIOBJ old = SelectObject(dc, f);
     SIZE sz{};
@@ -1081,10 +1107,12 @@ bool PickFile(HWND owner, bool save, std::wstring& path, const wchar_t* title, c
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = owner;
-    ofn.lpstrFilter = L"PDF-Dokumente (*.pdf)\0*.pdf\0Alle Dateien (*.*)\0*.*\0";
+    const std::wstring pdfFilter = TrFilter(L"PDF-Dokumente (*.pdf)\0*.pdf\0Alle Dateien (*.*)\0*.*\0");
+    const std::wstring titleTr = lang::Tr(title);
+    ofn.lpstrFilter = pdfFilter.c_str();
     ofn.lpstrFile = buf;
     ofn.nMaxFile = MAX_PATH * 4;
-    ofn.lpstrTitle = title;
+    ofn.lpstrTitle = titleTr.c_str();
     ofn.lpstrDefExt = L"pdf";
     ofn.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | OFN_NOCHANGEDIR | (save ? OFN_OVERWRITEPROMPT : (OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST));
     if (!(save ? GetSaveFileNameW(&ofn) : GetOpenFileNameW(&ofn))) return false;
@@ -1098,10 +1126,12 @@ bool PickFiles(HWND owner, std::vector<std::wstring>& out, const wchar_t* title)
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = owner;
-    ofn.lpstrFilter = L"PDF-Dokumente (*.pdf)\0*.pdf\0Alle Dateien (*.*)\0*.*\0";
+    const std::wstring pdfFilter = TrFilter(L"PDF-Dokumente (*.pdf)\0*.pdf\0Alle Dateien (*.*)\0*.*\0");
+    const std::wstring titleTr = lang::Tr(title);
+    ofn.lpstrFilter = pdfFilter.c_str();
     ofn.lpstrFile = buf.data();
     ofn.nMaxFile = static_cast<DWORD>(buf.size());
-    ofn.lpstrTitle = title;
+    ofn.lpstrTitle = titleTr.c_str();
     ofn.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_ALLOWMULTISELECT;
     if (!GetOpenFileNameW(&ofn)) return false;
     const wchar_t* p = buf.data();
@@ -1253,7 +1283,7 @@ bool PromptText(HWND owner, const wchar_t* title, std::wstring& text, const wcha
     AdjustWindowRectEx(&cr, style, FALSE, ex);
     RECT orc; GetWindowRect(owner, &orc);
     const int w = cr.right - cr.left, h = cr.bottom - cr.top;
-    HWND hwnd = CreateWindowExW(ex, L"DuncansPdfPrompt", title, style, orc.left + ((orc.right - orc.left) - w) / 2,
+    HWND hwnd = CreateWindowExW(ex, L"DuncansPdfPrompt", lang::Tr(title).c_str(), style, orc.left + ((orc.right - orc.left) - w) / 2,
                                 orc.top + ((orc.bottom - orc.top) - h) / 3, w, h, owner, nullptr, g.inst, nullptr);
     if (!hwnd) { g_prompt = nullptr; return false; }
     PromptLayout(hwnd);
@@ -1501,7 +1531,7 @@ void ShowSettings() {
     AdjustWindowRectEx(&cr, style, FALSE, ex);
     RECT orc; GetWindowRect(g.main, &orc);
     const int w = cr.right - cr.left, h = cr.bottom - cr.top;
-    HWND hwnd = CreateWindowExW(ex, L"DuncansPdfSettings", L"Einstellungen", style, orc.left + ((orc.right - orc.left) - w) / 2,
+    HWND hwnd = CreateWindowExW(ex, L"DuncansPdfSettings", lang::Tr(L"Einstellungen").c_str(), style, orc.left + ((orc.right - orc.left) - w) / 2,
                                 orc.top + ((orc.bottom - orc.top) - h) / 3, w, h, g.main, nullptr, g.inst, nullptr);
     if (!hwnd) { g_set = nullptr; return; }
     EnableWindow(g.main, FALSE);
@@ -1842,7 +1872,7 @@ bool DrawSignature(PdfDocument::Image& out) {
     AdjustWindowRectEx(&cr, style, FALSE, ex);
     RECT orc; GetWindowRect(g.main, &orc);
     const int w = cr.right - cr.left, h = cr.bottom - cr.top;
-    HWND hwnd = CreateWindowExW(ex, L"DuncansPdfSign", L"Unterschrift zeichnen", style, orc.left + ((orc.right - orc.left) - w) / 2,
+    HWND hwnd = CreateWindowExW(ex, L"DuncansPdfSign", lang::Tr(L"Unterschrift zeichnen").c_str(), style, orc.left + ((orc.right - orc.left) - w) / 2,
                                 orc.top + ((orc.bottom - orc.top) - h) / 3, w, h, g.main, nullptr, g.inst, nullptr);
     if (!hwnd) { g_sign = nullptr; return false; }
     SignLayout(hwnd);
@@ -1891,11 +1921,11 @@ void ShowStampMenu() {
     const std::wstring sigPath = SignaturePath();
     const bool haveSig = !sigPath.empty() && GetFileAttributesW(sigPath.c_str()) != INVALID_FILE_ATTRIBUTES;
     HMENU m = CreatePopupMenu();
-    for (int i = 0; i < 4; ++i) AppendMenuW(m, MF_STRING, 1 + i, (std::wstring(L"Stempel „") + kStamps[i].word + L"“").c_str());
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING, 10, L"Unterschrift zeichnen …");
-    AppendMenuW(m, MF_STRING, 11, L"Unterschrift aus Bilddatei (PNG) …");
-    AppendMenuW(m, MF_STRING | (haveSig ? 0 : MF_GRAYED), 12, L"Gespeicherte Unterschrift einfügen");
+    for (int i = 0; i < 4; ++i) AppendMenuT(m, MF_STRING, 1 + i, (std::wstring(L"Stempel „") + kStamps[i].word + L"“").c_str());
+    AppendMenuT(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuT(m, MF_STRING, 10, L"Unterschrift zeichnen …");
+    AppendMenuT(m, MF_STRING, 11, L"Unterschrift aus Bilddatei (PNG) …");
+    AppendMenuT(m, MF_STRING | (haveSig ? 0 : MF_GRAYED), 12, L"Gespeicherte Unterschrift einfügen");
     POINT pt{};
     GetCursorPos(&pt);
     for (const Item& it : g.items)
@@ -1919,10 +1949,12 @@ void ShowStampMenu() {
             OPENFILENAMEW ofn{};
             ofn.lStructSize = sizeof(ofn);
             ofn.hwndOwner = g.main;
-            ofn.lpstrFilter = L"Bilder (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0Alle Dateien (*.*)\0*.*\0";
+            const std::wstring imgFilter = TrFilter(L"Bilder (*.png;*.jpg;*.jpeg;*.bmp)\0*.png;*.jpg;*.jpeg;*.bmp\0Alle Dateien (*.*)\0*.*\0");
+            ofn.lpstrFilter = imgFilter.c_str();
             ofn.lpstrFile = buf;
             ofn.nMaxFile = MAX_PATH * 2;
-            ofn.lpstrTitle = L"Unterschrift als Bild wählen (PNG mit transparentem Hintergrund ist ideal)";
+            const std::wstring sigTitle = lang::Tr(L"Unterschrift als Bild wählen (PNG mit transparentem Hintergrund ist ideal)");
+            ofn.lpstrTitle = sigTitle.c_str();
             ofn.Flags = OFN_EXPLORER | OFN_HIDEREADONLY | OFN_NOCHANGEDIR | OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
             if (!GetOpenFileNameW(&ofn)) return;
             path = buf;
@@ -2041,7 +2073,7 @@ bool PickFolder(HWND owner, std::wstring& path, const std::wstring& startDir) {
     DWORD opts = 0;
     dlg->GetOptions(&opts);
     dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
-    dlg->SetTitle(L"Zielordner für die Teile wählen");
+    dlg->SetTitle(lang::Tr(L"Zielordner für die Teile wählen").c_str());
     if (!startDir.empty()) {
         IShellItem* si = nullptr;
         if (SUCCEEDED(SHCreateItemFromParsingName(startDir.c_str(), nullptr, IID_PPV_ARGS(&si)))) { dlg->SetFolder(si); si->Release(); }
@@ -2139,7 +2171,7 @@ std::wstring FormatBytes(unsigned long long b) {
 
 void UpdateTitle() {
     std::wstring t = g.doc.IsOpen() ? FileName(g.doc.Path()) + (g.doc.Modified() ? L" *" : L"") + L" – " + kAppTitle : kAppTitle;
-    SetWindowTextW(g.main, t.c_str());
+    SetWindowTextW(g.main, lang::Tr(t).c_str());
 }
 
 std::wstring PositionsPath() {
@@ -2303,7 +2335,7 @@ void RunCommand(int cmd) {
             case C_FIND: name = L"Im Dokument suchen"; break;
             }
             const bool on = (it.cmd == C_HILITE && g.tool == 1) || (it.cmd == C_NOTE && g.tool == 2) || (it.cmd == C_CROP && g.tool == 3) || (it.cmd == C_ERASE && g.tool == 4);
-            AppendMenuW(m, MF_STRING | (ItemEnabled(it) ? 0 : MF_GRAYED) | (on ? MF_CHECKED : 0), 1000 + it.cmd, name);
+            AppendMenuT(m, MF_STRING | (ItemEnabled(it) ? 0 : MF_GRAYED) | (on ? MF_CHECKED : 0), 1000 + it.cmd, name);
         }
         POINT pt{};
         GetCursorPos(&pt);
@@ -3147,14 +3179,14 @@ LRESULT CALLBACK SideProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (hit < 0) return 0;
         if (!g.sel[hit]) { SelectOnly(hit); g.selKeep = false; GoToPage(hit); }
         HMENU menu = CreatePopupMenu();
-        AppendMenuW(menu, MF_STRING, 1, L"Nach links drehen");
-        AppendMenuW(menu, MF_STRING, 2, L"Nach rechts drehen");
-        AppendMenuW(menu, MF_STRING, 3, L"Seite(n) löschen");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, 5, L"Ausgewählte Seiten als neue PDF speichern …");
-        AppendMenuW(menu, MF_STRING, 6, L"PDF teilen (Split) …");
-        AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(menu, MF_STRING, 4, L"Alle auswählen");
+        AppendMenuT(menu, MF_STRING, 1, L"Nach links drehen");
+        AppendMenuT(menu, MF_STRING, 2, L"Nach rechts drehen");
+        AppendMenuT(menu, MF_STRING, 3, L"Seite(n) löschen");
+        AppendMenuT(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuT(menu, MF_STRING, 5, L"Ausgewählte Seiten als neue PDF speichern …");
+        AppendMenuT(menu, MF_STRING, 6, L"PDF teilen (Split) …");
+        AppendMenuT(menu, MF_SEPARATOR, 0, nullptr);
+        AppendMenuT(menu, MF_STRING, 4, L"Alle auswählen");
         POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         ClientToScreen(hwnd, &pt);
         const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON, pt.x, pt.y, 0, hwnd, nullptr);
@@ -3344,6 +3376,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
+    lang::Add(kPdfEn);
     g.inst = inst;
     PdfDocument::SetFormRedrawHook(&FormRedrawHook);
     Gdiplus::GdiplusStartupInput gsi;

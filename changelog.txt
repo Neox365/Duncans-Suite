@@ -248,6 +248,9 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.9.0 | 2026-11-13
+- Neu: Englisch. Leiste, Seitenleiste, Einstellungen, Eingabefenster (Passwort, Split, Unterschrift), Datei-Dialoge, Meldungen und Hinweise gibt es jetzt auch auf Englisch. Das Programm folgt der Windows-Sprache: bei Deutsch bleibt alles wie gewohnt, sonst erscheint Englisch. Umschalten von Hand geht im Zahnrad-Menü von Oggys Docs-Files („Sprache: …“); die Wahl gilt für alle Programme der Suite.
+- Hinweis: Im Split-Dialog gelten weiter die Eingabewörter „je 5“ und „einzeln“. Eigene Texte (Notizen, Dateinamen, Suchbegriffe) werden nie übersetzt.
 ## 1.8.2 | 2026-11-12
 - Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen oder Dateien und wird nirgends automatisch gesendet.
 - Geändert: Meldungen und Rückfragen erscheinen im dunklen Design des Programms statt als Windows-Meldungsfenster. Bedienung wie gewohnt: Enter bestätigt, Esc bricht ab, J/Ja und N/Nein als Tasten, Pfeiltasten und Tab wechseln die Schaltfläche.
