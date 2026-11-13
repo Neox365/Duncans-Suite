@@ -76,6 +76,10 @@ int ProfileForDevice(const std::vector<Profile>& list, const std::wstring& devic
 // Liest eine Parametric-EQ-Datei (z. B. von AutoEq): nur "Preamp:" und "Filter:"-Zeilen mit harmlosen Zeichen werden uebernommen
 // ("Filter 3:" wird zu "Filter:"). ignored = Anzahl nicht uebernommener Zeilen.
 std::vector<std::string> ParseFilterFile(const std::string& text, int& ignored);
+// Auch eine einzelne "GraphicEQ: 20 -1.5; 25 ..."-Zeile (AutoEq GraphicEQ.txt) wird uebernommen.
+
+// Fuer den A/B-Vergleich: Einstellungen "Original hoeren", nur mit der Vorverstaerkung (ungefaehr gleich laut wie mit Equalizer)
+Settings BypassSettings(const Settings& s);
 
 // Anzeigename des Standard-Ausgabegeraets (leer, wenn nicht ermittelbar)
 std::wstring DefaultOutputName();

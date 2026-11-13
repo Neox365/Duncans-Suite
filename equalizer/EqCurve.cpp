@@ -181,7 +181,7 @@ std::vector<double> ResponseDbFromConfig(const std::string& config, const std::v
 {
     std::vector<double> db(freqs.size(), 0.0);
     std::vector<Biquad> filters;
-    std::vector<GraphicPoint> graphic;
+    std::vector<std::vector<GraphicPoint>> graphics;   // jede GraphicEQ-Zeile fuer sich (Equalizer APO schaltet sie hintereinander)
     double preamp = 0;
     std::istringstream in(config);
     std::string line;
@@ -196,18 +196,21 @@ std::vector<double> ResponseDbFromConfig(const std::string& config, const std::v
             std::string body = line.substr(11);
             std::replace(body.begin(), body.end(), ';', ' ');
             const std::vector<std::string> t = Tokens(body);
+            std::vector<GraphicPoint> graphic;
             for (size_t i = 0; i + 1 < t.size(); i += 2) {
                 double f = 0, g = 0;
                 if (ToNumber(t[i], f) && ToNumber(t[i + 1], g) && f > 0) graphic.push_back({f, g});
             }
             std::sort(graphic.begin(), graphic.end(), [](const GraphicPoint& a, const GraphicPoint& b) { return a.f < b.f; });
+            if (!graphic.empty()) graphics.push_back(std::move(graphic));
         } else if (line.compare(0, 7, "Filter:") == 0) {
             Filter f;
             if (ParseFilter(line, f) && f.on) filters.push_back(MakeBiquad(f));
         }
     }
     for (size_t i = 0; i < freqs.size(); ++i) {
-        double v = GraphicDb(graphic, freqs[i]);
+        double v = 0;
+        for (const auto& g : graphics) v += GraphicDb(g, freqs[i]);
         for (const Biquad& b : filters) v += BiquadDb(b, freqs[i]);
         db[i] = v + (includePreamp ? preamp : 0.0);
     }

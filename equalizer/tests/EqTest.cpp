@@ -362,6 +362,44 @@ int main()
         DeleteFileW(sp3.c_str());
     }
 
+    // AutoEq: GraphicEQ.txt wird als eine Zeile uebernommen, die Kurve addiert sich zu den Reglern
+    {
+        int ign = 0;
+        const std::string gtxt = "GraphicEQ: 20 -1.5; 100 0; 1000 3.0; 10000 -2; 20000 -4\r\n";
+        std::vector<std::string> gl = ParseFilterFile(gtxt, ign);
+        CHECK(gl.size() == 1 && ign == 0 && gl[0].compare(0, 11, "GraphicEQ: ") == 0);
+        gl = ParseFilterFile(gtxt + "GraphicEQ: 20 0; 30 1\r\n", ign);
+        CHECK(gl.size() == 1 && ign == 1);                                                              // nur eine Graphic-EQ-Zeile
+        gl = ParseFilterFile("GraphicEQ: 20 abc; 30 1\r\n", ign);
+        CHECK(gl.empty() && ign == 1);                                                                  // Buchstaben: verworfen
+        gl = ParseFilterFile("Preamp: -6.5 dB\r\nFilter 1: ON PK Fc 31 Hz Gain 6.3 dB Q 1.41\r\n" + gtxt, ign);
+        CHECK(gl.size() == 3);
+        Settings gs;
+        gs.extra = ParseFilterFile(gtxt, ign);
+        const std::vector<double> fq = {1000.0};
+        CHECK(std::fabs(ResponseDb(gs, fq)[0] - 3.0) < 0.1);
+        gs.gains[5] = 6;                                                                                  // Regler + Datei addieren sich (500 Hz Regler wirkt bei 1 kHz teils mit)
+        CHECK(ResponseDb(gs, fq)[0] > 3.0);
+        Settings gp;
+        gp.enabled = true;
+        gp.extra = gs.extra;
+        CHECK(BuildConfig(gp).find("GraphicEQ: 20 -1.5;") != std::string::npos);
+    }
+
+    // A/B-Vergleich: nur die Vorverstaerkung bleibt
+    {
+        Settings a;
+        a.gains[0] = 6; a.gains[3] = 3;
+        a.extra.push_back("Preamp: -2.0 dB");
+        a.extra.push_back("Filter: ON PK Fc 1000 Hz Gain 4 dB Q 1.0");
+        const Settings b = BypassSettings(a);
+        const std::string cfg = BuildConfig(b);
+        CHECK(cfg.find("Filter:") == std::string::npos && cfg.find("GraphicEQ") == std::string::npos);
+        CHECK(cfg.find("Preamp: -8 dB") != std::string::npos);                                         // -6 automatisch, -2 aus der Datei
+        Settings flat;
+        CHECK(BuildConfig(BypassSettings(flat)).find("Preamp") == std::string::npos);
+    }
+
     std::printf("%d Pruefungen, %d Fehler\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }
