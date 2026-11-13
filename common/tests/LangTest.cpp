@@ -54,6 +54,9 @@ int main()
     // Zeilen aus mehreren Teilen mit Mittelpunkt
     CHECK(lang::Tr(L"3 Rechnungen   ·   Status: Bezahlt   ·   x:/Ordner") == L"3 invoices   ·   Status: Paid   ·   x:/Ordner");
 
+    // Zeilen und Listen
+    CHECK(lang::Tr(L"• 3 Rechnungen\nBezahlt, 1 Rechnung\nx") == L"• 3 invoices\nPaid, 1 invoice\nx");
+
     // zurueck auf Deutsch (und die Wahl in der Datei aufraeumen)
     lang::SetMode(lang::Mode::German);
     CHECK(lang::Tr(L"Bezahlt") == L"Bezahlt");
