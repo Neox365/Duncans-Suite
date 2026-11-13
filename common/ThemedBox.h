@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "Lang.h"
 #include "Theme.h"
 
 namespace themedbox {
@@ -201,8 +202,8 @@ inline int Show(HWND owner, const wchar_t* text, const wchar_t* title, UINT flag
     using namespace detail;
     Register();
     Ctx c;
-    c.text = text ? text : L"";
-    c.title = title ? title : L"";
+    c.text = lang::Tr(text ? text : L"");
+    c.title = lang::Tr(title ? title : L"");
     switch (flags & MB_ICONMASK) {
         case MB_ICONINFORMATION: c.icon = 1; break;
         case MB_ICONQUESTION: c.icon = 2; break;
@@ -215,6 +216,7 @@ inline int Show(HWND owner, const wchar_t* text, const wchar_t* title, UINT flag
         case MB_YESNOCANCEL: c.n = 3; c.ids[0] = IDYES; c.ids[1] = IDNO; c.ids[2] = IDCANCEL; c.labels[0] = L"Ja"; c.labels[1] = L"Nein"; c.labels[2] = L"Abbrechen"; break;
         default: c.n = 1; c.ids[0] = IDOK; c.labels[0] = L"OK"; break;
     }
+    for (auto& l : c.labels) l = lang::Tr(l);
     const UINT d = flags & MB_DEFMASK;
     c.def = d == MB_DEFBUTTON2 && c.n > 1 ? 1 : d == MB_DEFBUTTON3 && c.n > 2 ? 2 : 0;
     HWND parent = owner && IsWindow(owner) ? owner : nullptr;

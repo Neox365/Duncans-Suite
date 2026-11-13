@@ -42,9 +42,20 @@
 #include "TextEdit.h"
 #include "Theme.h"
 #include "../common/AboutCard.h"
+#include "../common/Lang.h"
+
+#include "Lang_en.inc"
+
+// Menueeintrag mit uebersetztem Text (bei englischer Oberflaeche)
+static BOOL AppendMenuT(HMENU m, UINT flags, UINT_PTR id, const wchar_t* text)
+{
+    if (!text || (flags & (MF_SEPARATOR | MF_OWNERDRAW | MF_BITMAP))) return AppendMenuW(m, flags, id, text);
+    const std::wstring t = lang::Tr(text);
+    return AppendMenuW(m, flags, id, t.c_str());
+}
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.17.0"   // normalerweise aus CMake (DOCS_VER)
+#define APP_VERSION L"0.18.0"   // normalerweise aus CMake (DOCS_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -75,7 +86,7 @@ enum Id {
 };
 constexpr int kMaxTagChips = 23;
 enum MenuId {
-    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND, M_EXPORT, M_BACKUP, M_TAXEXPORT, M_HELP,
+    M_ROOT = 100, M_OPENROOT, M_MOVE, M_RESCAN, M_ABOUT, M_PDFREADER = 105, M_AUTOIMPORT, M_READPDF, M_REMIND, M_EXPORT, M_BACKUP, M_TAXEXPORT, M_HELP, M_LANG,
     C_OPEN = 120, C_SHOW, C_STATUS0 = 130, C_EDIT = 140, C_DELETE, C_INCOME, C_EXPENSE, C_TAGS, C_STORNO
 };
 
@@ -139,6 +150,11 @@ inline float H(const D2D1_RECT_F& r) { return r.bottom - r.top; }
 inline D2D1_RECT_F Inset(D2D1_RECT_F r, float dx, float dy) { return {r.left + dx, r.top + dy, r.right - dx, r.bottom - dy}; }
 
 std::wstring KnownFolder(REFKNOWNFOLDERID id) {
+    // Nur fuer Tests: DUNCANS_DOCS_TESTDIR verlegt Dokumente und lokale Daten in einen Wegwerf-Ordner (nie echte Rechnungen anfassen)
+    wchar_t testDir[MAX_PATH] = {};
+    if (GetEnvironmentVariableW(L"DUNCANS_DOCS_TESTDIR", testDir, MAX_PATH) > 0 &&
+        (IsEqualGUID(id, FOLDERID_LocalAppData) || IsEqualGUID(id, FOLDERID_Documents)))
+        return std::wstring(testDir) + (IsEqualGUID(id, FOLDERID_Documents) ? L"\\Documents" : L"\\Local");
     PWSTR p = nullptr;
     std::wstring s;
     if (SUCCEEDED(SHGetKnownFolderPath(id, 0, nullptr, &p))) s = p;
@@ -483,7 +499,8 @@ private:
     }
     void Txt(const std::wstring& s, const D2D1_RECT_F& r, IDWriteTextFormat* f, unsigned c, float a = 1.f) {
         SetCol(c, a);
-        rt->DrawText(s.c_str(), (UINT32)s.size(), f, r, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        const std::wstring t = lang::Tr(s);
+        rt->DrawText(t.c_str(), (UINT32)t.size(), f, r, brush.Get(), D2D1_DRAW_TEXT_OPTIONS_CLIP);
     }
     float TextW(const std::wstring& s, IDWriteTextFormat* f);
     void Button(int id, const D2D1_RECT_F& r, const std::wstring& label, bool accent, bool danger = false);
@@ -721,7 +738,8 @@ void App::Layout() {
     ClampScroll();
 }
 
-float App::TextW(const std::wstring& s, IDWriteTextFormat* f) {
+float App::TextW(const std::wstring& s0, IDWriteTextFormat* f) {
+    const std::wstring s = lang::Tr(s0);
     ComPtr<IDWriteTextLayout> l;
     if (FAILED(dw->CreateTextLayout(s.c_str(), (UINT32)s.size(), f, 10000.f, 100.f, &l))) return 0;
     DWRITE_TEXT_METRICS m{};
@@ -1132,7 +1150,7 @@ void App::DrawList() {
     const float xs[5] = {xName, xCred, xAmt, xDue, xStat};
     const float ws[5] = {wName, wCred, wAmt - 10 * k, wDue, rcList.right - xStat - pad};
     for (int c = 0; c < 5; ++c) {
-        std::wstring h = heads[c];
+        std::wstring h = lang::Tr(heads[c]);
         if (c == m_settings.sortCol) h += m_settings.sortDesc ? L"  ▾" : L"  ▴";
         Txt(h, {xs[c], rcHead.top, xs[c] + ws[c], rcHead.bottom}, c == 2 ? fRight.Get() : fBold.Get(),
             c == m_settings.sortCol ? Theme::Text : Theme::TextDim);
@@ -1687,13 +1705,13 @@ void App::ShowCustomerMenu() {
     HMENU m = CreatePopupMenu(), rm = CreatePopupMenu();
     constexpr int kPick = 1000, kRemove = 2000, kMax = 400;
     for (int i = 0; i < (int)list.size() && i < kMax; ++i) {
-        AppendMenuW(m, MF_STRING, kPick + i, list[i].name.c_str());
-        AppendMenuW(rm, MF_STRING, kRemove + i, list[i].name.c_str());
+        AppendMenuT(m, MF_STRING, kPick + i, list[i].name.c_str());
+        AppendMenuT(rm, MF_STRING, kRemove + i, list[i].name.c_str());
     }
-    if (list.empty()) AppendMenuW(m, MF_STRING | MF_GRAYED, 0, L"Noch keine Kunden (werden beim Erstellen einer Rechnung gemerkt)");
+    if (list.empty()) AppendMenuT(m, MF_STRING | MF_GRAYED, 0, L"Noch keine Kunden (werden beim Erstellen einer Rechnung gemerkt)");
     else {
-        AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-        AppendMenuW(m, MF_POPUP, (UINT_PTR)rm, L"Kunde aus der Liste entfernen");
+        AppendMenuT(m, MF_SEPARATOR, 0, nullptr);
+        AppendMenuT(m, MF_POPUP, (UINT_PTR)rm, L"Kunde aus der Liste entfernen");
     }
     POINT pt{};
     GetCursorPos(&pt);
@@ -1888,7 +1906,7 @@ void App::ChangeRoot() {
     DWORD opts = 0;
     dlg->GetOptions(&opts);
     dlg->SetOptions(opts | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
-    dlg->SetTitle(L"Rechnungsordner wählen");
+    dlg->SetTitle(lang::Tr(L"Rechnungsordner wählen").c_str());
     if (FAILED(dlg->Show(m_hwnd))) return;
     ComPtr<IShellItem> item;
     PWSTR p = nullptr;
@@ -1909,9 +1927,10 @@ void App::PickFilesToAdd() {
     DWORD opts = 0;
     dlg->GetOptions(&opts);
     dlg->SetOptions(opts | FOS_ALLOWMULTISELECT | FOS_FORCEFILESYSTEM);
-    COMDLG_FILTERSPEC fl[2] = {{L"Belege (PDF, JPG, PNG, XML)", L"*.pdf;*.jpg;*.jpeg;*.png;*.xml"}, {L"Alle Dateien", L"*.*"}};
+    const std::wstring flA = lang::Tr(L"Belege (PDF, JPG, PNG, XML)"), flB = lang::Tr(L"Alle Dateien");
+    COMDLG_FILTERSPEC fl[2] = {{flA.c_str(), L"*.pdf;*.jpg;*.jpeg;*.png;*.xml"}, {flB.c_str(), L"*.*"}};
     dlg->SetFileTypes(2, fl);
-    dlg->SetTitle(L"Rechnungen hinzufügen");
+    dlg->SetTitle(lang::Tr(L"Rechnungen hinzufügen").c_str());
     if (FAILED(dlg->Show(m_hwnd))) return;
     ComPtr<IShellItemArray> arr;
     if (FAILED(dlg->GetResults(&arr))) return;
@@ -2622,7 +2641,8 @@ void App::ExportCsv() {
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = m_hwnd;
-    ofn.lpstrFilter = L"CSV-Datei für Excel (*.csv)\0*.csv\0";
+    const std::wstring csvFilter = lang::Tr(L"CSV-Datei für Excel (*.csv)") + std::wstring(1, L'\0') + L"*.csv" + std::wstring(1, L'\0');
+    ofn.lpstrFilter = csvFilter.c_str();
     ofn.lpstrFile = file;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"csv";
@@ -2665,7 +2685,8 @@ bool AskZipPath(HWND owner, const std::wstring& defName, fs::path& out) {
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn);
     ofn.hwndOwner = owner;
-    ofn.lpstrFilter = L"ZIP-Datei (*.zip)\0*.zip\0";
+    const std::wstring zipFilter = lang::Tr(L"ZIP-Datei (*.zip)") + std::wstring(1, L'\0') + L"*.zip" + std::wstring(1, L'\0');
+    ofn.lpstrFilter = zipFilter.c_str();
     ofn.lpstrFile = file;
     ofn.nMaxFile = MAX_PATH;
     ofn.lpstrDefExt = L"zip";
@@ -2704,7 +2725,7 @@ void App::ExportTaxYear() {
     if (years.empty()) { SetNote(L"Es gibt noch keine Belege."); return; }
     std::vector<std::wstring> list(years.rbegin(), years.rend());   // neuestes Jahr zuerst
     HMENU m = CreatePopupMenu();
-    for (size_t i = 0; i < list.size() && i < 100; ++i) AppendMenuW(m, MF_STRING, 3000 + (UINT)i, (L"Jahr " + list[i]).c_str());
+    for (size_t i = 0; i < list.size() && i < 100; ++i) AppendMenuT(m, MF_STRING, 3000 + (UINT)i, (L"Jahr " + list[i]).c_str());
     POINT pt{};
     GetCursorPos(&pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
@@ -2730,23 +2751,24 @@ void App::ExportTaxYear() {
 
 void App::ShowGearMenu() {
     HMENU m = CreatePopupMenu();
-    AppendMenuW(m, MF_STRING, M_ROOT, L"Rechnungsordner ändern …");
-    AppendMenuW(m, MF_STRING, M_OPENROOT, L"Rechnungsordner im Explorer öffnen");
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING | (m_settings.moveFiles ? MF_CHECKED : 0), M_MOVE, L"Beim Hinzufügen verschieben statt kopieren");
-    AppendMenuW(m, MF_STRING | (m_settings.autoImport ? MF_CHECKED : 0), M_AUTOIMPORT, L"Beim Ablegen automatisch einsortieren (Umschalt = Dialog)");
-    AppendMenuW(m, MF_STRING | (m_settings.readPdf ? MF_CHECKED : 0) | (m_settings.autoImport ? 0 : MF_GRAYED), M_READPDF, L"Betrag und Fälligkeit aus PDF und Scans lesen (Texterkennung)");
+    AppendMenuT(m, MF_STRING, M_ROOT, L"Rechnungsordner ändern …");
+    AppendMenuT(m, MF_STRING, M_OPENROOT, L"Rechnungsordner im Explorer öffnen");
+    AppendMenuT(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuT(m, MF_STRING | (m_settings.moveFiles ? MF_CHECKED : 0), M_MOVE, L"Beim Hinzufügen verschieben statt kopieren");
+    AppendMenuT(m, MF_STRING | (m_settings.autoImport ? MF_CHECKED : 0), M_AUTOIMPORT, L"Beim Ablegen automatisch einsortieren (Umschalt = Dialog)");
+    AppendMenuT(m, MF_STRING | (m_settings.readPdf ? MF_CHECKED : 0) | (m_settings.autoImport ? 0 : MF_GRAYED), M_READPDF, L"Betrag und Fälligkeit aus PDF und Scans lesen (Texterkennung)");
     const bool haveReader = !FindPdfReader().empty();
-    AppendMenuW(m, MF_STRING | (m_settings.pdfReader && haveReader ? MF_CHECKED : 0) | (haveReader ? 0 : MF_GRAYED), M_PDFREADER,
+    AppendMenuT(m, MF_STRING | (m_settings.pdfReader && haveReader ? MF_CHECKED : 0) | (haveReader ? 0 : MF_GRAYED), M_PDFREADER,
                 haveReader ? L"PDFs im Duncan's PDF Reader \u00F6ffnen" : L"PDFs im Duncan's PDF Reader \u00F6ffnen (nicht gefunden)");
-    AppendMenuW(m, MF_STRING | (RemindAutostartOn() ? MF_CHECKED : 0), M_REMIND, L"An fällige Rechnungen erinnern (beim Windows-Start und täglich um 9 Uhr)");
-    AppendMenuW(m, MF_STRING, M_RESCAN, L"Neu einlesen (F5)");
-    AppendMenuW(m, MF_STRING | (m_view.empty() ? MF_GRAYED : 0), M_EXPORT, L"Belege der aktuellen Ansicht als CSV exportieren …");
-    AppendMenuW(m, MF_STRING | (m_all.empty() ? MF_GRAYED : 0), M_TAXEXPORT, L"Export für den Steuerberater (Jahr wählen) …");
-    AppendMenuW(m, MF_STRING, M_BACKUP, L"Sicherung des Rechnungsordners erstellen (ZIP) …");
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING, M_HELP, L"Hilfe und Kurzanleitung\tF1");
-    AppendMenuW(m, MF_STRING, M_ABOUT, L"Über Oggys Docs-Files");
+    AppendMenuT(m, MF_STRING | (RemindAutostartOn() ? MF_CHECKED : 0), M_REMIND, L"An fällige Rechnungen erinnern (beim Windows-Start und täglich um 9 Uhr)");
+    AppendMenuT(m, MF_STRING, M_RESCAN, L"Neu einlesen (F5)");
+    AppendMenuT(m, MF_STRING | (m_view.empty() ? MF_GRAYED : 0), M_EXPORT, L"Belege der aktuellen Ansicht als CSV exportieren …");
+    AppendMenuT(m, MF_STRING | (m_all.empty() ? MF_GRAYED : 0), M_TAXEXPORT, L"Export für den Steuerberater (Jahr wählen) …");
+    AppendMenuT(m, MF_STRING, M_BACKUP, L"Sicherung des Rechnungsordners erstellen (ZIP) …");
+    AppendMenuT(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuT(m, MF_STRING, M_LANG, lang::CurrentMode() == lang::Mode::German ? L"Sprache: Deutsch" : lang::CurrentMode() == lang::Mode::English ? L"Sprache: Englisch" : L"Sprache: automatisch");
+    AppendMenuT(m, MF_STRING, M_HELP, L"Hilfe und Kurzanleitung\tF1");
+    AppendMenuT(m, MF_STRING, M_ABOUT, L"Über Oggys Docs-Files");
     POINT pt{(LONG)rcTop.right - (LONG)(16 * k), (LONG)rcTop.bottom};
     ClientToScreen(m_hwnd, &pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_RIGHTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
@@ -2768,6 +2790,10 @@ void App::ShowGearMenu() {
         case M_BACKUP: ExportBackup(); break;
         case M_ABOUT: aboutcard::Open(m_about, m_hwnd); break;
         case M_HELP: aboutcard::Open(m_help, m_hwnd); break;
+        case M_LANG:   // automatisch -> Deutsch -> Englisch -> automatisch
+            lang::SetMode(lang::CurrentMode() == lang::Mode::Auto ? lang::Mode::German : lang::CurrentMode() == lang::Mode::German ? lang::Mode::English : lang::Mode::Auto);
+            Invalidate();
+            break;
     }
     Invalidate();
 }
@@ -2803,9 +2829,9 @@ void App::ShowContextMenu(int x, int y) {
     if (sel.empty()) return;
     HMENU m = CreatePopupMenu();
     std::vector<HBITMAP> dots;   // nach dem Menue freigeben
-    AppendMenuW(m, MF_STRING, C_OPEN, L"\u00D6ffnen");
-    AppendMenuW(m, MF_STRING, C_SHOW, L"Im Ordner anzeigen");
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuT(m, MF_STRING, C_OPEN, L"\u00D6ffnen");
+    AppendMenuT(m, MF_STRING, C_SHOW, L"Im Ordner anzeigen");
+    AppendMenuT(m, MF_SEPARATOR, 0, nullptr);
     bool same = true;
     for (const auto* d : sel) same = same && d->m.status == sel[0]->m.status;
     // Reihenfolge: Bezahlt, Offen, Ratenzahlung, Fixkosten; jeweils mit Punkt in der Badge-Farbe
@@ -2824,17 +2850,17 @@ void App::ShowContextMenu(int x, int y) {
         mi.hbmpItem = dot;
         InsertMenuItemW(m, GetMenuItemCount(m), TRUE, &mi);
     }
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuT(m, MF_SEPARATOR, 0, nullptr);
     bool allIncome = true;
     for (const auto* d : sel) allIncome = allIncome && d->m.income;
-    AppendMenuW(m, MF_STRING | (allIncome ? MF_CHECKED : 0), C_INCOME, L"Als Einnahme z\u00E4hlen");
-    AppendMenuW(m, MF_STRING | (!allIncome && std::none_of(sel.begin(), sel.end(), [](const docs::Doc* d) { return d->m.income; }) ? MF_CHECKED : 0), C_EXPENSE,
+    AppendMenuT(m, MF_STRING | (allIncome ? MF_CHECKED : 0), C_INCOME, L"Als Einnahme z\u00E4hlen");
+    AppendMenuT(m, MF_STRING | (!allIncome && std::none_of(sel.begin(), sel.end(), [](const docs::Doc* d) { return d->m.income; }) ? MF_CHECKED : 0), C_EXPENSE,
                 L"Als Ausgabe z\u00E4hlen");
-    AppendMenuW(m, MF_STRING, C_TAGS, L"Tags vergeben \u2026\tStrg+T");
-    AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(m, MF_STRING | (sel.size() == 1 ? 0 : MF_GRAYED), C_EDIT, L"Bearbeiten \u2026");
-    AppendMenuW(m, MF_STRING, C_DELETE, L"L\u00F6schen");
-    if (sel.size() == 1 && sel[0]->m.locked && sel[0]->m.link.empty()) AppendMenuW(m, MF_STRING, C_STORNO, L"Stornieren (Gutschrift erstellen) \u2026");
+    AppendMenuT(m, MF_STRING, C_TAGS, L"Tags vergeben \u2026\tStrg+T");
+    AppendMenuT(m, MF_SEPARATOR, 0, nullptr);
+    AppendMenuT(m, MF_STRING | (sel.size() == 1 ? 0 : MF_GRAYED), C_EDIT, L"Bearbeiten \u2026");
+    AppendMenuT(m, MF_STRING, C_DELETE, L"L\u00F6schen");
+    if (sel.size() == 1 && sel[0]->m.locked && sel[0]->m.link.empty()) AppendMenuT(m, MF_STRING, C_STORNO, L"Stornieren (Gutschrift erstellen) \u2026");
     POINT pt{x, y};
     ClientToScreen(m_hwnd, &pt);
     const int cmd = TrackPopupMenu(m, TPM_RETURNCMD | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, m_hwnd, nullptr);
@@ -3282,8 +3308,8 @@ int RunRemind(HINSTANCE hi) {
     g_remindNid.uCallbackMessage = WM_REMIND_TRAY;
     g_remindNid.hIcon = LoadIconW(hi, MAKEINTRESOURCEW(1));
     wcscpy_s(g_remindNid.szTip, L"Oggys Docs-Files");
-    wcscpy_s(g_remindNid.szInfoTitle, L"Rechnungen fällig");
-    wcsncpy_s(g_remindNid.szInfo, text.c_str(), _TRUNCATE);
+    wcscpy_s(g_remindNid.szInfoTitle, lang::Tr(L"Rechnungen fällig").c_str());
+    wcsncpy_s(g_remindNid.szInfo, lang::Tr(text).c_str(), _TRUNCATE);
     g_remindNid.dwInfoFlags = NIIF_WARNING;
     Shell_NotifyIconW(NIM_ADD, &g_remindNid);
     SetTimer(h, 1, 25000, nullptr);                                  // spaetestens nach 25 s beenden
@@ -3297,6 +3323,7 @@ int RunRemind(HINSTANCE hi) {
 
 int WINAPI wWinMain(HINSTANCE hi, HINSTANCE, PWSTR, int show) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    lang::Add(kDocsEn);
     CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     // Dunkle Kontextmenues (undokumentiert: uxtheme-Ordinal 135 = SetPreferredAppMode, 136 = FlushMenuThemes)
     if (HMODULE ux = LoadLibraryW(L"uxtheme.dll")) {

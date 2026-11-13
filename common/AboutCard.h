@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "Diagnostics.h"
+#include "Lang.h"
 #include "Theme.h"
 
 namespace aboutcard {
@@ -71,16 +72,20 @@ inline float TextH(IDWriteFactory* dw, IDWriteTextFormat* f, const std::wstring&
 }  // namespace detail
 
 // Zeichnet die Karte ueber das ganze Fenster (cr = Client-Rechteck, k = DPI-Faktor) und merkt sich die Knopf-Rechtecke in st.lay.
-inline void Draw(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, IDWriteFactory* dw, float kScale, const RECT& cr, const Spec& s, State& st) {
+inline void Draw(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, IDWriteFactory* dw, float kScale, const RECT& cr, const Spec& sIn, State& st) {
     using namespace detail;
     if (!rt || !br || !dw) return;
+    Spec s = sIn;   // englische Fassung, falls eingestellt
+    s.subtitle = lang::Tr(s.subtitle);
+    for (auto& t : s.tiles) { t.label = lang::Tr(t.label); t.value = lang::Tr(t.value); }
     float k = kScale;
     const float W = static_cast<float>(cr.right), H = static_cast<float>(cr.bottom);
     auto fill = [&](const D2D1_RECT_F& r, float rad, D2D1_COLOR_F c) { br->SetColor(c); rt->FillRoundedRectangle(D2D1::RoundedRect(r, rad, rad), br); };
     auto stroke = [&](const D2D1_RECT_F& r, float rad, D2D1_COLOR_F c, float w = 1.f) { br->SetColor(c); rt->DrawRoundedRectangle(D2D1::RoundedRect(r, rad, rad), br, w); };
     auto text = [&](const std::wstring& t, const D2D1_RECT_F& r, IDWriteTextFormat* f, D2D1_COLOR_F c) {
         br->SetColor(c);
-        rt->DrawText(t.c_str(), static_cast<UINT32>(t.size()), f, r, br, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+        const std::wstring tt = lang::Tr(t);
+        rt->DrawText(tt.c_str(), static_cast<UINT32>(tt.size()), f, r, br, D2D1_DRAW_TEXT_OPTIONS_CLIP);
     };
     // Hintergrund abdunkeln
     br->SetColor(Hex(0x000000, 0.66f));
