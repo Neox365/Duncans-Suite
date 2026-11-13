@@ -362,6 +362,42 @@ int main()
         DeleteFileW(sp3.c_str());
     }
 
+    // Profil pro Programm: Speichern/Laden, Export ohne Programme, Auswahl
+    {
+        std::vector<Profile> list(3);
+        list[0].name = L"Standard";
+        list[1].name = L"Musik";   list[1].apps = {L"spotify", L"vlc"};
+        list[2].name = L"Spiele";  list[2].apps = {L"bannerlord"};
+        list[1].s.gains[0] = 4;
+        wchar_t tmpP[MAX_PATH];
+        GetTempPathW(MAX_PATH, tmpP);
+        const std::wstring pp = std::wstring(tmpP) + L"eqapps" + std::to_wstring(GetCurrentProcessId()) + L".txt";
+        CHECK(SaveProfiles(list, 1, pp));
+        std::vector<Profile> back; int act = -1;
+        CHECK(LoadProfiles(back, act, pp) && back.size() == 3 && act == 1);
+        CHECK(back[1].apps.size() == 2 && back[1].apps[0] == L"spotify" && back[1].apps[1] == L"vlc");
+        CHECK(back[2].apps.size() == 1 && back[2].apps[0] == L"bannerlord" && back[0].apps.empty());
+        DeleteFileW(pp.c_str());
+        Profile imp;
+        CHECK(ProfileFromText(ProfileToText(list[1]), imp) && imp.apps.empty() && imp.s.gains[0] == 4);   // Export nimmt keine Programme mit
+        const std::vector<std::wstring> none, spot = {L"Spotify"}, both = {L"bannerlord", L"spotify"}, other = {L"chrome"};
+        CHECK(ProfileForApps(list, none, 0) == -1);
+        CHECK(ProfileForApps(list, other, 0) == -1);
+        CHECK(ProfileForApps(list, spot, 0) == 1);                                                         // ohne Beachtung der Gross-/Kleinschreibung
+        CHECK(ProfileForApps(list, both, 0) == 1);                                                         // das erste passende
+        CHECK(ProfileForApps(list, both, 2) == 2);                                                         // das bevorzugte bleibt, wenn es passt
+        CHECK(ProfileForApps(list, spot, 2) == 1);
+        // zu lange Listen werden begrenzt, Kommas im Namen verworfen
+        Profile many;
+        many.name = L"Viele";
+        for (int i = 0; i < 12; ++i) many.apps.push_back(L"prog" + std::to_wstring(i));
+        many.apps.push_back(L"a,b");
+        std::vector<Profile> ml = {many};
+        const std::wstring pp2 = std::wstring(tmpP) + L"eqapps2" + std::to_wstring(GetCurrentProcessId()) + L".txt";
+        CHECK(SaveProfiles(ml, 0, pp2) && LoadProfiles(back, act, pp2) && back[0].apps.size() == kMaxProfileApps);
+        DeleteFileW(pp2.c_str());
+    }
+
     // Auto-Lautstaerke: Einstellung wird gespeichert; alte Dateien ohne den Eintrag: aus
     {
         wchar_t tmpA[MAX_PATH];

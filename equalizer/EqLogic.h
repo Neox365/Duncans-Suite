@@ -36,6 +36,7 @@ struct Settings {
 struct Profile {
     std::wstring name;
     std::wstring device;        // Anzeigename des Ausgabegeraets oder leer
+    std::vector<std::wstring> apps;   // Programme (kleingeschriebener Dateiname ohne .exe): spielt eines Ton, wird dieses Profil gewaehlt
     Settings s;
 };
 constexpr int kMaxProfiles = 6;
@@ -77,6 +78,11 @@ int ProfileForDevice(const std::vector<Profile>& list, const std::wstring& devic
 // Liest eine Parametric-EQ-Datei (z. B. von AutoEq): nur "Preamp:" und "Filter:"-Zeilen mit harmlosen Zeichen werden uebernommen
 // ("Filter 3:" wird zu "Filter:"). ignored = Anzahl nicht uebernommener Zeilen.
 std::vector<std::string> ParseFilterFile(const std::string& text, int& ignored);
+
+// Profil fuer gerade Ton ausgebende Programme: das erste Profil, dessen Programmliste ein aktives Programm enthaelt; bleibt das
+// bevorzugte Profil (preferred, meist das gerade aktive) passend, gewinnt es. -1, wenn keines passt.
+int ProfileForApps(const std::vector<Profile>& list, const std::vector<std::wstring>& activeKeys, int preferred);
+constexpr size_t kMaxProfileApps = 8;
 // Auch eine einzelne "GraphicEQ: 20 -1.5; 25 ..."-Zeile (AutoEq GraphicEQ.txt) wird uebernommen.
 
 // Fuer den A/B-Vergleich: Einstellungen "Original hoeren", nur mit der Vorverstaerkung (ungefaehr gleich laut wie mit Equalizer)
