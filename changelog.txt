@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.12.1 | 2026-11-13
+- Geändert: Unter dem Preamp-Regler steht jetzt, wie sich die Vorverstärkung zusammensetzt, zum Beispiel „auto −4+5“ (4 dB automatisch abgesenkt, 5 dB von der Auto-Lautstärke wieder angehoben). Vorher stand dort nur die Summe, die sich nicht von der Absenkung unterscheiden ließ.
+- Intern: Testläufe mit DUNCANS_EQ_TESTDIR schreiben ihre Einstellungen und Profile jetzt auch in den Testordner statt in die echten.
 ## 0.12.0 | 2026-11-13
 - Neu: „Auto-Lautstärke“ ist jetzt eine eigene Karte mit Schalter in der rechten Spalte (unter dem Diagramm), mit Beschreibung und Live-Anzeige („Passt sich dem Lied an: +3 dB lauter, gesamt −3 dB“). Vorher war der Schalter unten in den Kurven-Infos versteckt.
 - Neu: Im Frequenzgang zeigt eine gestrichelte Kurve, was tatsächlich ankommt (Kurve plus Vorverstärkung). Sie steigt mit der Auto-Lautstärke und wandert zur blauen Kurve hin; rechts oben im Diagramm steht „Auto +3 dB“. So sieht man, wie sich die Lautstärke bei Rock, Pop oder Rap unterschiedlich anpasst.

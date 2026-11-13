@@ -229,10 +229,14 @@ std::string BuildConfig(const Settings& s)
 std::wstring SettingsPath()
 {
     wchar_t base[MAX_PATH] = {};
-    if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, base)))
+    wchar_t testDir[MAX_PATH] = {};
+    const bool testRun = GetEnvironmentVariableW(L"DUNCANS_EQ_TESTDIR", testDir, MAX_PATH) > 0;   // Testlauf: eigene Einstellungen, nie die echten
+    if (testRun)
+        wcsncpy_s(base, (std::wstring(testDir) + L"\\Local").c_str(), _TRUNCATE);
+    else if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, base)))
         return L"";
     const std::wstring dir = std::wstring(base) + L"\\DuncansEqualizer";
-    CreateDirectoryW(dir.c_str(), nullptr);
+    SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
     return dir + L"\\settings.txt";
 }
 
