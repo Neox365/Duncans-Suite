@@ -5,6 +5,11 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.12.0 | 2026-11-13
+- Neu: „Auto-Lautstärke“ ist jetzt eine eigene Karte mit Schalter in der rechten Spalte (unter dem Diagramm), mit Beschreibung und Live-Anzeige („Passt sich dem Lied an: +3 dB lauter, gesamt −3 dB“). Vorher war der Schalter unten in den Kurven-Infos versteckt.
+- Neu: Im Frequenzgang zeigt eine gestrichelte Kurve, was tatsächlich ankommt (Kurve plus Vorverstärkung). Sie steigt mit der Auto-Lautstärke und wandert zur blauen Kurve hin; rechts oben im Diagramm steht „Auto +3 dB“. So sieht man, wie sich die Lautstärke bei Rock, Pop oder Rap unterschiedlich anpasst.
+- Neu: Unter dem Preamp-Regler steht der wirksame Wert („auto −3“) und färbt sich blau, solange die Auto-Lautstärke anhebt; der Hinweistext nennt sie.
+- Geändert: Die Karte „Programme“ zeigt vier statt fünf Programme (weitere stehen als „+ n weitere“).
 ## 0.11.0 | 2026-11-13
 - Neu (Beta): Auto-Lautstärke. Wegen der automatischen Absenkung (Schutz vor Übersteuerung) klingt der Equalizer oft leiser als ohne. Ist „Auto-Lautstärke“ unten in der Karte mit den Kurven-Infos an, hebt das Programm die Vorverstärkung langsam wieder an, solange die Musik nach dem Equalizer genug Luft nach oben hat: um höchstens 1 dB alle 2 Sekunden, nie über den Pegel des Originals, mit 3 dB Abstand zur Übersteuerung. Wird es knapp, senkt es sofort wieder ab. Bei Stille oder sehr leiser Musik ändert sich nichts. Die Wirkung steht in der Zeile „Vorverstärkung“ und in der Statuszeile; „A/B halten“ berücksichtigt sie.
 - Hinweis: Das ist eine Messung mit Nachregeln, kein Begrenzer. Eine sehr kurze, laute Spitze kann vor der Reaktion schon da sein; bei Musik mit stark wechselnder Lautstärke kann man die Anpassung hören. Die Regelung liest dafür den Ton des Standard-Ausgabegeräts mit (auch bei geschlossenem Fenster, wenn der Equalizer im Infobereich läuft) und ist standardmäßig aus.
