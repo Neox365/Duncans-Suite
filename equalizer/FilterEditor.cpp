@@ -48,6 +48,11 @@ std::wstring Describe(const std::string& line)
         return s;
     }
     if (line.compare(0, 7, "Preamp:") == 0) return L"Vorverstärkung " + Wide(line.substr(8)) + L"  (aus Datei)";
+    if (line.compare(0, 11, "GraphicEQ: ") == 0) {
+        size_t pts = 0;
+        for (char c : line) if (c == ';') ++pts;
+        return L"Graphic-EQ-Kurve mit " + std::to_wstring(pts + 1) + L" Punkten  (aus Datei)";
+    }
     return Wide(line);
 }
 

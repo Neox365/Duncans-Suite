@@ -5,6 +5,10 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.10.0 | 2026-11-13
+- Neu: A/B-Vergleich. Der Knopf „A/B halten“ rechts neben den Voreinstellungen spielt, solange man ihn gedrückt hält, das Original ohne Equalizer – mit der Vorverstärkung des Equalizers, damit es ungefähr gleich laut ist. Loslassen schaltet sofort zurück (auch wenn man das Fenster wechselt). Er ändert nichts an den Einstellungen und gilt nur bei eingeschaltetem Equalizer. Die Lautstärke ist nur grob angeglichen; wie laut etwas klingt, hängt auch vom Klang selbst ab.
+- Neu: AutoEq mit einem Klick. Der Knopf „AutoEq“ (auch im Menü „Teilen …“) lädt die Kopfhörer-Korrektur aus einer AutoEq-Datei: ParametricEQ.txt (Preamp und Filter) oder GraphicEQ.txt (eine Kurve mit bis zu 400 Punkten). Sie ersetzt die bisherige Korrektur des Profils, steht danach unter „Korrektur …“ und fließt in Kurve und Diagramm ein. Die Dateien kommen von der AutoEq-Seite; das Programm lädt selbst nichts herunter.
+- Geändert: Der Knopf „Filter & Korrektur …“ heißt jetzt „Korrektur …“ (Platz für „AutoEq“). Mehrere Graphic-EQ-Zeilen werden in der Kurve addiert, wie es Equalizer APO tut.
 ## 0.9.0 | 2026-11-13
 - Neu: Live-Spektrum. Im Frequenzgang-Diagramm läuft hinter der Kurve das Spektrum des Tons, den das Standard-Ausgabegerät gerade abspielt (96 Frequenzbänder, rund 50 Aktualisierungen pro Sekunde, langsam abfallend). Daneben zeigen zwei Balken (L/R) den Spitzenpegel; sie werden orange kurz vor 0 dB und rot bei Übersteuerung. Der Schalter „Spektrum: an/aus“ oben im Diagramm schaltet es ab; die Wahl wird gespeichert.
 - Hinweis: Das Programm liest den Ton nur mit (WASAPI-Loopback), speichert und sendet nichts. Der Mitschnitt läuft nur, solange das Fenster mit Diagramm sichtbar ist; im Infobereich oder bei ausgeschaltetem Spektrum wird das Gerät freigegeben. Ob das Spektrum den Ton vor oder nach dem Equalizer zeigt, bestimmt Windows.

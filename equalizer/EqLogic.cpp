@@ -7,6 +7,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -69,8 +71,27 @@ std::string Trim(const std::string& s)
     return s.substr(a, b - a);
 }
 
+// Eine Graphic-EQ-Zeile aus einer Datei (z. B. AutoEq "GraphicEQ.txt"): "GraphicEQ: 20 -1.5; 25 -1.2; ..." mit hoechstens 400 Punkten
+bool IsSafeGraphicLine(const std::string& l)
+{
+    if (l.size() < 14 || l.size() > 8000 || l.compare(0, 11, "GraphicEQ: ") != 0)
+        return false;
+    size_t points = 0;
+    for (size_t i = 11; i < l.size(); ++i)
+    {
+        const unsigned char ch = static_cast<unsigned char>(l[i]);
+        if (ch == ';')
+            ++points;
+        else if (!(std::isdigit(ch) || ch == ' ' || ch == '.' || ch == '-'))
+            return false;
+    }
+    return points < 400;
+}
+
 bool IsSafeFilterLine(const std::string& l)
 {
+    if (l.compare(0, 11, "GraphicEQ: ") == 0)
+        return IsSafeGraphicLine(l);
     if (l.empty() || l.size() > 160)
         return false;
     if (l.compare(0, 7, "Preamp:") != 0 && l.compare(0, 7, "Filter:") != 0)
@@ -531,6 +552,15 @@ std::vector<std::string> ParseFilterFile(const std::string& text, int& ignored)
         std::string norm;
         if (line.compare(0, 7, "Preamp:") == 0)
             norm = line;
+        else if (line.compare(0, 11, "GraphicEQ: ") == 0)
+        {
+            bool haveGraphic = false;
+            for (const std::string& o : out)
+                if (o.compare(0, 11, "GraphicEQ: ") == 0)
+                    haveGraphic = true;
+            if (!haveGraphic)
+                norm = line;
+        }
         else if (line.compare(0, 6, "Filter") == 0)
         {
             const size_t colon = line.find(':');
@@ -547,6 +577,25 @@ std::vector<std::string> ParseFilterFile(const std::string& text, int& ignored)
             ++ignored;
     }
     return out;
+}
+
+Settings BypassSettings(const Settings& s)
+{
+    // Original hoeren, aber ungefaehr gleich laut: nur die Vorverstaerkung bleibt (automatische, eigene und die aus Dateien)
+    double total = TotalPreampDb(s);
+    for (const std::string& l : s.extra)
+        if (l.compare(0, 7, "Preamp:") == 0)
+        {
+            double v = 0;
+            if (std::sscanf(l.c_str() + 7, "%lf", &v) == 1)
+                total += v;
+        }
+    total = std::clamp(total, -30.0, 12.0);
+    Settings b;
+    b.enabled = true;
+    if (std::fabs(total) >= 0.05)
+        b.extra.push_back("Preamp: " + Num(static_cast<int>(std::lround(total))) + " dB");
+    return b;
 }
 
 std::wstring DefaultOutputName()

@@ -32,7 +32,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.8.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.10.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -63,6 +63,7 @@ enum HitId {
     H_PROFILE = 200,    // 200 .. 205: Profil waehlen
     H_PROFNEW = 210, H_BIND = 211, H_IMPORT = 212, H_PROFDEL = 213, H_SHARE = 214,
     H_BAND = 100,       // 100 .. 109 = Baender, 110 = Preamp
+    H_AB = 331, H_AUTOEQ = 332,
     H_SPECTRUM = 330,   // Schalter "Spektrum" im Diagramm
     H_MIXSLIDER = 310,  // 310 .. 314: Lautstaerke-Regler je Programm
     H_MIXMUTE = 320,    // 320 .. 324: Stumm-Knopf je Programm
@@ -91,6 +92,8 @@ struct App {
     RECT graph{}, info{};                          // rechte Spalte (nur bei breitem Fenster): Frequenzgang und Kurven-Infos
     int mx = -1, my = -1;                          // Mausposition (fuer die Anzeige im Diagramm)
     RECT specBtn{};                                // Schalter fuer das Live-Spektrum
+    RECT btnAB{}, btnAutoEq{};                     // A/B-Vergleich (halten = Original) und AutoEq-Datei laden
+    bool abBypass = false;                         // A/B: gerade wird das Original (ohne Equalizer) gespielt
     RECT mix{}, mixName[kMixRows]{}, mixSlider[kMixRows]{}, mixPct[kMixRows]{}, mixMute[kMixRows]{};   // Karte "Programme"
     std::vector<mixer::Entry> mixEntries;          // Programme, die gerade Ton ausgeben
     int mixDrag = -1;                              // Regler, der gerade gezogen wird
@@ -159,10 +162,12 @@ void SaveCfg() {
 void ApplyNow() {
     KillTimer(g.hwnd, kTimerApply);
     if (g.installDir.empty()) return;
-    switch (eq::ApplyToDir(g.installDir, g.cfg)) {
+    const eq::Settings applied = g.abBypass ? eq::BypassSettings(g.cfg) : g.cfg;      // A/B: Original, ungefaehr gleich laut
+    switch (eq::ApplyToDir(g.installDir, applied)) {
     case eq::ApplyResult::Applied:
         g.needAdmin = false;
-        SetStatus(g.cfg.enabled ? L"Übernommen – wirkt sofort" : L"Equalizer ist aus", kGreen);
+        if (g.abBypass) SetStatus(L"Original (Lautstärke ungefähr angeglichen) – loslassen für den Equalizer", kOrange);
+        else SetStatus(g.cfg.enabled ? L"Übernommen – wirkt sofort" : L"Equalizer ist aus", kGreen);
         break;
     case eq::ApplyResult::AccessDenied:
         g.needAdmin = true;
@@ -423,6 +428,37 @@ void ExportProfile() {
     else SetStatus(L"Die Datei konnte nicht geschrieben werden", kRed);
 }
 
+// AutoEq-Korrektur (Kopfhoerer-Entzerrung): ParametricEQ.txt (Preamp/Filter) oder GraphicEQ.txt; ersetzt die bisherige Korrektur des Profils
+void ImportAutoEq() {
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g.hwnd;
+    ofn.lpstrFilter = L"AutoEq-Dateien (*.txt)\0*.txt\0Alle Dateien\0*.*\0";
+    ofn.lpstrTitle = L"AutoEq-Korrektur laden (ParametricEQ.txt oder GraphicEQ.txt)";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) return;
+    HANDLE h = CreateFileW(file, GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE) { SetStatus(L"Die Datei konnte nicht gelesen werden", kRed); return; }
+    std::string text;
+    char buf[8192];
+    DWORD n = 0;
+    while (text.size() <= 256 * 1024 && ReadFile(h, buf, sizeof(buf), &n, nullptr) && n) text.append(buf, n);
+    CloseHandle(h);
+    int ignored = 0;
+    const std::vector<std::string> lines = eq::ParseFilterFile(text, ignored);
+    if (lines.empty()) { SetStatus(L"In der Datei stehen keine nutzbaren AutoEq-Zeilen (erwartet: Preamp:, Filter: oder GraphicEQ:)", kOrange); return; }
+    const bool replaced = !g.cfg.extra.empty();
+    g.cfg.extra = lines;
+    Changed();
+    std::wstring msg = L"AutoEq: " + std::to_wstring(lines.size()) + L" Zeilen übernommen";
+    if (replaced) msg += L" (ersetzt die bisherige Korrektur)";
+    if (ignored) msg += L", " + std::to_wstring(ignored) + L" ignoriert";
+    SetStatus(msg, kGreen);
+}
+
 void ImportProfile() {
     if (static_cast<int>(g.profiles.size()) >= eq::kMaxProfiles) { SetStatus(L"Es sind schon sechs Profile vorhanden – bitte erst eines löschen", kOrange); return; }
     wchar_t file[MAX_PATH] = {};
@@ -462,12 +498,14 @@ void ShareMenu() {
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, 1, L"Aktuelles Profil als Datei speichern …");
     AppendMenuW(menu, MF_STRING | (static_cast<int>(g.profiles.size()) >= eq::kMaxProfiles ? MF_GRAYED : 0), 2, L"Profil aus Datei laden …");
+    AppendMenuW(menu, MF_STRING, 3, L"AutoEq-Korrektur laden (ParametricEQ.txt / GraphicEQ.txt) …");
     POINT pt{ g.btnShare.left, g.btnShare.bottom };
     ClientToScreen(g.hwnd, &pt);
     const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, g.hwnd, nullptr);
     DestroyMenu(menu);
     if (cmd == 1) ExportProfile();
     else if (cmd == 2) ImportProfile();
+    else if (cmd == 3) ImportAutoEq();
 }
 
 void EditFilters() {                                // Fenster mit Frequenzkurve, eigenen Filtern und Datei-Korrektur
@@ -583,6 +621,7 @@ void Layout() {
         g.presetRect[i] = { x, y, x + w, y + ph };
         x += w + S(8);
     }
+    g.btnAB = { R - m - S(104), y, R - m, y + ph };
     y += ph + S(14);
     g.panel = { m, y, R - m, y + S(292) };
     const int inner = (g.panel.right - g.panel.left) - 2 * S(14);
@@ -622,13 +661,17 @@ void Layout() {
     const int row2 = g.profCard.top + S(76), h2 = S(32);
     const bool hasDev = !g.profiles[static_cast<size_t>(g.active)].device.empty();
     const int bw1 = TextWidth(dc, g.fBold, hasDev ? L"Gerät lösen" : L"An Gerät binden") + S(28);
-    const int bw2 = TextWidth(dc, g.fBold, L"Filter & Korrektur …") + S(28);
+    const int bw2 = TextWidth(dc, g.fBold, L"Korrektur …") + S(28);
     const int bwS = TextWidth(dc, g.fBold, L"Teilen …") + S(28);
     const int bw3 = TextWidth(dc, g.fBold, g.delArmed ? L"Wirklich?" : L"Löschen") + S(28);
     g.btnBind = { ix, row2, ix + bw1, row2 + h2 };
     g.btnImport = { g.btnBind.right + S(8), row2, g.btnBind.right + S(8) + bw2, row2 + h2 };
     g.btnShare = { g.btnImport.right + S(8), row2, g.btnImport.right + S(8) + bwS, row2 + h2 };
     g.btnDel = { ir - bw3, row2, ir, row2 + h2 };
+    {   // "AutoEq ..." nur, wenn es neben "Teilen" noch hinpasst (sonst steht es im Teilen-Menue)
+        const int bwA = TextWidth(dc, g.fBold, L"AutoEq") + S(22), ax = g.btnShare.right + S(8);
+        g.btnAutoEq = ax + bwA + S(8) <= g.btnDel.left ? RECT{ ax, row2, ax + bwA, row2 + h2 } : RECT{};
+    }
     y = g.profCard.bottom + S(14);
     const int cw = TextWidth(dc, g.fBold, L"Geräte auswählen") + S(36);
     g.confBtn = { m, y, m + cw, y + S(36) };
@@ -894,6 +937,12 @@ void Paint(HDC dc, const RECT& cr) {
                       L"Über 100 % geht nicht – stelle die anderen leiser.", DT_LEFT | DT_VCENTER | DT_WORDBREAK);
         }
 
+        {   // A/B-Vergleich: Knopf gedrueckt halten = Original hoeren (ungefaehr gleich laut)
+            const bool hot = g.hover == H_AB, act = g.abBypass;
+            FillRound(dc, g.btnAB, S(12), act ? Blend(kCard, kOrange, 25) : (hot ? kCardHover : kCard), act ? kOrange : (hot ? kBorderHot : kBorder));
+            DrawText2(dc, g.fBold, act ? kOrange : (on ? kText : kTextDim), g.btnAB, act ? L"Original" : L"A/B halten", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+
         // Regler
         FillRound(dc, g.panel, S(16), kCard, kBorder);
         const int tw = S(4);
@@ -1006,8 +1055,9 @@ void Paint(HDC dc, const RECT& cr) {
             DrawText2(dc, g.fBold, warn ? kOrange : kText, r, t, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         };
         smallBtn(g.btnBind, g.profiles[static_cast<size_t>(g.active)].device.empty() ? L"An Gerät binden" : L"Gerät lösen", H_BIND, false);
-        smallBtn(g.btnImport, L"Filter & Korrektur …", H_IMPORT, false);
+        smallBtn(g.btnImport, L"Korrektur …", H_IMPORT, false);
         smallBtn(g.btnShare, L"Teilen …", H_SHARE, false);
+        if (g.btnAutoEq.right > g.btnAutoEq.left) smallBtn(g.btnAutoEq, L"AutoEq", H_AUTOEQ, false);
         smallBtn(g.btnDel, g.delArmed ? L"Wirklich?" : L"Löschen", H_PROFDEL, g.delArmed);
         DrawButton(dc, g.confBtn, L"Geräte auswählen", false, g.hover == H_CONFIGURATOR, g.press == H_CONFIGURATOR && g.hover == H_CONFIGURATOR);
         {
@@ -1038,6 +1088,8 @@ int HitTest(POINT p) {
     for (int i = 0; i < eq::PresetCount() && i < 8; ++i) if (PtInRect(&g.presetRect[i], p)) return H_PRESET + i;
     if (PtInRect(&g.btnReset, p)) return H_RESET;
     if (PtInRect(&g.specBtn, p)) return H_SPECTRUM;
+    if (PtInRect(&g.btnAB, p)) return H_AB;
+    if (PtInRect(&g.btnAutoEq, p)) return H_AUTOEQ;
     for (int i = 0; i < kMixRows; ++i) {
         if (PtInRect(&g.mixMute[i], p)) return H_MIXMUTE + i;
         if (PtInRect(&g.mixSlider[i], p)) return H_MIXSLIDER + i;
@@ -1074,6 +1126,7 @@ void Activate(int id) {
         return;
     }
     if (id == H_HERO) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
+    else if (id == H_AUTOEQ) ImportAutoEq();
     else if (id == H_SPECTRUM) { g.cfg.spectrum = !g.cfg.spectrum; Changed(); }
     else if (id == H_BASS) { g.cfg.bass = !g.cfg.bass; Changed(); }
     else if (id == H_VOICE) { g.cfg.voice = !g.cfg.voice; Changed(); }
@@ -1166,6 +1219,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (h != g.hover) { g.hover = h; InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     }
+    case WM_CAPTURECHANGED:
+        if (g.abBypass && reinterpret_cast<HWND>(lp) != hwnd) { g.abBypass = false; ApplyNow(); }   // Fokus weg beim Halten: sicher zurueck
+        return 0;
     case WM_MOUSELEAVE: g.tracking = false; g.hover = H_NONE; g.mx = g.my = -1; InvalidateRect(hwnd, nullptr, FALSE); return 0;
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, g.hover == H_NONE ? IDC_ARROW : IDC_HAND)); return TRUE; }
@@ -1179,6 +1235,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         const POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         g.press = HitTest(p);
         if (g.press >= H_BAND && g.press <= H_BAND + eq::kBands) { g.drag = g.press - H_BAND; SetBand(g.drag, YToGain(p.y)); }
+        if (g.press == H_AB && g.cfg.enabled && !g.installDir.empty()) { g.abBypass = true; ApplyNow(); }
         if (g.press >= H_MIXSLIDER && g.press < H_MIXSLIDER + kMixRows) { g.mixDrag = g.press - H_MIXSLIDER; SetMixVolume(g.mixDrag, MixFromX(g.mixDrag, p.x)); }
         SetCapture(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -1186,6 +1243,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     case WM_LBUTTONUP: {
         if (GetCapture() == hwnd) ReleaseCapture();
+        if (g.abBypass) { g.abBypass = false; ApplyNow(); }                       // A/B: losgelassen = wieder der Equalizer
         const int h = HitTest({ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
         const int pressed = g.press;
         const bool wasDrag = g.drag >= 0 || g.mixDrag >= 0;
