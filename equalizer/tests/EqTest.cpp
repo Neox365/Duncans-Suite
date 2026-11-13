@@ -362,6 +362,19 @@ int main()
         DeleteFileW(sp3.c_str());
     }
 
+    // Auto-Lautstaerke: Einstellung wird gespeichert; alte Dateien ohne den Eintrag: aus
+    {
+        wchar_t tmpA[MAX_PATH];
+        GetTempPathW(MAX_PATH, tmpA);
+        const std::wstring spa = std::wstring(tmpA) + L"eqag" + std::to_wstring(GetCurrentProcessId()) + L".txt";
+        Settings ag; CHECK(!ag.autoGain);
+        ag.autoGain = true;
+        Settings ag2; CHECK(SaveSettings(ag, spa) && LoadSettings(ag2, spa) && ag2.autoGain);
+        Put(spa, "enabled=1\r\n");
+        CHECK(LoadSettings(ag2, spa) && !ag2.autoGain);
+        DeleteFileW(spa.c_str());
+    }
+
     // AutoEq: GraphicEQ.txt wird als eine Zeile uebernommen, die Kurve addiert sich zu den Reglern
     {
         int ign = 0;

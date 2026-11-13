@@ -25,6 +25,7 @@ struct Settings {
     bool voice = false;         // Sprache klarer
     int  preamp = 0;            // Vorverstaerkung in dB (-12 ... +12), kommt zur automatischen Absenkung dazu
     bool hotkeys = true;        // globale Tastenkuerzel: Strg+Alt+F9 an/aus, F10 naechstes, F8 voriges Profil
+    bool autoGain = false;      // Auto-Lautstaerke (Beta): Vorverstaerkung passt sich der Musik an
     bool spectrum = true;       // Live-Spektrum im Frequenzgang-Diagramm
     bool keepRunning = true;    // Fenster schliessen = im Infobereich weiterlaufen (Profilwechsel pro Geraet, Symbol)
     std::vector<std::string> extra;   // eingelesene Filterzeilen (z. B. AutoEq-Kopfhoerer-Korrektur), nur "Preamp:"/"Filter:"
