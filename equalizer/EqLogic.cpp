@@ -232,7 +232,7 @@ std::wstring SettingsPath()
     wchar_t testDir[MAX_PATH] = {};
     const bool testRun = GetEnvironmentVariableW(L"DUNCANS_EQ_TESTDIR", testDir, MAX_PATH) > 0;   // Testlauf: eigene Einstellungen, nie die echten
     if (testRun)
-        wcsncpy_s(base, (std::wstring(testDir) + L"\\Local").c_str(), _TRUNCATE);
+        lstrcpynW(base, (std::wstring(testDir) + L"\\Local").c_str(), MAX_PATH);
     else if (FAILED(SHGetFolderPathW(nullptr, CSIDL_LOCAL_APPDATA, nullptr, 0, base)))
         return L"";
     const std::wstring dir = std::wstring(base) + L"\\DuncansEqualizer";
@@ -404,9 +404,41 @@ std::wstring ProfilesPath()
     return s == std::wstring::npos ? L"" : p.substr(0, s) + L"\\profiles.txt";
 }
 
+static std::string AppsLine(const Profile& p)
+{
+    std::string out;
+    size_t n = 0;
+    for (const std::wstring& a : p.apps)
+    {
+        std::string u = ToUtf8(a);
+        if (u.empty() || u.find(',') != std::string::npos || u.find('\r') != std::string::npos || u.find('\n') != std::string::npos || n >= kMaxProfileApps)
+            continue;
+        out += (n ? "," : "") + u;
+        ++n;
+    }
+    return out;
+}
+
+int ProfileForApps(const std::vector<Profile>& list, const std::vector<std::wstring>& activeKeys, int preferred)
+{
+    auto matches = [&](const Profile& p) {
+        for (const std::wstring& a : p.apps)
+            for (const std::wstring& k : activeKeys)
+                if (!a.empty() && LowerW(a) == LowerW(k))
+                    return true;
+        return false;
+    };
+    if (preferred >= 0 && preferred < static_cast<int>(list.size()) && matches(list[static_cast<size_t>(preferred)]))
+        return preferred;
+    for (size_t i = 0; i < list.size(); ++i)
+        if (matches(list[i]))
+            return static_cast<int>(i);
+    return -1;
+}
+
 static std::string ProfileBlock(const Profile& p, bool withDevice)
 {
-    std::string t = "[profile]\r\nname=" + ToUtf8(p.name) + "\r\ndevice=" + (withDevice ? ToUtf8(p.device) : std::string()) + "\r\nbass=" + (p.s.bass ? "1" : "0") +
+    std::string t = "[profile]\r\nname=" + ToUtf8(p.name) + "\r\ndevice=" + (withDevice ? ToUtf8(p.device) : std::string()) + "\r\napps=" + (withDevice ? AppsLine(p) : std::string()) + "\r\nbass=" + (p.s.bass ? "1" : "0") +
                     "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\npreamp=" + Num(std::clamp(p.s.preamp, -kMaxGain, kMaxGain)) + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(p.s.gains[b]));
@@ -463,6 +495,7 @@ bool ProfileFromText(const std::string& text, Profile& out)
         return false;
     out = list[0];
     out.device.clear();
+    out.apps.clear();
     return true;
 }
 
@@ -510,6 +543,21 @@ bool ParseProfiles(const std::string& data, std::vector<Profile>& list, int& act
         Profile& p = list.back();
         if (key == "name") p.name = CleanName(ToWide(val));
         else if (key == "device") p.device = ToWide(val);
+        else if (key == "apps")
+        {
+            p.apps.clear();
+            size_t q = 0;
+            while (q <= val.size() && p.apps.size() < kMaxProfileApps)
+            {
+                size_t c = val.find(',', q);
+                if (c == std::string::npos)
+                    c = val.size();
+                const std::wstring a = LowerW(ToWide(Trim(val.substr(q, c - q))));
+                if (!a.empty() && a.size() <= 64)
+                    p.apps.push_back(a);
+                q = c + 1;
+            }
+        }
         else if (key == "bass") p.s.bass = val == "1";
         else if (key == "voice") p.s.voice = val == "1";
         else if (key == "preamp") p.s.preamp = std::clamp(std::atoi(val.c_str()), -kMaxGain, kMaxGain);

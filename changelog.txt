@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.13.0 | 2026-11-13
+- Neu: Profil pro Programm. Der Knopf „Binden …“ (vorher „An Gerät binden“) öffnet ein Menü: oben wie bisher das Binden an das Ausgabegerät, darunter alle Programme, die gerade Ton ausgeben (Spiel, Browser, Spotify …) zum Anhaken. Spielt ein angehaktes Programm Ton, wählt der Equalizer automatisch das zugehörige Profil, zum Beispiel „Musik“ für Spotify und „Spiele“ für das Spiel. Hört das Programm auf, geht es zum vorherigen Profil zurück. Ein Programm gehört zu einem Profil, ein Profil kann bis zu acht Programme haben; die Zuordnung steht in der Zeile über den Profil-Knöpfen („Programme: Spotify“).
+- Hinweis: Wählst du selbst ein anderes Profil, wartet die Automatik, bis sich etwas ändert (ein zugeordnetes Programm startet oder endet). Programme erscheinen im Menü erst, wenn sie Ton abspielen; die Zuordnung wird nicht in .eqprofil-Dateien weitergegeben. Das Profil wird alle zwei Sekunden geprüft, auch bei geschlossenem Fenster im Infobereich.
 ## 0.12.1 | 2026-11-13
 - Geändert: Unter dem Preamp-Regler steht jetzt, wie sich die Vorverstärkung zusammensetzt, zum Beispiel „auto −4+5“ (4 dB automatisch abgesenkt, 5 dB von der Auto-Lautstärke wieder angehoben). Vorher stand dort nur die Summe, die sich nicht von der Absenkung unterscheiden ließ.
 - Intern: Testläufe mit DUNCANS_EQ_TESTDIR schreiben ihre Einstellungen und Profile jetzt auch in den Testordner statt in die echten.

@@ -12,6 +12,7 @@
 #include <commdlg.h>
 
 #include <algorithm>
+#include <cwctype>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -33,7 +34,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.12.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.13.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -51,7 +52,7 @@ const COLORREF kEq = RGB(125, 211, 252);            // Akzent dieses Programms (
 const COLORREF kOnEq = RGB(8, 24, 34);              // Schrift auf dem Akzent
 
 const wchar_t* kTitle = L"Duncan's Equalizer";
-const UINT_PTR kTimerApply = 1, kTimerDevice = 2, kTimerDisarm = 3, kTimerMixer = 4, kTimerSpectrum = 5;
+const UINT_PTR kTimerApply = 1, kTimerDevice = 2, kTimerDisarm = 3, kTimerMixer = 4, kTimerSpectrum = 5, kTimerApps = 6;
 constexpr int kMixRows = 4;                         // so viele Programme zeigt die Karte "Programme"
 const UINT WM_TRAY = WM_APP + 2;                // Symbol im Infobereich
 const UINT WM_SHOWMAIN = WM_APP + 3;            // zweiter Start: bestehendes Fenster zeigen
@@ -97,6 +98,10 @@ struct App {
     RECT autoCard{};                               // Karte "Auto-Lautstaerke" (Schalter) in der rechten Spalte
     eq::AutoGain autoCtl;                          // Regelung der Auto-Lautstaerke
     int autoExtra = 0;                             // aktuelle Anhebung der Vorverstaerkung durch die Auto-Lautstaerke (dB)
+    bool appAuto = false;                          // das aktive Profil wurde wegen eines abspielenden Programms gewaehlt
+    int appPrev = -1;                              // Profil davor (dahin geht es zurueck, wenn das Programm aufhoert)
+    bool appLocked = false, switchingAuto = false; // von Hand gewaehlt: Automatik ruht, bis sich etwas aendert
+    std::wstring appSig, appLockSig;               // welche zugeordneten Programme gerade spielen (zum Erkennen von Aenderungen)
     bool abBypass = false;                         // A/B: gerade wird das Original (ohne Equalizer) gespielt
     RECT mix{}, mixName[kMixRows]{}, mixSlider[kMixRows]{}, mixPct[kMixRows]{}, mixMute[kMixRows]{};   // Karte "Programme"
     std::vector<mixer::Entry> mixEntries;          // Programme, die gerade Ton ausgeben
@@ -351,6 +356,7 @@ void StopNameEdit() {
 
 void SwitchProfile(int i, const std::wstring& why = L"") {
     if (i < 0 || i >= static_cast<int>(g.profiles.size()) || i == g.active) return;
+    if (!g.switchingAuto) { g.appAuto = false; g.appLocked = true; g.appLockSig = g.appSig; }    // von Hand: die Programm-Automatik wartet auf die naechste Aenderung
     SyncActive();
     g.active = i;
     LoadActive();
@@ -413,6 +419,93 @@ void BindDevice() {
     p.device = g.lastDevice;
     SaveCfg();
     SetStatus(L"Wird jetzt automatisch gewählt, sobald „" + g.lastDevice + L"“ das Standardgerät ist", kGreen);
+}
+
+std::wstring AppDisplay(const std::wstring& key) {
+    std::wstring n = key;
+    if (!n.empty()) n[0] = static_cast<wchar_t>(std::towupper(n[0]));
+    return n;
+}
+
+// Programme, die ein Profil auswaehlen, sobald sie Ton abspielen
+void BindMenu() {
+    eq::Profile& p = g.profiles[static_cast<size_t>(g.active)];
+    const std::vector<mixer::Entry> now = mixer::List();
+    HMENU menu = CreatePopupMenu();
+    const std::wstring devLabel = p.device.empty() ? (g.lastDevice.empty() ? std::wstring(L"An das Ausgabegerät binden (keines erkannt)") : L"An das Ausgabegerät binden: " + g.lastDevice)
+                                                  : L"Vom Ausgabegerät lösen: " + p.device;
+    AppendMenuW(menu, MF_STRING | (p.device.empty() && g.lastDevice.empty() ? MF_GRAYED : 0), 1, devLabel.c_str());
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"Spielt eines dieser Programme Ton, wird dieses Profil gewählt:");
+    std::vector<std::pair<std::wstring, std::wstring>> items;          // Schluessel, Anzeige
+    for (const mixer::Entry& e : now) if (e.key != L"#system") items.push_back({ e.key, e.name });
+    for (const std::wstring& a : p.apps) {
+        bool have = false;
+        for (const auto& it : items) if (it.first == a) have = true;
+        if (!have) items.push_back({ a, AppDisplay(a) + L" (spielt gerade nicht)" });
+    }
+    if (items.empty()) AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"Gerade gibt kein Programm Ton aus – starte eines, dann erscheint es hier");
+    for (size_t i = 0; i < items.size() && i < 40; ++i) {
+        bool mine = false;
+        for (const std::wstring& a : p.apps) if (a == items[i].first) mine = true;
+        std::wstring label = items[i].second;
+        if (!mine)
+            for (const eq::Profile& o : g.profiles)
+                if (&o != &p) for (const std::wstring& a : o.apps) if (a == items[i].first) label += L"  (bisher: " + o.name + L")";
+        AppendMenuW(menu, MF_STRING | (mine ? MF_CHECKED : 0), static_cast<UINT_PTR>(100 + i), label.c_str());
+    }
+    POINT pt{ g.btnBind.left, g.btnBind.bottom };
+    ClientToScreen(g.hwnd, &pt);
+    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, g.hwnd, nullptr);
+    DestroyMenu(menu);
+    if (cmd == 1) { BindDevice(); return; }
+    if (cmd < 100 || cmd >= 100 + static_cast<int>(items.size())) return;
+    const std::wstring key = items[static_cast<size_t>(cmd - 100)].first, name = AppDisplay(key);
+    auto it = std::find(p.apps.begin(), p.apps.end(), key);
+    if (it != p.apps.end()) {
+        p.apps.erase(it);
+        SetStatus(name + L" wählt dieses Profil nicht mehr aus", kTextDim);
+    } else {
+        if (p.apps.size() >= eq::kMaxProfileApps) { SetStatus(L"Mehr als acht Programme pro Profil sind nicht möglich", kOrange); return; }
+        for (eq::Profile& o : g.profiles) if (&o != &p) o.apps.erase(std::remove(o.apps.begin(), o.apps.end(), key), o.apps.end());   // ein Programm gehört zu einem Profil
+        p.apps.push_back(key);
+        SetStatus(L"Spielt " + name + L" Ton, wird jetzt das Profil „" + p.name + L"“ gewählt", kGreen);
+    }
+    g.appLocked = false;
+    SaveCfg();
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
+// Alle paar Sekunden: spielt ein zugeordnetes Programm Ton, dessen Profil waehlen; hoert es auf, zurueck zum vorherigen
+void PollApps() {
+    bool any = false;
+    for (const eq::Profile& p : g.profiles) if (!p.apps.empty()) any = true;
+    if (!any) { g.appAuto = false; g.appSig.clear(); return; }
+    const std::vector<mixer::Entry> now = mixer::List();
+    std::vector<std::wstring> keys;
+    for (const mixer::Entry& e : now) keys.push_back(e.key);
+    std::wstring sig;
+    for (const eq::Profile& p : g.profiles) for (const std::wstring& a : p.apps) for (const std::wstring& k : keys) if (a == k) sig += a + L"|";
+    g.appSig = sig;
+    if (g.appLocked) { if (sig == g.appLockSig) return; g.appLocked = false; }        // von Hand gewaehlt: erst bei einer Aenderung wieder eingreifen
+    const int idx = eq::ProfileForApps(g.profiles, keys, g.active);
+    if (idx >= 0) {
+        if (idx == g.active) return;
+        std::wstring who;
+        for (const mixer::Entry& e : now) for (const std::wstring& a : g.profiles[static_cast<size_t>(idx)].apps) if (e.key == a && who.empty()) who = e.name;
+        if (!g.appAuto) g.appPrev = g.active;
+        g.switchingAuto = true;
+        SwitchProfile(idx, L"Profil „" + g.profiles[static_cast<size_t>(idx)].name + L"“ gewählt (" + who + L" spielt)");
+        g.switchingAuto = false;
+        g.appAuto = true;
+    } else if (g.appAuto) {
+        g.appAuto = false;
+        if (g.appPrev >= 0 && g.appPrev < static_cast<int>(g.profiles.size()) && g.appPrev != g.active) {
+            g.switchingAuto = true;
+            SwitchProfile(g.appPrev, L"Zurück zum Profil „" + g.profiles[static_cast<size_t>(g.appPrev)].name + L"“ (kein zugeordnetes Programm spielt)");
+            g.switchingAuto = false;
+        }
+    }
 }
 
 // ---------- Profil weitergeben (Datei) ----------
@@ -670,8 +763,7 @@ void Layout() {
     g.profNew = canNew ? RECT{ px, row1, px + S(78), row1 + h1 } : RECT{};
     g.nameRect = { ix, row1, ir, row1 + h1 };
     const int row2 = g.profCard.top + S(76), h2 = S(32);
-    const bool hasDev = !g.profiles[static_cast<size_t>(g.active)].device.empty();
-    const int bw1 = TextWidth(dc, g.fBold, hasDev ? L"Gerät lösen" : L"An Gerät binden") + S(28);
+    const int bw1 = TextWidth(dc, g.fBold, L"Binden …") + S(28);
     const int bw2 = TextWidth(dc, g.fBold, L"Korrektur …") + S(28);
     const int bwS = TextWidth(dc, g.fBold, L"Teilen …") + S(28);
     const int bw3 = TextWidth(dc, g.fBold, g.delArmed ? L"Wirklich?" : L"Löschen") + S(28);
@@ -1072,6 +1164,10 @@ void Paint(HDC dc, const RECT& cr) {
                 info = ap.device.empty() ? (g.lastDevice.empty() ? L"kein Gerät festgelegt" : L"kein Gerät festgelegt (aktuell: " + g.lastDevice + L")")
                                          : L"wird automatisch gewählt für: " + ap.device;
                 if (!g.cfg.extra.empty()) info += L"  ·  Korrektur: " + std::to_wstring(g.cfg.extra.size()) + L" Zeilen";
+                if (!ap.apps.empty()) {
+                    info += L"  ·  Programme: ";
+                    for (size_t i = 0; i < ap.apps.size(); ++i) info += (i ? L", " : L"") + AppDisplay(ap.apps[i]);
+                }
             }
             DrawText2(dc, g.fBold, kText, { g.profCard.left + S(18), g.profCard.top + S(9), g.profCard.left + S(86), g.profCard.top + S(31) }, L"Profile");
             DrawText2(dc, g.fSmall, kTextDim, { g.profCard.left + S(84), g.profCard.top + S(10), g.profCard.right - S(18), g.profCard.top + S(32) }, info,
@@ -1096,7 +1192,7 @@ void Paint(HDC dc, const RECT& cr) {
             FillRound(dc, r, S(12), hot ? kCardHover : Blend(kCard, kBackground, 25), warn ? kOrange : (hot ? kBorderHot : kBorder));
             DrawText2(dc, g.fBold, warn ? kOrange : kText, r, t, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         };
-        smallBtn(g.btnBind, g.profiles[static_cast<size_t>(g.active)].device.empty() ? L"An Gerät binden" : L"Gerät lösen", H_BIND, false);
+        smallBtn(g.btnBind, L"Binden …", H_BIND, false);
         smallBtn(g.btnImport, L"Korrektur …", H_IMPORT, false);
         smallBtn(g.btnShare, L"Teilen …", H_SHARE, false);
         if (g.btnAutoEq.right > g.btnAutoEq.left) smallBtn(g.btnAutoEq, L"AutoEq", H_AUTOEQ, false);
@@ -1200,7 +1296,7 @@ void Activate(int id) {
         Layout();
     }
     else if (id == H_PROFNEW) BeginNewProfile();
-    else if (id == H_BIND) BindDevice();
+    else if (id == H_BIND) BindMenu();
     else if (id == H_IMPORT) EditFilters();
     else if (id == H_SHARE) ShareMenu();
     else if (id == H_PROFDEL) { DeleteProfile(); Layout(); }
@@ -1336,6 +1432,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
                 ApplyNow();
             }
         }
+        else if (wp == kTimerApps) PollApps();
         else if (wp == kTimerMixer) { if (IsWindowVisible(hwnd) && !IsIconic(hwnd)) RefreshMixer(); }
         else if (wp == kTimerDisarm) { KillTimer(hwnd, kTimerDisarm); g.delArmed = false; Layout(); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
@@ -1449,6 +1546,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     Layout();
     SetTimer(g.hwnd, kTimerDevice, 2500, nullptr);
     SetTimer(g.hwnd, kTimerMixer, 1200, nullptr);
+    SetTimer(g.hwnd, kTimerApps, 2000, nullptr);
     SetTimer(g.hwnd, kTimerSpectrum, 60, nullptr);
     RefreshMixer();
     if (!g.installDir.empty()) ApplyNow();      // beim Start die gespeicherten Einstellungen (neu) eintragen
