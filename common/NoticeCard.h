@@ -26,9 +26,11 @@ struct State {
 inline void Open(State& st, HWND hwnd) { st.open = true; st.hover = 0; InvalidateRect(hwnd, nullptr, FALSE); }
 inline void Close(State& st, HWND hwnd) { st.open = false; st.hover = 0; InvalidateRect(hwnd, nullptr, FALSE); }
 
-inline void Draw(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, IDWriteFactory* dw, float k, const RECT& cr, const Spec& s, State& st) {
+inline void Draw(ID2D1RenderTarget* rt, ID2D1SolidColorBrush* br, IDWriteFactory* dw, float k, const RECT& cr, const Spec& sIn, State& st) {
     using namespace aboutcard::detail;
     if (!rt || !br || !dw) return;
+    Spec s = sIn;   // englische Fassung, falls eingestellt
+    s.title = lang::Tr(s.title); s.text = lang::Tr(s.text); s.yes = lang::Tr(s.yes); s.no = lang::Tr(s.no);
     const float W = static_cast<float>(cr.right), H = static_cast<float>(cr.bottom);
     auto fill = [&](const D2D1_RECT_F& r, float rad, D2D1_COLOR_F c) { br->SetColor(c); rt->FillRoundedRectangle(D2D1::RoundedRect(r, rad, rad), br); };
     auto stroke = [&](const D2D1_RECT_F& r, float rad, D2D1_COLOR_F c) { br->SetColor(c); rt->DrawRoundedRectangle(D2D1::RoundedRect(r, rad, rad), br, 1.f); };

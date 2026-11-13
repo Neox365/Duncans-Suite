@@ -387,6 +387,10 @@
 - Neues Programm: Ordnerbaum, schnelle Vorschaubilder, EXIF-/GPS-Cleaner, Stapelverarbeitung, Bildbetrachter mit Zoom und Zuschneiden.
 
 [OggysDocsFiles.exe]
+## 0.18.0 | 2026-11-13
+- Neu: Englisch. Die Oberfläche (Menüs, Dialoge, Hinweise, Hilfe und Über-Karte) gibt es jetzt auch auf Englisch. Das Programm folgt der Windows-Sprache: bei Deutsch bleibt alles wie gewohnt, bei jeder anderen Sprache erscheint Englisch. Im Zahnrad-Menü schaltet „Sprache: …“ von Hand um (automatisch, Deutsch, Englisch); die Wahl gilt für alle Programme der Suite, die Englisch können.
+- Hinweis: Rechnungs-PDFs, E-Rechnungsdaten, Beträge und Datumsformat bleiben deutsch (deutsches Steuerrecht). Namen, Dateinamen und eigene Eingaben werden nie übersetzt.
+- Intern: gemeinsame Übersetzungshilfe (common/Lang.h) für die übrigen Programme; die gemeinsamen Karten und Meldungsfenster der Suite übersetzen ihre Standardtexte (Schließen, Abbrechen, Ja/Nein, Diagnose kopieren).
 ## 0.17.0 | 2026-11-12
 - Geändert: Rückfragen und Hinweise erscheinen jetzt als Karte im Design des Programms statt als Windows-Meldungsfenster: „Löschen?“ (mit „In den Papierkorb“ in Warnfarbe), „Rechnung stornieren?“, „Gesperrte Rechnung“ und „Stornieren nicht möglich“. Enter bestätigt, Esc bricht ab; bei der Storno-Rückfrage ist „Abbrechen“ vorgewählt, damit Enter nichts Unumkehrbares auslöst. Die Karte lässt sich nicht wegklicken, die Frage muss beantwortet werden.
 - Hinweis: Die Windows-Dialoge zum Datei-Speichern und Ordner-Wählen bleiben, die kommen vom System.

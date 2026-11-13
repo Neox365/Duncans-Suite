@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "Diagnostics.h"
+#include "Lang.h"
 #include "Theme.h"
 
 namespace aboutgdi {
@@ -67,7 +68,8 @@ inline HFONT MakeFont(int dpi, int pt, int weight) {
 inline int WrapH(HDC dc, HFONT f, const std::wstring& s, int w) {
     HGDIOBJ old = SelectObject(dc, f);
     RECT r{0, 0, std::max(1, w), 0};
-    DrawTextW(dc, s.c_str(), static_cast<int>(s.size()), &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
+    const std::wstring tt = lang::Tr(s);
+    DrawTextW(dc, tt.c_str(), static_cast<int>(tt.size()), &r, DT_CALCRECT | DT_WORDBREAK | DT_NOPREFIX);
     SelectObject(dc, old);
     return r.bottom;
 }
@@ -75,7 +77,8 @@ inline void Text(HDC dc, HFONT f, COLORREF c, RECT r, const std::wstring& s, UIN
     HGDIOBJ old = SelectObject(dc, f);
     SetBkMode(dc, TRANSPARENT);
     SetTextColor(dc, c);
-    DrawTextW(dc, s.c_str(), static_cast<int>(s.size()), &r, flags | DT_NOPREFIX);
+    const std::wstring tt = lang::Tr(s);
+    DrawTextW(dc, tt.c_str(), static_cast<int>(tt.size()), &r, flags | DT_NOPREFIX);
     SelectObject(dc, old);
 }
 // Abgerundetes Rechteck mit Kantenglaettung (GDI+) und 1 px Rahmen
