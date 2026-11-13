@@ -27,12 +27,13 @@ using std::min;
 #include "../common/Gfx.h"
 #include "EqCurve.h"
 #include "AppMixer.h"
+#include "AutoGain.h"
 #include "EqLogic.h"
 #include "FilterEditor.h"
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.10.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.11.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -63,7 +64,7 @@ enum HitId {
     H_PROFILE = 200,    // 200 .. 205: Profil waehlen
     H_PROFNEW = 210, H_BIND = 211, H_IMPORT = 212, H_PROFDEL = 213, H_SHARE = 214,
     H_BAND = 100,       // 100 .. 109 = Baender, 110 = Preamp
-    H_AB = 331, H_AUTOEQ = 332,
+    H_AB = 331, H_AUTOEQ = 332, H_AUTOGAIN = 333,
     H_SPECTRUM = 330,   // Schalter "Spektrum" im Diagramm
     H_MIXSLIDER = 310,  // 310 .. 314: Lautstaerke-Regler je Programm
     H_MIXMUTE = 320,    // 320 .. 324: Stumm-Knopf je Programm
@@ -93,6 +94,9 @@ struct App {
     int mx = -1, my = -1;                          // Mausposition (fuer die Anzeige im Diagramm)
     RECT specBtn{};                                // Schalter fuer das Live-Spektrum
     RECT btnAB{}, btnAutoEq{};                     // A/B-Vergleich (halten = Original) und AutoEq-Datei laden
+    RECT autoBtn{};                                // Schalter Auto-Lautstaerke in der Karte mit den Kurven-Infos
+    eq::AutoGain autoCtl;                          // Regelung der Auto-Lautstaerke
+    int autoExtra = 0;                             // aktuelle Anhebung der Vorverstaerkung durch die Auto-Lautstaerke (dB)
     bool abBypass = false;                         // A/B: gerade wird das Original (ohne Equalizer) gespielt
     RECT mix{}, mixName[kMixRows]{}, mixSlider[kMixRows]{}, mixPct[kMixRows]{}, mixMute[kMixRows]{};   // Karte "Programme"
     std::vector<mixer::Entry> mixEntries;          // Programme, die gerade Ton ausgeben
@@ -159,10 +163,17 @@ void SaveCfg() {
     eq::SaveProfiles(g.profiles, g.active, g.profilesPath);
 }
 
+// Einstellungen, wie sie in die Datei fuer Equalizer APO gehen: Regler plus die Anhebung der Auto-Lautstaerke
+eq::Settings Effective() {
+    eq::Settings e = g.cfg;
+    e.preamp = std::clamp(e.preamp + g.autoExtra, -eq::kMaxGain, eq::kMaxGain);
+    return e;
+}
+
 void ApplyNow() {
     KillTimer(g.hwnd, kTimerApply);
     if (g.installDir.empty()) return;
-    const eq::Settings applied = g.abBypass ? eq::BypassSettings(g.cfg) : g.cfg;      // A/B: Original, ungefaehr gleich laut
+    const eq::Settings applied = g.abBypass ? eq::BypassSettings(Effective()) : Effective();      // A/B: Original, ungefaehr gleich laut
     switch (eq::ApplyToDir(g.installDir, applied)) {
     case eq::ApplyResult::Applied:
         g.needAdmin = false;
@@ -680,10 +691,11 @@ void Layout() {
     g.btnAuto = { g.confBtn.right + S(10), y, g.confBtn.right + S(10) + TextWidth(dc, g.fBold, autoLabel) + S(28), y + S(36) };
     g.btnKeep = { g.btnAuto.right + S(10), y, g.btnAuto.right + S(10) + TextWidth(dc, g.fBold, keepLabel) + S(28), y + S(36) };
     ReleaseDC(g.hwnd, dc);
-    g.graph = g.info = g.specBtn = RECT{};
+    g.graph = g.info = g.specBtn = g.autoBtn = RECT{};
     if (wide && !g.installDir.empty() && g.profCard.bottom > 0) {   // rechte Spalte: Diagramm oben, Kurven-Infos unten bis zur Unterkante der Profile
         const int x0 = R + S(2), x1 = cr.right - m;
-        g.info = { x0, g.profCard.bottom - S(132), x1, g.profCard.bottom };
+        g.info = { x0, g.profCard.bottom - S(158), x1, g.profCard.bottom };
+        g.autoBtn = { g.info.right - S(16) - S(70), g.info.top + S(14) + 4 * S(26) + S(2), g.info.right - S(16), g.info.top + S(14) + 5 * S(26) - S(2) };
         g.mix = { x0, g.info.top - S(14) - S(252), x1, g.info.top - S(14) };
         g.graph = { x0, g.hero.top, x1, g.mix.top - S(14) };
         g.specBtn = { g.graph.right - S(138), g.graph.top + S(10), g.graph.right - S(20), g.graph.top + S(36) };
@@ -897,8 +909,16 @@ void Paint(HDC dc, const RECT& cr) {
             };
             row(L"Stärkste Anhebung", hi < 0.05 ? std::wstring(L"keine") : num(hi, L"%+.1f") + L" dB bei " + freqText(hiF));
             row(L"Stärkste Absenkung", lo > -0.05 ? std::wstring(L"keine") : num(lo, L"%+.1f") + L" dB bei " + freqText(loF));
-            row(L"Vorverstärkung", std::to_wstring(eq::PreampDb(g.cfg)) + L" dB automatisch, gesamt " + std::to_wstring(eq::TotalPreampDb(g.cfg)) + L" dB");
+            row(L"Vorverstärkung", std::to_wstring(eq::PreampDb(g.cfg)) + L" dB automatisch" + (g.autoExtra > 0 ? L", +" + std::to_wstring(g.autoExtra) + L" dB Auto" : std::wstring()) +
+                                   L", gesamt " + std::to_wstring(eq::TotalPreampDb(Effective())) + L" dB");
             row(L"Zusatzfilter", g.cfg.extra.empty() ? std::wstring(L"keine") : std::to_wstring(g.cfg.extra.size()) + (g.cfg.extra.size() == 1 ? L" Zeile" : L" Zeilen"));
+            row(L"Auto-Lautstärke", g.cfg.autoGain ? (g.cfg.enabled ? L"an (Beta)" : L"an, wartet auf den Equalizer") : L"aus (Beta)");
+            {
+                const bool hotA = g.hover == H_AUTOGAIN;
+                FillRound(dc, g.autoBtn, S(10), g.cfg.autoGain ? Blend(kCard, kEq, 16) : (hotA ? kCardHover : Blend(kCard, kBackground, 25)),
+                          g.cfg.autoGain ? Blend(kBorder, kEq, 60) : (hotA ? kBorderHot : kBorder));
+                DrawText2(dc, g.fSmall, g.cfg.autoGain ? kEq : kText, g.autoBtn, g.cfg.autoGain ? L"an" : L"aus", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            }
         }
 
         if (g.mix.right > g.mix.left) {   // Programme: Lautstaerke je Programm (Windows-Lautstaerkemixer)
@@ -1089,6 +1109,7 @@ int HitTest(POINT p) {
     if (PtInRect(&g.btnReset, p)) return H_RESET;
     if (PtInRect(&g.specBtn, p)) return H_SPECTRUM;
     if (PtInRect(&g.btnAB, p)) return H_AB;
+    if (PtInRect(&g.autoBtn, p)) return H_AUTOGAIN;
     if (PtInRect(&g.btnAutoEq, p)) return H_AUTOEQ;
     for (int i = 0; i < kMixRows; ++i) {
         if (PtInRect(&g.mixMute[i], p)) return H_MIXMUTE + i;
@@ -1127,6 +1148,11 @@ void Activate(int id) {
     }
     if (id == H_HERO) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
     else if (id == H_AUTOEQ) ImportAutoEq();
+    else if (id == H_AUTOGAIN) {
+        g.cfg.autoGain = !g.cfg.autoGain;
+        if (!g.cfg.autoGain) { g.autoExtra = 0; g.autoCtl.Reset(); }
+        Changed();
+    }
     else if (id == H_SPECTRUM) { g.cfg.spectrum = !g.cfg.spectrum; Changed(); }
     else if (id == H_BASS) { g.cfg.bass = !g.cfg.bass; Changed(); }
     else if (id == H_VOICE) { g.cfg.voice = !g.cfg.voice; Changed(); }
@@ -1267,8 +1293,26 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (wp == kTimerApply) ApplyNow();
         else if (wp == kTimerDevice) PollDevice();
         else if (wp == kTimerSpectrum) {   // Mitschnitt nur, solange das Fenster mit Diagramm sichtbar ist; sonst Geraet freigeben
-            const bool want = g.cfg.spectrum && g.graph.right > g.graph.left && IsWindowVisible(hwnd) && !IsIconic(hwnd);
-            if (want) { spectrum::Start(); InvalidateRect(hwnd, &g.graph, FALSE); } else if (spectrum::Running()) spectrum::Stop();
+            const bool wantView = g.cfg.spectrum && g.graph.right > g.graph.left && IsWindowVisible(hwnd) && !IsIconic(hwnd);
+            const bool wantAuto = g.cfg.autoGain && g.cfg.enabled && !g.installDir.empty();
+            if (wantView || wantAuto) spectrum::Start(); else if (spectrum::Running()) spectrum::Stop();
+            if (wantView) InvalidateRect(hwnd, &g.graph, FALSE);
+            if (wantAuto) {
+                const spectrum::Snapshot s = spectrum::Get();
+                if (s.running && !g.abBypass) {
+                    const double peak = std::max(s.peakL, s.peakR);
+                    const int maxExtra = std::max(0, -eq::TotalPreampDb(g.cfg));            // nie ueber den Pegel des Originals
+                    if (g.autoCtl.Update(peak, 0.06, maxExtra)) {
+                        g.autoExtra = g.autoCtl.extra;
+                        ApplyNow();
+                        SetStatus(L"Auto-Lautstärke: +" + std::to_wstring(g.autoExtra) + L" dB", kTextDim);
+                    }
+                }
+            } else if (g.autoExtra != 0) {
+                g.autoExtra = 0;
+                g.autoCtl.Reset();
+                ApplyNow();
+            }
         }
         else if (wp == kTimerMixer) { if (IsWindowVisible(hwnd) && !IsIconic(hwnd)) RefreshMixer(); }
         else if (wp == kTimerDisarm) { KillTimer(hwnd, kTimerDisarm); g.delArmed = false; Layout(); InvalidateRect(hwnd, nullptr, FALSE); }
