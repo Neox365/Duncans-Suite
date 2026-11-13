@@ -29,6 +29,7 @@ using std::min;
 #include "AppMixer.h"
 #include "EqLogic.h"
 #include "FilterEditor.h"
+#include "Spectrum.h"
 
 #ifndef APP_VERSION
 #define APP_VERSION L"0.8.0"   // normalerweise aus CMake
@@ -49,7 +50,7 @@ const COLORREF kEq = RGB(125, 211, 252);            // Akzent dieses Programms (
 const COLORREF kOnEq = RGB(8, 24, 34);              // Schrift auf dem Akzent
 
 const wchar_t* kTitle = L"Duncan's Equalizer";
-const UINT_PTR kTimerApply = 1, kTimerDevice = 2, kTimerDisarm = 3, kTimerMixer = 4;
+const UINT_PTR kTimerApply = 1, kTimerDevice = 2, kTimerDisarm = 3, kTimerMixer = 4, kTimerSpectrum = 5;
 constexpr int kMixRows = 5;                         // so viele Programme zeigt die Karte "Programme"
 const UINT WM_TRAY = WM_APP + 2;                // Symbol im Infobereich
 const UINT WM_SHOWMAIN = WM_APP + 3;            // zweiter Start: bestehendes Fenster zeigen
@@ -62,6 +63,7 @@ enum HitId {
     H_PROFILE = 200,    // 200 .. 205: Profil waehlen
     H_PROFNEW = 210, H_BIND = 211, H_IMPORT = 212, H_PROFDEL = 213, H_SHARE = 214,
     H_BAND = 100,       // 100 .. 109 = Baender, 110 = Preamp
+    H_SPECTRUM = 330,   // Schalter "Spektrum" im Diagramm
     H_MIXSLIDER = 310,  // 310 .. 314: Lautstaerke-Regler je Programm
     H_MIXMUTE = 320,    // 320 .. 324: Stumm-Knopf je Programm
     H_RESET = 121
@@ -88,6 +90,7 @@ struct App {
     RECT btnAuto{}, btnKeep{};
     RECT graph{}, info{};                          // rechte Spalte (nur bei breitem Fenster): Frequenzgang und Kurven-Infos
     int mx = -1, my = -1;                          // Mausposition (fuer die Anzeige im Diagramm)
+    RECT specBtn{};                                // Schalter fuer das Live-Spektrum
     RECT mix{}, mixName[kMixRows]{}, mixSlider[kMixRows]{}, mixPct[kMixRows]{}, mixMute[kMixRows]{};   // Karte "Programme"
     std::vector<mixer::Entry> mixEntries;          // Programme, die gerade Ton ausgeben
     int mixDrag = -1;                              // Regler, der gerade gezogen wird
@@ -634,12 +637,13 @@ void Layout() {
     g.btnAuto = { g.confBtn.right + S(10), y, g.confBtn.right + S(10) + TextWidth(dc, g.fBold, autoLabel) + S(28), y + S(36) };
     g.btnKeep = { g.btnAuto.right + S(10), y, g.btnAuto.right + S(10) + TextWidth(dc, g.fBold, keepLabel) + S(28), y + S(36) };
     ReleaseDC(g.hwnd, dc);
-    g.graph = g.info = RECT{};
+    g.graph = g.info = g.specBtn = RECT{};
     if (wide && !g.installDir.empty() && g.profCard.bottom > 0) {   // rechte Spalte: Diagramm oben, Kurven-Infos unten bis zur Unterkante der Profile
         const int x0 = R + S(2), x1 = cr.right - m;
         g.info = { x0, g.profCard.bottom - S(132), x1, g.profCard.bottom };
         g.mix = { x0, g.info.top - S(14) - S(252), x1, g.info.top - S(14) };
         g.graph = { x0, g.hero.top, x1, g.mix.top - S(14) };
+        g.specBtn = { g.graph.right - S(138), g.graph.top + S(10), g.graph.right - S(20), g.graph.top + S(36) };
     } else g.mix = RECT{};
     LayoutMixerRows();
 }
@@ -762,12 +766,50 @@ void Paint(HDC dc, const RECT& cr) {
                 DrawText2(dc, g.fSmall, kTextDim, { g.graph.left + S(8), static_cast<int>(yy) - S(9), pl.left - S(8), static_cast<int>(yy) + S(9) },
                           d > 0 ? L"+" + std::to_wstring(d) : std::to_wstring(d), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             }
-            DrawText2(dc, g.fSmall, kTextDim, { g.graph.right - S(70), g.graph.top + S(16), g.graph.right - S(20), g.graph.top + S(36) }, L"dB", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             static const struct { double f; const wchar_t* t; } kMarks[] = { {50, L"50"}, {100, L"100"}, {200, L"200"}, {500, L"500"}, {1000, L"1k"}, {2000, L"2k"}, {5000, L"5k"}, {10000, L"10k"} };
             for (const auto& mk : kMarks) {
                 const float xx = xOf(mk.f);
                 gr.DrawLine(&grid, xx, static_cast<float>(pl.top), xx, static_cast<float>(pl.bottom));
                 DrawText2(dc, g.fSmall, kTextDim, { static_cast<int>(xx) - S(24), pl.bottom + S(6), static_cast<int>(xx) + S(24), pl.bottom + S(26) }, mk.t, DT_CENTER | DT_SINGLELINE);
+            }
+            const spectrum::Snapshot sp = spectrum::Get();
+            const bool showSpec = g.cfg.spectrum && sp.running;
+            if (showSpec) {   // Live-Spektrum: Anzeige von -90 dBFS (unten) bis -10 dBFS (oben), hinter der Kurve
+                std::vector<Gdiplus::PointF> sp2;
+                const float bottomY = static_cast<float>(pl.bottom);
+                sp2.push_back({ xOf(spectrum::BandEdgeHz(0)), bottomY });
+                for (int b = 0; b < spectrum::kBands; ++b) {
+                    const float v = std::clamp((sp.bands[b] + 90.f) / 80.f, 0.f, 1.f);
+                    sp2.push_back({ xOf(spectrum::BandCenterHz(b)), bottomY - v * ph });
+                }
+                sp2.push_back({ xOf(spectrum::BandEdgeHz(spectrum::kBands)), bottomY });
+                const COLORREF sc = on ? Blend(kCard, RGB(255, 255, 255), 55) : Blend(kCard, RGB(255, 255, 255), 30);
+                Gdiplus::SolidBrush specFill(Gdiplus::Color(on ? 42 : 24, GetRValue(sc), GetGValue(sc), GetBValue(sc)));
+                gr.FillPolygon(&specFill, sp2.data(), static_cast<INT>(sp2.size()));
+                Gdiplus::Pen specLine(Gdiplus::Color(on ? 120 : 70, GetRValue(sc), GetGValue(sc), GetBValue(sc)), static_cast<float>(S(1)));
+                gr.DrawLines(&specLine, sp2.data() + 1, static_cast<INT>(sp2.size() - 2));
+            }
+            {   // Schalter und Pegelanzeige in der Kopfzeile
+                const bool hotB = g.hover == H_SPECTRUM;
+                FillRound(dc, g.specBtn, S(10), g.cfg.spectrum ? Blend(kCard, kEq, 16) : (hotB ? kCardHover : Blend(kCard, kBackground, 25)),
+                          g.cfg.spectrum ? Blend(kBorder, kEq, 60) : (hotB ? kBorderHot : kBorder));
+                DrawText2(dc, g.fSmall, g.cfg.spectrum ? kEq : kText, g.specBtn, g.cfg.spectrum ? L"Spektrum: an" : L"Spektrum: aus", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                if (showSpec) {
+                    const int mx0 = g.graph.left + S(190), mw = S(70);
+                    const float pk[2] = { sp.peakL, sp.peakR };
+                    for (int c = 0; c < 2; ++c) {
+                        const int my0 = g.graph.top + S(c == 0 ? 14 : 24);
+                        DrawText2(dc, g.fSmall, kTextDim, { mx0 - S(16), my0 - S(6), mx0 - S(4), my0 + S(12) }, c == 0 ? L"L" : L"R", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                        RECT bar{ mx0, my0, mx0 + mw, my0 + S(5) };
+                        FillRound(dc, bar, S(2), Blend(kCard, kBackground, 55), Blend(kCard, kBackground, 55));
+                        const float v = std::clamp((pk[c] + 60.f) / 60.f, 0.f, 1.f);
+                        if (v > 0.01f) {
+                            const COLORREF mc = pk[c] > -1.f ? kRed : (pk[c] > -6.f ? kOrange : kGreen);
+                            RECT fillBar{ mx0, my0, mx0 + std::max(S(3), static_cast<int>(v * mw)), my0 + S(5) };
+                            FillRound(dc, fillBar, S(2), mc, mc);
+                        }
+                    }
+                }
             }
             std::vector<Gdiplus::PointF> pts;
             for (size_t k = 0; k < fr.size(); ++k) pts.push_back({ xOf(fr[k]), yOf(db[k]) });
@@ -798,7 +840,7 @@ void Paint(HDC dc, const RECT& cr) {
                 gr.DrawLine(&cur, static_cast<float>(g.mx), static_cast<float>(pl.top), static_cast<float>(g.mx), static_cast<float>(pl.bottom));
                 const float r = static_cast<float>(S(5));
                 gr.FillEllipse(&dot, g.mx - r, yOf(d) - r, r * 2, r * 2);
-                DrawText2(dc, g.fBold, kText, { pl.left + S(60), g.graph.top + S(14), pl.right - S(50), g.graph.top + S(38) }, freqText(f) + L"   " + num(d, L"%+.1f") + L" dB", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                DrawText2(dc, g.fBold, kText, { pl.right - S(220), pl.top + S(4), pl.right - S(8), pl.top + S(26) }, freqText(f) + L"   " + num(d, L"%+.1f") + L" dB", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             }
 
             // Kurven-Infos
@@ -995,6 +1037,7 @@ int HitTest(POINT p) {
     if (g.needAdmin && PtInRect(&g.adminBtn, p)) return H_ADMIN;
     for (int i = 0; i < eq::PresetCount() && i < 8; ++i) if (PtInRect(&g.presetRect[i], p)) return H_PRESET + i;
     if (PtInRect(&g.btnReset, p)) return H_RESET;
+    if (PtInRect(&g.specBtn, p)) return H_SPECTRUM;
     for (int i = 0; i < kMixRows; ++i) {
         if (PtInRect(&g.mixMute[i], p)) return H_MIXMUTE + i;
         if (PtInRect(&g.mixSlider[i], p)) return H_MIXSLIDER + i;
@@ -1031,6 +1074,7 @@ void Activate(int id) {
         return;
     }
     if (id == H_HERO) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
+    else if (id == H_SPECTRUM) { g.cfg.spectrum = !g.cfg.spectrum; Changed(); }
     else if (id == H_BASS) { g.cfg.bass = !g.cfg.bass; Changed(); }
     else if (id == H_VOICE) { g.cfg.voice = !g.cfg.voice; Changed(); }
     else if (id == H_RESET) { for (int b = 0; b < eq::kBands; ++b) g.cfg.gains[b] = 0; g.cfg.preamp = 0; Changed(); SetStatus(L"Alle Regler auf 0 gesetzt", kTextDim); }
@@ -1164,6 +1208,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_TIMER:
         if (wp == kTimerApply) ApplyNow();
         else if (wp == kTimerDevice) PollDevice();
+        else if (wp == kTimerSpectrum) {   // Mitschnitt nur, solange das Fenster mit Diagramm sichtbar ist; sonst Geraet freigeben
+            const bool want = g.cfg.spectrum && g.graph.right > g.graph.left && IsWindowVisible(hwnd) && !IsIconic(hwnd);
+            if (want) { spectrum::Start(); InvalidateRect(hwnd, &g.graph, FALSE); } else if (spectrum::Running()) spectrum::Stop();
+        }
         else if (wp == kTimerMixer) { if (IsWindowVisible(hwnd) && !IsIconic(hwnd)) RefreshMixer(); }
         else if (wp == kTimerDisarm) { KillTimer(hwnd, kTimerDisarm); g.delArmed = false; Layout(); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
@@ -1187,6 +1235,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         }
         return 0;
     case WM_DESTROY:
+        spectrum::Stop();
         UnregisterHotkeys();
         if (!g.installDir.empty()) ApplyNow();
         Shell_NotifyIconW(NIM_DELETE, &g.nid);
@@ -1276,6 +1325,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     Layout();
     SetTimer(g.hwnd, kTimerDevice, 2500, nullptr);
     SetTimer(g.hwnd, kTimerMixer, 1200, nullptr);
+    SetTimer(g.hwnd, kTimerSpectrum, 60, nullptr);
     RefreshMixer();
     if (!g.installDir.empty()) ApplyNow();      // beim Start die gespeicherten Einstellungen (neu) eintragen
     g.autostartOn = eq::GetAutostart();

@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.9.0 | 2026-11-13
+- Neu: Live-Spektrum. Im Frequenzgang-Diagramm läuft hinter der Kurve das Spektrum des Tons, den das Standard-Ausgabegerät gerade abspielt (96 Frequenzbänder, rund 50 Aktualisierungen pro Sekunde, langsam abfallend). Daneben zeigen zwei Balken (L/R) den Spitzenpegel; sie werden orange kurz vor 0 dB und rot bei Übersteuerung. Der Schalter „Spektrum: an/aus“ oben im Diagramm schaltet es ab; die Wahl wird gespeichert.
+- Hinweis: Das Programm liest den Ton nur mit (WASAPI-Loopback), speichert und sendet nichts. Der Mitschnitt läuft nur, solange das Fenster mit Diagramm sichtbar ist; im Infobereich oder bei ausgeschaltetem Spektrum wird das Gerät freigegeben. Ob das Spektrum den Ton vor oder nach dem Equalizer zeigt, bestimmt Windows.
 ## 0.8.0 | 2026-11-13
 - Neu: Lautstärke pro Programm. Die neue Karte „Programme“ (rechts, unter dem Diagramm) zeigt alle Programme, die gerade Ton ausgeben – Spiel, Browser, Discord, Musik –, jeweils mit Regler (0 bis 100 %, auch mit dem Mausrad), Prozentanzeige und „Stumm“. Das ist der Lautstärkemixer von Windows: Windows merkt sich die Einstellung pro Programm selbst. Mehrere Fenster oder Tabs desselben Programms sind eine Zeile. Die Liste aktualisiert sich alle paar Sekunden, solange das Fenster sichtbar ist.
 - Hinweis: Mehr als 100 % lässt Windows nicht zu. Ein Programm wird lauter, indem man die anderen leiser stellt. Es zählt das Standard-Ausgabegerät; Programme erscheinen erst, wenn sie Ton abspielen. Die Karte gibt es nur im breiten Fenster (wie das Diagramm).
