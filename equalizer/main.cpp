@@ -26,11 +26,12 @@ using std::min;
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "EqCurve.h"
+#include "AppMixer.h"
 #include "EqLogic.h"
 #include "FilterEditor.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.8.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -48,7 +49,8 @@ const COLORREF kEq = RGB(125, 211, 252);            // Akzent dieses Programms (
 const COLORREF kOnEq = RGB(8, 24, 34);              // Schrift auf dem Akzent
 
 const wchar_t* kTitle = L"Duncan's Equalizer";
-const UINT_PTR kTimerApply = 1, kTimerDevice = 2, kTimerDisarm = 3;
+const UINT_PTR kTimerApply = 1, kTimerDevice = 2, kTimerDisarm = 3, kTimerMixer = 4;
+constexpr int kMixRows = 5;                         // so viele Programme zeigt die Karte "Programme"
 const UINT WM_TRAY = WM_APP + 2;                // Symbol im Infobereich
 const UINT WM_SHOWMAIN = WM_APP + 3;            // zweiter Start: bestehendes Fenster zeigen
 const UINT WM_NAME_DONE = WM_APP + 1;      // wParam = 1: Name uebernehmen, 0: abbrechen
@@ -60,6 +62,8 @@ enum HitId {
     H_PROFILE = 200,    // 200 .. 205: Profil waehlen
     H_PROFNEW = 210, H_BIND = 211, H_IMPORT = 212, H_PROFDEL = 213, H_SHARE = 214,
     H_BAND = 100,       // 100 .. 109 = Baender, 110 = Preamp
+    H_MIXSLIDER = 310,  // 310 .. 314: Lautstaerke-Regler je Programm
+    H_MIXMUTE = 320,    // 320 .. 324: Stumm-Knopf je Programm
     H_RESET = 121
 };
 
@@ -84,6 +88,9 @@ struct App {
     RECT btnAuto{}, btnKeep{};
     RECT graph{}, info{};                          // rechte Spalte (nur bei breitem Fenster): Frequenzgang und Kurven-Infos
     int mx = -1, my = -1;                          // Mausposition (fuer die Anzeige im Diagramm)
+    RECT mix{}, mixName[kMixRows]{}, mixSlider[kMixRows]{}, mixPct[kMixRows]{}, mixMute[kMixRows]{};   // Karte "Programme"
+    std::vector<mixer::Entry> mixEntries;          // Programme, die gerade Ton ausgeben
+    int mixDrag = -1;                              // Regler, der gerade gezogen wird
     NOTIFYICONDATAW nid{};
     bool autostartOn = false, quitting = false, balloonShown = false;
     bool delArmed = false;                         // "Loeschen" wurde einmal geklickt, zweiter Klick loescht
@@ -496,6 +503,47 @@ void PollDevice() {                                 // Geraetewechsel erkennen u
 int TrackTop() { return g.panel.top + S(42); }
 int TrackBottom() { return g.panel.bottom - S(106); }
 
+// ---------- Programme (Lautstaerke je Programm) ----------
+void LayoutMixerRows() {
+    const int n = std::min(static_cast<int>(g.mixEntries.size()), kMixRows);
+    for (int i = 0; i < kMixRows; ++i) g.mixName[i] = g.mixSlider[i] = g.mixPct[i] = g.mixMute[i] = RECT{};
+    if (g.mix.right <= g.mix.left) return;
+    for (int i = 0; i < n; ++i) {
+        const int y0 = g.mix.top + S(52) + i * S(32), h = S(28);
+        const int l = g.mix.left + S(20), r = g.mix.right - S(20);
+        g.mixMute[i] = { r - S(64), y0, r, y0 + h };
+        g.mixPct[i] = { g.mixMute[i].left - S(52), y0, g.mixMute[i].left - S(8), y0 + h };
+        g.mixName[i] = { l, y0, l + S(110), y0 + h };
+        g.mixSlider[i] = { g.mixName[i].right + S(8), y0, g.mixPct[i].left - S(8), y0 + h };
+    }
+}
+
+void RefreshMixer() {
+    if (g.mix.right <= g.mix.left || g.mixDrag >= 0) return;
+    std::vector<mixer::Entry> now = mixer::List();
+    bool same = now.size() == g.mixEntries.size();
+    for (size_t i = 0; same && i < now.size(); ++i)
+        same = now[i].key == g.mixEntries[i].key && now[i].muted == g.mixEntries[i].muted && std::fabs(now[i].volume - g.mixEntries[i].volume) < 0.005f;
+    if (same) return;
+    g.mixEntries = std::move(now);
+    LayoutMixerRows();
+    InvalidateRect(g.hwnd, &g.mix, FALSE);
+}
+
+void SetMixVolume(int i, float v) {
+    if (i < 0 || i >= static_cast<int>(g.mixEntries.size()) || i >= kMixRows) return;
+    mixer::Entry& e = g.mixEntries[static_cast<size_t>(i)];
+    e.volume = std::clamp(v, 0.f, 1.f);
+    if (e.muted && e.volume > 0) { e.muted = false; mixer::SetMuted(e.key, false); }      // Regler anfassen hebt Stumm auf
+    mixer::SetVolume(e.key, e.volume);
+    InvalidateRect(g.hwnd, &g.mix, FALSE);
+}
+
+float MixFromX(int i, int x) {
+    const RECT& r = g.mixSlider[i];
+    return r.right > r.left ? std::clamp(static_cast<float>(x - r.left) / static_cast<float>(r.right - r.left), 0.f, 1.f) : 0.f;
+}
+
 void Layout() {
     RECT cr; GetClientRect(g.hwnd, &cr);
     const bool wide = cr.right >= S(900);
@@ -589,9 +637,11 @@ void Layout() {
     g.graph = g.info = RECT{};
     if (wide && !g.installDir.empty() && g.profCard.bottom > 0) {   // rechte Spalte: Diagramm oben, Kurven-Infos unten bis zur Unterkante der Profile
         const int x0 = R + S(2), x1 = cr.right - m;
-        g.info = { x0, g.profCard.bottom - S(150), x1, g.profCard.bottom };
-        g.graph = { x0, g.hero.top, x1, g.info.top - S(14) };
-    }
+        g.info = { x0, g.profCard.bottom - S(132), x1, g.profCard.bottom };
+        g.mix = { x0, g.info.top - S(14) - S(252), x1, g.info.top - S(14) };
+        g.graph = { x0, g.hero.top, x1, g.mix.top - S(14) };
+    } else g.mix = RECT{};
+    LayoutMixerRows();
 }
 
 // ---------- Zeichnen ----------
@@ -766,6 +816,42 @@ void Paint(HDC dc, const RECT& cr) {
             row(L"Zusatzfilter", g.cfg.extra.empty() ? std::wstring(L"keine") : std::to_wstring(g.cfg.extra.size()) + (g.cfg.extra.size() == 1 ? L" Zeile" : L" Zeilen"));
         }
 
+        if (g.mix.right > g.mix.left) {   // Programme: Lautstaerke je Programm (Windows-Lautstaerkemixer)
+            FillRound(dc, g.mix, S(16), kCard, kBorder);
+            DrawText2(dc, g.fHead, kText, { g.mix.left + S(20), g.mix.top + S(12), g.mix.left + S(240), g.mix.top + S(38) }, L"Programme");
+            const int total = static_cast<int>(g.mixEntries.size());
+            if (total == 0) {
+                DrawText2(dc, g.fSmall, kTextDim, { g.mix.left + S(20), g.mix.top + S(60), g.mix.right - S(20), g.mix.top + S(180) },
+                          L"Gerade gibt kein Programm Ton aus.\nSobald eines spielt, erscheint es hier mit eigenem Regler.", DT_CENTER | DT_VCENTER | DT_WORDBREAK);
+            }
+            Gdiplus::Graphics gr(dc);
+            gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            for (int i = 0; i < std::min(total, kMixRows); ++i) {
+                const mixer::Entry& e = g.mixEntries[static_cast<size_t>(i)];
+                const bool hotS = g.hover == H_MIXSLIDER + i || g.mixDrag == i, hotM = g.hover == H_MIXMUTE + i;
+                const COLORREF ac = e.muted ? Blend(kEq, kCard, 40) : kEq;
+                DrawText2(dc, g.fSmall, e.muted ? kTextDim : kText, g.mixName[i], e.name, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                const RECT& sl = g.mixSlider[i];
+                const int cy = (sl.top + sl.bottom) / 2, th = S(4);
+                RECT track{ sl.left, cy - th / 2, sl.right, cy + th / 2 + (th & 1) };
+                FillRound(dc, track, th / 2, Blend(kCard, kBackground, 55), Blend(kCard, kBackground, 55));
+                const int hx = sl.left + static_cast<int>(std::lround(e.volume * (sl.right - sl.left)));
+                if (hx > sl.left) { RECT fill{ sl.left, track.top, hx, track.bottom }; FillRound(dc, fill, th / 2, ac, ac); }
+                const float rad = static_cast<float>(S(hotS ? 8 : 7));
+                const COLORREF hc = hotS ? Blend(ac, RGB(255, 255, 255), 25) : ac;
+                Gdiplus::SolidBrush hb(Gdiplus::Color(255, GetRValue(hc), GetGValue(hc), GetBValue(hc)));
+                gr.FillEllipse(&hb, hx - rad, static_cast<float>(cy) - rad, rad * 2, rad * 2);
+                DrawText2(dc, g.fSmall, e.muted ? kTextDim : kText, g.mixPct[i], std::to_wstring(static_cast<int>(std::lround(e.volume * 100))) + L" %", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                const RECT& mb = g.mixMute[i];
+                FillRound(dc, mb, S(10), e.muted ? Blend(kCard, kOrange, 22) : (hotM ? kCardHover : Blend(kCard, kBackground, 25)), e.muted ? Blend(kBorder, kOrange, 70) : (hotM ? kBorderHot : kBorder));
+                DrawText2(dc, g.fSmall, e.muted ? kOrange : kText, mb, L"Stumm", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            }
+            if (total > kMixRows)
+                DrawText2(dc, g.fSmall, kTextDim, { g.mix.right - S(160), g.mix.top + S(14), g.mix.right - S(20), g.mix.top + S(36) }, L"+ " + std::to_wstring(total - kMixRows) + L" weitere", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fSmall, kTextDim, { g.mix.left + S(20), g.mix.bottom - S(36), g.mix.right - S(20), g.mix.bottom - S(8) },
+                      L"Über 100 % geht nicht – stelle die anderen leiser.", DT_LEFT | DT_VCENTER | DT_WORDBREAK);
+        }
+
         // Regler
         FillRound(dc, g.panel, S(16), kCard, kBorder);
         const int tw = S(4);
@@ -909,6 +995,10 @@ int HitTest(POINT p) {
     if (g.needAdmin && PtInRect(&g.adminBtn, p)) return H_ADMIN;
     for (int i = 0; i < eq::PresetCount() && i < 8; ++i) if (PtInRect(&g.presetRect[i], p)) return H_PRESET + i;
     if (PtInRect(&g.btnReset, p)) return H_RESET;
+    for (int i = 0; i < kMixRows; ++i) {
+        if (PtInRect(&g.mixMute[i], p)) return H_MIXMUTE + i;
+        if (PtInRect(&g.mixSlider[i], p)) return H_MIXSLIDER + i;
+    }
     for (int b = 0; b <= eq::kBands; ++b) if (PtInRect(&g.band[b], p)) return H_BAND + b;
     if (PtInRect(&g.cardBass, p)) return H_BASS;
     if (PtInRect(&g.cardVoice, p)) return H_VOICE;
@@ -935,6 +1025,11 @@ void SetBand(int b, int db) {                       // b == kBands: der Preamp-R
 }
 
 void Activate(int id) {
+    if (id >= H_MIXMUTE && id < H_MIXMUTE + kMixRows) {
+        const size_t i = static_cast<size_t>(id - H_MIXMUTE);
+        if (i < g.mixEntries.size()) { g.mixEntries[i].muted = !g.mixEntries[i].muted; mixer::SetMuted(g.mixEntries[i].key, g.mixEntries[i].muted); InvalidateRect(g.hwnd, &g.mix, FALSE); }
+        return;
+    }
     if (id == H_HERO) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
     else if (id == H_BASS) { g.cfg.bass = !g.cfg.bass; Changed(); }
     else if (id == H_VOICE) { g.cfg.voice = !g.cfg.voice; Changed(); }
@@ -1021,6 +1116,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g.mx = now ? p.x : -1; g.my = now ? p.y : -1;
             if (was || now) InvalidateRect(hwnd, &g.graph, FALSE);
         }
+        if (g.mixDrag >= 0) { SetMixVolume(g.mixDrag, MixFromX(g.mixDrag, p.x)); return 0; }
         if (g.drag >= 0) { SetBand(g.drag, YToGain(p.y)); return 0; }
         const int h = HitTest(p);
         if (h != g.hover) { g.hover = h; InvalidateRect(hwnd, nullptr, FALSE); }
@@ -1039,6 +1135,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         const POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         g.press = HitTest(p);
         if (g.press >= H_BAND && g.press <= H_BAND + eq::kBands) { g.drag = g.press - H_BAND; SetBand(g.drag, YToGain(p.y)); }
+        if (g.press >= H_MIXSLIDER && g.press < H_MIXSLIDER + kMixRows) { g.mixDrag = g.press - H_MIXSLIDER; SetMixVolume(g.mixDrag, MixFromX(g.mixDrag, p.x)); }
         SetCapture(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
@@ -1047,8 +1144,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (GetCapture() == hwnd) ReleaseCapture();
         const int h = HitTest({ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
         const int pressed = g.press;
-        const bool wasDrag = g.drag >= 0;
-        g.press = H_NONE; g.drag = -1;
+        const bool wasDrag = g.drag >= 0 || g.mixDrag >= 0;
+        g.press = H_NONE; g.drag = -1; g.mixDrag = -1;
         InvalidateRect(hwnd, nullptr, FALSE);
         if (!wasDrag && pressed != H_NONE && pressed == h) Activate(h);
         return 0;
@@ -1058,11 +1155,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         ScreenToClient(hwnd, &p);
         const int h = HitTest(p);
         if (h >= H_BAND && h <= H_BAND + eq::kBands) { const int b = h - H_BAND; SetBand(b, (b == eq::kBands ? g.cfg.preamp : g.cfg.gains[b]) + (GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 1 : -1)); }
+        else if (h >= H_MIXSLIDER && h < H_MIXSLIDER + kMixRows && static_cast<size_t>(h - H_MIXSLIDER) < g.mixEntries.size()) {
+            const int i = h - H_MIXSLIDER;
+            SetMixVolume(i, g.mixEntries[static_cast<size_t>(i)].volume + (GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 0.05f : -0.05f));
+        }
         return 0;
     }
     case WM_TIMER:
         if (wp == kTimerApply) ApplyNow();
         else if (wp == kTimerDevice) PollDevice();
+        else if (wp == kTimerMixer) { if (IsWindowVisible(hwnd) && !IsIconic(hwnd)) RefreshMixer(); }
         else if (wp == kTimerDisarm) { KillTimer(hwnd, kTimerDisarm); g.delArmed = false; Layout(); InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     case WM_NAME_DONE: FinishNewProfile(wp == 1); return 0;
@@ -1117,7 +1219,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     const bool background = argv && argc >= 2 && std::wstring(argv[1]) == L"--background";
     if (argv) LocalFree(argv);
 
-    HANDLE single = CreateMutexW(nullptr, TRUE, L"DuncansEqualizer.Single");
+    wchar_t testDir[8] = {};
+    const bool testRun = GetEnvironmentVariableW(L"DUNCANS_EQ_TESTDIR", testDir, 8) > 0;   // Testlauf: darf neben einer echten Instanz laufen
+    HANDLE single = CreateMutexW(nullptr, TRUE, testRun ? L"DuncansEqualizer.Single.Test" : L"DuncansEqualizer.Single");
     if (single && GetLastError() == ERROR_ALREADY_EXISTS) {
         if (HWND other = FindWindowW(L"DuncansEqualizer", nullptr)) if (!background) PostMessageW(other, WM_SHOWMAIN, 0, 0);
         return 0;
@@ -1171,6 +1275,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     g.installDir = Detect();
     Layout();
     SetTimer(g.hwnd, kTimerDevice, 2500, nullptr);
+    SetTimer(g.hwnd, kTimerMixer, 1200, nullptr);
+    RefreshMixer();
     if (!g.installDir.empty()) ApplyNow();      // beim Start die gespeicherten Einstellungen (neu) eintragen
     g.autostartOn = eq::GetAutostart();
     AddTray(inst);

@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.8.0 | 2026-11-13
+- Neu: Lautstärke pro Programm. Die neue Karte „Programme“ (rechts, unter dem Diagramm) zeigt alle Programme, die gerade Ton ausgeben – Spiel, Browser, Discord, Musik –, jeweils mit Regler (0 bis 100 %, auch mit dem Mausrad), Prozentanzeige und „Stumm“. Das ist der Lautstärkemixer von Windows: Windows merkt sich die Einstellung pro Programm selbst. Mehrere Fenster oder Tabs desselben Programms sind eine Zeile. Die Liste aktualisiert sich alle paar Sekunden, solange das Fenster sichtbar ist.
+- Hinweis: Mehr als 100 % lässt Windows nicht zu. Ein Programm wird lauter, indem man die anderen leiser stellt. Es zählt das Standard-Ausgabegerät; Programme erscheinen erst, wenn sie Ton abspielen. Die Karte gibt es nur im breiten Fenster (wie das Diagramm).
 ## 0.7.0 | 2026-11-13
 - Neu: Frequenzgang-Diagramm. Auf breiten Bildschirmen zeigt das Fenster rechts neben den Reglern eine große Kurve mit logarithmischer Frequenzachse (50 Hz bis 10 kHz) und dB-Skala, gefüllt unter der Kurve, mit Punkten an den zehn Reglerfrequenzen. Sie zeigt die Gesamtwirkung von Reglern, Bass, Sprache und Filtern und passt sich beim Ziehen sofort an; bei starken Anhebungen weitet sich die Skala bis ±24 dB. Fährt man mit der Maus über das Diagramm, erscheinen Frequenz und Pegel an dieser Stelle.
 - Neu: Kurven-Infos unter dem Diagramm: stärkste Anhebung und Absenkung mit Frequenz, Vorverstärkung (automatisch und gesamt) und Zahl der Zusatzfilter.
