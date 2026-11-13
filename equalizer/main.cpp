@@ -33,7 +33,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.11.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.12.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -52,7 +52,7 @@ const COLORREF kOnEq = RGB(8, 24, 34);              // Schrift auf dem Akzent
 
 const wchar_t* kTitle = L"Duncan's Equalizer";
 const UINT_PTR kTimerApply = 1, kTimerDevice = 2, kTimerDisarm = 3, kTimerMixer = 4, kTimerSpectrum = 5;
-constexpr int kMixRows = 5;                         // so viele Programme zeigt die Karte "Programme"
+constexpr int kMixRows = 4;                         // so viele Programme zeigt die Karte "Programme"
 const UINT WM_TRAY = WM_APP + 2;                // Symbol im Infobereich
 const UINT WM_SHOWMAIN = WM_APP + 3;            // zweiter Start: bestehendes Fenster zeigen
 const UINT WM_NAME_DONE = WM_APP + 1;      // wParam = 1: Name uebernehmen, 0: abbrechen
@@ -94,7 +94,7 @@ struct App {
     int mx = -1, my = -1;                          // Mausposition (fuer die Anzeige im Diagramm)
     RECT specBtn{};                                // Schalter fuer das Live-Spektrum
     RECT btnAB{}, btnAutoEq{};                     // A/B-Vergleich (halten = Original) und AutoEq-Datei laden
-    RECT autoBtn{};                                // Schalter Auto-Lautstaerke in der Karte mit den Kurven-Infos
+    RECT autoCard{};                               // Karte "Auto-Lautstaerke" (Schalter) in der rechten Spalte
     eq::AutoGain autoCtl;                          // Regelung der Auto-Lautstaerke
     int autoExtra = 0;                             // aktuelle Anhebung der Vorverstaerkung durch die Auto-Lautstaerke (dB)
     bool abBypass = false;                         // A/B: gerade wird das Original (ohne Equalizer) gespielt
@@ -691,13 +691,13 @@ void Layout() {
     g.btnAuto = { g.confBtn.right + S(10), y, g.confBtn.right + S(10) + TextWidth(dc, g.fBold, autoLabel) + S(28), y + S(36) };
     g.btnKeep = { g.btnAuto.right + S(10), y, g.btnAuto.right + S(10) + TextWidth(dc, g.fBold, keepLabel) + S(28), y + S(36) };
     ReleaseDC(g.hwnd, dc);
-    g.graph = g.info = g.specBtn = g.autoBtn = RECT{};
+    g.graph = g.info = g.specBtn = g.autoCard = RECT{};
     if (wide && !g.installDir.empty() && g.profCard.bottom > 0) {   // rechte Spalte: Diagramm oben, Kurven-Infos unten bis zur Unterkante der Profile
         const int x0 = R + S(2), x1 = cr.right - m;
-        g.info = { x0, g.profCard.bottom - S(158), x1, g.profCard.bottom };
-        g.autoBtn = { g.info.right - S(16) - S(70), g.info.top + S(14) + 4 * S(26) + S(2), g.info.right - S(16), g.info.top + S(14) + 5 * S(26) - S(2) };
-        g.mix = { x0, g.info.top - S(14) - S(252), x1, g.info.top - S(14) };
-        g.graph = { x0, g.hero.top, x1, g.mix.top - S(14) };
+        g.info = { x0, g.profCard.bottom - S(132), x1, g.profCard.bottom };
+        g.mix = { x0, g.info.top - S(14) - S(210), x1, g.info.top - S(14) };
+        g.autoCard = { x0, g.mix.top - S(14) - S(64), x1, g.mix.top - S(14) };
+        g.graph = { x0, g.hero.top, x1, g.autoCard.top - S(14) };
         g.specBtn = { g.graph.right - S(138), g.graph.top + S(10), g.graph.right - S(20), g.graph.top + S(36) };
     } else g.mix = RECT{};
     LayoutMixerRows();
@@ -798,12 +798,16 @@ void Paint(HDC dc, const RECT& cr) {
             const float pw = static_cast<float>(pl.right - pl.left), ph = static_cast<float>(pl.bottom - pl.top);
             const std::vector<double> fr = eq::LogFreqs(300, 20.0, 20000.0);
             const std::vector<double> db = eq::ResponseDb(g.cfg, fr);
+            const std::vector<double> dbNet = eq::ResponseDb(Effective(), fr, true);       // tatsaechlich: mit Vorverstaerkung (auch der Auto-Lautstaerke)
+            bool netDiffers = false;
+            for (size_t k = 0; k < db.size(); ++k) if (std::fabs(dbNet[k] - db[k]) >= 0.5) netDiffers = true;
             double peak = 0, hi = -1e9, lo = 1e9, hiF = 0, loF = 0;
             for (size_t k = 0; k < db.size(); ++k) {
                 peak = std::max(peak, std::fabs(db[k]));
                 if (db[k] > hi) { hi = db[k]; hiF = fr[k]; }
                 if (db[k] < lo) { lo = db[k]; loF = fr[k]; }
             }
+            for (double v : dbNet) peak = std::max(peak, std::fabs(v));
             int range = eq::kMaxGain;
             while (range < peak && range < 24) range += 6;
             auto xOf = [&](double f) { return pl.left + static_cast<float>(std::log10(f / 20.0) / 3.0) * pw; };
@@ -881,6 +885,14 @@ void Paint(HDC dc, const RECT& cr) {
             line.SetLineJoin(Gdiplus::LineJoinRound);
             gr.DrawLines(&glow, pts.data(), static_cast<INT>(pts.size()));
             gr.DrawLines(&line, pts.data(), static_cast<INT>(pts.size()));
+            if (netDiffers) {   // gestrichelt: was tatsaechlich ankommt (Kurve plus Vorverstaerkung); steigt mit der Auto-Lautstaerke
+                std::vector<Gdiplus::PointF> net;
+                for (size_t k = 0; k < fr.size(); ++k) net.push_back({ xOf(fr[k]), yOf(dbNet[k]) });
+                const COLORREF nc = on ? RGB(255, 205, 130) : Blend(RGB(255, 205, 130), kCard, 55);
+                Gdiplus::Pen netPen(Gdiplus::Color(on ? 235 : 130, GetRValue(nc), GetGValue(nc), GetBValue(nc)), static_cast<float>(S(2)));
+                netPen.SetDashStyle(Gdiplus::DashStyleDash);
+                gr.DrawLines(&netPen, net.data(), static_cast<INT>(net.size()));
+            }
             gr.ResetClip();
             Gdiplus::SolidBrush dot(Gdiplus::Color(255, GetRValue(lc), GetGValue(lc), GetBValue(lc)));
             for (int b = 0; b < eq::kBands; ++b) {      // Punkte an den zehn Reglerfrequenzen
@@ -898,6 +910,13 @@ void Paint(HDC dc, const RECT& cr) {
                 DrawText2(dc, g.fBold, kText, { pl.right - S(220), pl.top + S(4), pl.right - S(8), pl.top + S(26) }, freqText(f) + L"   " + num(d, L"%+.1f") + L" dB", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             }
 
+            {   // Beschriftung im Diagramm: Legende links oben, rechts oben die Auto-Lautstaerke (wenn nicht gerade die Maus anzeigt)
+                if (netDiffers) DrawText2(dc, g.fSmall, RGB(255, 205, 130), { pl.left + S(8), pl.top + S(4), pl.left + S(250), pl.top + S(24) }, L"gestrichelt: tatsächlich (mit Vorverstärkung)", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                const bool hovering = g.mx >= pl.left && g.mx <= pl.right && g.my >= g.graph.top && g.my <= g.graph.bottom;
+                if (!hovering && g.cfg.autoGain && g.autoExtra > 0)
+                    DrawText2(dc, g.fSmall, kEq, { pl.right - S(130), pl.top + S(4), pl.right - S(8), pl.top + S(24) }, L"Auto +" + std::to_wstring(g.autoExtra) + L" dB", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            }
+
             // Kurven-Infos
             const int ix = g.info.left + S(20), vx = g.info.left + S(150);
             const int rowH = S(26);
@@ -912,13 +931,15 @@ void Paint(HDC dc, const RECT& cr) {
             row(L"Vorverstärkung", std::to_wstring(eq::PreampDb(g.cfg)) + L" dB automatisch" + (g.autoExtra > 0 ? L", +" + std::to_wstring(g.autoExtra) + L" dB Auto" : std::wstring()) +
                                    L", gesamt " + std::to_wstring(eq::TotalPreampDb(Effective())) + L" dB");
             row(L"Zusatzfilter", g.cfg.extra.empty() ? std::wstring(L"keine") : std::to_wstring(g.cfg.extra.size()) + (g.cfg.extra.size() == 1 ? L" Zeile" : L" Zeilen"));
-            row(L"Auto-Lautstärke", g.cfg.autoGain ? (g.cfg.enabled ? L"an (Beta)" : L"an, wartet auf den Equalizer") : L"aus (Beta)");
-            {
-                const bool hotA = g.hover == H_AUTOGAIN;
-                FillRound(dc, g.autoBtn, S(10), g.cfg.autoGain ? Blend(kCard, kEq, 16) : (hotA ? kCardHover : Blend(kCard, kBackground, 25)),
-                          g.cfg.autoGain ? Blend(kBorder, kEq, 60) : (hotA ? kBorderHot : kBorder));
-                DrawText2(dc, g.fSmall, g.cfg.autoGain ? kEq : kText, g.autoBtn, g.cfg.autoGain ? L"an" : L"aus", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            }
+        }
+
+        if (g.autoCard.right > g.autoCard.left) {   // Auto-Lautstaerke: Schalter mit Beschreibung und Live-Anzeige
+            std::wstring desc;
+            if (!g.cfg.autoGain) desc = L"Gleicht aus, wenn der Equalizer leiser macht (Beta)";
+            else if (!g.cfg.enabled) desc = L"An – wartet auf den Equalizer";
+            else if (g.autoExtra > 0) desc = L"Passt sich dem Lied an: +" + std::to_wstring(g.autoExtra) + L" dB lauter, gesamt " + std::to_wstring(eq::TotalPreampDb(Effective())) + L" dB";
+            else desc = L"An – misst die Musik, noch keine Anhebung";
+            DrawSwitchCard(dc, g.autoCard, L"Auto-Lautstärke", desc.c_str(), g.cfg.autoGain, g.hover == H_AUTOGAIN);
         }
 
         if (g.mix.right > g.mix.left) {   // Programme: Lautstaerke je Programm (Windows-Lautstaerkemixer)
@@ -926,7 +947,7 @@ void Paint(HDC dc, const RECT& cr) {
             DrawText2(dc, g.fHead, kText, { g.mix.left + S(20), g.mix.top + S(12), g.mix.left + S(240), g.mix.top + S(38) }, L"Programme");
             const int total = static_cast<int>(g.mixEntries.size());
             if (total == 0) {
-                DrawText2(dc, g.fSmall, kTextDim, { g.mix.left + S(20), g.mix.top + S(60), g.mix.right - S(20), g.mix.top + S(180) },
+                DrawText2(dc, g.fSmall, kTextDim, { g.mix.left + S(20), g.mix.top + S(56), g.mix.right - S(20), g.mix.top + S(170) },
                           L"Gerade gibt kein Programm Ton aus.\nSobald eines spielt, erscheint es hier mit eigenem Regler.", DT_CENTER | DT_VCENTER | DT_WORDBREAK);
             }
             Gdiplus::Graphics gr(dc);
@@ -953,8 +974,8 @@ void Paint(HDC dc, const RECT& cr) {
             }
             if (total > kMixRows)
                 DrawText2(dc, g.fSmall, kTextDim, { g.mix.right - S(160), g.mix.top + S(14), g.mix.right - S(20), g.mix.top + S(36) }, L"+ " + std::to_wstring(total - kMixRows) + L" weitere", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-            DrawText2(dc, g.fSmall, kTextDim, { g.mix.left + S(20), g.mix.bottom - S(36), g.mix.right - S(20), g.mix.bottom - S(8) },
-                      L"Über 100 % geht nicht – stelle die anderen leiser.", DT_LEFT | DT_VCENTER | DT_WORDBREAK);
+            DrawText2(dc, g.fSmall, kTextDim, { g.mix.left + S(20), g.mix.bottom - S(30), g.mix.right - S(20), g.mix.bottom - S(8) },
+                      L"Über 100 % geht nicht – stelle die anderen leiser.", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         }
 
         {   // A/B-Vergleich: Knopf gedrueckt halten = Original hoeren (ungefaehr gleich laut)
@@ -995,8 +1016,8 @@ void Paint(HDC dc, const RECT& cr) {
             Gdiplus::SolidBrush hb(Gdiplus::Color(255, GetRValue(hc), GetGValue(hc), GetBValue(hc)));
             gr.FillEllipse(&hb, cx - rad, hy - rad, rad * 2, rad * 2);
             DrawText2(dc, g.fSmall, hot ? kText : kTextDim, { c.left, TrackBottom() + S(12), c.right, TrackBottom() + S(32) }, pre ? std::wstring(L"Preamp") : FreqText(eq::kFreqs[b]), DT_CENTER | DT_SINGLELINE);
-            DrawText2(dc, g.fSmall, hot ? (pre ? kOrange : kEq) : Blend(kTextDim, kCard, 25), { c.left - S(4), TrackBottom() + S(32), c.right + S(4), TrackBottom() + S(52) },
-                      pre ? L"auto " + std::to_wstring(eq::PreampDb(g.cfg)) : std::wstring(eq::BandName(b)), DT_CENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fSmall, (pre && g.autoExtra > 0) ? kEq : (hot ? (pre ? kOrange : kEq) : Blend(kTextDim, kCard, 25)), { c.left - S(4), TrackBottom() + S(32), c.right + S(4), TrackBottom() + S(52) },
+                      pre ? L"auto " + std::to_wstring(eq::PreampDb(g.cfg) + g.autoExtra) : std::wstring(eq::BandName(b)), DT_CENTER | DT_SINGLELINE);
         }
 
         {   // Frequenzkurve: Gesamtwirkung von Reglern, Bass, Sprache und Filtern (ohne Vorverstaerkung) ueber den Reglerspalten
@@ -1026,7 +1047,8 @@ void Paint(HDC dc, const RECT& cr) {
         {
             const int shown = g.drag >= 0 ? g.drag : (g.hover >= H_BAND && g.hover <= H_BAND + eq::kBands ? g.hover - H_BAND : -1);
             const std::wstring preHint = L"Preamp: Gesamtlautstärke des Equalizers. Senke sie, wenn es verzerrt. Automatisch abgesenkt wird um " +
-                                         std::to_wstring(-eq::PreampDb(g.cfg)) + L" dB (Anhebungen, Bass, Sprache); dein Wert kommt dazu. Gesamt: " + std::to_wstring(eq::TotalPreampDb(g.cfg)) + L" dB.";
+                                         std::to_wstring(-eq::PreampDb(g.cfg)) + L" dB (Anhebungen, Bass, Sprache); dein Wert kommt dazu." +
+                                         (g.autoExtra > 0 ? L" Die Auto-Lautstärke hebt gerade um " + std::to_wstring(g.autoExtra) + L" dB an." : std::wstring()) + L" Gesamt: " + std::to_wstring(eq::TotalPreampDb(Effective())) + L" dB.";
             RECT line{ g.panel.left + S(14), g.panel.bottom - S(48), g.panel.right - S(14), g.panel.bottom - S(47) };
             FillRound(dc, line, 1, Blend(kCard, RGB(255, 255, 255), 12), Blend(kCard, RGB(255, 255, 255), 12));
             DrawText2(dc, g.fSmall, shown >= 0 ? kText : kTextDim, { g.panel.left + S(18), g.panel.bottom - S(44), g.btnReset.left - S(12), g.panel.bottom - S(4) },
@@ -1109,7 +1131,7 @@ int HitTest(POINT p) {
     if (PtInRect(&g.btnReset, p)) return H_RESET;
     if (PtInRect(&g.specBtn, p)) return H_SPECTRUM;
     if (PtInRect(&g.btnAB, p)) return H_AB;
-    if (PtInRect(&g.autoBtn, p)) return H_AUTOGAIN;
+    if (PtInRect(&g.autoCard, p)) return H_AUTOGAIN;
     if (PtInRect(&g.btnAutoEq, p)) return H_AUTOEQ;
     for (int i = 0; i < kMixRows; ++i) {
         if (PtInRect(&g.mixMute[i], p)) return H_MIXMUTE + i;
