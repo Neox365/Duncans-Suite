@@ -30,7 +30,7 @@ using std::min;
 #include "FilterEditor.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.7.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -82,6 +82,8 @@ struct App {
     HWND nameEdit = nullptr;                       // Eingabefeld fuer den Namen eines neuen Profils
     WNDPROC nameOldProc = nullptr;
     RECT btnAuto{}, btnKeep{};
+    RECT graph{}, info{};                          // rechte Spalte (nur bei breitem Fenster): Frequenzgang und Kurven-Infos
+    int mx = -1, my = -1;                          // Mausposition (fuer die Anzeige im Diagramm)
     NOTIFYICONDATAW nid{};
     bool autostartOn = false, quitting = false, balloonShown = false;
     bool delArmed = false;                         // "Loeschen" wurde einmal geklickt, zweiter Klick loescht
@@ -496,15 +498,17 @@ int TrackBottom() { return g.panel.bottom - S(106); }
 
 void Layout() {
     RECT cr; GetClientRect(g.hwnd, &cr);
+    const bool wide = cr.right >= S(900);
+    const int R = wide ? S(640) : static_cast<int>(cr.right);          // rechter Rand der linken Spalte
     const int m = S(28);
     g.footer = { m, cr.bottom - S(34), cr.right - m, cr.bottom - S(8) };
-    g.hero = { m, S(84), cr.right - m, S(84) + S(96) };
+    g.hero = { m, S(84), R - m, S(84) + S(96) };
     g.heroToggle = { g.hero.right - S(18) - S(64), g.hero.top + (S(96) - S(34)) / 2, g.hero.right - S(18), g.hero.top + (S(96) - S(34)) / 2 + S(34) };
     int y = g.hero.bottom + S(14);
     g.adminBar = g.adminBtn = RECT{};
     HDC dc = GetDC(g.hwnd);
     if (g.installDir.empty()) {
-        g.setup = { m, y, cr.right - m, y + S(292) };
+        g.setup = { m, y, R - m, y + S(292) };
         const int bh = S(40);
         const int dlW = std::max(S(220), TextWidth(dc, g.fBold, L"Equalizer APO herunterladen") + S(40));
         const int rcW = std::max(S(140), TextWidth(dc, g.fBold, L"Erneut prüfen") + S(40));
@@ -515,7 +519,7 @@ void Layout() {
     }
     g.setup = g.dlBtn = g.recheckBtn = RECT{};
     if (g.needAdmin) {
-        g.adminBar = { m, y, cr.right - m, y + S(54) };
+        g.adminBar = { m, y, R - m, y + S(54) };
         const int w = std::max(S(250), TextWidth(dc, g.fBold, L"Mit Administratorrechten übernehmen") + S(36));
         g.adminBtn = { g.adminBar.right - S(10) - w, g.adminBar.top + S(7), g.adminBar.right - S(10), g.adminBar.bottom - S(7) };
         y = g.adminBar.bottom + S(14);
@@ -529,7 +533,7 @@ void Layout() {
         x += w + S(8);
     }
     y += ph + S(14);
-    g.panel = { m, y, cr.right - m, y + S(292) };
+    g.panel = { m, y, R - m, y + S(292) };
     const int inner = (g.panel.right - g.panel.left) - 2 * S(14);
     for (int slot = 0; slot <= eq::kBands; ++slot) {              // Spalte 0 = Preamp, danach die zehn Baender
         const int x0 = g.panel.left + S(14) + inner * slot / (eq::kBands + 1), x1 = g.panel.left + S(14) + inner * (slot + 1) / (eq::kBands + 1);
@@ -537,13 +541,13 @@ void Layout() {
     }
     g.btnReset = { g.panel.right - S(14) - S(150), g.panel.bottom - S(40), g.panel.right - S(14), g.panel.bottom - S(10) };
     y = g.panel.bottom + S(14);
-    const int half = (cr.right - 2 * m - S(12)) / 2;
+    const int half = (R - 2 * m - S(12)) / 2;
     g.cardBass = { m, y, m + half, y + S(58) };
-    g.cardVoice = { m + half + S(12), y, cr.right - m, y + S(58) };
+    g.cardVoice = { m + half + S(12), y, R - m, y + S(58) };
     y = g.cardBass.bottom + S(14);
 
     // Profile: Titelzeile, Reihe mit Profil-Schaltflaechen, Reihe mit drei Knoepfen
-    g.profCard = { m, y, cr.right - m, y + S(120) };
+    g.profCard = { m, y, R - m, y + S(120) };
     const int ix = g.profCard.left + S(18), ir = g.profCard.right - S(18);
     const int n = static_cast<int>(g.profiles.size());
     const bool canNew = n < eq::kMaxProfiles;
@@ -582,6 +586,12 @@ void Layout() {
     g.btnAuto = { g.confBtn.right + S(10), y, g.confBtn.right + S(10) + TextWidth(dc, g.fBold, autoLabel) + S(28), y + S(36) };
     g.btnKeep = { g.btnAuto.right + S(10), y, g.btnAuto.right + S(10) + TextWidth(dc, g.fBold, keepLabel) + S(28), y + S(36) };
     ReleaseDC(g.hwnd, dc);
+    g.graph = g.info = RECT{};
+    if (wide && !g.installDir.empty() && g.profCard.bottom > 0) {   // rechte Spalte: Diagramm oben, Kurven-Infos unten bis zur Unterkante der Profile
+        const int x0 = R + S(2), x1 = cr.right - m;
+        g.info = { x0, g.profCard.bottom - S(150), x1, g.profCard.bottom };
+        g.graph = { x0, g.hero.top, x1, g.info.top - S(14) };
+    }
 }
 
 // ---------- Zeichnen ----------
@@ -669,6 +679,91 @@ void Paint(HDC dc, const RECT& cr) {
             const bool active = i == match, hot = g.hover == H_PRESET + i;
             FillRound(dc, g.presetRect[i], S(12), active ? kEq : (hot ? kCardHover : kCard), active ? kEq : (hot ? kBorderHot : kBorder));
             DrawText2(dc, g.fBold, active ? kOnEq : kText, g.presetRect[i], eq::PresetAt(i).name, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+
+        if (g.graph.right > g.graph.left) {   // Frequenzgang: Gesamtwirkung von Reglern, Bass, Sprache und Filtern (ohne Vorverstaerkung)
+            FillRound(dc, g.graph, S(16), kCard, kBorder);
+            FillRound(dc, g.info, S(16), kCard, kBorder);
+            DrawText2(dc, g.fHead, kText, { g.graph.left + S(20), g.graph.top + S(12), g.graph.left + S(240), g.graph.top + S(38) }, L"Frequenzgang");
+            const RECT pl{ g.graph.left + S(48), g.graph.top + S(48), g.graph.right - S(22), g.graph.bottom - S(32) };
+            const float pw = static_cast<float>(pl.right - pl.left), ph = static_cast<float>(pl.bottom - pl.top);
+            const std::vector<double> fr = eq::LogFreqs(300, 20.0, 20000.0);
+            const std::vector<double> db = eq::ResponseDb(g.cfg, fr);
+            double peak = 0, hi = -1e9, lo = 1e9, hiF = 0, loF = 0;
+            for (size_t k = 0; k < db.size(); ++k) {
+                peak = std::max(peak, std::fabs(db[k]));
+                if (db[k] > hi) { hi = db[k]; hiF = fr[k]; }
+                if (db[k] < lo) { lo = db[k]; loF = fr[k]; }
+            }
+            int range = eq::kMaxGain;
+            while (range < peak && range < 24) range += 6;
+            auto xOf = [&](double f) { return pl.left + static_cast<float>(std::log10(f / 20.0) / 3.0) * pw; };
+            auto yOf = [&](double d) { return pl.top + static_cast<float>((range - std::clamp(d, -static_cast<double>(range), static_cast<double>(range))) / (2.0 * range)) * ph; };
+            auto num = [](double v, const wchar_t* fmt) { wchar_t b[48]; swprintf(b, 48, fmt, v); std::wstring t = b; for (wchar_t& ch : t) if (ch == L'.') ch = L','; return t; };
+            auto freqText = [&](double f) { return f >= 1000 ? num(f / 1000.0, L"%.2f kHz") : num(f, L"%.0f Hz"); };
+            Gdiplus::Graphics gr(dc);
+            gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+            const COLORREF gridC = Blend(kCard, RGB(255, 255, 255), 9), zeroC = Blend(kCard, RGB(255, 255, 255), 24);
+            Gdiplus::Pen grid(Gdiplus::Color(255, GetRValue(gridC), GetGValue(gridC), GetBValue(gridC)), 1.f);
+            Gdiplus::Pen zero(Gdiplus::Color(255, GetRValue(zeroC), GetGValue(zeroC), GetBValue(zeroC)), 1.f);
+            for (int d = -range; d <= range; d += 6) {   // waagerechte Linien alle 6 dB
+                const float yy = yOf(d);
+                gr.DrawLine(d == 0 ? &zero : &grid, static_cast<float>(pl.left), yy, static_cast<float>(pl.right), yy);
+                DrawText2(dc, g.fSmall, kTextDim, { g.graph.left + S(8), static_cast<int>(yy) - S(9), pl.left - S(8), static_cast<int>(yy) + S(9) },
+                          d > 0 ? L"+" + std::to_wstring(d) : std::to_wstring(d), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            }
+            DrawText2(dc, g.fSmall, kTextDim, { g.graph.right - S(70), g.graph.top + S(16), g.graph.right - S(20), g.graph.top + S(36) }, L"dB", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            static const struct { double f; const wchar_t* t; } kMarks[] = { {50, L"50"}, {100, L"100"}, {200, L"200"}, {500, L"500"}, {1000, L"1k"}, {2000, L"2k"}, {5000, L"5k"}, {10000, L"10k"} };
+            for (const auto& mk : kMarks) {
+                const float xx = xOf(mk.f);
+                gr.DrawLine(&grid, xx, static_cast<float>(pl.top), xx, static_cast<float>(pl.bottom));
+                DrawText2(dc, g.fSmall, kTextDim, { static_cast<int>(xx) - S(24), pl.bottom + S(6), static_cast<int>(xx) + S(24), pl.bottom + S(26) }, mk.t, DT_CENTER | DT_SINGLELINE);
+            }
+            std::vector<Gdiplus::PointF> pts;
+            for (size_t k = 0; k < fr.size(); ++k) pts.push_back({ xOf(fr[k]), yOf(db[k]) });
+            const COLORREF lc = on ? kEq : Blend(kEq, kCard, 55);
+            gr.SetClip(Gdiplus::RectF(static_cast<float>(pl.left), static_cast<float>(pl.top - 2), pw, ph + 4));
+            std::vector<Gdiplus::PointF> area = pts;
+            area.push_back({ pts.back().X, yOf(0) });
+            area.push_back({ pts.front().X, yOf(0) });
+            Gdiplus::SolidBrush fillB(Gdiplus::Color(on ? 50 : 26, GetRValue(lc), GetGValue(lc), GetBValue(lc)));
+            gr.FillPolygon(&fillB, area.data(), static_cast<INT>(area.size()));
+            Gdiplus::Pen glow(Gdiplus::Color(on ? 55 : 30, GetRValue(lc), GetGValue(lc), GetBValue(lc)), static_cast<float>(S(8)));
+            Gdiplus::Pen line(Gdiplus::Color(on ? 240 : 140, GetRValue(lc), GetGValue(lc), GetBValue(lc)), static_cast<float>(S(2)));
+            glow.SetLineJoin(Gdiplus::LineJoinRound);
+            line.SetLineJoin(Gdiplus::LineJoinRound);
+            gr.DrawLines(&glow, pts.data(), static_cast<INT>(pts.size()));
+            gr.DrawLines(&line, pts.data(), static_cast<INT>(pts.size()));
+            gr.ResetClip();
+            Gdiplus::SolidBrush dot(Gdiplus::Color(255, GetRValue(lc), GetGValue(lc), GetBValue(lc)));
+            for (int b = 0; b < eq::kBands; ++b) {      // Punkte an den zehn Reglerfrequenzen
+                const double f = eq::kFreqs[b];
+                const float r = static_cast<float>(S(3));
+                gr.FillEllipse(&dot, xOf(f) - r, yOf(eq::ResponseDb(g.cfg, { f })[0]) - r, r * 2, r * 2);
+            }
+            if (g.mx >= pl.left && g.mx <= pl.right && g.my >= g.graph.top && g.my <= g.graph.bottom) {   // Anzeige unter der Maus
+                const double f = 20.0 * std::pow(10.0, (g.mx - pl.left) / pw * 3.0);
+                const double d = eq::ResponseDb(g.cfg, { f })[0];
+                Gdiplus::Pen cur(Gdiplus::Color(90, 255, 255, 255), 1.f);
+                gr.DrawLine(&cur, static_cast<float>(g.mx), static_cast<float>(pl.top), static_cast<float>(g.mx), static_cast<float>(pl.bottom));
+                const float r = static_cast<float>(S(5));
+                gr.FillEllipse(&dot, g.mx - r, yOf(d) - r, r * 2, r * 2);
+                DrawText2(dc, g.fBold, kText, { pl.left + S(60), g.graph.top + S(14), pl.right - S(50), g.graph.top + S(38) }, freqText(f) + L"   " + num(d, L"%+.1f") + L" dB", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            }
+
+            // Kurven-Infos
+            const int ix = g.info.left + S(20), vx = g.info.left + S(150);
+            const int rowH = S(26);
+            int ry = g.info.top + S(14);
+            auto row = [&](const wchar_t* label, const std::wstring& value) {
+                DrawText2(dc, g.fSmall, kTextDim, { ix, ry, vx, ry + rowH }, label, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+                DrawText2(dc, g.fSmall, kText, { vx, ry, g.info.right - S(16), ry + rowH }, value, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+                ry += rowH;
+            };
+            row(L"Stärkste Anhebung", hi < 0.05 ? std::wstring(L"keine") : num(hi, L"%+.1f") + L" dB bei " + freqText(hiF));
+            row(L"Stärkste Absenkung", lo > -0.05 ? std::wstring(L"keine") : num(lo, L"%+.1f") + L" dB bei " + freqText(loF));
+            row(L"Vorverstärkung", std::to_wstring(eq::PreampDb(g.cfg)) + L" dB automatisch, gesamt " + std::to_wstring(eq::TotalPreampDb(g.cfg)) + L" dB");
+            row(L"Zusatzfilter", g.cfg.extra.empty() ? std::wstring(L"keine") : std::to_wstring(g.cfg.extra.size()) + (g.cfg.extra.size() == 1 ? L" Zeile" : L" Zeilen"));
         }
 
         // Regler
@@ -921,12 +1016,17 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEMOVE: {
         if (!g.tracking) { TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, hwnd, 0 }; TrackMouseEvent(&t); g.tracking = true; }
         const POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        {   // Diagramm: Anzeige folgt der Maus
+            const bool was = g.mx >= 0, now = g.graph.right > g.graph.left && PtInRect(&g.graph, p);
+            g.mx = now ? p.x : -1; g.my = now ? p.y : -1;
+            if (was || now) InvalidateRect(hwnd, &g.graph, FALSE);
+        }
         if (g.drag >= 0) { SetBand(g.drag, YToGain(p.y)); return 0; }
         const int h = HitTest(p);
         if (h != g.hover) { g.hover = h; InvalidateRect(hwnd, nullptr, FALSE); }
         return 0;
     }
-    case WM_MOUSELEAVE: g.tracking = false; g.hover = H_NONE; InvalidateRect(hwnd, nullptr, FALSE); return 0;
+    case WM_MOUSELEAVE: g.tracking = false; g.hover = H_NONE; g.mx = g.my = -1; InvalidateRect(hwnd, nullptr, FALSE); return 0;
     case WM_SETCURSOR:
         if (LOWORD(lp) == HTCLIENT) { SetCursor(LoadCursorW(nullptr, g.hover == H_NONE ? IDC_ARROW : IDC_HAND)); return TRUE; }
         break;
@@ -1038,7 +1138,9 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     MakeFonts();
     const DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;     // feste Groesse: alles passt immer
     auto windowSize = [&](UINT dpi, int& w, int& h) {
-        RECT r{ 0, 0, MulDiv(640, dpi, 96), MulDiv(864, dpi, 96) };
+        RECT wa{};
+        const bool room = SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0) && (wa.right - wa.left) >= MulDiv(1120, dpi, 96);   // sonst nur die schmale Fassung ohne Diagramm
+        RECT r{ 0, 0, MulDiv(room ? 1080 : 640, dpi, 96), MulDiv(864, dpi, 96) };
         AdjustWindowRectExForDpi(&r, style, FALSE, 0, dpi);
         w = r.right - r.left; h = r.bottom - r.top;
     };

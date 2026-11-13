@@ -5,6 +5,10 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.7.0 | 2026-11-13
+- Neu: Frequenzgang-Diagramm. Auf breiten Bildschirmen zeigt das Fenster rechts neben den Reglern eine große Kurve mit logarithmischer Frequenzachse (50 Hz bis 10 kHz) und dB-Skala, gefüllt unter der Kurve, mit Punkten an den zehn Reglerfrequenzen. Sie zeigt die Gesamtwirkung von Reglern, Bass, Sprache und Filtern und passt sich beim Ziehen sofort an; bei starken Anhebungen weitet sich die Skala bis ±24 dB. Fährt man mit der Maus über das Diagramm, erscheinen Frequenz und Pegel an dieser Stelle.
+- Neu: Kurven-Infos unter dem Diagramm: stärkste Anhebung und Absenkung mit Frequenz, Vorverstärkung (automatisch und gesamt) und Zahl der Zusatzfilter.
+- Hinweis: Das Fenster ist jetzt breiter (1080 statt 640 Pixel bei 100 %). Passt das nicht auf den Bildschirm, bleibt es schmal wie bisher, ohne Diagramm. Die Kurve ist eine Orientierung aus den geschriebenen Einstellungen, kein Messergebnis.
 ## 0.6.0 | 2026-11-11
 - Neu: Tastenkürzel für den ganzen PC, auch im Spiel oder Vollbild: Strg+Alt+F9 schaltet den Equalizer an/aus, Strg+Alt+F10 wählt das nächste und Strg+Alt+F8 das vorige Profil (nach dem letzten kommt wieder das erste). Eine kurze Meldung am Symbol im Infobereich bestätigt es. Die Kürzel lassen sich im Menü des Symbols (Rechtsklick) abschalten; ist eines von einem anderen Programm belegt, steht das in der Statuszeile. Es sind F-Tasten, weil Strg+Alt auf deutschen Tastaturen AltGr ist (€, @ bleiben tippbar).
 - Neu: Profile weitergeben. „Teilen …“ im Profilbereich speichert das aktuelle Profil als Datei (.eqprofil, Textdatei: Regler, Preamp, Bass, Sprache, Filter; ohne Gerätebindung) oder lädt eine solche Datei als neues Profil (bei gleichem Namen wird „(2)“ angehängt; nur wenn noch Platz unter den sechs Profilen ist). Werte werden begrenzt und unsichere Filterzeilen verworfen. So lassen sich Profile sichern, auf einen anderen PC übertragen oder teilen.
