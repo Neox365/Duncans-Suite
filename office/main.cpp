@@ -36,9 +36,11 @@
 #include <gdiplus.h>
 #include "../common/ThemedBox.h"
 #include "../common/AboutCardGdi.h"
+#include "../common/Lang.h"
+#include "Lang_en.inc"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.8.1"
+#define APP_VERSION L"0.9.0"
 #endif
 
 namespace {
@@ -509,8 +511,9 @@ void App::MakeFonts()
     if (m_formula) SendMessageW(m_formula, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
 }
 
-int App::TextW(HFONT f, const std::wstring& t)
+int App::TextW(HFONT f, const std::wstring& t0)
 {
+    const std::wstring t = lang::Tr(t0);
     HDC dc = GetDC(m_hwnd);
     HGDIOBJ old = SelectObject(dc, f);
     SIZE sz{};
@@ -651,13 +654,14 @@ void App::UpdateTitle()
         t = (m_sPath.empty() ? L"Unbenannt" : FileNameOf(m_sPath)) + (m_sDirty ? L"*" : L"") + L" – Sheets – Duncan's Office";
     else
         t = L"Duncan's Office";
-    SetWindowTextW(m_hwnd, t.c_str());
+    SetWindowTextW(m_hwnd, lang::Tr(t).c_str());
 }
 
 // ======================= Zeichnen =======================
 
-void App::Text(HDC dc, HFONT f, COLORREF col, RECT rc, const std::wstring& t, UINT flags)
+void App::Text(HDC dc, HFONT f, COLORREF col, RECT rc, const std::wstring& t0, UINT flags)
 {
+    const std::wstring t = lang::Tr(t0);
     HGDIOBJ old = SelectObject(dc, f);
     SetTextColor(dc, col);
     SetBkMode(dc, TRANSPARENT);
@@ -902,7 +906,7 @@ void App::Paint(HDC dc, const RECT& rc)
             SIZE sv{}, szl{};
             HGDIOBJ of = SelectObject(dc, m_fSmall);
             GetTextExtentPoint32W(dc, ver.c_str(), static_cast<int>(ver.size()), &sv);
-            GetTextExtentPoint32W(dc, L"Über", 4, &szl);
+            { const std::wstring aboutTr = lang::Tr(L"Über"); GetTextExtentPoint32W(dc, aboutTr.c_str(), static_cast<int>(aboutTr.size()), &szl); }
             SelectObject(dc, of);
             m_aboutRc = { (rc.right - S(16)) - szl.cx - S(2), m_statusRc.top, (rc.right - S(16)), m_statusRc.bottom };
             Text(dc, m_fSmall, kDim, { m_aboutRc.left - sv.cx, m_aboutRc.top, m_aboutRc.left, m_aboutRc.bottom }, ver, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
@@ -914,7 +918,7 @@ void App::Paint(HDC dc, const RECT& rc)
             SIZE sv{}, szl{};
             HGDIOBJ of = SelectObject(dc, m_fSmall);
             GetTextExtentPoint32W(dc, ver.c_str(), static_cast<int>(ver.size()), &sv);
-            GetTextExtentPoint32W(dc, L"Über", 4, &szl);
+            { const std::wstring aboutTr = lang::Tr(L"Über"); GetTextExtentPoint32W(dc, aboutTr.c_str(), static_cast<int>(aboutTr.size()), &szl); }
             SelectObject(dc, of);
             m_aboutRc = { (rc.right - S(20)) - szl.cx - S(2), rc.bottom - S(30), (rc.right - S(20)), rc.bottom - S(8) };
             Text(dc, m_fSmall, kDim, { m_aboutRc.left - sv.cx, m_aboutRc.top, m_aboutRc.left, m_aboutRc.bottom }, ver, DT_SINGLELINE | DT_VCENTER | DT_RIGHT | DT_NOPREFIX);
@@ -1229,8 +1233,25 @@ LRESULT App::Handle(UINT msg, WPARAM wp, LPARAM lp)
 
 // ======================= Dateidialoge =======================
 
-std::wstring App::PickOpen(const wchar_t* filter)
+static std::wstring TrFilter(const wchar_t* f)
 {
+    std::wstring out;
+    bool desc = true;
+    while (*f) {
+        const std::wstring part = f;
+        out += desc ? lang::Tr(part) : part;
+        out.push_back(L'\0');
+        f += part.size() + 1;
+        desc = !desc;
+    }
+    out.push_back(L'\0');
+    return out;
+}
+
+std::wstring App::PickOpen(const wchar_t* filter0)
+{
+    const std::wstring filterTr = TrFilter(filter0);
+    const wchar_t* filter = filterTr.c_str();
     wchar_t buf[MAX_PATH * 4] = L"";
     OPENFILENAMEW ofn{ sizeof ofn };
     ofn.hwndOwner = m_hwnd;
@@ -1241,8 +1262,10 @@ std::wstring App::PickOpen(const wchar_t* filter)
     return GetOpenFileNameW(&ofn) ? std::wstring(buf) : std::wstring();
 }
 
-std::wstring App::PickSave(const wchar_t* filter, const wchar_t* defExt, const std::wstring& suggest)
+std::wstring App::PickSave(const wchar_t* filter0, const wchar_t* defExt, const std::wstring& suggest)
 {
+    const std::wstring filterTr = TrFilter(filter0);
+    const wchar_t* filter = filterTr.c_str();
     wchar_t buf[MAX_PATH * 4] = L"";
     wcsncpy_s(buf, suggest.c_str(), _TRUNCATE);
     OPENFILENAMEW ofn{ sizeof ofn };
@@ -2197,7 +2220,7 @@ void PaintChart(HDC dc, const RECT& rc, ChartWin& w, bool forExport)
             DeleteObject(br);
             RECT tr{ x + S(18), y, x + S(18) + S(160), y + S(20) };
             SetTextColor(dc, txt);
-            DrawTextW(dc, nm.c_str(), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+            DrawTextW(dc, lang::Tr(nm).c_str(), -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
             SIZE sz{};
             GetTextExtentPoint32W(dc, nm.c_str(), static_cast<int>(nm.size()), &sz);
             x += S(18) + std::min<int>(sz.cx, S(160)) + S(20);
@@ -2242,12 +2265,12 @@ LRESULT CALLBACK ChartProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             DeleteObject(pn);
             SetTextColor(mem, kText);
             RECT tr = *rs[i];
-            DrawTextW(mem, names[i], -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            DrawTextW(mem, lang::Tr(names[i]).c_str(), -1, &tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
         if (!w->note.empty()) {
             SetTextColor(mem, kDim);
             RECT nr{ S(216), S(12), w->bCopy.left - S(8), S(44) };
-            DrawTextW(mem, w->note.c_str(), -1, &nr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+            DrawTextW(mem, lang::Tr(w->note).c_str(), -1, &nr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
         }
         SelectObject(mem, of);
         DeleteObject(font);
@@ -2321,7 +2344,7 @@ void App::ShowChartDialog()
     RECT want{ 0, 0, S(820), S(560) };
     AdjustWindowRectEx(&want, WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU, FALSE, WS_EX_DLGMODALFRAME);
     const int fw = want.right - want.left, fh = want.bottom - want.top;
-    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"DuncansOfficeChart", L"Diagramm", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
+    HWND dlg = CreateWindowExW(WS_EX_DLGMODALFRAME, L"DuncansOfficeChart", lang::Tr(L"Diagramm").c_str(), WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_VISIBLE,
                                own.left + ((own.right - own.left) - fw) / 2, own.top + ((own.bottom - own.top) - fh) / 2, fw, fh, m_hwnd, nullptr,
                                GetModuleHandleW(nullptr), &w);
     if (!dlg) return;
@@ -2769,7 +2792,7 @@ void App::ShowColorMenu()
     for (int i = 0; i < kColorCount; ++i)
         AppendMenuW(menu, MF_OWNERDRAW, static_cast<UINT_PTR>(C_COLOR_BASE + i), reinterpret_cast<LPCWSTR>(static_cast<ULONG_PTR>(i)));   // itemData = Index, gezeichnet in WM_DRAWITEM
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING, C_COLOR_MORE, L"Weitere Farben …");
+    AppendMenuW(menu, MF_STRING, C_COLOR_MORE, lang::Tr(L"Weitere Farben …").c_str());
     for (const Btn& b : m_btns)
         if (b.id == C_COLOR) {
             POINT pt{ b.rc.left, b.rc.bottom };
@@ -2782,11 +2805,11 @@ void App::ShowColorMenu()
 void App::ShowTableMenu()
 {
     HMENU menu = CreatePopupMenu();
-    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, L"Tabelle einfügen");
+    AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, lang::Tr(L"Tabelle einfügen").c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     for (int i = 0; i < kTableSizeCount; ++i) {
         const std::wstring label = std::to_wstring(kTableSizes[i][0]) + L" Spalten × " + std::to_wstring(kTableSizes[i][1]) + L" Zeilen";
-        AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(C_TABLE_BASE + i), label.c_str());
+        AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(C_TABLE_BASE + i), lang::Tr(label).c_str());
     }
     for (const Btn& b : m_btns)
         if (b.id == C_TABLE) {
@@ -2866,7 +2889,7 @@ void App::ToggleBullet()
 
 void App::SetFindStatus(const std::wstring& t)
 {
-    if (m_findDlg && IsWindow(m_findDlg)) SetDlgItemTextW(m_findDlg, ID_F_STATUS, t.c_str());
+    if (m_findDlg && IsWindow(m_findDlg)) SetDlgItemTextW(m_findDlg, ID_F_STATUS, lang::Tr(t).c_str());
 }
 
 void App::ReadFindFields(HWND dlg)
@@ -2977,7 +3000,7 @@ void App::ShowFindDialog()
     RECT own{};
     GetWindowRect(m_hwnd, &own);
     const int w = client.right - client.left, h = client.bottom - client.top;
-    m_findDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kFindClass, L"Suchen und Ersetzen", WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
+    m_findDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kFindClass, lang::Tr(L"Suchen und Ersetzen").c_str(), WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
                                 own.left + (own.right - own.left - w) / 2, own.top + S(120), w, h, m_hwnd, nullptr, m_inst, nullptr);
     if (!m_findDlg) return;
     const BOOL dark = TRUE;
@@ -3013,7 +3036,7 @@ LRESULT App::FindHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
         case WM_CREATE: {
             auto label = [&](const wchar_t* t, int x, int y, int w, int h, int id) {
-                HWND c = CreateWindowExW(0, L"STATIC", t, WS_CHILD | WS_VISIBLE, S(x), S(y), S(w), S(h), hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
+                HWND c = CreateWindowExW(0, L"STATIC", lang::Tr(t).c_str(), WS_CHILD | WS_VISIBLE, S(x), S(y), S(w), S(h), hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
                 SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
                 return c;
             };
@@ -3024,7 +3047,7 @@ LRESULT App::FindHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 return c;
             };
             auto check = [&](const wchar_t* t, int y, int id, bool on) {
-                HWND c = CreateWindowExW(0, L"BUTTON", t, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, S(20), S(y), S(420), S(22), hwnd,
+                HWND c = CreateWindowExW(0, L"BUTTON", lang::Tr(t).c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX, S(20), S(y), S(420), S(22), hwnd,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
                 SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
                 SetWindowTheme(c, L"", L"");   // ohne Windows-Design folgt die Schriftfarbe WM_CTLCOLORSTATIC (dunkles Design)
@@ -3032,7 +3055,7 @@ LRESULT App::FindHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
                 return c;
             };
             auto button = [&](const wchar_t* t, int x, int w, int id, bool def) {
-                HWND c = CreateWindowExW(0, L"BUTTON", t, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | (def ? BS_DEFPUSHBUTTON : 0), S(x), S(226), S(w), S(34), hwnd,
+                HWND c = CreateWindowExW(0, L"BUTTON", lang::Tr(t).c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | (def ? BS_DEFPUSHBUTTON : 0), S(x), S(226), S(w), S(34), hwnd,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
                 SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
                 return c;
@@ -3124,7 +3147,7 @@ void App::SpellNext()
             m_spellHave = false;
             SetDlgItemTextW(m_spellDlg, ID_S_WORD, L"");
             SetDlgItemTextW(m_spellDlg, ID_S_CTX, L"");
-            SetDlgItemTextW(m_spellDlg, ID_S_STATUS, L"Fertig: keine weiteren Fehler gefunden.");
+            SetDlgItemTextW(m_spellDlg, ID_S_STATUS, lang::Tr(L"Fertig: keine weiteren Fehler gefunden.").c_str());
             for (int id : { ID_S_CHANGE, ID_S_CHANGEALL, ID_S_IGNORE, ID_S_IGNOREALL, ID_S_ADD }) EnableWindow(GetDlgItem(m_spellDlg, id), FALSE);
             SendMessageW(m_spellDlg, DM_SETDEFID, ID_S_CLOSE, 0);
             SetFocus(GetDlgItem(m_spellDlg, ID_S_CLOSE));
@@ -3154,7 +3177,7 @@ void App::SpellNext()
         SetDlgItemTextW(m_spellDlg, ID_S_WORD, ms.word.c_str());
         SetDlgItemTextW(m_spellDlg, ID_S_CTX, ctx.c_str());
         std::vector<std::wstring> sug;
-        if (ms.repeated) sug.push_back(L"(Doppeltes Wort löschen)");
+        if (ms.repeated) sug.push_back(lang::Tr(L"(Doppeltes Wort löschen)"));
         else {
             if (!ms.replacement.empty()) sug.push_back(ms.replacement);
             for (const auto& s : m_spell->Suggest(ms.word, 8))
@@ -3162,7 +3185,7 @@ void App::SpellNext()
         }
         for (const auto& s : sug) SendMessageW(list, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(s.c_str()));
         if (!sug.empty()) SendMessageW(list, LB_SETCURSEL, 0, 0);
-        SetDlgItemTextW(m_spellDlg, ID_S_STATUS, sug.empty() ? L"Keine Vorschläge – du kannst das Wort im Text selbst ändern und hier „Ignorieren“ wählen." : L"");
+        SetDlgItemTextW(m_spellDlg, ID_S_STATUS, sug.empty() ? lang::Tr(L"Keine Vorschläge – du kannst das Wort im Text selbst ändern und hier „Ignorieren“ wählen.").c_str() : L"");
         EnableWindow(GetDlgItem(m_spellDlg, ID_S_CHANGE), !sug.empty());
         EnableWindow(GetDlgItem(m_spellDlg, ID_S_CHANGEALL), !sug.empty() && !ms.repeated);
         for (int id : { ID_S_IGNORE, ID_S_IGNOREALL, ID_S_ADD }) EnableWindow(GetDlgItem(m_spellDlg, id), TRUE);
@@ -3227,7 +3250,7 @@ void App::ShowSpellDialog()
     RECT own{};
     GetWindowRect(m_hwnd, &own);
     const int w = client.right - client.left, h = client.bottom - client.top;
-    m_spellDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kSpellClass, L"Rechtschreibung", WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
+    m_spellDlg = CreateWindowExW(WS_EX_DLGMODALFRAME, kSpellClass, lang::Tr(L"Rechtschreibung").c_str(), WS_POPUP | WS_CAPTION | WS_SYSMENU | WS_CLIPCHILDREN,
                                  own.left + (own.right - own.left - w) / 2, own.top + S(100), w, h, m_hwnd, nullptr, m_inst, nullptr);
     if (!m_spellDlg) return;
     const BOOL dark = TRUE;
@@ -3270,12 +3293,12 @@ LRESULT App::SpellHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
     switch (msg) {
         case WM_CREATE: {
             auto label = [&](const wchar_t* t, int x, int y, int w, int h, int id) {
-                HWND c = CreateWindowExW(0, L"STATIC", t, WS_CHILD | WS_VISIBLE, S(x), S(y), S(w), S(h), hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
+                HWND c = CreateWindowExW(0, L"STATIC", lang::Tr(t).c_str(), WS_CHILD | WS_VISIBLE, S(x), S(y), S(w), S(h), hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
                 SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
                 return c;
             };
             auto button = [&](const wchar_t* t, int x, int y, int w, int id, bool def) {
-                HWND c = CreateWindowExW(0, L"BUTTON", t, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | (def ? BS_DEFPUSHBUTTON : 0), S(x), S(y), S(w), S(34), hwnd,
+                HWND c = CreateWindowExW(0, L"BUTTON", lang::Tr(t).c_str(), WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW | (def ? BS_DEFPUSHBUTTON : 0), S(x), S(y), S(w), S(34), hwnd,
                                          reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)), m_inst, nullptr);
                 SendMessageW(c, WM_SETFONT, reinterpret_cast<WPARAM>(m_fUi), TRUE);
                 return c;
@@ -3360,6 +3383,7 @@ LRESULT App::SpellHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
 {
+    lang::Add(kOfficeEn);
     std::wstring open;
     int argc = 0;
     if (LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc)) {

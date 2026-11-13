@@ -264,23 +264,29 @@ inline std::wstring Tr(const std::wstring& t)
         }
     }
     if (out == t) {
-        // Zusammengesetzte Zeilen "Teil  ·  Teil  ·  Teil": jedes Stueck fuer sich uebersetzen (Trenner bleiben)
-        const size_t dot = t.find(L'·');
-        if (dot != std::wstring::npos) {
+        // Zusammengesetzte Texte: Stueckweise uebersetzen, getrennt an "·", Zeilenumbruechen oder ", " (Trenner bleiben)
+        static const wchar_t* const kSeps[] = {L"·", L"\n", L", "};
+        for (const wchar_t* sep : kSeps) {
+            const std::wstring sp = sep;
+            if (t.find(sp) == std::wstring::npos) continue;
             std::wstring res;
             size_t pos = 0;
-            while (pos <= t.size()) {
-                size_t d = t.find(L'·', pos);
+            for (;;) {
+                const size_t d = t.find(sp, pos);
                 const size_t end = d == std::wstring::npos ? t.size() : d;
                 size_t a = pos, b = end;
                 while (a < b && t[a] == L' ') ++a;
                 while (b > a && t[b - 1] == L' ') --b;
+                if (b - a > 2 && t[a] == L'•' && t[a + 1] == L' ') a += 2;   // Aufzaehlungspunkt bleibt
                 res += t.substr(pos, a - pos) + Tr(t.substr(a, b - a)) + t.substr(b, end - b);
                 if (d == std::wstring::npos) break;
-                res += L'·';
-                pos = d + 1;
+                res += sp;
+                pos = d + sp.size();
             }
-            out = res;
+            if (res != t) {
+                out = res;
+                break;
+            }
         }
     }
     if (s.cache.size() > 6000) s.cache.clear();
