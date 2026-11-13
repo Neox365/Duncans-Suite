@@ -33,7 +33,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.12.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.12.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -1017,7 +1017,7 @@ void Paint(HDC dc, const RECT& cr) {
             gr.FillEllipse(&hb, cx - rad, hy - rad, rad * 2, rad * 2);
             DrawText2(dc, g.fSmall, hot ? kText : kTextDim, { c.left, TrackBottom() + S(12), c.right, TrackBottom() + S(32) }, pre ? std::wstring(L"Preamp") : FreqText(eq::kFreqs[b]), DT_CENTER | DT_SINGLELINE);
             DrawText2(dc, g.fSmall, (pre && g.autoExtra > 0) ? kEq : (hot ? (pre ? kOrange : kEq) : Blend(kTextDim, kCard, 25)), { c.left - S(4), TrackBottom() + S(32), c.right + S(4), TrackBottom() + S(52) },
-                      pre ? L"auto " + std::to_wstring(eq::PreampDb(g.cfg) + g.autoExtra) : std::wstring(eq::BandName(b)), DT_CENTER | DT_SINGLELINE);
+                      pre ? L"auto " + std::to_wstring(eq::PreampDb(g.cfg)) + (g.autoExtra > 0 ? L"+" + std::to_wstring(g.autoExtra) : std::wstring()) : std::wstring(eq::BandName(b)), DT_CENTER | DT_SINGLELINE);
         }
 
         {   // Frequenzkurve: Gesamtwirkung von Reglern, Bass, Sprache und Filtern (ohne Vorverstaerkung) ueber den Reglerspalten
