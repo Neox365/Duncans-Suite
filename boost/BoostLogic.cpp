@@ -356,6 +356,14 @@ std::vector<std::wstring> SuggestedHelpers() {
     return { L"onedrive.exe", L"dropbox.exe", L"googledrivefs.exe", L"teams.exe", L"ms-teams.exe", L"skype.exe", L"slack.exe" };
 }
 
+int ClampClipAudio(int a) { return a < 0 || a > 2 ? 0 : a; }
+
+const wchar_t* ClipAudioName(int a)
+{
+    static const wchar_t* const n[3] = { L"aus", L"Systemton", L"Systemton + Mikrofon" };
+    return n[ClampClipAudio(a)];
+}
+
 int ClampClipSeconds(int s)
 {
     int best = kClipLengths[1];
@@ -398,6 +406,7 @@ Settings LoadSettings() {
     s.crossSize = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"CrossSize", L"1").c_str(), nullptr, 10));
     s.optClip = ReadIni(f, L"Settings", L"Clip", L"0") == L"1";
     s.clipSeconds = ClampClipSeconds(static_cast<int>(wcstol(ReadIni(f, L"Settings", L"ClipSeconds", L"30").c_str(), nullptr, 10)));
+    s.clipAudio = ClampClipAudio(static_cast<int>(wcstol(ReadIni(f, L"Settings", L"ClipAudio", L"0").c_str(), nullptr, 10)));
     s.optOverlay = ReadIni(f, L"Settings", L"Overlay", L"0") == L"1";
     s.overlayCorner = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"OverlayCorner", L"1").c_str(), nullptr, 10));
     if (s.overlayCorner < 0 || s.overlayCorner > 3) s.overlayCorner = 1;
@@ -421,6 +430,7 @@ bool SaveSettings(const Settings& s) {
     ok &= WriteIni(f, L"Settings", L"CrossSize", std::to_wstring(s.crossSize));
     ok &= WriteIni(f, L"Settings", L"Clip", s.optClip ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"ClipSeconds", std::to_wstring(ClampClipSeconds(s.clipSeconds)));
+    ok &= WriteIni(f, L"Settings", L"ClipAudio", std::to_wstring(ClampClipAudio(s.clipAudio)));
     ok &= WriteIni(f, L"Settings", L"Overlay", s.optOverlay ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"OverlayCorner", std::to_wstring(s.overlayCorner < 0 || s.overlayCorner > 3 ? 1 : s.overlayCorner));
     ok &= WriteIni(f, L"Settings", L"OverlayStats", s.overlayStats ? L"1" : L"0");

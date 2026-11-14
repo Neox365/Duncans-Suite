@@ -179,6 +179,9 @@ static void OverlayTests() {
 }
 
 static void ClipTests() {
+    CHECK(ClampClipAudio(-1) == 0 && ClampClipAudio(0) == 0 && ClampClipAudio(2) == 2 && ClampClipAudio(3) == 0);
+    CHECK(std::wstring(ClipAudioName(1)) == L"Systemton" && std::wstring(ClipAudioName(2)) == L"Systemton + Mikrofon" && std::wstring(ClipAudioName(9)) == L"aus");
+    { Settings a; a.clipAudio = 2; CHECK(SaveSettings(a)); CHECK(LoadSettings().clipAudio == 2); a.clipAudio = 7; CHECK(SaveSettings(a)); CHECK(LoadSettings().clipAudio == 0); }
     CHECK(ClampClipSeconds(30) == 30 && ClampClipSeconds(15) == 15 && ClampClipSeconds(60) == 60);
     CHECK(ClampClipSeconds(0) == 15 && ClampClipSeconds(100) == 60 && ClampClipSeconds(40) == 30 && ClampClipSeconds(-5) == 15 && ClampClipSeconds(46) == 60);
     CHECK(NextClipSeconds(15) == 30 && NextClipSeconds(30) == 60 && NextClipSeconds(60) == 15 && NextClipSeconds(7) == 30);

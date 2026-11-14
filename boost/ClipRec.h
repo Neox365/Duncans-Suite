@@ -21,11 +21,13 @@ struct Options {
     int fps = 30;
     int segmentSeconds = 10;     // Laenge eines Abschnitts
     int bitrateKbps = 0;         // 0 = automatisch nach Bildgroesse
+    int audio = 0;               // Ton: 0 aus, 1 Systemton (alles, was der PC abspielt), 2 Systemton + Mikrofon
     std::wstring outDir;         // Ordner fuer fertige Clips (leer = Videos\Boost-Clips)
     std::wstring tempDir;        // Ordner fuer die laufenden Abschnitte (leer = Temp\DuncansBoostClips)
 };
 
 constexpr int kMinSeconds = 10, kMaxSeconds = 120;
+constexpr int kAudioOff = 0, kAudioSystem = 1, kAudioSystemMic = 2;
 
 // Anzahl Abschnitte, die fuer den gewuenschten Rueckblick aufgehoben werden (immer genug fuer "seconds", plus der laufende)
 int SegmentsToKeep(int seconds, int segmentSeconds);
