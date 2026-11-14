@@ -9,7 +9,7 @@ set(VAULT_VER "0.7.1")
 set(OFFICE_VER "0.9.1")
 set(QUICKCONVERT_VER "0.4.3")
 set(BOOST_VER "0.6.2")
-set(CLIP_VER "0.6.2")
+set(CLIP_VER "0.7.0")
 set(EQUALIZER_VER "0.15.1")
 
 set(CMAKE_CXX_STANDARD 17)
@@ -269,7 +269,7 @@ else()
     target_compile_options(DuncansClip PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
     target_link_options(DuncansClip PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
-target_link_libraries(DuncansClip PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 crypt32 comdlg32)
+target_link_libraries(DuncansClip PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 crypt32 comdlg32 uxtheme)
 
 # ---- Duncan's Equalizer: Klang-Regler fuer den ganzen PC, bedient Equalizer APO (Win32 + GDI, keine Administratorrechte; Logik in equalizer/EqLogic) ----
 add_executable(DuncansEqualizer WIN32

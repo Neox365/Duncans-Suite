@@ -1052,6 +1052,17 @@ std::vector<Prompt> LoadPrompts() {
     return out;
 }
 
+bool SaveNote(const std::wstring& text) {
+    const std::wstring t = text.size() > kMaxNoteLen ? text.substr(0, kMaxNoteLen) : text;
+    return SaveEncrypted(L"note.dat", PackRecords({ { t } }));
+}
+
+std::wstring LoadNote() {
+    std::vector<std::vector<std::wstring>> recs;
+    if (!LoadEncrypted(L"note.dat", recs) || recs.empty() || recs[0].size() != 1) return std::wstring();
+    return recs[0][0].size() > kMaxNoteLen ? recs[0][0].substr(0, kMaxNoteLen) : recs[0][0];
+}
+
 bool SavePins(const std::vector<std::wstring>& pins) {
     std::vector<std::vector<std::wstring>> recs;
     for (const std::wstring& x : pins) recs.push_back({ x });
