@@ -32,6 +32,7 @@
 #include "../src/Icons.h"
 #include "../src/SuiteSafety.h"
 #include "../common/Theme.h"
+#include "../common/ThemedBox.h"
 #include "../common/Gfx.h"
 #include "../common/VersionUtil.h"
 #include "../common/Changelog.h"
@@ -50,7 +51,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.44"
+#define SUITE_VERSION L"1.1.45"
 #endif
 
 namespace
@@ -379,13 +380,13 @@ namespace
         const DWORD attr = rest.empty() || rest.size() > 32000 ? INVALID_FILE_ATTRIBUTES : GetFileAttributesW(drive ? (rest + L"\\").c_str() : rest.c_str());
         if (attr == INVALID_FILE_ATTRIBUTES || !(attr & FILE_ATTRIBUTE_DIRECTORY))
         {
-            MessageBoxW(nullptr, L"Dieser Ordner wurde nicht gefunden oder ist nicht lesbar.", L"Duncan's Suite", MB_ICONWARNING | MB_OK);
+            themedbox::Show(nullptr, L"Dieser Ordner wurde nicht gefunden oder ist nicht lesbar.", L"Duncan's Suite", MB_ICONWARNING | MB_OK);
             return 1;
         }
         const std::wstring tidy = FindExeFile(L"DuncansTidy.exe", L"DuncansTidy");
         if (tidy.empty())
         {
-            if (MessageBoxW(nullptr, L"Duncan's Tidy ist nicht installiert.\n\nDie Suite öffnen, um es mit einem Klick herunterzuladen?", L"Duncan's Suite",
+            if (themedbox::Show(nullptr, L"Duncan's Tidy ist nicht installiert.\n\nDie Suite öffnen, um es mit einem Klick herunterzuladen?", L"Duncan's Suite",
                             MB_ICONINFORMATION | MB_YESNO) == IDYES)
                 ShellExecuteW(nullptr, L"open", SelfPath().c_str(), nullptr, nullptr, SW_SHOWNORMAL);
             return 1;
@@ -393,7 +394,7 @@ namespace
         std::wstring version;
         if (!FileVersionAtLeast(tidy, 1, 1, 4, &version))
         {
-            MessageBoxW(nullptr, (L"Die installierte Version von Duncan's Tidy (" + (version.empty() ? std::wstring(L"unbekannt") : version) +
+            themedbox::Show(nullptr, (L"Die installierte Version von Duncan's Tidy (" + (version.empty() ? std::wstring(L"unbekannt") : version) +
                                   L") kann noch keine Ordner analysieren.\n\nBitte Tidy auf Version 1.1.4 oder neuer aktualisieren (Tidy: Update im Programm, oder GitHub-Release).").c_str(),
                         L"Duncan's Suite", MB_ICONINFORMATION | MB_OK);
             return 1;
@@ -2106,7 +2107,7 @@ void SuiteWindow::UninstallTool(int index)
     const std::wstring question = std::wstring(t.title) + L" deinstallieren?\n\nDiese Dateien werden gelöscht:" + list +
                                   L"\n\nDeine Daten und Einstellungen bleiben erhalten (zum Beispiel ein Tresor oder Rechnungen). Du kannst das Programm jederzeit wieder herunterladen. "
                                   L"Liegt eine Datei in einem geschützten Ordner, fragt Windows nach Administratorrechten.";
-    if (MessageBoxW(m_hwnd, question.c_str(), L"Deinstallieren", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+    if (themedbox::Show(m_hwnd, question.c_str(), L"Deinstallieren", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
         return;
 
     std::wstring failed;

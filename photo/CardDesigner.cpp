@@ -14,6 +14,7 @@
 #include <memory>
 
 #include "../common/Theme.h"
+#include "../common/ThemedBox.h"
 #include "Card.h"
 
 namespace card {
@@ -362,7 +363,7 @@ void Designer::PickColor(COLORREF& c) {
 
 void Designer::SaveCard() {
     Pull();
-    if (spec.photos.empty() && MessageBoxW(hwnd, L"Es sind noch keine Fotos gewählt. Trotzdem speichern?", L"Karte gestalten", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
+    if (spec.photos.empty() && themedbox::Show(hwnd, L"Es sind noch keine Fotos gewählt. Trotzdem speichern?", L"Karte gestalten", MB_YESNO | MB_ICONQUESTION) != IDYES) return;
     wchar_t file[MAX_PATH] = L"Karte.jpg";
     OPENFILENAMEW o{};
     o.lStructSize = sizeof(o);
@@ -388,7 +389,7 @@ void Designer::SaveCard() {
         CanvasSize(spec, 300, w, h);
         SetWindowTextW(status, (L"Gespeichert: " + FileName(path) + L" (" + std::to_wstring(w) + L" × " + std::to_wstring(h) + L" px, 300 dpi)").c_str());
     } else {
-        MessageBoxW(hwnd, err.c_str(), L"Karte gestalten", MB_OK | MB_ICONWARNING);
+        themedbox::Show(hwnd, err.c_str(), L"Karte gestalten", MB_OK | MB_ICONWARNING);
     }
 }
 
@@ -603,7 +604,7 @@ void ShowDesigner(HWND owner, const std::vector<std::wstring>& photos) {
     for (const auto& p : photos)
         if (Usable(p) && d.spec.photos.size() < 24) d.spec.photos.push_back(p);
     if (!photos.empty() && d.spec.photos.empty())
-        MessageBoxW(owner, L"Diese Bildformate kann die Kartenfunktion noch nicht laden (JPG, PNG, BMP, TIF und GIF gehen). Fotos lassen sich im Fenster hinzufügen.", L"Karte gestalten", MB_OK | MB_ICONINFORMATION);
+        themedbox::Show(owner, L"Diese Bildformate kann die Kartenfunktion noch nicht laden (JPG, PNG, BMP, TIF und GIF gehen). Fotos lassen sich im Fenster hinzufügen.", L"Karte gestalten", MB_OK | MB_ICONINFORMATION);
     static const int kBest[] = {0, 0, 1, 3, 5, 6, 7};
     d.spec.layout = kBest[std::min<size_t>(d.spec.photos.size(), 6)];
     if (!d.spec.photos.empty()) {
