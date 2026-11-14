@@ -9,6 +9,7 @@
 #include <windowsx.h>
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <shlobj.h>
 
 #include <algorithm>
 #include <cwchar>
@@ -31,6 +32,7 @@ using std::min;
 #include "BoostLogic.h"
 #include "AudioFocus.h"
 #include "Crosshair.h"
+#include "ClipRec.h"
 #include "Profiles.h"
 #include "LiveStats.h"
 
@@ -52,11 +54,13 @@ const COLORREF kBorderHot = kBorderHover;
 const COLORREF kBoost = RGB(255, 150, 50);          // Akzent dieses Programms (Orange)
 
 const wchar_t* kTitle = L"Duncan's Boost";
-const UINT WM_JOB_DONE = WM_APP + 1;                // lp = JobResult*
-const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6, kTimerCross = 7;
+const UINT WM_JOB_DONE = WM_APP + 1;
+const UINT WM_CLIP_SAVED = WM_APP + 2;               // wp = 1 gespeichert, lp = new std::wstring (Pfad oder Fehlertext)
+const int kClipHotkeyId = 11;                       // Strg+Alt+F7                // lp = JobResult*
+const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6, kTimerCross = 7, kTimerClip = 8;
 
 enum HitId { H_NONE = -1, H_HERO = 1000, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP = 5000 };
-enum RowType { R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_PROF_NEW, R_PROF, R_GROUP, R_HINT };
+enum RowType { R_CLIP_ON, R_CLIP_LEN, R_CLIP_FOLDER, R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_PROF_NEW, R_PROF, R_GROUP, R_HINT };
 
 struct Row {
     RowType type = R_HINT;
@@ -83,6 +87,12 @@ struct App {
     std::vector<Row> rows;
     bool autoCollapsed = true;                    // "Automatik (optional)" ist beim Start eingeklappt
     bool crossCollapsed = true;                   // "Fadenkreuz (optional)" ebenso
+    bool clipCollapsed = true;                    // "Video-Clips (optional)" ebenso
+    cliprec::Recorder rec;
+    bool clipHotkeyOn = false;
+    bool clipSaving = false;
+    DWORD clipRetryAt = 0;
+    std::wstring clipErr;
     bool profCollapsed = true;                    // "Profile (optional)" ebenso
     std::vector<boostmode::Profile> profiles;
     boostmode::CrosshairOverlay cross;
@@ -146,6 +156,8 @@ const wchar_t* kAutoTitle = L"Automatisch starten, wenn ich ein Spiel starte";
 const wchar_t* kAutoDesc = L"Hake unten dein Spiel an. Sobald es läuft, schaltet sich der Zock-Modus ohne Rückfrage ein, nach dem Spiel wieder aus.";
 const wchar_t* kDuckTitle = L"Andere Programme leiser beim Spielen";
 const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Solange ein Spiel im Vordergrund ist, laufen Browser, Musik & Co. auf 40 % und sind sofort wieder normal, wenn du das Spiel verlässt. Discord, TeamSpeak & Co. bleiben unverändert.";
+const wchar_t* kClipTitle = L"Video-Clips: letzte Sekunden speichern";
+const wchar_t* kClipDesc = L"Boost nimmt den Hauptbildschirm im Hintergrund auf und bewahrt nur die letzten Sekunden; Strg+Alt+F7 speichert sie als MP4 in Videos\Boost-Clips. Es läuft nur, solange ein oben angehaktes Spiel vorne ist (ohne angehaktes Spiel immer). Nur Bild, kein Ton; im echten Vollbild bleibt das Bild eventuell schwarz. Kostet etwas Leistung.";
 const wchar_t* kCrossTitle = L"Fadenkreuz über dem Spiel anzeigen";
 const wchar_t* kCrossDesc = L"Ein kleines Fadenkreuz in der Bildschirmmitte, nur über den oben angehakten Spielen (ist keines angehakt, immer). Es ist ein normales, durchklickbares Fenster und greift nicht in das Spiel ein. Es erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
 const wchar_t* kMuteTitle = L"Spiel stumm beim Wegschalten";
@@ -197,6 +209,12 @@ void BuildRows(HDC dc) {
     if (!g.crossCollapsed) {
         Row r; r.type = R_CROSS_ON; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kCrossDesc, textW) + S(14));
         for (RowType t : { R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE }) { Row c; c.type = t; add(c, S(52)); }
+    }
+
+    { Row r; r.type = R_GROUP; r.idx = 3; r.text = L"Video-Clips (optional)"; add(r, S(46)); }
+    if (!g.clipCollapsed) {
+        Row r; r.type = R_CLIP_ON; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kClipDesc, textW) + S(14));
+        for (RowType t : { R_CLIP_LEN, R_CLIP_FOLDER }) { Row c; c.type = t; add(c, S(52)); }
     }
 
     { Row r; r.type = R_GROUP; r.idx = 2; r.text = L"Profile (optional)"; add(r, S(46)); }
@@ -510,8 +528,49 @@ void CrossTick() {
     g.cross.Update(vis, spec, MonitorFromWindow(fgw ? fgw : g.hwnd, MONITOR_DEFAULTTOPRIMARY), g.dpi);
 }
 
+// Video-Clips: Aufnahme laeuft nur, wenn die Funktion an ist und (bei angehakten Spielen) eines vorne ist
+void ClipTick() {
+    const bool want = g.cfg.optClip && boostmode::ClipShouldRecord(g.cfg.gameApps, boostmode::ForegroundExe());
+    if (want && !g.rec.Running() && GetTickCount() >= g.clipRetryAt) {
+        cliprec::Options o;
+        o.seconds = g.cfg.clipSeconds;
+        std::wstring err;
+        if (!g.rec.Start(o, err)) {
+            g.clipRetryAt = GetTickCount() + 20000;                     // nicht dauernd neu versuchen
+            if (err != g.clipErr) SetStatus(L"Video-Clips: " + err, kRed);
+            g.clipErr = err;
+        } else g.clipErr.clear();
+    } else if (!want && g.rec.Running()) g.rec.Stop();
+    const bool hk = g.cfg.optClip;
+    if (hk && !g.clipHotkeyOn) g.clipHotkeyOn = RegisterHotKey(g.hwnd, kClipHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_F7) != 0;
+    else if (!hk && g.clipHotkeyOn) { UnregisterHotKey(g.hwnd, kClipHotkeyId); g.clipHotkeyOn = false; }
+}
+
+void SaveClipNow() {
+    if (g.clipSaving) return;
+    if (!g.rec.Running()) { SetStatus(L"Video-Clips: Es läuft gerade keine Aufnahme (ist ein angehaktes Spiel vorne?).", kOrange); return; }
+    g.clipSaving = true;
+    SetStatus(L"Clip wird gespeichert …", kBoost);
+    HWND hw = g.hwnd;
+    std::thread([hw]() {                                                // Zusammensetzen im Hintergrund, die Aufnahme laeuft weiter
+        std::wstring file, err;
+        const bool ok = g.rec.Save(file, err);
+        PostMessageW(hw, WM_CLIP_SAVED, ok ? 1 : 0, reinterpret_cast<LPARAM>(new std::wstring(ok ? file : err)));
+    }).detach();
+}
+
+void OpenClipFolder() {
+    const std::wstring dir = cliprec::DefaultClipDir();
+    if (dir.empty()) { SetStatus(L"Der Videos-Ordner wurde nicht gefunden.", kRed); return; }
+    SHCreateDirectoryExW(nullptr, dir.c_str(), nullptr);
+    ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+}
+
 void ActivateRow(const Row& r) {
-    if (r.type == R_APP_CLOSE) { Toggle(g.cfg.closeApps, g.apps[r.idx].exe); SaveCfg(); }
+    if (r.type == R_CLIP_ON) { g.cfg.optClip = !g.cfg.optClip; SaveCfg(); ClipTick(); }
+    else if (r.type == R_CLIP_LEN) { g.cfg.clipSeconds = boostmode::NextClipSeconds(g.cfg.clipSeconds); SaveCfg(); if (g.rec.Running()) g.rec.Stop(); ClipTick(); }
+    else if (r.type == R_CLIP_FOLDER) OpenClipFolder();
+    else if (r.type == R_APP_CLOSE) { Toggle(g.cfg.closeApps, g.apps[r.idx].exe); SaveCfg(); }
     else if (r.type == R_APP_GAME) { Toggle(g.cfg.gameApps, g.apps[r.idx].exe); SaveCfg(); }
     else if (r.type == R_AUTO) { g.cfg.optAuto = !g.cfg.optAuto; g.missPolls = 0; SaveCfg(); }
     else if (r.type == R_DUCK) { g.cfg.optDuck = !g.cfg.optDuck; SaveCfg(); AudioTick(); }
@@ -663,8 +722,8 @@ void Paint(HDC dc, const RECT& cr) {
             continue;
         }
         if (r.type == R_GROUP) {
-            const bool collapsed = r.idx == 0 ? g.autoCollapsed : (r.idx == 1 ? g.crossCollapsed : g.profCollapsed);
-            const bool grpOn = r.idx == 0 ? g.cfg.optAuto : (r.idx == 1 ? g.cfg.optCross : !g.profiles.empty());
+            const bool collapsed = r.idx == 0 ? g.autoCollapsed : (r.idx == 1 ? g.crossCollapsed : (r.idx == 3 ? g.clipCollapsed : g.profCollapsed));
+            const bool grpOn = r.idx == 0 ? g.cfg.optAuto : (r.idx == 1 ? g.cfg.optCross : (r.idx == 3 ? g.cfg.optClip : !g.profiles.empty()));
             FillRound(dc, card, S(12), hot ? kCardHover : Blend(kCard, kBackground, 40), hot ? kBorderHot : kBorder);
             {
                 Gdiplus::Graphics gr(dc);
@@ -704,6 +763,13 @@ void Paint(HDC dc, const RECT& cr) {
                       std::to_wstring(p.paths.size()) + (p.paths.size() == 1 ? L" Programm" : L" Programme"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
+        if (r.type == R_CLIP_LEN || r.type == R_CLIP_FOLDER) {
+            FillRound(dc, card, S(14), hot ? kCardHover : kCard, hot ? kBorderHot : kBorder);
+            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top, card.left + pad + S(160), card.bottom }, r.type == R_CLIP_LEN ? L"Rückblick" : L"Clip-Ordner", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fBold, kBoost, { card.left + pad + S(160), card.top, card.right - pad, card.bottom },
+                      r.type == R_CLIP_LEN ? (std::to_wstring(g.cfg.clipSeconds) + L" Sekunden") : std::wstring(L"Öffnen"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            continue;
+        }
         if (r.type == R_CROSS_STYLE || r.type == R_CROSS_COLOR || r.type == R_CROSS_SIZE) {
             FillRound(dc, card, S(14), hot ? kCardHover : kCard, hot ? kBorderHot : kBorder);
             const wchar_t* label = r.type == R_CROSS_STYLE ? L"Form" : (r.type == R_CROSS_COLOR ? L"Farbe" : L"Größe");
@@ -720,10 +786,10 @@ void Paint(HDC dc, const RECT& cr) {
             DrawText2(dc, g.fBold, kBoost, { card.left + pad + S(120), card.top, right, card.bottom }, val, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
-        if (r.type == R_AUTO || r.type == R_DUCK || r.type == R_MUTE || r.type == R_CROSS_ON) {
-            const bool v = r.type == R_AUTO ? g.cfg.optAuto : (r.type == R_DUCK ? g.cfg.optDuck : (r.type == R_MUTE ? g.cfg.optMuteGame : g.cfg.optCross));
-            const wchar_t* title = r.type == R_AUTO ? kAutoTitle : (r.type == R_DUCK ? kDuckTitle : (r.type == R_MUTE ? kMuteTitle : kCrossTitle));
-            const wchar_t* desc = r.type == R_AUTO ? kAutoDesc : (r.type == R_DUCK ? kDuckDesc : (r.type == R_MUTE ? kMuteDesc : kCrossDesc));
+        if (r.type == R_AUTO || r.type == R_DUCK || r.type == R_MUTE || r.type == R_CROSS_ON || r.type == R_CLIP_ON) {
+            const bool v = r.type == R_AUTO ? g.cfg.optAuto : (r.type == R_DUCK ? g.cfg.optDuck : (r.type == R_MUTE ? g.cfg.optMuteGame : (r.type == R_CLIP_ON ? g.cfg.optClip : g.cfg.optCross)));
+            const wchar_t* title = r.type == R_AUTO ? kAutoTitle : (r.type == R_DUCK ? kDuckTitle : (r.type == R_MUTE ? kMuteTitle : (r.type == R_CLIP_ON ? kClipTitle : kCrossTitle)));
+            const wchar_t* desc = r.type == R_AUTO ? kAutoDesc : (r.type == R_DUCK ? kDuckDesc : (r.type == R_MUTE ? kMuteDesc : (r.type == R_CLIP_ON ? kClipDesc : kCrossDesc)));
             const int textW = cardW - pad * 2 - S(64) - S(16);
             FillRound(dc, card, S(14), hot ? kCardHover : kCard, v ? Blend(kBorder, kBoost, 55) : (hot ? kBorderHot : kBorder));
             DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(14), card.left + pad + textW, card.top + S(14) + S(24) }, title);
@@ -794,8 +860,8 @@ void Activate(int id) {
     if (id == H_MODAL_OK) { CloseModal(true); return; }
     if (id == H_MODAL_CANCEL) { CloseModal(false); return; }
     if (g.modal.open) return;
-    if (id >= H_GROUP && id <= H_GROUP + 2) {
-        bool& collapsed = id == H_GROUP ? g.autoCollapsed : (id == H_GROUP + 1 ? g.crossCollapsed : g.profCollapsed);
+    if (id >= H_GROUP && id <= H_GROUP + 3) {
+        bool& collapsed = id == H_GROUP ? g.autoCollapsed : (id == H_GROUP + 1 ? g.crossCollapsed : (id == H_GROUP + 3 ? g.clipCollapsed : g.profCollapsed));
         collapsed = !collapsed;
         g.hover = H_NONE;
         Layout();
@@ -887,11 +953,25 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == kTimerLive) LiveTick();
         else if (wp == kTimerAudio) AudioTick();
         else if (wp == kTimerCross) CrossTick();
+        else if (wp == kTimerClip) ClipTick();
         return 0;
     case WM_ENDSESSION:
         if (wp) RestoreAudio();
         return 0;
-    case WM_DESTROY: RestoreAudio(); g.cross.Destroy(); PostQuitMessage(0); return 0;
+    case WM_HOTKEY:
+        if (wp == kClipHotkeyId) SaveClipNow();
+        return 0;
+    case WM_CLIP_SAVED: {
+        std::unique_ptr<std::wstring> text(reinterpret_cast<std::wstring*>(lp));
+        g.clipSaving = false;
+        if (wp) {
+            MessageBeep(MB_OK);
+            const size_t k = text->find_last_of(L"\\");
+            SetStatus(L"Clip gespeichert: " + (k == std::wstring::npos ? *text : text->substr(k + 1)), kGreen);
+        } else SetStatus(L"Clip konnte nicht gespeichert werden: " + *text, kRed);
+        return 0;
+    }
+    case WM_DESTROY: g.rec.Stop(); if (g.clipHotkeyOn) UnregisterHotKey(hwnd, kClipHotkeyId); RestoreAudio(); g.cross.Destroy(); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -946,6 +1026,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     SetTimer(g.hwnd, kTimerLive, 1000, nullptr);
     SetTimer(g.hwnd, kTimerAudio, 700, nullptr);
     SetTimer(g.hwnd, kTimerCross, 500, nullptr);
+    SetTimer(g.hwnd, kTimerClip, 1500, nullptr);
     ShowWindow(g.hwnd, show);
     UpdateWindow(g.hwnd);
 

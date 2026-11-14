@@ -154,6 +154,24 @@ static void ProfileTests() {
     CHECK(SaveProfiles({}) && LoadProfiles().empty());
 }
 
+static void ClipTests() {
+    CHECK(ClampClipSeconds(30) == 30 && ClampClipSeconds(15) == 15 && ClampClipSeconds(60) == 60);
+    CHECK(ClampClipSeconds(0) == 15 && ClampClipSeconds(100) == 60 && ClampClipSeconds(40) == 30 && ClampClipSeconds(-5) == 15 && ClampClipSeconds(46) == 60);
+    CHECK(NextClipSeconds(15) == 30 && NextClipSeconds(30) == 60 && NextClipSeconds(60) == 15 && NextClipSeconds(7) == 30);
+    const std::vector<std::wstring> games = { L"game.exe" };
+    CHECK(ClipShouldRecord({}, L"chrome.exe") && ClipShouldRecord({}, L""));                 // kein Spiel angehakt: immer
+    CHECK(ClipShouldRecord(games, L"game.exe") && !ClipShouldRecord(games, L"chrome.exe") && !ClipShouldRecord(games, L""));
+    const std::wstring dir = DataDir() + L"\\cliptest";
+    Settings s; s.optClip = true; s.clipSeconds = 60;
+    CHECK(SaveSettings(s));
+    const Settings back = LoadSettings();
+    CHECK(back.optClip && back.clipSeconds == 60);
+    s.optClip = false; s.clipSeconds = 999;
+    CHECK(SaveSettings(s));
+    const Settings b2 = LoadSettings();
+    CHECK(!b2.optClip && b2.clipSeconds == 60);
+}
+
 static void CrosshairTests() {
     CrosshairSpec s; s.on = true;
     const std::vector<std::wstring> games = { L"game.exe" };
@@ -306,6 +324,7 @@ int main() {
     AudioTests();
     CrosshairTests();
     ProfileTests();
+    ClipTests();
     std::printf("%d bestanden, %d fehlgeschlagen\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }
