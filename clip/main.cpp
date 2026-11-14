@@ -9,6 +9,7 @@
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <commdlg.h>
+#include <uxtheme.h>
 
 #include <algorithm>
 #include <cstdlib>
@@ -32,7 +33,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.2"   // normalerweise aus CMake
+#define APP_VERSION L"0.7.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -53,13 +54,13 @@ const wchar_t* kMainClass = L"DuncansClip";
 const wchar_t* kPopupClass = L"DuncansClipPopup";
 const UINT WM_TRAY = WM_APP + 10;
 const UINT WM_SHOWMAIN = WM_APP + 11;                // zweiter Start: bestehendes Fenster zeigen
-const int kHotkeyId = 1;
-const UINT_PTR kTimerPaste = 1, kTimerStatus = 2, kTimerRestore = 3, kTimerPurge = 5;
-const int kIdEditTitle = 101, kIdEditText = 102, kIdSearch = 103, kIdPopupSearch = 104, kIdEditFolder = 105;
+const int kHotkeyId = 1, kNoteHotkeyId = 2;      // 2: Strg+Alt+N oeffnet den Zettel
+const UINT_PTR kTimerPaste = 1, kTimerStatus = 2, kTimerRestore = 3, kTimerPurge = 5, kTimerNote = 6;
+const int kIdEditTitle = 101, kIdEditText = 102, kIdSearch = 103, kIdPopupSearch = 104, kIdEditFolder = 105, kIdNote = 106;
 
-enum Tab { T_HISTORY, T_PROMPTS };
+enum Tab { T_HISTORY, T_PROMPTS, T_NOTE };
 enum HitId {
-    H_NONE = -1, H_TAB_HISTORY = 1000, H_TAB_PROMPTS = 1001, H_ACTION = 1002, H_INTRO_OK = 1003, H_HELP = 1004, H_SET_BASE = 1010 /* 1010..1015 */, H_CHIP_BASE = 1100 /* 1100..1149 */,
+    H_NONE = -1, H_TAB_HISTORY = 1000, H_TAB_PROMPTS = 1001, H_TAB_NOTE = 1005, H_ACTION = 1002, H_INTRO_OK = 1003, H_HELP = 1004, H_SET_BASE = 1010 /* 1010..1015 */, H_CHIP_BASE = 1100 /* 1100..1149 */,
     H_EDIT_SAVE = 2000, H_EDIT_CANCEL = 2001, H_ROW_BASE = 3000
 };
 
@@ -71,7 +72,7 @@ struct EditState { bool open = false; int index = -1; };   // index -1 = neuer P
 struct Thumb { HBITMAP bmp = nullptr; int w = 0, h = 0; };      // Vorschaubild eines Bildes im Verlauf
 
 struct App {
-    HWND hwnd = nullptr, hSearch = nullptr, hEditTitle = nullptr, hEditFolder = nullptr, hEditText = nullptr;
+    HWND hwnd = nullptr, hSearch = nullptr, hEditTitle = nullptr, hEditFolder = nullptr, hEditText = nullptr, hNote = nullptr;
     HWND popup = nullptr, popupSearch = nullptr;
     UINT dpi = 96;
     HFONT fTitle = nullptr, fHead = nullptr, fBody = nullptr, fSmall = nullptr, fBold = nullptr;
@@ -86,7 +87,7 @@ struct App {
     std::map<unsigned, Thumb> thumbs;                // Vorschaubilder je Verlaufseintrag (Id)
     std::vector<Row> rows;
     int scroll = 0, contentH = 0;
-    RECT tabHistory{}, tabPrompts{}, actionBtn{}, searchRc{}, chipsRc{}, list{}, set[6]{}, footer{}, editCard{}, editSave{}, editCancel{};
+    RECT tabNote{}, noteRc{}, tabHistory{}, tabPrompts{}, actionBtn{}, searchRc{}, chipsRc{}, list{}, set[6]{}, footer{}, editCard{}, editSave{}, editCancel{};
     RECT introRc{}, introOk{}, helpBtn{}, hintRc{};
     std::wstring lastOwner;   // Programm, aus dem zuletzt kopiert wurde (zum Sperren per Menue)
     EditState edit;
@@ -100,6 +101,7 @@ struct App {
     std::wstring selection;                          // beim Oeffnen der Schnellauswahl uebernommene Markierung (ersetzt {clip})
     bool hotkeyOk = false;
     bool quitting = false;
+    bool noteDirty = false;                          // Zettel hat ungespeicherte Aenderungen
     NOTIFYICONDATAW nid{};
 } g;
 
@@ -113,7 +115,7 @@ void MakeFonts() {
     };
     g.fTitle = make(20, FW_SEMIBOLD); g.fHead = make(11, FW_SEMIBOLD); g.fBody = make(10, FW_NORMAL);
     g.fSmall = make(9, FW_NORMAL); g.fBold = make(10, FW_SEMIBOLD);
-    for (HWND h : { g.hSearch, g.hEditTitle, g.hEditFolder, g.hEditText, g.popupSearch }) if (h) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(g.fBody), TRUE);
+    for (HWND h : { g.hSearch, g.hEditTitle, g.hEditFolder, g.hEditText, g.hNote, g.popupSearch }) if (h) SendMessageW(h, WM_SETFONT, reinterpret_cast<WPARAM>(g.fBody), TRUE);
 }
 
 void DrawText2(HDC dc, HFONT f, COLORREF c, RECT r, const std::wstring& t, UINT flags = DT_LEFT | DT_TOP | DT_SINGLELINE) {
@@ -225,6 +227,14 @@ void SavePromptsNow() { if (!clip::SavePrompts(g.store.prompts)) SetStatus(L"Die
 
 void Layout();
 
+std::wstring GetEditText(HWND h);
+
+void SaveNoteNow() {
+    KillTimer(g.hwnd, kTimerNote);
+    if (!g.noteDirty) return;
+    if (clip::SaveNote(GetEditText(g.hNote))) g.noteDirty = false;
+}
+
 void OnClipboardChanged() {
     if (GetTickCount() < g.suppressUntil) return;
     if (clip::ClipboardIsExcluded()) return;
@@ -288,7 +298,7 @@ bool RowMatches(size_t i) {
 void BuildRows() {
     g.rows.clear();
     int y = 0;
-    const size_t n = g.tab == T_HISTORY ? g.store.history.size() : g.store.prompts.size();
+    const size_t n = g.tab == T_NOTE ? 0 : g.tab == T_HISTORY ? g.store.history.size() : g.store.prompts.size();
     for (size_t i = 0; i < n; ++i) {
         if (!RowMatches(i)) continue;
         Row r; r.idx = i; r.top = y; r.height = (g.tab == T_HISTORY && g.store.history[i].IsImage()) ? S(88) : S(66);
@@ -303,8 +313,12 @@ void PositionEditControls() {
     ShowWindow(g.hEditTitle, open ? SW_SHOW : SW_HIDE);
     ShowWindow(g.hEditFolder, open ? SW_SHOW : SW_HIDE);
     ShowWindow(g.hEditText, open ? SW_SHOW : SW_HIDE);
-    ShowWindow(g.hSearch, open ? SW_HIDE : SW_SHOW);
-    if (!open) return;
+    ShowWindow(g.hSearch, open || g.tab == T_NOTE ? SW_HIDE : SW_SHOW);
+    ShowWindow(g.hNote, !open && g.tab == T_NOTE ? SW_SHOW : SW_HIDE);
+    if (!open) {
+        if (g.tab == T_NOTE) SetWindowPos(g.hNote, nullptr, g.noteRc.left + S(14), g.noteRc.top + S(12), g.noteRc.right - g.noteRc.left - S(28), g.noteRc.bottom - g.noteRc.top - S(24), SWP_NOZORDER);
+        return;
+    }
     const RECT& c = g.editCard;
     SetWindowPos(g.hEditTitle, nullptr, c.left + S(24), c.top + S(86), c.right - c.left - S(48), S(30), SWP_NOZORDER);
     SetWindowPos(g.hEditFolder, nullptr, c.left + S(24), c.top + S(150), c.right - c.left - S(48), S(30), SWP_NOZORDER);
@@ -347,14 +361,15 @@ void Layout() {
     // Reiter
     HDC dc = GetDC(g.hwnd);
     const int th = S(38), ty = S(92);
-    const int w1 = TextWidth(dc, g.fBold, L"Verlauf") + S(40), w2 = TextWidth(dc, g.fBold, L"Prompts") + S(40);
+    const int w1 = TextWidth(dc, g.fBold, L"Verlauf") + S(40), w2 = TextWidth(dc, g.fBold, L"Prompts") + S(40), w3 = TextWidth(dc, g.fBold, L"Zettel") + S(40);
     g.tabHistory = { m, ty, m + w1, ty + th };
     g.tabPrompts = { g.tabHistory.right + S(10), ty, g.tabHistory.right + S(10) + w2, ty + th };
-    const std::wstring act = g.tab == T_HISTORY ? L"Verlauf leeren" : L"+ Neuer Prompt";
+    g.tabNote = { g.tabPrompts.right + S(10), ty, g.tabPrompts.right + S(10) + w3, ty + th };
+    const std::wstring act = g.tab == T_HISTORY ? L"Verlauf leeren" : g.tab == T_NOTE ? L"Alles kopieren" : L"+ Neuer Prompt";
     const int aw = TextWidth(dc, g.fBold, act) + S(36);
     g.actionBtn = { right - aw, ty, right, ty + th };
     const int hw = TextWidth(dc, g.fBold, L"Hilfe") + S(36);
-    g.helpBtn = { g.tabPrompts.right + S(10), ty, g.tabPrompts.right + S(10) + hw, ty + th };
+    g.helpBtn = { g.tabNote.right + S(10), ty, g.tabNote.right + S(10) + hw, ty + th };
     ReleaseDC(g.hwnd, dc);
     g.searchRc = { m, ty + th + S(14), right, ty + th + S(14) + S(36) };
     // Ordner-Chips (nur im Reiter Prompts, wenn es Ordner gibt)
@@ -391,7 +406,7 @@ void Layout() {
         g.set[i] = { m + col * (setW + gap), top, m + col * (setW + gap) + setW, top + setH };
     }
     g.introRc = g.introOk = RECT{};
-    if (!g.cfg.hideIntro) {
+    if (!g.cfg.hideIntro && g.tab != T_NOTE) {
         HDC idc = GetDC(g.hwnd);
         const int ih = IntroHeight(idc, right - m);
         ReleaseDC(g.hwnd, idc);
@@ -402,6 +417,11 @@ void Layout() {
         }
     }
     g.list = { m, listTop, right, g.hintRc.top - S(8) };
+    g.noteRc = RECT{};
+    if (g.tab == T_NOTE) {                           // Zettel: grosse Schreibflaeche statt Suche und Liste
+        g.noteRc = { m, g.searchRc.top, right, g.hintRc.top - S(8) };
+        g.searchRc = g.list = RECT{};
+    }
     // Prompt-Editor (Karte ueber der Liste)
     g.editCard = { m, S(84), right, cr.bottom - S(50) };
     const int bh = S(40), bw = S(130);
@@ -624,6 +644,7 @@ void ActivateRow(int rowIndex, int part) {
 }
 
 void SetTab(Tab t) {
+    if (g.tab == T_NOTE && t != T_NOTE) SaveNoteNow();
     g.tab = t; g.scroll = 0; g.folderFilter.clear();
     SetWindowTextW(g.hSearch, L"");
     g.filter.clear();
@@ -737,12 +758,19 @@ void Paint(HDC dc, const RECT& cr) {
 
     DrawPill(dc, g.tabHistory, L"Verlauf", g.tab == T_HISTORY, g.hover == H_TAB_HISTORY, kClip);
     DrawPill(dc, g.tabPrompts, L"Prompts", g.tab == T_PROMPTS, g.hover == H_TAB_PROMPTS, kClip);
+    DrawPill(dc, g.tabNote, L"Zettel", g.tab == T_NOTE, g.hover == H_TAB_NOTE, kClip);
     DrawPill(dc, g.helpBtn, L"Hilfe", !g.cfg.hideIntro && g.introRc.right > g.introRc.left, g.hover == H_HELP, kClip);
-    DrawButton(dc, g.actionBtn, g.tab == T_HISTORY ? L"Verlauf leeren" : L"+ Neuer Prompt", g.tab == T_PROMPTS, g.hover == H_ACTION, g.press == H_ACTION && g.hover == H_ACTION);
+    DrawButton(dc, g.actionBtn, g.tab == T_HISTORY ? L"Verlauf leeren" : g.tab == T_NOTE ? L"Alles kopieren" : L"+ Neuer Prompt", g.tab == T_PROMPTS, g.hover == H_ACTION, g.press == H_ACTION && g.hover == H_ACTION);
 
     // Suchfeld (das EDIT liegt darueber)
+    if (g.tab == T_NOTE) {
+        FillRound(dc, g.noteRc, S(14), Blend(kCard, kBackground, 30), kBorder);
+        if (GetWindowTextLengthW(g.hNote) == 0 && GetFocus() != g.hNote)
+            DrawText2(dc, g.fBody, kTextDim, { g.noteRc.left + S(20), g.noteRc.top + S(14), g.noteRc.right - S(20), g.noteRc.bottom }, L"Dein Zettel: Hier landet, was du schnell festhalten willst, zum Beispiel eine Adresse, ein Befehl oder eine Aufgabe. Er wird beim Tippen von selbst gespeichert (verschlüsselt, nur auf diesem PC). Strg+Alt+N öffnet ihn jederzeit.", DT_LEFT | DT_TOP | DT_WORDBREAK);
+    } else {
     FillRound(dc, g.searchRc, S(12), Blend(kCard, kBackground, 30), kBorder);
     DrawText2(dc, g.fSmall, kTextDim, { g.searchRc.left + S(16), g.searchRc.top, g.searchRc.left + S(80), g.searchRc.bottom }, L"Suchen:", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+    }
     for (size_t ci = 0; ci < g.chipRects.size(); ++ci)                                  // Ordner-Chips
         DrawChip(dc, g.chipRects[ci], g.chipNames[ci].empty() ? L"Alle" : g.chipNames[ci], g.chipNames[ci] == g.folderFilter, g.hover == H_CHIP_BASE + static_cast<int>(ci));
 
@@ -861,6 +889,7 @@ int HitTest(POINT p) {
     }
     if (PtInRect(&g.tabHistory, p)) return H_TAB_HISTORY;
     if (PtInRect(&g.tabPrompts, p)) return H_TAB_PROMPTS;
+    if (PtInRect(&g.tabNote, p)) return H_TAB_NOTE;
     if (PtInRect(&g.actionBtn, p)) return H_ACTION;
     if (PtInRect(&g.helpBtn, p)) return H_HELP;
     if (g.introOk.right > g.introOk.left && PtInRect(&g.introOk, p)) return H_INTRO_OK;
@@ -897,10 +926,16 @@ void Activate(int id) {
     else if (g.edit.open) return;
     else if (id == H_TAB_HISTORY) SetTab(T_HISTORY);
     else if (id == H_TAB_PROMPTS) SetTab(T_PROMPTS);
+    else if (id == H_TAB_NOTE) { SetTab(T_NOTE); SetFocus(g.hNote); }
     else if (id == H_INTRO_OK) { g.cfg.hideIntro = true; clip::SaveSettings(g.cfg); Layout(); }
     else if (id == H_HELP) { g.cfg.hideIntro = !g.cfg.hideIntro; clip::SaveSettings(g.cfg); Layout(); }
     else if (id == H_ACTION) {
-        if (g.tab == T_HISTORY) {
+        if (g.tab == T_NOTE) {
+            const std::wstring t = GetEditText(g.hNote);
+            if (t.empty()) SetStatus(L"Der Zettel ist leer.", kOrange);
+            else CopyToClipboard(t, L"Zettel in die Zwischenablage kopiert.");
+        }
+        else if (g.tab == T_HISTORY) {
             clip::ClearHistory(g.store);
             PruneThumbs(); SaveHistoryIfWanted(); Layout();
             SetStatus(clip::PinnedCount(g.store) ? L"Verlauf geleert (angepinnte Einträge bleiben)." : L"Verlauf geleert.", kGreen);
@@ -1163,10 +1198,17 @@ void AddTray(HINSTANCE inst) {
     Shell_NotifyIconW(NIM_ADD, &g.nid);
 }
 
+void OpenNote() {
+    ShowMain();
+    SetTab(T_NOTE);
+    SetFocus(g.hNote);
+}
+
 void TrayMenu() {
     HMENU m = CreatePopupMenu();
     AppendMenuW(m, MF_STRING, 1, L"Öffnen");
     AppendMenuW(m, MF_STRING, 2, L"Schnellauswahl");
+    AppendMenuW(m, MF_STRING, 4, L"Zettel öffnen");
     AppendMenuW(m, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(m, MF_STRING, 3, L"Beenden");
     POINT pt; GetCursorPos(&pt);
@@ -1176,6 +1218,7 @@ void TrayMenu() {
     DestroyMenu(m);
     if (cmd == 1) ShowMain();
     else if (cmd == 2) ShowPopup();
+    else if (cmd == 4) OpenNote();
     else if (cmd == 3) { g.quitting = true; DestroyWindow(g.hwnd); }
 }
 
@@ -1215,6 +1258,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_COMMAND:
+        if (LOWORD(wp) == kIdNote && HIWORD(wp) == EN_CHANGE) { g.noteDirty = true; SetTimer(hwnd, kTimerNote, 800, nullptr); }
+        else if (LOWORD(wp) == kIdNote && (HIWORD(wp) == EN_SETFOCUS || HIWORD(wp) == EN_KILLFOCUS)) InvalidateRect(hwnd, nullptr, FALSE);
         if (LOWORD(wp) == kIdSearch && HIWORD(wp) == EN_CHANGE) {
             g.filter = GetEditText(g.hSearch); g.scroll = 0;
             Layout();
@@ -1258,9 +1303,11 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_CLIPBOARDUPDATE: OnClipboardChanged(); return 0;
     case WM_HOTKEY:
         if (wp == kHotkeyId) { if (IsWindowVisible(g.popup)) HidePopup(); else ShowPopup(); }
+        else if (wp == kNoteHotkeyId) OpenNote();
         return 0;
     case WM_TIMER:
-        if (wp == kTimerStatus) { KillTimer(hwnd, kTimerStatus); g.status.clear(); InvalidateRect(hwnd, nullptr, FALSE); }
+        if (wp == kTimerNote) SaveNoteNow();
+        else if (wp == kTimerStatus) { KillTimer(hwnd, kTimerStatus); g.status.clear(); InvalidateRect(hwnd, nullptr, FALSE); }
         else if (wp == kTimerPurge) PurgeNow();
         else if (wp == kTimerPaste) {
             static int tries = 0;                           // erst einfuegen, wenn das Zielfenster wirklich vorn ist (hoechstens ~1,3 s warten)
@@ -1283,9 +1330,15 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_SHOWMAIN: ShowMain(); return 0;
     case WM_CLOSE:
         if (g.quitting) { DestroyWindow(hwnd); return 0; }
+        SaveNoteNow();
         ShowWindow(hwnd, SW_HIDE);                          // im Infobereich weiterlaufen
         return 0;
+    case WM_ENDSESSION:
+        if (wp) SaveNoteNow();
+        return 0;
     case WM_DESTROY:
+        SaveNoteNow();
+        UnregisterHotKey(hwnd, kNoteHotkeyId);
         FreeThumbs();
         RemoveClipboardFormatListener(hwnd);
         UnregisterHotKey(hwnd, kHotkeyId);
@@ -1340,6 +1393,10 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
     g.hEditTitle = MakeEdit(g.hwnd, kIdEditTitle, ES_AUTOHSCROLL, 80);
     g.hEditFolder = MakeEdit(g.hwnd, kIdEditFolder, ES_AUTOHSCROLL, 60);
     g.hEditText = MakeEdit(g.hwnd, kIdEditText, ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN, static_cast<int>(clip::kMaxTextLen));
+    g.hNote = MakeEdit(g.hwnd, kIdNote, WS_VSCROLL | ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN, static_cast<int>(clip::kMaxNoteLen));
+    SetWindowTheme(g.hNote, L"DarkMode_Explorer", nullptr);     // dunkle Bildlaufleiste
+    SetWindowTextW(g.hNote, clip::LoadNote().c_str());
+    g.noteDirty = false;
     g.popup = CreateWindowExW(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, kPopupClass, L"", WS_POPUP, 0, 0, 100, 100, nullptr, nullptr, inst, nullptr);
     g.popupSearch = MakeEdit(g.popup, kIdPopupSearch, WS_VISIBLE | ES_AUTOHSCROLL, 200);
     g_oldPopupEdit = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(g.popupSearch, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(PopupEditProc)));
@@ -1365,6 +1422,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
         clip::SaveSettings(g.cfg);
     }
     g.hotkeyOk = RegisterHotkeyFor(g.cfg.hotkey);
+    RegisterHotKey(g.hwnd, kNoteHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'N');   // Zettel; ist das Kuerzel belegt, bleibt er ueber Reiter und Infobereich erreichbar
     AddClipboardFormatListener(g.hwnd);
     SetTimer(g.hwnd, kTimerPurge, 60000, nullptr);   // Aufbewahrung: jede Minute alte Eintraege entfernen
     AddTray(inst);

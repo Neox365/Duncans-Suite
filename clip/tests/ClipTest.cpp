@@ -370,6 +370,13 @@ int main() {
         const std::vector<std::wstring> lp = LoadPins();
         CHECK(lp.size() == 2 && lp[0] == L"eins" && lp[1] == L"zwei \xE4");
         CHECK(SavePins({}) && LoadPins().empty());
+        // Zettel
+        CHECK(LoadNote().empty());
+        const std::wstring note = L"10.0.0.5\r\nBefehl: ls -la \xE4\xF6\r\n\r\n- Aufgabe";
+        CHECK(SaveNote(note) && LoadNote() == note);
+        CHECK(SaveNote(L"") && LoadNote().empty());
+        CHECK(SaveNote(std::wstring(kMaxNoteLen + 500, L'x')) && LoadNote().size() == kMaxNoteLen);
+        CHECK(SaveNote(L"") );
     }
 
     // ---- Formatierung erkennen ----

@@ -159,6 +159,9 @@ Settings LoadSettings();
 bool SaveSettings(const Settings& s);
 bool SavePrompts(const std::vector<Prompt>& p);              // mit Windows-Schluessel (DPAPI) verschluesselt
 std::vector<Prompt> LoadPrompts();
+constexpr size_t kMaxNoteLen = 50000;                        // Zettel: groesster gespeicherter Text (Zeichen)
+bool SaveNote(const std::wstring& text);                     // Zettel (ein freier Textblock), mit Windows-Schluessel verschluesselt
+std::wstring LoadNote();
 bool SavePins(const std::vector<std::wstring>& pins);        // immer gespeichert (mit Windows-Schluessel), weil man sie bewusst anpinnt
 std::vector<std::wstring> LoadPins();
 bool SaveHistory(const std::vector<std::wstring>& h);        // nur Texte (Bilder werden nie gespeichert)

@@ -78,6 +78,8 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.7.0 | 2026-11-14
+- Neu: Reiter „Zettel“. Ein freier Textblock für das, was du schnell festhalten willst, zum Beispiel eine Adresse, ein Befehl oder eine Aufgabe. Er speichert sich beim Tippen von selbst (verschlüsselt, nur auf diesem PC) und ist beim nächsten Start wieder da. „Alles kopieren“ legt den ganzen Text in die Zwischenablage. Strg+Alt+N oder „Zettel öffnen“ im Infobereich-Menü öffnet ihn sofort; ist das Kürzel schon von einem anderen Programm belegt, geht es über den Reiter.
 ## 0.6.2 | 2026-11-14
 - Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 0.6.1 | 2026-11-12
