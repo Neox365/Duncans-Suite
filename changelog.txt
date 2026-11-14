@@ -352,6 +352,8 @@
 - Der PDF Reader kommt als Programm in die Suite.
 
 [DuncansPrivacy.exe]
+## 0.13.0 | 2026-11-14
+- Neu: „Verbindungen“ in der Fußzeile. Zeigt, welche Programme gerade offene Verbindungen haben, nach Programm geordnet, mit der Zahl der Verbindungen ins Internet und im Heimnetz und ein paar Beispiel-Adressen. Die Ansicht aktualisiert sich alle paar Sekunden und ist nur eine Anzeige: Es wird nichts blockiert oder verändert, und es werden keine Daten gesendet. Mit „Zurück“ oder Esc kommst du zur Einstellungsliste zurück.
 ## 0.12.1 | 2026-11-12
 - Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen oder Dateien und wird nirgends automatisch gesendet.
 ## 0.12.0 | 2026-11-08
