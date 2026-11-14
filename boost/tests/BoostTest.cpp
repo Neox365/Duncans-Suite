@@ -4,6 +4,8 @@
 #include "../AudioFocus.h"
 #include "../Crosshair.h"
 #include "../Overlay.h"
+#include "../GameScan.h"
+#include <cwctype>
 #include "../Profiles.h"
 
 #include <shellapi.h>
@@ -153,6 +155,51 @@ static void ProfileTests() {
     const std::vector<Profile> back = LoadProfiles();
     CHECK(back.size() == 2 && back[0].name == L"Arbeit" && back[0].paths == all[0].paths && back[1].paths == all[1].paths);
     CHECK(SaveProfiles({}) && LoadProfiles().empty());
+}
+
+static void MouseTests() {
+    const int cur[3] = { 6, 10, 1 };
+    int off[3] = { 9, 9, 9 };
+    MouseAccelOff(cur, off);
+    CHECK(off[0] == 6 && off[1] == 10 && off[2] == 0);
+    int now[3] = { 0, 0, 0 };
+    CHECK(GetMouseAccel(now) && now[2] >= 0 && now[2] <= 2);
+    CHECK(SetMouseAccel(now));                                       // gleiche Werte zurueckschreiben: aendert nichts, prueft den Aufruf
+    Settings s; s.optMouse = true;
+    CHECK(SaveSettings(s) && LoadSettings().optMouse);
+    s.optMouse = false;
+    CHECK(SaveSettings(s) && !LoadSettings().optMouse);
+    State st; st.active = true; st.mouseChanged = true; st.prevMouse[0] = 6; st.prevMouse[1] = 10; st.prevMouse[2] = 1;
+    CHECK(SaveState(st));
+    const State back = LoadState();
+    CHECK(back.mouseChanged && back.prevMouse[0] == 6 && back.prevMouse[1] == 10 && back.prevMouse[2] == 1);
+    CHECK(SaveState(State()));
+    CHECK(!LoadState().mouseChanged);
+}
+
+static void GameScanTests() {
+    const std::string vdf = "\"libraryfolders\"\n{\n\t\"0\"\n\t{\n\t\t\"path\"\t\t\"C:\\\\Program Files (x86)\\\\Steam\"\n\t\t\"apps\"\n\t\t{\n\t\t\t\"730\"\t\t\"123\"\n\t\t}\n\t}\n\t\"1\"\n\t{\n\t\t\"path\"\t\t\"D:\\\\SteamLibrary\"\n\t}\n}\n";
+    const std::vector<std::wstring> libs = ParseSteamLibraries(vdf);
+    CHECK(libs.size() == 2 && libs[0] == L"C:\\Program Files (x86)\\Steam" && libs[1] == L"D:\\SteamLibrary");
+    CHECK(ParseSteamLibraries("").empty() && ParseSteamLibraries("\"path\" 5").empty());
+    const std::string acf = "\"AppState\"\n{\n\t\"appid\"\t\t\"730\"\n\t\"name\"\t\t\"Counter-Strike 2\"\n\t\"installdir\"\t\t\"Counter-Strike Global Offensive\"\n}\n";
+    std::wstring name, dir, exe;
+    CHECK(ParseSteamManifest(acf, name, dir) && name == L"Counter-Strike 2" && dir == L"Counter-Strike Global Offensive");
+    CHECK(!ParseSteamManifest("\"AppState\" { \"name\" \"X\" }", name, dir));                                    // kein installdir
+    CHECK(!ParseSteamManifest("\"name\" \"X\" \"installdir\" \"..\\\\..\\\\Windows\"", name, dir));               // kein Ausbruch aus dem Ordner
+    CHECK(!ParseSteamManifest("\"name\" \"X\" \"installdir\" \"C:\\\\Windows\"", name, dir));
+    const std::string epic = "{\n  \"FormatVersion\": 0,\n  \"LaunchExecutable\": \"FortniteGame\\\\Binaries\\\\Win64\\\\FortniteClient-Win64-Shipping.exe\",\n  \"InstallLocation\": \"C:\\\\Games\\\\Fortnite\",\n  \"DisplayName\": \"Fortnite\"\n}";
+    std::wstring loc;
+    CHECK(ParseEpicManifest(epic, name, loc, exe) && name == L"Fortnite" && loc == L"C:\\Games\\Fortnite" && exe == L"fortniteclient-win64-shipping.exe");
+    CHECK(!ParseEpicManifest("{ \"DisplayName\": \"X\" }", name, loc, exe));
+    CHECK(ParseEpicManifest("{ \"DisplayName\": \"Y\", \"InstallLocation\": \"D:\\\\Y\", \"LaunchExecutable\": \"\" }", name, loc, exe) && exe.empty());
+    CHECK(IsHelperExe(L"unins000.exe") && IsHelperExe(L"unitycrashhandler64.exe") && IsHelperExe(L"vc_redist.x64.exe") && IsHelperExe(L"easyanticheat_eos_setup.exe") && !IsHelperExe(L"cs2.exe") && !IsHelperExe(L"eldenring.exe"));
+    CHECK(IsToolName(L"Steamworks Common Redistributables") && IsToolName(L"Proton 8.0") && IsToolName(L"Steam Linux Runtime 3.0 (sniper)") && !IsToolName(L"Counter-Strike 2"));
+    CHECK(PickMainExe({ { L"unins000.exe", 900000 }, { L"game.exe", 50000000 }, { L"crashreporter.exe", 70000000 } }) == L"game.exe");     // groesste Nicht-Hilfs-EXE
+    CHECK(PickMainExe({ { L"setup.exe", 10 }, { L"redist.exe", 20 } }) == L"redist.exe" && PickMainExe({}).empty());
+    const std::vector<InstalledGame> found = ScanInstalledGames();         // je nach Rechner leer oder voll; darf nicht abstuerzen
+    for (const InstalledGame& g : found) CHECK(!g.name.empty() && !g.exe.empty() && g.exe.size() > 4 && g.exe == [&] { std::wstring l = g.exe; for (wchar_t& c : l) c = static_cast<wchar_t>(std::towlower(c)); return l; }());
+    std::printf("Hinweis: %d installierte Spiele auf diesem Rechner gefunden\n", static_cast<int>(found.size()));
 }
 
 static void OverlayTests() {
@@ -353,6 +400,8 @@ int main() {
     ProfileTests();
     ClipTests();
     OverlayTests();
+    GameScanTests();
+    MouseTests();
     std::printf("%d bestanden, %d fehlgeschlagen\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

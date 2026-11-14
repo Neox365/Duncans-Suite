@@ -34,6 +34,7 @@ using std::min;
 #include "Crosshair.h"
 #include "ClipRec.h"
 #include "Overlay.h"
+#include "GameScan.h"
 #include "Profiles.h"
 #include "LiveStats.h"
 
@@ -63,7 +64,7 @@ const int kClipHotkeyId = 11;                       // Strg+Alt+F7              
 const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6, kTimerCross = 7, kTimerClip = 8, kTimerOverlay = 9;
 
 enum HitId { H_NONE = -1, H_HERO = 1000, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP = 5000 };
-enum RowType { R_CLIP_AUDIO, R_OV_ON, R_OV_CORNER, R_OV_STATS, R_CLIP_ON, R_CLIP_LEN, R_CLIP_FOLDER, R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_PROF_NEW, R_PROF, R_GROUP, R_HINT };
+enum RowType { R_MOUSE, R_INST_SCAN, R_INST, R_CLIP_AUDIO, R_OV_ON, R_OV_CORNER, R_OV_STATS, R_CLIP_ON, R_CLIP_LEN, R_CLIP_FOLDER, R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_PROF_NEW, R_PROF, R_GROUP, R_HINT };
 
 struct Row {
     RowType type = R_HINT;
@@ -92,6 +93,8 @@ struct App {
     bool crossCollapsed = true;                   // "Fadenkreuz (optional)" ebenso
     bool clipCollapsed = true;                    // "Video-Clips (optional)" ebenso
     cliprec::Recorder rec;
+    std::vector<boostmode::InstalledGame> installed;   // gefundene Steam-/Epic-Spiele (Suche auf Knopfdruck)
+    bool scanned = false;
     boostmode::GameOverlay overlay;
     bool ovCollapsed = true;
     bool ovHotkeyOn = false;
@@ -103,6 +106,7 @@ struct App {
     bool clipSaving = false;
     DWORD clipRetryAt = 0;
     std::wstring clipErr;
+    bool extrasCollapsed = true;                  // "Zock-Extras (optional)" ebenso
     bool profCollapsed = true;                    // "Profile (optional)" ebenso
     std::vector<boostmode::Profile> profiles;
     boostmode::CrosshairOverlay cross;
@@ -170,6 +174,8 @@ const wchar_t* kClipTitle = L"Video-Clips: letzte Sekunden speichern";
 const wchar_t* kClipDesc = L"Boost nimmt den Hauptbildschirm im Hintergrund auf und bewahrt nur die letzten Sekunden; Strg+Alt+F7 speichert sie als MP4 in Videos\Boost-Clips. Es läuft nur, solange ein oben angehaktes Spiel vorne ist (ohne angehaktes Spiel immer). Ton ist wählbar (Systemton = alles, was der PC abspielt, auch Discord; optional mit Mikrofon). Im echten Vollbild bleibt das Bild eventuell schwarz. Kostet etwas Leistung.";
 const wchar_t* kOvTitle = L"Overlay im Spiel anzeigen";
 const wchar_t* kOvDesc = L"Eine kleine Statusleiste in einer Ecke zeigt Zock-Modus, laufende Aufnahme und Auslastung. Mit Strg+Alt+O öffnest du ein Panel: Clip speichern, Aufnahme an oder aus, Zock-Modus beenden, dazu Live-Werte. Es ist ein normales Fenster über dem Spiel (nichts wird in das Spiel eingeklinkt) und erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
+const wchar_t* kMouseTitle = L"Mausbeschleunigung im Zock-Modus ausschalten";
+const wchar_t* kMouseDesc = L"Windows beschleunigt die Maus, wenn du sie schnell bewegst („Zeigerbeschleunigung verbessern“). Viele Spieler wollen das beim Zielen aus haben, weil die Maus dann immer gleich weit läuft. Boost schaltet es nur solange der Zock-Modus läuft aus und stellt es danach wieder her; es wird nichts dauerhaft geändert.";
 const wchar_t* kCrossTitle = L"Fadenkreuz über dem Spiel anzeigen";
 const wchar_t* kCrossDesc = L"Ein kleines Fadenkreuz in der Bildschirmmitte, nur über den oben angehakten Spielen (ist keines angehakt, immer). Es ist ein normales, durchklickbares Fenster und greift nicht in das Spiel ein. Es erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
 const wchar_t* kMuteTitle = L"Spiel stumm beim Wegschalten";
@@ -215,6 +221,13 @@ void BuildRows(HDC dc) {
         Row mu; mu.type = R_MUTE; add(mu, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kMuteDesc, textW) + S(14));
         if (g.apps.empty()) hint(L"Starte dein Spiel einmal, dann kannst du es hier anhaken.");
         for (size_t i = 0; i < g.apps.size(); ++i) appRow(R_APP_GAME, static_cast<int>(i));
+        { Row s; s.type = R_INST_SCAN; add(s, S(52)); }
+        if (g.scanned && g.installed.empty()) hint(L"Keine Steam- oder Epic-Spiele gefunden.");
+        for (size_t i = 0; i < g.installed.size(); ++i) {                 // Spiele, die gerade laufen, stehen schon oben
+            bool running = false;
+            for (const auto& a : g.apps) if (a.exe == g.installed[i].exe) running = true;
+            if (!running) appRow(R_INST, static_cast<int>(i));
+        }
     }
 
     { Row r; r.type = R_GROUP; r.idx = 1; r.text = L"Fadenkreuz (optional)"; add(r, S(46)); }
@@ -222,6 +235,9 @@ void BuildRows(HDC dc) {
         Row r; r.type = R_CROSS_ON; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kCrossDesc, textW) + S(14));
         for (RowType t : { R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE }) { Row c; c.type = t; add(c, S(52)); }
     }
+
+    { Row r; r.type = R_GROUP; r.idx = 5; r.text = L"Zock-Extras (optional)"; add(r, S(46)); }
+    if (!g.extrasCollapsed) { Row r; r.type = R_MOUSE; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kMouseDesc, textW) + S(14)); }
 
     { Row r; r.type = R_GROUP; r.idx = 4; r.text = L"Overlay (optional)"; add(r, S(46)); }
     if (!g.ovCollapsed) {
@@ -634,6 +650,14 @@ void ActivateRow(const Row& r) {
     else if (r.type == R_CLIP_FOLDER) OpenClipFolder();
     else if (r.type == R_APP_CLOSE) { Toggle(g.cfg.closeApps, g.apps[r.idx].exe); SaveCfg(); }
     else if (r.type == R_APP_GAME) { Toggle(g.cfg.gameApps, g.apps[r.idx].exe); SaveCfg(); }
+    else if (r.type == R_MOUSE) { g.cfg.optMouse = !g.cfg.optMouse; SaveCfg(); }
+    else if (r.type == R_INST) { Toggle(g.cfg.gameApps, g.installed[static_cast<size_t>(r.idx)].exe); SaveCfg(); }
+    else if (r.type == R_INST_SCAN) {
+        g.installed = boostmode::ScanInstalledGames();
+        g.scanned = true;
+        SetStatus(g.installed.empty() ? L"Keine Steam- oder Epic-Spiele gefunden." : std::to_wstring(g.installed.size()) + L" installierte Spiele gefunden.", g.installed.empty() ? kOrange : kGreen);
+        Layout();
+    }
     else if (r.type == R_AUTO) { g.cfg.optAuto = !g.cfg.optAuto; g.missPolls = 0; SaveCfg(); }
     else if (r.type == R_DUCK) { g.cfg.optDuck = !g.cfg.optDuck; SaveCfg(); AudioTick(); }
     else if (r.type == R_MUTE) { g.cfg.optMuteGame = !g.cfg.optMuteGame; SaveCfg(); AudioTick(); }
@@ -784,8 +808,8 @@ void Paint(HDC dc, const RECT& cr) {
             continue;
         }
         if (r.type == R_GROUP) {
-            const bool collapsed = r.idx == 0 ? g.autoCollapsed : (r.idx == 1 ? g.crossCollapsed : (r.idx == 3 ? g.clipCollapsed : (r.idx == 4 ? g.ovCollapsed : g.profCollapsed)));
-            const bool grpOn = r.idx == 0 ? g.cfg.optAuto : (r.idx == 1 ? g.cfg.optCross : (r.idx == 3 ? g.cfg.optClip : (r.idx == 4 ? g.cfg.optOverlay : !g.profiles.empty())));
+            const bool collapsed = r.idx == 0 ? g.autoCollapsed : (r.idx == 1 ? g.crossCollapsed : (r.idx == 3 ? g.clipCollapsed : (r.idx == 4 ? g.ovCollapsed : (r.idx == 5 ? g.extrasCollapsed : g.profCollapsed))));
+            const bool grpOn = r.idx == 0 ? g.cfg.optAuto : (r.idx == 1 ? g.cfg.optCross : (r.idx == 3 ? g.cfg.optClip : (r.idx == 4 ? g.cfg.optOverlay : (r.idx == 5 ? g.cfg.optMouse : !g.profiles.empty()))));
             FillRound(dc, card, S(12), hot ? kCardHover : Blend(kCard, kBackground, 40), hot ? kBorderHot : kBorder);
             {
                 Gdiplus::Graphics gr(dc);
@@ -855,16 +879,33 @@ void Paint(HDC dc, const RECT& cr) {
             DrawText2(dc, g.fBold, kBoost, { card.left + pad + S(120), card.top, right, card.bottom }, val, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
-        if (r.type == R_AUTO || r.type == R_DUCK || r.type == R_MUTE || r.type == R_CROSS_ON || r.type == R_CLIP_ON || r.type == R_OV_ON) {
-            const bool v = r.type == R_AUTO ? g.cfg.optAuto : (r.type == R_DUCK ? g.cfg.optDuck : (r.type == R_MUTE ? g.cfg.optMuteGame : (r.type == R_CLIP_ON ? g.cfg.optClip : (r.type == R_OV_ON ? g.cfg.optOverlay : g.cfg.optCross))));
-            const wchar_t* title = r.type == R_AUTO ? kAutoTitle : (r.type == R_DUCK ? kDuckTitle : (r.type == R_MUTE ? kMuteTitle : (r.type == R_CLIP_ON ? kClipTitle : (r.type == R_OV_ON ? kOvTitle : kCrossTitle))));
-            const wchar_t* desc = r.type == R_AUTO ? kAutoDesc : (r.type == R_DUCK ? kDuckDesc : (r.type == R_MUTE ? kMuteDesc : (r.type == R_CLIP_ON ? kClipDesc : (r.type == R_OV_ON ? kOvDesc : kCrossDesc))));
+        if (r.type == R_AUTO || r.type == R_DUCK || r.type == R_MUTE || r.type == R_CROSS_ON || r.type == R_CLIP_ON || r.type == R_OV_ON || r.type == R_MOUSE) {
+            const bool v = r.type == R_MOUSE ? g.cfg.optMouse : r.type == R_AUTO ? g.cfg.optAuto : (r.type == R_DUCK ? g.cfg.optDuck : (r.type == R_MUTE ? g.cfg.optMuteGame : (r.type == R_CLIP_ON ? g.cfg.optClip : (r.type == R_OV_ON ? g.cfg.optOverlay : g.cfg.optCross))));
+            const wchar_t* title = r.type == R_MOUSE ? kMouseTitle : r.type == R_AUTO ? kAutoTitle : (r.type == R_DUCK ? kDuckTitle : (r.type == R_MUTE ? kMuteTitle : (r.type == R_CLIP_ON ? kClipTitle : (r.type == R_OV_ON ? kOvTitle : kCrossTitle))));
+            const wchar_t* desc = r.type == R_MOUSE ? kMouseDesc : r.type == R_AUTO ? kAutoDesc : (r.type == R_DUCK ? kDuckDesc : (r.type == R_MUTE ? kMuteDesc : (r.type == R_CLIP_ON ? kClipDesc : (r.type == R_OV_ON ? kOvDesc : kCrossDesc))));
             const int textW = cardW - pad * 2 - S(64) - S(16);
             FillRound(dc, card, S(14), hot ? kCardHover : kCard, v ? Blend(kBorder, kBoost, 55) : (hot ? kBorderHot : kBorder));
             DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(14), card.left + pad + textW, card.top + S(14) + S(24) }, title);
             DrawText2(dc, g.fSmall, kTextDim, { card.left + pad, card.top + S(14) + S(24), card.left + pad + textW, card.bottom - S(8) }, desc, DT_LEFT | DT_TOP | DT_WORDBREAK);
             RECT tg{ card.right - pad - S(52), card.top + (r.height - S(28)) / 2, card.right - pad, card.top + (r.height - S(28)) / 2 + S(28) };
             DrawToggle(dc, tg, v, hot, kBoost);
+            continue;
+        }
+        if (r.type == R_INST_SCAN) {
+            FillRound(dc, card, S(14), hot ? kCardHover : kCard, hot ? kBorderHot : kBorder);
+            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top, card.left + pad + S(340), card.bottom }, L"Installierte Spiele (Steam, Epic)", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fBold, kBoost, { card.left + pad + S(340), card.top, card.right - pad, card.bottom },
+                      g.scanned ? std::to_wstring(g.installed.size()) + L" gefunden · neu suchen" : std::wstring(L"Suchen"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            continue;
+        }
+        if (r.type == R_INST) {
+            const boostmode::InstalledGame& ig = g.installed[static_cast<size_t>(r.idx)];
+            const bool sel = Has(g.cfg.gameApps, ig.exe);
+            FillRound(dc, card, S(14), hot ? kCardHover : kCard, sel ? Blend(kBorder, kBoost, 55) : (hot ? kBorderHot : kBorder));
+            DrawCheck(dc, { card.left + pad, card.top + (r.height - S(22)) / 2, card.left + pad + S(22), card.top + (r.height - S(22)) / 2 + S(22) }, sel, hot);
+            const int tx = card.left + pad + S(22) + S(14);
+            DrawText2(dc, g.fBold, kText, { tx, card.top + S(9), card.right - pad, card.top + S(9) + S(24) }, ig.name, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawText2(dc, g.fSmall, kTextDim, { tx, card.top + S(9) + S(24), card.right - pad, card.bottom - S(4) }, ig.store + L" · " + ig.exe, DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
             continue;
         }
         // Programmzeile
@@ -929,8 +970,8 @@ void Activate(int id) {
     if (id == H_MODAL_OK) { CloseModal(true); return; }
     if (id == H_MODAL_CANCEL) { CloseModal(false); return; }
     if (g.modal.open) return;
-    if (id >= H_GROUP && id <= H_GROUP + 4) {
-        bool& collapsed = id == H_GROUP ? g.autoCollapsed : (id == H_GROUP + 1 ? g.crossCollapsed : (id == H_GROUP + 3 ? g.clipCollapsed : (id == H_GROUP + 4 ? g.ovCollapsed : g.profCollapsed)));
+    if (id >= H_GROUP && id <= H_GROUP + 5) {
+        bool& collapsed = id == H_GROUP ? g.autoCollapsed : (id == H_GROUP + 1 ? g.crossCollapsed : (id == H_GROUP + 3 ? g.clipCollapsed : (id == H_GROUP + 4 ? g.ovCollapsed : (id == H_GROUP + 5 ? g.extrasCollapsed : g.profCollapsed))));
         collapsed = !collapsed;
         g.hover = H_NONE;
         Layout();
