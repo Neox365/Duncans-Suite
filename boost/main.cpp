@@ -24,6 +24,7 @@ using std::min;
 #include <propidl.h>
 #include <gdiplus.h>
 
+#include "../common/DarkMenus.h"
 #include "../src/Icons.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
@@ -34,7 +35,7 @@ using std::min;
 #include "LiveStats.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.6.2"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -898,6 +899,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
+    darkmenus::Enable();
     HANDLE single = CreateMutexW(nullptr, TRUE, L"DuncansBoost.Single");
     if (single && GetLastError() == ERROR_ALREADY_EXISTS) {
         if (HWND other = FindWindowW(L"DuncansBoost", nullptr)) { ShowWindow(other, SW_RESTORE); SetForegroundWindow(other); }

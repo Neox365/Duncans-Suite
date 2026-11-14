@@ -23,6 +23,7 @@ using std::min;
 #include <propidl.h>
 #include <gdiplus.h>
 
+#include "../common/DarkMenus.h"
 #include "../src/Icons.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
@@ -34,7 +35,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.15.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.15.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -1604,6 +1605,7 @@ int RunApplyMode(const std::wstring& path) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
+    darkmenus::Enable();
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv && argc >= 3 && std::wstring(argv[1]) == L"--apply") {

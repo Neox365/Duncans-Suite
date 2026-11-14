@@ -26,6 +26,7 @@
 #include <thread>
 #include <vector>
 
+#include "../common/DarkMenus.h"
 #include "../docs/PdfWriter.h"
 #include "Chart.h"
 #include "Codec.h"
@@ -40,7 +41,7 @@
 #include "Lang_en.inc"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.9.0"
+#define APP_VERSION L"0.9.1"
 #endif
 
 namespace {
@@ -3383,6 +3384,7 @@ LRESULT App::SpellHandle(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show)
 {
+    darkmenus::Enable();
     lang::Add(kOfficeEn);
     std::wstring open;
     int argc = 0;
