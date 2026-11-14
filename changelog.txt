@@ -5,6 +5,10 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.14.0 | 2026-11-14
+- Neu: Impulsantwort (Raum- und Kopfhörerkorrektur). Der Knopf „Klang …“ (vorher „Korrektur …“) öffnet jetzt ein Menü; „Impulsantwort laden …“ nimmt eine WAV-Datei (höchstens 24 MB), zum Beispiel eine Raummessung oder die Kopfhörer-Korrektur eines Herstellers. Equalizer APO faltet den Ton damit. Das Programm kopiert die Datei in den APO-Ordner, damit auch Pfade mit Umlauten gehen. Der Knopf zeigt mit Akzentrahmen, dass etwas Zusätzliches wirkt; „Impulsantwort entfernen“ nimmt es wieder heraus. Die Datei gehört zu diesem PC und steht deshalb nicht in weitergegebenen Profilen („Teilen …“). Das Faltungsfilter kann etwas Rechenzeit brauchen.
+- Neu: Balance und Mono im selben Menü. Balance macht eine Seite um 3, 6 oder 9 dB leiser (links lauter oder rechts lauter), „Mono“ gibt beiden Seiten denselben Ton, zum Beispiel bei Hörverlust auf einem Ohr. Beides gehört zum Profil und wird mit ihm gespeichert und weitergegeben. Das Frequenzgang-Diagramm bleibt davon unberührt.
+- Geändert: In der Karte unten rechts heißt die Zeile „Zusätze“ und zeigt neben den Filterzeilen auch „Faltung“ (Impulsantwort), die Balance („Links +6“) und Mono.
 ## 0.13.1 | 2026-11-14
 - Behoben: Im Frequenzgang-Diagramm lagen die Pegelbalken (L/R) über dem Schalter „Spektrum: an“, sodass der Text kaum lesbar war. Die Balken sitzen jetzt zwischen Titel und Schalter (bei wenig Platz ohne die Buchstaben L und R); reicht der Platz gar nicht, werden sie weggelassen, statt etwas zu überdecken.
 ## 0.13.0 | 2026-11-13

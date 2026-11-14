@@ -221,6 +221,8 @@ std::vector<double> ResponseDb(const Settings& s, const std::vector<double>& fre
 {
     Settings on = s;
     on.enabled = true;   // die Kurve zeigt, was der Equalizer taete, auch wenn er gerade aus ist
+    on.balance = 0;      // Balance und Mono betreffen den Frequenzgang nicht (sonst wuerde "Preamp" der einen Seite die Kurve verschieben)
+    on.mono = false;
     return ResponseDbFromConfig(BuildConfig(on), freqs, includePreamp);
 }
 
