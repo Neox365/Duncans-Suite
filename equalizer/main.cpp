@@ -34,7 +34,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.13.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.13.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -945,12 +945,15 @@ void Paint(HDC dc, const RECT& cr) {
                 FillRound(dc, g.specBtn, S(10), g.cfg.spectrum ? Blend(kCard, kEq, 16) : (hotB ? kCardHover : Blend(kCard, kBackground, 25)),
                           g.cfg.spectrum ? Blend(kBorder, kEq, 60) : (hotB ? kBorderHot : kBorder));
                 DrawText2(dc, g.fSmall, g.cfg.spectrum ? kEq : kText, g.specBtn, g.cfg.spectrum ? L"Spektrum: an" : L"Spektrum: aus", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-                if (showSpec) {
-                    const int mx0 = g.graph.left + S(190), mw = S(70);
+                // Pegel direkt links vom Schalter (nie darueber), im Platz zwischen Titel und Schalter; mit Buchstaben L/R nur, wenn es breit genug ist
+                const int meterRight = g.specBtn.left - S(10), titleEnd = g.graph.left + S(134);
+                const bool letters = meterRight - titleEnd >= S(72);
+                const int mw = std::min(S(52), meterRight - titleEnd - (letters ? S(16) : 0)), mx0 = meterRight - mw;
+                if (showSpec && mw >= S(24)) {
                     const float pk[2] = { sp.peakL, sp.peakR };
                     for (int c = 0; c < 2; ++c) {
                         const int my0 = g.graph.top + S(c == 0 ? 14 : 24);
-                        DrawText2(dc, g.fSmall, kTextDim, { mx0 - S(16), my0 - S(6), mx0 - S(4), my0 + S(12) }, c == 0 ? L"L" : L"R", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                        if (letters) DrawText2(dc, g.fSmall, kTextDim, { mx0 - S(16), my0 - S(6), mx0 - S(4), my0 + S(12) }, c == 0 ? L"L" : L"R", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
                         RECT bar{ mx0, my0, mx0 + mw, my0 + S(5) };
                         FillRound(dc, bar, S(2), Blend(kCard, kBackground, 55), Blend(kCard, kBackground, 55));
                         const float v = std::clamp((pk[c] + 60.f) / 60.f, 0.f, 1.f);

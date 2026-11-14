@@ -5,6 +5,8 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.13.1 | 2026-11-14
+- Behoben: Im Frequenzgang-Diagramm lagen die Pegelbalken (L/R) über dem Schalter „Spektrum: an“, sodass der Text kaum lesbar war. Die Balken sitzen jetzt zwischen Titel und Schalter (bei wenig Platz ohne die Buchstaben L und R); reicht der Platz gar nicht, werden sie weggelassen, statt etwas zu überdecken.
 ## 0.13.0 | 2026-11-13
 - Neu: Profil pro Programm. Der Knopf „Binden …“ (vorher „An Gerät binden“) öffnet ein Menü: oben wie bisher das Binden an das Ausgabegerät, darunter alle Programme, die gerade Ton ausgeben (Spiel, Browser, Spotify …) zum Anhaken. Spielt ein angehaktes Programm Ton, wählt der Equalizer automatisch das zugehörige Profil, zum Beispiel „Musik“ für Spotify und „Spiele“ für das Spiel. Hört das Programm auf, geht es zum vorherigen Profil zurück. Ein Programm gehört zu einem Profil, ein Profil kann bis zu acht Programme haben; die Zuordnung steht in der Zeile über den Profil-Knöpfen („Programme: Spotify“).
 - Hinweis: Wählst du selbst ein anderes Profil, wartet die Automatik, bis sich etwas ändert (ein zugeordnetes Programm startet oder endet). Programme erscheinen im Menü erst, wenn sie Ton abspielen; die Zuordnung wird nicht in .eqprofil-Dateien weitergegeben. Das Profil wird alle zwei Sekunden geprüft, auch bei geschlossenem Fenster im Infobereich.
