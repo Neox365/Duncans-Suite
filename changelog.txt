@@ -115,6 +115,9 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.9.0 | 2026-11-14
+- Neu: Ton für Video-Clips. Im Bereich „Video-Clips“ wählst du bei „Ton“: aus, Systemton (alles, was der PC abspielt, also auch Discord und Musik) oder Systemton plus Mikrofon. Der Ton liegt als AAC-Spur im MP4 und läuft zum Bild synchron. Ist das Mikrofon nicht verfügbar (Windows-Datenschutz), nimmt Boost mit Systemton weiter auf und sagt es. Standard bleibt „aus“.
+- Behoben: Beim Zusammensetzen eines Clips aus mehreren Abschnitten konnten spätere Abschnitte im Bild fehlen, wenn Ton mitlief; das ist behoben.
 ## 0.8.0 | 2026-11-14
 - Neu: Overlay im Spiel (Gruppe „Overlay (optional)“, standardmäßig aus). Eine kleine Statusleiste in einer wählbaren Ecke zeigt, ob der Zock-Modus läuft, ob die Video-Aufnahme läuft (roter Punkt mit Rückblick-Zeit) und auf Wunsch CPU-, GPU-Auslastung und GPU-Temperatur. Mit Strg+Alt+O öffnest du ein Panel mit den Knöpfen „Clip speichern“, „Aufnahme an/aus“ und „Beenden“ für den Zock-Modus sowie Live-Werten; „Clip gespeichert“ erscheint zur Bestätigung. Das Overlay ist ein normales, immer-oben-Fenster, das nie den Fokus nimmt und nichts in das Spiel einklinkt; es erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays. Eine FPS-Anzeige gibt es bewusst nicht, weil dafür ein Eingriff in das Spiel nötig wäre. Den Zock-Modus startest du weiter im Boost-Fenster, weil dort die Rückfrage vor dem Beenden von Programmen kommt.
 ## 0.7.0 | 2026-11-14

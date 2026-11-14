@@ -63,7 +63,7 @@ const int kClipHotkeyId = 11;                       // Strg+Alt+F7              
 const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6, kTimerCross = 7, kTimerClip = 8, kTimerOverlay = 9;
 
 enum HitId { H_NONE = -1, H_HERO = 1000, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP = 5000 };
-enum RowType { R_OV_ON, R_OV_CORNER, R_OV_STATS, R_CLIP_ON, R_CLIP_LEN, R_CLIP_FOLDER, R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_PROF_NEW, R_PROF, R_GROUP, R_HINT };
+enum RowType { R_CLIP_AUDIO, R_OV_ON, R_OV_CORNER, R_OV_STATS, R_CLIP_ON, R_CLIP_LEN, R_CLIP_FOLDER, R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_PROF_NEW, R_PROF, R_GROUP, R_HINT };
 
 struct Row {
     RowType type = R_HINT;
@@ -167,7 +167,7 @@ const wchar_t* kAutoDesc = L"Hake unten dein Spiel an. Sobald es läuft, schalte
 const wchar_t* kDuckTitle = L"Andere Programme leiser beim Spielen";
 const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Solange ein Spiel im Vordergrund ist, laufen Browser, Musik & Co. auf 40 % und sind sofort wieder normal, wenn du das Spiel verlässt. Discord, TeamSpeak & Co. bleiben unverändert.";
 const wchar_t* kClipTitle = L"Video-Clips: letzte Sekunden speichern";
-const wchar_t* kClipDesc = L"Boost nimmt den Hauptbildschirm im Hintergrund auf und bewahrt nur die letzten Sekunden; Strg+Alt+F7 speichert sie als MP4 in Videos\Boost-Clips. Es läuft nur, solange ein oben angehaktes Spiel vorne ist (ohne angehaktes Spiel immer). Nur Bild, kein Ton; im echten Vollbild bleibt das Bild eventuell schwarz. Kostet etwas Leistung.";
+const wchar_t* kClipDesc = L"Boost nimmt den Hauptbildschirm im Hintergrund auf und bewahrt nur die letzten Sekunden; Strg+Alt+F7 speichert sie als MP4 in Videos\Boost-Clips. Es läuft nur, solange ein oben angehaktes Spiel vorne ist (ohne angehaktes Spiel immer). Ton ist wählbar (Systemton = alles, was der PC abspielt, auch Discord; optional mit Mikrofon). Im echten Vollbild bleibt das Bild eventuell schwarz. Kostet etwas Leistung.";
 const wchar_t* kOvTitle = L"Overlay im Spiel anzeigen";
 const wchar_t* kOvDesc = L"Eine kleine Statusleiste in einer Ecke zeigt Zock-Modus, laufende Aufnahme und Auslastung. Mit Strg+Alt+O öffnest du ein Panel: Clip speichern, Aufnahme an oder aus, Zock-Modus beenden, dazu Live-Werte. Es ist ein normales Fenster über dem Spiel (nichts wird in das Spiel eingeklinkt) und erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
 const wchar_t* kCrossTitle = L"Fadenkreuz über dem Spiel anzeigen";
@@ -232,7 +232,7 @@ void BuildRows(HDC dc) {
     { Row r; r.type = R_GROUP; r.idx = 3; r.text = L"Video-Clips (optional)"; add(r, S(46)); }
     if (!g.clipCollapsed) {
         Row r; r.type = R_CLIP_ON; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kClipDesc, textW) + S(14));
-        for (RowType t : { R_CLIP_LEN, R_CLIP_FOLDER }) { Row c; c.type = t; add(c, S(52)); }
+        for (RowType t : { R_CLIP_LEN, R_CLIP_AUDIO, R_CLIP_FOLDER }) { Row c; c.type = t; add(c, S(52)); }
     }
 
     { Row r; r.type = R_GROUP; r.idx = 2; r.text = L"Profile (optional)"; add(r, S(46)); }
@@ -552,12 +552,17 @@ void ClipTick() {
     if (want && !g.rec.Running() && GetTickCount() >= g.clipRetryAt) {
         cliprec::Options o;
         o.seconds = g.cfg.clipSeconds;
+        o.audio = g.cfg.clipAudio;
         std::wstring err;
         if (!g.rec.Start(o, err)) {
             g.clipRetryAt = GetTickCount() + 20000;                     // nicht dauernd neu versuchen
             if (err != g.clipErr) SetStatus(L"Video-Clips: " + err, kRed);
             g.clipErr = err;
-        } else g.clipErr.clear();
+        } else {
+            g.clipErr.clear();
+            const std::wstring pr = g.rec.Problem();                    // z. B. Mikrofon nicht verfuegbar: Bild laeuft trotzdem
+            if (!pr.empty()) SetStatus(L"Video-Clips: " + pr, kOrange);
+        }
     } else if (!want && g.rec.Running()) g.rec.Stop();
     const bool hk = g.cfg.optClip;
     if (hk && !g.clipHotkeyOn) g.clipHotkeyOn = RegisterHotKey(g.hwnd, kClipHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_F7) != 0;
@@ -625,6 +630,7 @@ void ActivateRow(const Row& r) {
     else if (r.type == R_OV_STATS) { g.cfg.overlayStats = !g.cfg.overlayStats; SaveCfg(); OverlayTick(); }
     else if (r.type == R_CLIP_ON) { g.cfg.optClip = !g.cfg.optClip; SaveCfg(); ClipTick(); }
     else if (r.type == R_CLIP_LEN) { g.cfg.clipSeconds = boostmode::NextClipSeconds(g.cfg.clipSeconds); SaveCfg(); if (g.rec.Running()) g.rec.Stop(); ClipTick(); }
+    else if (r.type == R_CLIP_AUDIO) { g.cfg.clipAudio = (boostmode::ClampClipAudio(g.cfg.clipAudio) + 1) % 3; SaveCfg(); if (g.rec.Running()) g.rec.Stop(); ClipTick(); }
     else if (r.type == R_CLIP_FOLDER) OpenClipFolder();
     else if (r.type == R_APP_CLOSE) { Toggle(g.cfg.closeApps, g.apps[r.idx].exe); SaveCfg(); }
     else if (r.type == R_APP_GAME) { Toggle(g.cfg.gameApps, g.apps[r.idx].exe); SaveCfg(); }
@@ -826,11 +832,11 @@ void Paint(HDC dc, const RECT& cr) {
                       r.type == R_OV_CORNER ? std::wstring(boostmode::OverlayCornerName(g.cfg.overlayCorner)) : std::wstring(g.cfg.overlayStats ? L"an" : L"aus"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
-        if (r.type == R_CLIP_LEN || r.type == R_CLIP_FOLDER) {
+        if (r.type == R_CLIP_LEN || r.type == R_CLIP_FOLDER || r.type == R_CLIP_AUDIO) {
             FillRound(dc, card, S(14), hot ? kCardHover : kCard, hot ? kBorderHot : kBorder);
-            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top, card.left + pad + S(160), card.bottom }, r.type == R_CLIP_LEN ? L"Rückblick" : L"Clip-Ordner", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top, card.left + pad + S(160), card.bottom }, r.type == R_CLIP_LEN ? L"Rückblick" : (r.type == R_CLIP_AUDIO ? L"Ton" : L"Clip-Ordner"), DT_LEFT | DT_VCENTER | DT_SINGLELINE);
             DrawText2(dc, g.fBold, kBoost, { card.left + pad + S(160), card.top, card.right - pad, card.bottom },
-                      r.type == R_CLIP_LEN ? (std::to_wstring(g.cfg.clipSeconds) + L" Sekunden") : std::wstring(L"Öffnen"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+                      r.type == R_CLIP_LEN ? (std::to_wstring(g.cfg.clipSeconds) + L" Sekunden") : (r.type == R_CLIP_AUDIO ? std::wstring(boostmode::ClipAudioName(g.cfg.clipAudio)) : std::wstring(L"Öffnen")), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
         if (r.type == R_CROSS_STYLE || r.type == R_CROSS_COLOR || r.type == R_CROSS_SIZE) {

@@ -1,4 +1,5 @@
 #include "ClipRec.h"
+#include "ClipAudio.h"
 
 #include <d3d11.h>
 #include <dxgi1_2.h>
@@ -66,12 +67,14 @@ void MakeDirs(const std::wstring& dir) { SHCreateDirectoryExW(nullptr, dir.c_str
 // Ein laufender Abschnitt: Sink-Writer, der Rohbilder (RGB32) in H.264/MP4 verwandelt
 struct SegmentWriter {
     ComPtr<IMFSinkWriter> w;
+    DWORD audioStream = 0;
+    bool hasAudio = false;
     std::wstring path;
     LONGLONG start = -1;       // Zeit des ersten Bildes
     bool ok = false;
 };
 
-bool OpenSegment(SegmentWriter& s, const std::wstring& path, UINT w, UINT h, int fps, int kbps)
+bool OpenSegment(SegmentWriter& s, const std::wstring& path, UINT w, UINT h, int fps, int kbps, bool audio)
 {
     s = SegmentWriter();
     s.path = path;
@@ -104,6 +107,30 @@ bool OpenSegment(SegmentWriter& s, const std::wstring& path, UINT w, UINT h, int
     MFSetAttributeRatio(in.Get(), MF_MT_FRAME_RATE, static_cast<UINT32>(fps), 1);
     MFSetAttributeRatio(in.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
     if (FAILED(s.w->SetInputMediaType(stream, in.Get(), nullptr))) return false;
+    if (audio) {                                                     // zweite Spur: AAC (192 kbit/s) aus 16-Bit-PCM bei 48 kHz, Stereo
+        ComPtr<IMFMediaType> ao;
+        if (FAILED(MFCreateMediaType(&ao))) return false;
+        ao->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+        ao->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_AAC);
+        ao->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+        ao->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, kAudioRate);
+        ao->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+        ao->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, 24000);
+        ao->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 0);
+        ao->SetUINT32(MF_MT_AAC_AUDIO_PROFILE_LEVEL_INDICATION, 0x29);
+        if (FAILED(s.w->AddStream(ao.Get(), &s.audioStream))) return false;
+        ComPtr<IMFMediaType> ai;
+        if (FAILED(MFCreateMediaType(&ai))) return false;
+        ai->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Audio);
+        ai->SetGUID(MF_MT_SUBTYPE, MFAudioFormat_PCM);
+        ai->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, 16);
+        ai->SetUINT32(MF_MT_AUDIO_SAMPLES_PER_SECOND, kAudioRate);
+        ai->SetUINT32(MF_MT_AUDIO_NUM_CHANNELS, 2);
+        ai->SetUINT32(MF_MT_AUDIO_BLOCK_ALIGNMENT, 4);
+        ai->SetUINT32(MF_MT_AUDIO_AVG_BYTES_PER_SECOND, kAudioRate * 4);
+        if (FAILED(s.w->SetInputMediaType(s.audioStream, ai.Get(), nullptr))) return false;
+        s.hasAudio = true;
+    }
     if (FAILED(s.w->BeginWriting())) return false;
     s.ok = true;
     return true;
@@ -129,11 +156,39 @@ bool WriteFrame(SegmentWriter& s, const std::vector<BYTE>& bgra, UINT w, UINT h,
     return SUCCEEDED(s.w->WriteSample(0, smp.Get()));
 }
 
+bool WriteAudio(SegmentWriter& s, const short* pcm, size_t frames, LONGLONG rel)
+{
+    if (!s.ok || !s.hasAudio || rel < 0) return false;
+    const DWORD len = static_cast<DWORD>(frames * 4);
+    ComPtr<IMFMediaBuffer> buf;
+    if (FAILED(MFCreateMemoryBuffer(len, &buf))) return false;
+    BYTE* dst = nullptr;
+    if (FAILED(buf->Lock(&dst, nullptr, nullptr))) return false;
+    std::memcpy(dst, pcm, len);
+    buf->Unlock();
+    buf->SetCurrentLength(len);
+    ComPtr<IMFSample> smp;
+    if (FAILED(MFCreateSample(&smp))) return false;
+    smp->AddBuffer(buf.Get());
+    smp->SetSampleTime(rel);
+    smp->SetSampleDuration(static_cast<LONGLONG>(frames) * kSecond / kAudioRate);
+    return SUCCEEDED(s.w->WriteSample(s.audioStream, smp.Get()));
+}
+
 void CloseSegment(SegmentWriter& s)
 {
     if (s.w) s.w->Finalize();
     s.w.Reset();
     s.ok = false;
+}
+
+// Ist der Strom mit diesem Index der Ton? (Video hat im Abschnitt den Index 0, Ton den Index 1)
+bool IsAudioIndex(IMFSourceReader* r, DWORD idx)
+{
+    ComPtr<IMFMediaType> t;
+    if (FAILED(r->GetCurrentMediaType(idx, &t)) && FAILED(r->GetNativeMediaType(idx, 0, &t))) return false;
+    GUID major{};
+    return SUCCEEDED(t->GetGUID(MF_MT_MAJOR_TYPE, &major)) && major == MFMediaType_Audio;
 }
 
 // Haengt fertige Abschnitte (H.264 unveraendert, ohne neu zu kodieren) zu einer Datei zusammen
@@ -142,11 +197,14 @@ bool Remux(const std::vector<std::wstring>& segs, const std::wstring& out, std::
     ComPtr<IMFSinkWriter> w;
     LONGLONG offset = 0;
     bool wrote = false;
+    DWORD audioOut = 0;
+    bool haveAudioOut = false;
     for (const std::wstring& path : segs) {
         ComPtr<IMFSourceReader> r;
         if (FAILED(MFCreateSourceReaderFromURL(path.c_str(), nullptr, &r))) continue;   // unlesbarer Abschnitt: ueberspringen
         r->SetStreamSelection(MF_SOURCE_READER_ALL_STREAMS, FALSE);
         r->SetStreamSelection(MF_SOURCE_READER_FIRST_VIDEO_STREAM, TRUE);
+        const bool segAudio = SUCCEEDED(r->SetStreamSelection(MF_SOURCE_READER_FIRST_AUDIO_STREAM, TRUE));
         if (!w) {
             ComPtr<IMFMediaType> nat;
             if (FAILED(r->GetNativeMediaType(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, &nat))) continue;
@@ -155,25 +213,37 @@ bool Remux(const std::vector<std::wstring>& segs, const std::wstring& out, std::
             if (at) at->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE);
             if (FAILED(MFCreateSinkWriterFromURL(out.c_str(), nullptr, at.Get(), &w))) { err = L"Die Zieldatei konnte nicht angelegt werden."; return false; }
             DWORD stream = 0;
-            if (FAILED(w->AddStream(nat.Get(), &stream)) || FAILED(w->SetInputMediaType(stream, nat.Get(), nullptr)) || FAILED(w->BeginWriting())) {
+            if (FAILED(w->AddStream(nat.Get(), &stream)) || FAILED(w->SetInputMediaType(stream, nat.Get(), nullptr))) {
                 err = L"Der Videoabschnitt passt nicht zusammen.";
                 return false;
             }
+            ComPtr<IMFMediaType> anat;
+            if (segAudio && SUCCEEDED(r->GetNativeMediaType(MF_SOURCE_READER_FIRST_AUDIO_STREAM, 0, &anat))) {
+                if (SUCCEEDED(w->AddStream(anat.Get(), &audioOut)) && SUCCEEDED(w->SetInputMediaType(audioOut, anat.Get(), nullptr))) haveAudioOut = true;
+            }
+            if (FAILED(w->BeginWriting())) { err = L"Der Videoabschnitt passt nicht zusammen."; return false; }
         }
         LONGLONG segEnd = 0;
+        int openStreams = segAudio ? 2 : 1;
         for (;;) {
-            DWORD flags = 0;
+            DWORD idx = 0, flags = 0;
             ComPtr<IMFSample> smp;
-            if (FAILED(r->ReadSample(MF_SOURCE_READER_FIRST_VIDEO_STREAM, 0, nullptr, &flags, nullptr, &smp))) break;
-            if (flags & MF_SOURCE_READERF_ENDOFSTREAM) break;
+            if (FAILED(r->ReadSample(MF_SOURCE_READER_ANY_STREAM, 0, &idx, &flags, nullptr, &smp))) break;
+            if (flags & MF_SOURCE_READERF_ENDOFSTREAM) { if (--openStreams <= 0) break; continue; }     // jede Spur meldet ihr Ende einzeln
             if (!smp) continue;
+            const bool isAudio = segAudio && IsAudioIndex(r.Get(), idx);
+            if (isAudio && !haveAudioOut) continue;
             LONGLONG t = 0, d = 0;
             smp->GetSampleTime(&t);
             smp->GetSampleDuration(&d);
             if (d <= 0) d = kSecond / 30;
             segEnd = std::max(segEnd, t + d);
             smp->SetSampleTime(t + offset);
-            if (FAILED(w->WriteSample(0, smp.Get()))) { err = L"Beim Schreiben der Datei ist ein Fehler aufgetreten."; return false; }
+            {   // Dekodierzeit (DTS) mitverschieben, sonst verwirft der MP4-Schreiber spaetere Abschnitte (Zeit laeuft rueckwaerts)
+                UINT64 dts = 0;
+                if (SUCCEEDED(smp->GetUINT64(MFSampleExtension_DecodeTimestamp, &dts))) smp->SetUINT64(MFSampleExtension_DecodeTimestamp, dts + static_cast<UINT64>(offset));
+            }
+            if (FAILED(w->WriteSample(isAudio ? audioOut : 0, smp.Get()))) { err = L"Beim Schreiben der Datei ist ein Fehler aufgetreten."; return false; }
             wrote = true;
         }
         offset += segEnd;
@@ -201,6 +271,10 @@ struct Recorder::Impl {
     std::wstring tmp;
     unsigned segCounter = 0;
     UINT width = 0, height = 0;
+    AudioSource sys, mic;
+    bool useSys = false, useMic = false;
+    LONGLONG audioWritten = 0;          // bisher erzeugte Frames (48 kHz) seit Start
+    LONGLONG audioBoundary = 0;         // Zeit (100 ns), bis zu der der Ton schon in Abschnitte geschrieben wurde
 
     // Desktop Duplication
     ComPtr<ID3D11Device> dev;
@@ -329,9 +403,26 @@ struct Recorder::Impl {
             kbps = o.bitrateKbps > 0 ? o.bitrateKbps : AutoBitrateKbps(static_cast<int>(width), static_cast<int>(height), fps);
             SegmentWriter probe;
             const std::wstring pp = SegPath();
-            if (!OpenSegment(probe, pp, width, height, fps, kbps)) { ok = false; err = L"Es wurde kein Videokodierer gefunden."; }
+            if (!OpenSegment(probe, pp, width, height, fps, kbps, false)) { ok = false; err = L"Es wurde kein Videokodierer gefunden."; }
             CloseSegment(probe);
             DeleteFileW(pp.c_str());
+        }
+        if (ok && o.audio >= kAudioSystem) {                                  // Ton ist Zugabe: Fehler hier stoppen die Aufnahme nicht
+            std::wstring ae;
+            useSys = sys.Start(true, ae);
+            if (!useSys) SetProblem(ae);
+            if (o.audio >= kAudioSystemMic) {
+                std::wstring me;
+                useMic = mic.Start(false, me);
+                if (!useMic) SetProblem(me);
+            }
+            if (useSys || useMic) {
+                SegmentWriter probe;
+                const std::wstring pp = SegPath();
+                if (!OpenSegment(probe, pp, width, height, fps, kbps, true)) { useSys = useMic = false; SetProblem(L"Der Ton-Kodierer (AAC) fehlt; es wird ohne Ton aufgenommen."); sys.Stop(); mic.Stop(); }
+                CloseSegment(probe);
+                DeleteFileW(pp.c_str());
+            }
         }
         startOk = ok;
         startErr = err;
@@ -345,6 +436,9 @@ struct Recorder::Impl {
 
         std::vector<BYTE> last;
         bool haveFrame = false;
+        const bool withAudio = useSys || useMic;
+        std::vector<float> blockSys, blockMic;
+        std::vector<short> pcm;
         SegmentWriter seg;
         LONGLONG next = 0, lastNewFrame = 0;
         while (!stop) {
@@ -371,13 +465,31 @@ struct Recorder::Impl {
             if (g > 0) { haveFrame = true; lastNewFrame = t; SetProblem(L""); }
             if (!haveFrame) { if (t > 3 * kSecond) SetProblem(L"Es kommen keine Bilder vom Bildschirm."); continue; }
             if (!seg.ok) {
-                if (!OpenSegment(seg, SegPath(), width, height, fps, kbps)) { SetProblem(L"Der Videokodierer konnte nicht gestartet werden."); Sleep(500); continue; }
+                if (!OpenSegment(seg, SegPath(), width, height, fps, kbps, withAudio)) { SetProblem(L"Der Videokodierer konnte nicht gestartet werden."); Sleep(500); continue; }
+                if (withAudio) seg.start = std::min(t, audioBoundary);             // Ton schliesst ohne Luecke an den vorigen Abschnitt an
             }
             if (last.size() == static_cast<size_t>(width) * height * 4 && WriteFrame(seg, last, width, height, t, frameDur)) ++frames;
+            if (withAudio && seg.ok) {                                              // Ton bis "jetzt" in 10-ms-Bloecken nachliefern (Stille, wenn nichts kommt)
+                const LONGLONG target = t * kAudioRate / kSecond;
+                const size_t blk = kAudioRate / 100;
+                while (audioWritten + static_cast<LONGLONG>(blk) <= target) {
+                    blockSys.assign(blk * 2, 0.0f);
+                    if (useSys) { std::vector<float> g; sys.Read(blk, g); std::copy(g.begin(), g.end(), blockSys.begin()); }
+                    if (useMic) { std::vector<float> g; mic.Read(blk, g); if (!g.empty()) MixInto(blockSys.data(), g.data(), g.size(), 1.0f); }
+                    pcm.resize(blk * 2);
+                    FloatToPcm16(blockSys.data(), blk * 2, pcm.data());
+                    const LONGLONG at = audioWritten * kSecond / kAudioRate;
+                    if (at >= seg.start) WriteAudio(seg, pcm.data(), blk, at - seg.start);
+                    audioWritten += static_cast<LONGLONG>(blk);
+                    audioBoundary = audioWritten * kSecond / kAudioRate;
+                }
+            }
             if (seg.start >= 0 && t - seg.start >= static_cast<LONGLONG>(o.segmentSeconds) * kSecond) FinishSegment(seg);
             (void)lastNewFrame;
         }
         if (seg.ok) CloseSegment(seg);
+        sys.Stop();
+        mic.Stop();
         const std::wstring leftover = seg.path;
         if (!leftover.empty()) DeleteFileW(leftover.c_str());
         MFShutdown();

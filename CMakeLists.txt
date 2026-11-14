@@ -8,7 +8,7 @@ set(DOCS_VER "0.18.0")
 set(VAULT_VER "0.7.1")
 set(OFFICE_VER "0.9.1")
 set(QUICKCONVERT_VER "0.4.3")
-set(BOOST_VER "0.8.0")
+set(BOOST_VER "0.9.0")
 set(CLIP_VER "0.7.1")
 set(EQUALIZER_VER "0.15.1")
 
@@ -231,6 +231,7 @@ target_link_libraries(DuncansQuickConvert PRIVATE gdiplus windowscodecs mfplat m
 # ---- Duncan's Boost: Zock-Modus (Win32 + GDI, keine Administratorrechte; Logik in boost/BoostLogic) ----
 add_executable(DuncansBoost WIN32
     boost/ClipRec.cpp
+    boost/ClipAudio.cpp
     boost/OverlayLogic.cpp
     boost/OverlayWindow.cpp
     boost/main.cpp
@@ -254,7 +255,7 @@ else()
     target_compile_options(DuncansBoost PRIVATE -Wall -Wextra -Os -ffunction-sections -fdata-sections)
     target_link_options(DuncansBoost PRIVATE -municode -mwindows -static -s -Wl,--gc-sections)
 endif()
-target_link_libraries(DuncansBoost PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 powrprof psapi pdh d3d11 dxgi mfplat mfreadwrite mfuuid)
+target_link_libraries(DuncansBoost PRIVATE user32 gdi32 shell32 ole32 dwmapi gdiplus advapi32 powrprof psapi pdh d3d11 dxgi mfplat mfreadwrite mfuuid mmdevapi)
 
 # ---- Duncan's Clip: Zwischenablage-Verlauf und Prompts (Win32 + GDI, keine Administratorrechte; Logik in clip/ClipLogic) ----
 add_executable(DuncansClip WIN32
