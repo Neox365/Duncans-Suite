@@ -417,7 +417,7 @@ std::vector<std::wstring> FolderNames(const std::vector<Prompt>& prompts) {
 
 // ---- Export / Import ----
 std::wstring ExportPrompts(const std::vector<Prompt>& prompts) {
-    std::wstring out = L"# Duncan's Clip – Prompts\r\n# Jede Zeile \"=== Titel | Ordner ===\" beginnt einen Prompt, darunter steht sein Text.\r\n";
+    std::wstring out = L"# Duncan's Scratchpad – Prompts\r\n# Jede Zeile \"=== Titel | Ordner ===\" beginnt einen Prompt, darunter steht sein Text.\r\n";
     for (const Prompt& p : prompts) {
         out += L"\r\n=== " + p.title + L" | " + p.folder + L" ===\r\n";
         size_t i = 0;

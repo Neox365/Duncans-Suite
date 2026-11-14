@@ -51,7 +51,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.45"
+#define SUITE_VERSION L"1.1.46"
 #endif
 
 namespace
@@ -1112,8 +1112,8 @@ private:
           CategoryIcon::Boost, RGB(250, 112, 76), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansBoost.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
-        { L"DuncansClip.exe", L"Duncan's Clip",
-          L"Zwischenablage-Verlauf und Prompts, per Tastenkürzel in jedes Programm.",
+        { L"DuncansClip.exe", L"Duncan's Scratchpad",
+          L"Zwischenablage-Verlauf, Textbausteine und Notizzettel, per Tastenkürzel überall.",
           CategoryIcon::Clip, RGB(190, 242, 100), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansClip.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
@@ -1880,7 +1880,7 @@ void SuiteWindow::DrawInfo(HDC dc, int w, int h)
 {
     FillAlphaRect(dc, RECT{ 0, 0, w, h }, RGB(0, 0, 0), 150);
 
-    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo", L"Docs-Files", L"Vault", L"Office", L"QuickConvert", L"Boost", L"Clip", L"Equalizer", L"Suite" };
+    static const wchar_t* const kNames[kInfoTabs] = { L"Tidy", L"Driver Updater", L"PDF Reader", L"Privacy Shield", L"Photo", L"Docs-Files", L"Vault", L"Office", L"QuickConvert", L"Boost", L"Scratchpad", L"Equalizer", L"Suite" };
     const int pad = S(22), btnH = S(38);
     const int boxW = std::min(S(940), w - S(40)), boxH = std::min(S(700), h - S(50));
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };

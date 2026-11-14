@@ -78,6 +78,8 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.7.1 | 2026-11-14
+- Geändert: Das Programm heißt jetzt „Duncan's Scratchpad“ (vorher „Clip“), weil der alte Name nach Videoclips klang. Es kann weiterhin Zwischenablage-Verlauf, Textbausteine und den Notizzettel. Dateien, gespeicherte Daten und der Autostart-Eintrag bleiben unverändert, es geht nichts verloren.
 ## 0.7.0 | 2026-11-14
 - Neu: Reiter „Zettel“. Ein freier Textblock für das, was du schnell festhalten willst, zum Beispiel eine Adresse, ein Befehl oder eine Aufgabe. Er speichert sich beim Tippen von selbst (verschlüsselt, nur auf diesem PC) und ist beim nächsten Start wieder da. „Alles kopieren“ legt den ganzen Text in die Zwischenablage. Strg+Alt+N oder „Zettel öffnen“ im Infobereich-Menü öffnet ihn sofort; ist das Kürzel schon von einem anderen Programm belegt, geht es über den Reiter.
 ## 0.6.2 | 2026-11-14
@@ -669,6 +671,8 @@
 - Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
 
 [DuncansSuite.exe]
+## 1.1.46 | 2026-11-14
+- Geändert: Die Karte „Duncan's Clip“ heißt jetzt „Duncan's Scratchpad“ und beschreibt, was das Programm kann (Zwischenablage-Verlauf, Textbausteine, Notizzettel).
 ## 1.1.45 | 2026-11-14
 - Geändert: Die Meldungen beim Deinstallieren und beim Öffnen eines Ordners mit Tidy erscheinen im dunklen Design der Suite statt als Windows-Fenster.
 ## 1.1.44 | 2026-11-09
