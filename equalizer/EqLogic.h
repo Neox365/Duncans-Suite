@@ -15,6 +15,7 @@ namespace eq {
 constexpr int kBands = 10;      // 31 Hz ... 16 kHz
 constexpr int kMaxGain = 12;    // Regler: -12 ... +12 dB
 constexpr int kMaxBalance = 12; // Balance: -12 ... +12 dB (negativ: links lauter, positiv: rechts lauter)
+constexpr int kMaxDelay = 20;   // Verzoegerung einer Seite: bis 20 ms (negativ: links spaeter, positiv: rechts spaeter)
 constexpr unsigned kMaxIrBytes = 24u << 20;   // groesste erlaubte Impulsantwort (WAV)
 extern const int kFreqs[kBands];
 const wchar_t* BandName(int band);   // kurzes Wort, z. B. "Waerme"
@@ -33,6 +34,9 @@ struct Settings {
     std::vector<std::string> extra;   // eingelesene Filterzeilen (z. B. AutoEq-Kopfhoerer-Korrektur), nur "Preamp:"/"Filter:"
     int  balance = 0;           // Links/Rechts-Ausgleich in dB: negativ = links lauter (rechts wird leiser), positiv = rechts lauter
     bool mono = false;          // beide Seiten bekommen denselben Ton (Mittelwert aus links und rechts)
+    int  delay = 0;             // Laufzeitausgleich in ms: negativ = linke Seite spaeter, positiv = rechte Seite spaeter (z. B. ungleich aufgestellte Lautsprecher)
+    int  micMode = 0;           // Mikrofon-Equalizer: 0 aus, 1 Stimme klarer, 2 Rumpeln weg (Hochpass), 3 beides. Gilt nur auf diesem PC, nicht in Profilen
+    std::wstring micDevice;     // Anzeigename des Mikrofons, auf das micMode wirkt
     std::wstring irPath;        // Impulsantwort (WAV) fuer Raum-/Kopfhoerer-Korrektur per Faltung; leer = keine. Nur auf diesem PC (nicht in weitergegebenen Profilen)
 };
 
@@ -66,6 +70,9 @@ int TotalPreampDb(const Settings& s);
 // Text der Konfigurationsdatei fuer Equalizer APO (ASCII, Zeilenende CRLF). irFile: absoluter Pfad der Impulsantwort, wie APO ihn lesen soll
 // (leer = keine Faltung; unsichere Pfade werden verworfen).
 std::string BuildConfig(const Settings& s, const std::string& irFile = std::string());
+// Name des Mikrofons, wie er in die APO-Konfiguration kommt: der laengste Abschnitt aus einfachen ASCII-Zeichen (APO findet Geraete ueber einen Namensteil); leer = unbrauchbar
+std::string MicDeviceKey(const std::wstring& name);
+std::vector<std::wstring> CaptureDeviceNames();   // Anzeigenamen der aktiven Mikrofone
 // Prueft eine Impulsantwort: vorhanden, hoechstens kMaxIrBytes, WAV-Kopf. err = Meldung fuer den Nutzer.
 bool CheckImpulseFile(const std::wstring& path, std::wstring& err);
 extern const wchar_t* const kIrCopyName;      // "duncans-ir.wav": Kopie der Impulsantwort im config-Ordner von Equalizer APO

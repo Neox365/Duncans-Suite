@@ -5,6 +5,10 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.15.0 | 2026-11-14
+- Neu: Verzögerung im Menü „Klang …“. Eine Seite kommt bis zu 20 Millisekunden später, zum Beispiel wenn die Lautsprecher unterschiedlich weit weg stehen. Die Einstellung gehört zum Profil und wird mit ihm gespeichert und weitergegeben.
+- Neu: Mikrofon-Equalizer im Menü „Klang …“. „Stimme klarer“ und „Rumpeln weg“ (Tiefen unter 90 Hz) wirken nur auf das gewählte Mikrofon, nicht auf die Wiedergabe. Dafür muss Equalizer APO auch für das Mikrofon eingerichtet sein (Configurator, Reiter „Capture devices“). Das Mikrofon gehört zu diesem PC und steht nicht in weitergegebenen Profilen. Das Frequenzgang-Diagramm zeigt weiterhin nur die Wiedergabe.
+- Geändert: In der Karte „Zusätze“ erscheinen Verzögerung und Mikrofon-Filter, und der Knopf „Klang …“ hat den Akzentrahmen auch dann, wenn nur eines davon wirkt.
 ## 0.14.0 | 2026-11-14
 - Neu: Impulsantwort (Raum- und Kopfhörerkorrektur). Der Knopf „Klang …“ (vorher „Korrektur …“) öffnet jetzt ein Menü; „Impulsantwort laden …“ nimmt eine WAV-Datei (höchstens 24 MB), zum Beispiel eine Raummessung oder die Kopfhörer-Korrektur eines Herstellers. Equalizer APO faltet den Ton damit. Das Programm kopiert die Datei in den APO-Ordner, damit auch Pfade mit Umlauten gehen. Der Knopf zeigt mit Akzentrahmen, dass etwas Zusätzliches wirkt; „Impulsantwort entfernen“ nimmt es wieder heraus. Die Datei gehört zu diesem PC und steht deshalb nicht in weitergegebenen Profilen („Teilen …“). Das Faltungsfilter kann etwas Rechenzeit brauchen.
 - Neu: Balance und Mono im selben Menü. Balance macht eine Seite um 3, 6 oder 9 dB leiser (links lauter oder rechts lauter), „Mono“ gibt beiden Seiten denselben Ton, zum Beispiel bei Hörverlust auf einem Ohr. Beides gehört zum Profil und wird mit ihm gespeichert und weitergegeben. Das Frequenzgang-Diagramm bleibt davon unberührt.

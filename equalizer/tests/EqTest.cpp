@@ -532,6 +532,50 @@ int main()
         RemoveDirectoryW((apo2 + L"/config").c_str()); RemoveDirectoryW(apo2.c_str()); RemoveDirectoryW(d.c_str());
     }
 
+
+    // Verzoegerung und Mikrofon-Abschnitt
+    {
+        Settings d; d.enabled = true; d.delay = 5;
+        CHECK(BuildConfig(d).find("Channel: R\r\nDelay: 5 ms\r\nChannel: all\r\n") != std::string::npos);
+        d.delay = -3;
+        CHECK(BuildConfig(d).find("Channel: L\r\nDelay: 3 ms\r\nChannel: all\r\n") != std::string::npos);
+        d.delay = 500;
+        CHECK(BuildConfig(d).find("Delay: 20 ms") != std::string::npos);
+        d.delay = 0;
+        CHECK(BuildConfig(d).find("Delay") == std::string::npos && BuildConfig(d).find("Alle Regler") != std::string::npos);
+        CHECK(MicDeviceKey(L"Mikrofon (Realtek High Definition Audio)") == "Realtek High Definition Audio");
+        CHECK(MicDeviceKey(L"\xC4\xD6").empty() && MicDeviceKey(L"ab").empty());
+        Settings m; m.micMode = 3; m.micDevice = L"Mikrofon (Blue Yeti)";
+        const std::string c = BuildConfig(m);                              // Equalizer aus, Mikrofon wirkt trotzdem
+        CHECK(c.find("Device: Blue Yeti\r\nFilter: ON HP Fc 90 Hz\r\n") != std::string::npos && c.find("Fc 3500 Hz Gain 3 dB") != std::string::npos && c.rfind("Device: all") != std::string::npos);
+        m.micMode = 2;
+        CHECK(BuildConfig(m).find("PK Fc") == std::string::npos && BuildConfig(m).find("HP Fc 90") != std::string::npos);
+        m.micDevice = L"\xC4\xD6";
+        CHECK(BuildConfig(m).find("Device:") == std::string::npos);
+        m.micDevice = L"Blue Yeti"; m.micMode = 0;
+        CHECK(BuildConfig(m).find("Device:") == std::string::npos);
+        Settings cv; cv.enabled = true; cv.micMode = 3; cv.micDevice = L"Blue Yeti"; cv.delay = 4;   // Kurve der Wiedergabe bleibt unberuehrt
+        const std::vector<double> fr = { 100, 1000, 3500 };
+        const std::vector<double> r = ResponseDb(cv, fr, true);
+        CHECK(std::fabs(r[0]) < 0.01 && std::fabs(r[2]) < 0.01);
+        wchar_t tmp4[MAX_PATH] = {};
+        GetTempPathW(MAX_PATH, tmp4);
+        const std::wstring dd = std::wstring(tmp4) + L"eqtest_mic" + std::to_wstring(GetCurrentProcessId());
+        CreateDirectoryW(dd.c_str(), nullptr);
+        Settings w; w.enabled = true; w.delay = -7; w.micMode = 3; w.micDevice = L"Blue Yeti";
+        CHECK(SaveSettings(w, dd + L"/m.txt"));
+        Settings rr;
+        CHECK(LoadSettings(rr, dd + L"/m.txt") && rr.delay == -7 && rr.micMode == 3 && rr.micDevice == L"Blue Yeti");
+        Put(dd + L"/m2.txt", "delay=99\r\nmic=9\r\n");
+        CHECK(LoadSettings(rr, dd + L"/m2.txt") && rr.delay == kMaxDelay && rr.micMode == 3);
+        Profile pr; pr.name = L"X"; pr.s = w;
+        Profile back2;
+        CHECK(ProfileFromText(ProfileToText(pr), back2) && back2.s.delay == -7 && back2.s.micMode == 0 && back2.s.micDevice.empty());
+        const std::vector<std::wstring> caps = CaptureDeviceNames();       // je nach Rechner leer; darf nicht abstuerzen
+        CHECK(caps.size() <= 12);
+        DeleteFileW((dd + L"/m.txt").c_str()); DeleteFileW((dd + L"/m2.txt").c_str()); RemoveDirectoryW(dd.c_str());
+    }
+
     std::printf("%d Pruefungen, %d Fehler\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

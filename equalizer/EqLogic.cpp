@@ -231,7 +231,81 @@ bool CheckImpulseFile(const std::wstring& path, std::wstring& err)
     return true;
 }
 
+std::string MicDeviceKey(const std::wstring& name)
+{
+    std::string best, cur;
+    auto flush = [&]() {
+        while (!cur.empty() && cur.back() == ' ') cur.pop_back();
+        size_t k = 0;
+        while (k < cur.size() && cur[k] == ' ') ++k;
+        cur = cur.substr(k);
+        if (cur.size() > best.size()) best = cur;
+        cur.clear();
+    };
+    for (wchar_t c : name)
+    {
+        const bool ok = (c >= L'0' && c <= L'9') || (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') || c == L' ' || c == L'.' || c == L'_' || c == L'-';
+        if (ok) cur += static_cast<char>(c);
+        else flush();
+    }
+    flush();
+    return best.size() >= 3 && best.size() <= 64 ? best : std::string();
+}
+
+static std::string BuildMain(const Settings& s, const std::string& irFile);
+
 std::string BuildConfig(const Settings& s, const std::string& irFile)
+{
+    std::string t = BuildMain(s, irFile);
+    const std::string key = MicDeviceKey(s.micDevice);
+    if (s.micMode >= 1 && s.micMode <= 3 && !key.empty())          // eigener Abschnitt nur fuer das Mikrofon; "Device: all" beendet ihn
+    {
+        t += "Device: " + key + "\r\n";
+        if (s.micMode & 2) t += "Filter: ON HP Fc 90 Hz\r\n";
+        if (s.micMode & 1)
+        {
+            t += "Filter: ON PK Fc 250 Hz Gain -2 dB Q 1.0\r\n";
+            t += "Filter: ON PK Fc 3500 Hz Gain 3 dB Q 1.0\r\n";
+        }
+        t += "Device: all\r\n";
+    }
+    return t;
+}
+
+std::vector<std::wstring> CaptureDeviceNames()
+{
+    std::vector<std::wstring> out;
+    const HRESULT init = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    IMMDeviceEnumerator* en = nullptr;
+    if (SUCCEEDED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), reinterpret_cast<void**>(&en))) && en)
+    {
+        IMMDeviceCollection* col = nullptr;
+        UINT n = 0;
+        if (SUCCEEDED(en->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &col)) && col && SUCCEEDED(col->GetCount(&n)))
+            for (UINT i = 0; i < n && out.size() < 12; ++i)
+            {
+                IMMDevice* dev = nullptr;
+                if (FAILED(col->Item(i, &dev)) || !dev) continue;
+                IPropertyStore* store = nullptr;
+                if (SUCCEEDED(dev->OpenPropertyStore(STGM_READ, &store)) && store)
+                {
+                    PROPVARIANT v;
+                    PropVariantInit(&v);
+                    if (SUCCEEDED(store->GetValue(PKEY_Device_FriendlyName, &v)) && v.vt == VT_LPWSTR && v.pwszVal)
+                        out.push_back(v.pwszVal);
+                    PropVariantClear(&v);
+                    store->Release();
+                }
+                dev->Release();
+            }
+        if (col) col->Release();
+        en->Release();
+    }
+    if (SUCCEEDED(init)) CoUninitialize();
+    return out;
+}
+
+static std::string BuildMain(const Settings& s, const std::string& irFile)
 {
     std::string t = "# Duncan's Equalizer - wird automatisch erzeugt, bitte nicht von Hand aendern\r\n";
     if (!s.enabled)
@@ -241,8 +315,9 @@ std::string BuildConfig(const Settings& s, const std::string& irFile)
         if (s.gains[b] != 0)
             anyBand = true;
     const int balance = std::clamp(s.balance, -kMaxBalance, kMaxBalance);
+    const int delay = std::clamp(s.delay, -kMaxDelay, kMaxDelay);
     const bool useIr = !irFile.empty() && IsSafeConfigPath(irFile);
-    if (!anyBand && !s.bass && !s.voice && s.extra.empty() && s.preamp == 0 && balance == 0 && !s.mono && !useIr)
+    if (!anyBand && !s.bass && !s.voice && s.extra.empty() && s.preamp == 0 && balance == 0 && delay == 0 && !s.mono && !useIr)
         return t + "# Alle Regler stehen auf 0\r\n";
     if (TotalPreampDb(s) != 0)
         t += "Preamp: " + Num(TotalPreampDb(s)) + " dB\r\n";
@@ -277,6 +352,8 @@ std::string BuildConfig(const Settings& s, const std::string& irFile)
         t += "Copy: L=0.5*L+0.5*R R=0.5*L+0.5*R\r\n";                       // beide Seiten gleich
     if (balance != 0)                                                        // die lautere Seite bleibt, die andere wird leiser
         t += std::string("Channel: ") + (balance < 0 ? "R" : "L") + "\r\nPreamp: -" + Num(std::abs(balance)) + " dB\r\nChannel: all\r\n";
+    if (delay != 0)                                                          // die Seite, die spaeter kommen soll, wird verzoegert
+        t += std::string("Channel: ") + (delay < 0 ? "L" : "R") + "\r\nDelay: " + Num(std::abs(delay)) + " ms\r\nChannel: all\r\n";
     return t;
 }
 
@@ -297,7 +374,7 @@ std::wstring SettingsPath()
 bool SaveSettings(const Settings& s, const std::wstring& path)
 {
     std::string t = std::string("enabled=") + (s.enabled ? "1" : "0") + "\r\nkeeprunning=" + (s.keepRunning ? "1" : "0") + "\r\nhotkeys=" + (s.hotkeys ? "1" : "0") + "\r\nspectrum=" + (s.spectrum ? "1" : "0") + "\r\nautogain=" + (s.autoGain ? "1" : "0") + "\r\nbass=" + (s.bass ? "1" : "0") +
-                    "\r\nvoice=" + (s.voice ? "1" : "0") + "\r\nbalance=" + Num(std::clamp(s.balance, -kMaxBalance, kMaxBalance)) + "\r\nmono=" + (s.mono ? "1" : "0") + "\r\nir=" + ToUtf8(s.irPath) + "\r\ngains=";
+                    "\r\nvoice=" + (s.voice ? "1" : "0") + "\r\nbalance=" + Num(std::clamp(s.balance, -kMaxBalance, kMaxBalance)) + "\r\nmono=" + (s.mono ? "1" : "0") + "\r\ndelay=" + Num(std::clamp(s.delay, -kMaxDelay, kMaxDelay)) + "\r\nmic=" + Num(s.micMode) + "\r\nmicdevice=" + ToUtf8(s.micDevice) + "\r\nir=" + ToUtf8(s.irPath) + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(s.gains[b]));
     t += "\r\n";
@@ -331,6 +408,9 @@ bool LoadSettings(Settings& s, const std::wstring& path)
         else if (key == "voice") s.voice = val == "1";
         else if (key == "balance") s.balance = std::clamp(std::atoi(val.c_str()), -kMaxBalance, kMaxBalance);
         else if (key == "mono") s.mono = val == "1";
+        else if (key == "delay") s.delay = std::clamp(std::atoi(val.c_str()), -kMaxDelay, kMaxDelay);
+        else if (key == "mic") s.micMode = std::clamp(std::atoi(val.c_str()), 0, 3);
+        else if (key == "micdevice") s.micDevice = ToWide(val);
         else if (key == "ir") s.irPath = ToWide(val);
         else if (key == "gains")
         {
@@ -521,7 +601,7 @@ int ProfileForApps(const std::vector<Profile>& list, const std::vector<std::wstr
 static std::string ProfileBlock(const Profile& p, bool withDevice)
 {
     std::string t = "[profile]\r\nname=" + ToUtf8(p.name) + "\r\ndevice=" + (withDevice ? ToUtf8(p.device) : std::string()) + "\r\napps=" + (withDevice ? AppsLine(p) : std::string()) + "\r\nbass=" + (p.s.bass ? "1" : "0") +
-                    "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\nbalance=" + Num(std::clamp(p.s.balance, -kMaxBalance, kMaxBalance)) + "\r\nmono=" + (p.s.mono ? "1" : "0") +
+                    "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\nbalance=" + Num(std::clamp(p.s.balance, -kMaxBalance, kMaxBalance)) + "\r\nmono=" + (p.s.mono ? "1" : "0") + "\r\ndelay=" + Num(std::clamp(p.s.delay, -kMaxDelay, kMaxDelay)) +
                     (withDevice && !p.s.irPath.empty() ? "\r\nir=" + ToUtf8(p.s.irPath) : std::string()) + "\r\npreamp=" + Num(std::clamp(p.s.preamp, -kMaxGain, kMaxGain)) + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(p.s.gains[b]));
@@ -646,6 +726,7 @@ bool ParseProfiles(const std::string& data, std::vector<Profile>& list, int& act
         else if (key == "voice") p.s.voice = val == "1";
         else if (key == "balance") p.s.balance = std::clamp(std::atoi(val.c_str()), -kMaxBalance, kMaxBalance);
         else if (key == "mono") p.s.mono = val == "1";
+        else if (key == "delay") p.s.delay = std::clamp(std::atoi(val.c_str()), -kMaxDelay, kMaxDelay);
         else if (key == "ir") p.s.irPath = ToWide(val);
         else if (key == "preamp") p.s.preamp = std::clamp(std::atoi(val.c_str()), -kMaxGain, kMaxGain);
         else if (key == "extra") { if (p.s.extra.size() < kMaxExtraLines && IsSafeFilterLine(val)) p.s.extra.push_back(val); }
