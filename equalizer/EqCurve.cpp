@@ -223,6 +223,8 @@ std::vector<double> ResponseDb(const Settings& s, const std::vector<double>& fre
     on.enabled = true;   // die Kurve zeigt, was der Equalizer taete, auch wenn er gerade aus ist
     on.balance = 0;      // Balance und Mono betreffen den Frequenzgang nicht (sonst wuerde "Preamp" der einen Seite die Kurve verschieben)
     on.mono = false;
+    on.delay = 0;        // Verzoegerung und Mikrofon-Abschnitt gehoeren nicht zur Kurve der Wiedergabe
+    on.micMode = 0;
     return ResponseDbFromConfig(BuildConfig(on), freqs, includePreamp);
 }
 

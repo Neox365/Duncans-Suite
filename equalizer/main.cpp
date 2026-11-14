@@ -34,7 +34,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.14.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.15.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -153,7 +153,7 @@ void SyncActive() {                                 // aktuelle Regler/Schalter/
     for (int b = 0; b < eq::kBands; ++b) p.s.gains[b] = g.cfg.gains[b];
     p.s.preamp = g.cfg.preamp;
     p.s.bass = g.cfg.bass; p.s.voice = g.cfg.voice; p.s.extra = g.cfg.extra;
-    p.s.balance = g.cfg.balance; p.s.mono = g.cfg.mono; p.s.irPath = g.cfg.irPath;
+    p.s.balance = g.cfg.balance; p.s.mono = g.cfg.mono; p.s.delay = g.cfg.delay; p.s.irPath = g.cfg.irPath;
 }
 
 void LoadActive() {                                 // Einstellungen des aktiven Profils uebernehmen (Ein/Aus bleibt)
@@ -161,7 +161,7 @@ void LoadActive() {                                 // Einstellungen des aktiven
     for (int b = 0; b < eq::kBands; ++b) g.cfg.gains[b] = p.s.gains[b];
     g.cfg.preamp = p.s.preamp;
     g.cfg.bass = p.s.bass; g.cfg.voice = p.s.voice; g.cfg.extra = p.s.extra;
-    g.cfg.balance = p.s.balance; g.cfg.mono = p.s.mono; g.cfg.irPath = p.s.irPath;
+    g.cfg.balance = p.s.balance; g.cfg.mono = p.s.mono; g.cfg.delay = p.s.delay; g.cfg.irPath = p.s.irPath;
 }
 
 void SaveCfg() {
@@ -632,6 +632,11 @@ std::wstring BalanceText(int b) {
     return b < 0 ? L"links lauter (" + std::to_wstring(-b) + L" dB)" : L"rechts lauter (" + std::to_wstring(b) + L" dB)";
 }
 
+std::wstring DelayText(int d) {
+    if (d == 0) return L"keine";
+    return (d < 0 ? L"links " : L"rechts ") + std::to_wstring(std::abs(d)) + L" ms später";
+}
+
 void PickImpulse() {                                // Impulsantwort (WAV) fuer Raum-/Kopfhoerer-Korrektur waehlen
     wchar_t file[MAX_PATH] = {};
     OPENFILENAMEW ofn{};
@@ -672,6 +677,23 @@ void SoundMenu() {                                  // Knopf "Klang ...": Filter
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     AppendMenuW(menu, MF_POPUP | (g.cfg.balance != 0 ? MF_CHECKED : 0), reinterpret_cast<UINT_PTR>(bal), (L"Balance: " + BalanceText(g.cfg.balance)).c_str());
     AppendMenuW(menu, MF_STRING | (g.cfg.mono ? MF_CHECKED : 0), 4, L"Mono (beide Seiten gleich)");
+    static const int kDelays[] = { -20, -10, -5, -2, -1, 0, 1, 2, 5, 10, 20 };
+    HMENU dly = CreatePopupMenu();
+    for (int i = 0; i < static_cast<int>(sizeof(kDelays) / sizeof(kDelays[0])); ++i) {
+        const std::wstring label = kDelays[i] == 0 ? L"Keine" : (kDelays[i] < 0 ? L"Links später um " : L"Rechts später um ") + std::to_wstring(std::abs(kDelays[i])) + L" ms";
+        AppendMenuW(dly, MF_STRING | (g.cfg.delay == kDelays[i] ? MF_CHECKED : 0), static_cast<UINT_PTR>(200 + i), label.c_str());
+    }
+    AppendMenuW(menu, MF_POPUP | (g.cfg.delay != 0 ? MF_CHECKED : 0), reinterpret_cast<UINT_PTR>(dly), (L"Verzögerung: " + DelayText(g.cfg.delay)).c_str());
+    static const wchar_t* const kMicModes[] = { L"Aus", L"Stimme klarer", L"Rumpeln weg (Tiefen unter 90 Hz)", L"Beides" };
+    const std::vector<std::wstring> mics = eq::CaptureDeviceNames();
+    HMENU mic = CreatePopupMenu();
+    for (int i = 0; i < 4; ++i)
+        AppendMenuW(mic, MF_STRING | (g.cfg.micMode == i ? MF_CHECKED : 0), static_cast<UINT_PTR>(300 + i), kMicModes[i]);
+    AppendMenuW(mic, MF_SEPARATOR, 0, nullptr);
+    if (mics.empty()) AppendMenuW(mic, MF_STRING | MF_GRAYED, 0, L"Kein Mikrofon gefunden");
+    for (size_t i = 0; i < mics.size(); ++i)
+        AppendMenuW(mic, MF_STRING | (g.cfg.micDevice == mics[i] ? MF_CHECKED : 0), static_cast<UINT_PTR>(400 + i), mics[i].c_str());
+    AppendMenuW(menu, MF_POPUP | (g.cfg.micMode != 0 ? MF_CHECKED : 0), reinterpret_cast<UINT_PTR>(mic), g.cfg.micMode ? (std::wstring(L"Mikrofon: ") + kMicModes[g.cfg.micMode]).c_str() : L"Mikrofon-Equalizer");
     POINT pt{ g.btnImport.left, g.btnImport.bottom };
     ClientToScreen(g.hwnd, &pt);
     const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, g.hwnd, nullptr);
@@ -680,6 +702,24 @@ void SoundMenu() {                                  // Knopf "Klang ...": Filter
     else if (cmd == 2) PickImpulse();
     else if (cmd == 3) ClearImpulse();
     else if (cmd == 4) { g.cfg.mono = !g.cfg.mono; Changed(); SetStatus(g.cfg.mono ? L"Mono an: beide Seiten bekommen denselben Ton" : L"Mono aus", kTextDim); }
+    else if (cmd >= 200 && cmd < 200 + static_cast<int>(sizeof(kDelays) / sizeof(kDelays[0]))) {
+        g.cfg.delay = kDelays[cmd - 200];
+        Changed();
+        SetStatus(L"Verzögerung: " + DelayText(g.cfg.delay), kTextDim);
+    }
+    else if (cmd >= 300 && cmd < 304) {
+        g.cfg.micMode = cmd - 300;
+        if (g.cfg.micMode && (g.cfg.micDevice.empty() || eq::MicDeviceKey(g.cfg.micDevice).empty()) && !mics.empty()) g.cfg.micDevice = mics[0];
+        Changed();
+        if (g.cfg.micMode && eq::MicDeviceKey(g.cfg.micDevice).empty()) SetStatus(L"Der Name dieses Mikrofons enthält zu wenige einfache Zeichen; bitte ein anderes wählen", kOrange);
+        else SetStatus(g.cfg.micMode ? L"Mikrofon-Filter an. Equalizer APO muss auch für das Mikrofon eingerichtet sein (Configurator → Capture devices)" : L"Mikrofon-Filter aus", g.cfg.micMode ? kGreen : kTextDim);
+    }
+    else if (cmd >= 400 && cmd < 400 + static_cast<int>(mics.size())) {
+        g.cfg.micDevice = mics[static_cast<size_t>(cmd - 400)];
+        if (g.cfg.micMode == 0) g.cfg.micMode = 1;
+        Changed();
+        SetStatus(L"Mikrofon: " + g.cfg.micDevice, kGreen);
+    }
     else if (cmd >= 100 && cmd < 100 + static_cast<int>(sizeof(kSteps) / sizeof(kSteps[0]))) {
         g.cfg.balance = kSteps[cmd - 100];
         Changed();
@@ -1099,6 +1139,8 @@ void Paint(HDC dc, const RECT& cr) {
                 if (!g.cfg.irPath.empty()) add(L"Faltung");
                 if (g.cfg.balance != 0) add(std::wstring(g.cfg.balance < 0 ? L"Links +" : L"Rechts +") + std::to_wstring(std::abs(g.cfg.balance)));
                 if (g.cfg.mono) add(L"Mono");
+                if (g.cfg.delay != 0) add(L"Verzögerung " + DelayText(g.cfg.delay));
+                if (g.cfg.micMode != 0) add(L"Mikrofon-Filter");
                 row(L"Zusätze", z.empty() ? std::wstring(L"keine") : z);
             }
         }
@@ -1272,7 +1314,7 @@ void Paint(HDC dc, const RECT& cr) {
         };
         smallBtn(g.btnBind, L"Binden …", H_BIND, false);
         {   // "Klang ...": mit Akzentrahmen, solange Balance, Mono oder eine Impulsantwort wirkt
-            const bool active = g.cfg.balance != 0 || g.cfg.mono || !g.cfg.irPath.empty();
+            const bool active = g.cfg.balance != 0 || g.cfg.mono || g.cfg.delay != 0 || g.cfg.micMode != 0 || !g.cfg.irPath.empty();
             const bool hot = g.hover == H_IMPORT;
             FillRound(dc, g.btnImport, S(12), active ? Blend(kCard, kEq, 22) : (hot ? kCardHover : Blend(kCard, kBackground, 25)), active ? kEq : (hot ? kBorderHot : kBorder));
             DrawText2(dc, g.fBold, kText, g.btnImport, L"Klang …", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
