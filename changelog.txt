@@ -5,6 +5,8 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.15.1 | 2026-11-14
+- Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 0.15.0 | 2026-11-14
 - Neu: Verzögerung im Menü „Klang …“. Eine Seite kommt bis zu 20 Millisekunden später, zum Beispiel wenn die Lautsprecher unterschiedlich weit weg stehen. Die Einstellung gehört zum Profil und wird mit ihm gespeichert und weitergegeben.
 - Neu: Mikrofon-Equalizer im Menü „Klang …“. „Stimme klarer“ und „Rumpeln weg“ (Tiefen unter 90 Hz) wirken nur auf das gewählte Mikrofon, nicht auf die Wiedergabe. Dafür muss Equalizer APO auch für das Mikrofon eingerichtet sein (Configurator, Reiter „Capture devices“). Das Mikrofon gehört zu diesem PC und steht nicht in weitergegebenen Profilen. Das Frequenzgang-Diagramm zeigt weiterhin nur die Wiedergabe.
@@ -76,6 +78,8 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.6.2 | 2026-11-14
+- Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 0.6.1 | 2026-11-12
 - Geändert: Meldungen und Rückfragen erscheinen im dunklen Design des Programms statt als Windows-Meldungsfenster. Bedienung wie gewohnt: Enter bestätigt, Esc bricht ab, J/Ja und N/Nein als Tasten, Pfeiltasten und Tab wechseln die Schaltfläche.
 ## 0.6.0 | 2026-11-10
@@ -107,6 +111,8 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.6.2 | 2026-11-14
+- Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 0.6.1 | 2026-11-09
 - Behoben: Die Überschrift „Andere Programme leiser, solange das Spiel im Vordergrund ist“ war zu lang und wurde abgeschnitten. Die Titel der Ton-Schalter sind jetzt kürzer („Andere Programme leiser beim Spielen“, „Spiel stumm beim Wegschalten“), die Erklärung steht darunter.
 ## 0.6.0 | 2026-11-09
@@ -249,6 +255,8 @@
 - Übersicht: Die Meldung nach dem Aufräumen zeigt nur noch die Anzahl der übersprungenen Einträge, mit mehr Abstand zwischen den Textzeilen
 
 [DuncansDriverUpdater.exe]
+## 1.4.2 | 2026-11-14
+- Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 1.4.1 | 2026-11-09
 - Neu: Vor jedem Treiber-Update sichert der Driver Updater den bisherigen Treiber automatisch (pnputil, im Ordner „Sicherung“ neben den Programmdaten, je Gerät ein Ordner). Die letzten fünf Sicherungen bleiben erhalten, ältere werden gelöscht, weil Treiber mehrere hundert MB groß sein können. Im Verlauf steht, wohin gesichert wurde, und „Sicherungen öffnen“ zeigt den Ordner. Windows-Standardtreiber (Inbox-Treiber) lassen sich nicht einzeln sichern; scheitert eine Sicherung, läuft die Installation trotzdem weiter. Zurückspielen geht weiter über Windows: Geräte-Manager › „Vorheriger Treiber“ oder „Treiber aktualisieren“ › „Auf dem Computer suchen“ mit dem Sicherungsordner.
 ## 1.4.0 | 2026-11-06
@@ -286,6 +294,8 @@
 - Erste Version: liest alle Geräte aus, erkennt Treiber-Updates und installiert sie.
 
 [DuncansPdf.exe]
+## 1.9.1 | 2026-11-14
+- Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 1.9.0 | 2026-11-13
 - Neu: Englisch. Leiste, Seitenleiste, Einstellungen, Eingabefenster (Passwort, Split, Unterschrift), Datei-Dialoge, Meldungen und Hinweise gibt es jetzt auch auf Englisch. Das Programm folgt der Windows-Sprache: bei Deutsch bleibt alles wie gewohnt, sonst erscheint Englisch. Umschalten von Hand geht im Zahnrad-Menü von Oggys Docs-Files („Sprache: …“); die Wahl gilt für alle Programme der Suite.
 - Hinweis: Im Split-Dialog gelten weiter die Eingabewörter „je 5“ und „einzeln“. Eigene Texte (Notizen, Dateinamen, Suchbegriffe) werden nie übersetzt.
@@ -569,6 +579,8 @@
 - Automatische Sperre nach 5 Minuten Inaktivität (abschaltbar), Master-Passwort änderbar, Bremse bei falschen Eingaben.
 
 [DuncansQuickConvert.exe]
+## 0.4.3 | 2026-11-14
+- Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 0.4.2 | 2026-11-12
 - Neu: „Diagnose kopieren“ in der Über-Ansicht. Kopiert Programm, Version, Windows-Version, Sprache und Skalierung in die Zwischenablage, damit sich Probleme besser melden lassen. Es enthält keine Pfade, Namen oder Dateien und wird nirgends automatisch gesendet.
 ## 0.4.1 | 2026-11-09
@@ -597,6 +609,8 @@
 - Stapelverarbeitung: mehrere Dateien laufen parallel in Hintergrund-Threads, das Fenster bleibt bedienbar; Abbrechen jederzeit. Vorhandene Dateien werden nie überschrieben.
 
 [DuncansOffice.exe]
+## 0.9.1 | 2026-11-14
+- Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 0.9.0 | 2026-11-13
 - Neu: Englisch. Writer und Sheets (Leiste, Startseite, Dialoge, Suchen/Ersetzen, Rechtschreibung, Diagramm, Datei-Dialoge, Meldungen und Statuszeile) gibt es jetzt auch auf Englisch. Das Programm folgt der Windows-Sprache: bei Deutsch bleibt alles wie gewohnt, sonst erscheint Englisch. Umschalten von Hand geht im Zahnrad-Menü von Oggys Docs-Files („Sprache: …“); die Wahl gilt für alle Programme der Suite.
 - Hinweis: Tabellenfunktionen (SUMME, WENN, …) und das Zahlenformat bleiben deutsch, damit bestehende Tabellen weiter rechnen. Eigene Texte und Dateinamen werden nie übersetzt.

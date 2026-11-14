@@ -18,11 +18,12 @@
 #include <vector>
 
 #include <gdiplus.h>
+#include "../common/DarkMenus.h"
 #include "Convert.h"
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.4.2"
+#define APP_VERSION L"0.4.3"
 #endif
 
 namespace {
@@ -985,6 +986,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, PWSTR, int show) {
+    darkmenus::Enable();
     if (FAILED(CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE))) return 1;
     conv::MediaStartup();
     Gdiplus::GdiplusStartupInput gsi;

@@ -21,6 +21,7 @@ using std::min;
 #include <propidl.h>
 #include <gdiplus.h>
 
+#include "../common/DarkMenus.h"
 #include "PdfDocument.h"
 #include "Print.h"
 #include "OcrRun.h"
@@ -33,7 +34,7 @@ using std::min;
 #include "Lang_en.inc"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"1.9.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"1.9.1"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -3376,6 +3377,7 @@ LRESULT CALLBACK MainProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 } // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
+    darkmenus::Enable();
     lang::Add(kPdfEn);
     g.inst = inst;
     PdfDocument::SetFormRedrawHook(&FormRedrawHook);

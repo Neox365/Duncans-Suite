@@ -7,11 +7,13 @@
 
 #include <cwchar>
 
+#include "../common/DarkMenus.h"
 #include "CheckTask.h"
 #include "MainWindow.h"
 
 int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int showCommand)
 {
+    darkmenus::Enable();
     // Die App laeuft als Administrator: nachgeladene DLLs nur aus System32, nie aus dem (evtl. beschreibbaren) Programmordner
     SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32);
     if (cmdLine && wcsstr(cmdLine, L"--check") != nullptr)

@@ -24,6 +24,7 @@ using std::min;
 #include <propidl.h>
 #include <gdiplus.h>
 
+#include "../common/DarkMenus.h"
 #include "../src/Icons.h"
 #include "../common/ThemedBox.h"
 #include "../common/Theme.h"
@@ -31,7 +32,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.6.2"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -1304,6 +1305,7 @@ HWND MakeEdit(HWND parent, int id, DWORD style, int limit) {
 }  // namespace
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int show) {
+    darkmenus::Enable();
     const bool background = cmdLine && wcsstr(cmdLine, L"--background") != nullptr;
     HANDLE single = CreateMutexW(nullptr, TRUE, L"DuncansClip.Single");
     if (single && GetLastError() == ERROR_ALREADY_EXISTS) {
