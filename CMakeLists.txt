@@ -8,7 +8,7 @@ set(DOCS_VER "0.18.0")
 set(VAULT_VER "0.7.1")
 set(OFFICE_VER "0.9.1")
 set(QUICKCONVERT_VER "0.4.3")
-set(BOOST_VER "0.7.0")
+set(BOOST_VER "0.8.0")
 set(CLIP_VER "0.7.1")
 set(EQUALIZER_VER "0.15.1")
 
@@ -231,6 +231,8 @@ target_link_libraries(DuncansQuickConvert PRIVATE gdiplus windowscodecs mfplat m
 # ---- Duncan's Boost: Zock-Modus (Win32 + GDI, keine Administratorrechte; Logik in boost/BoostLogic) ----
 add_executable(DuncansBoost WIN32
     boost/ClipRec.cpp
+    boost/OverlayLogic.cpp
+    boost/OverlayWindow.cpp
     boost/main.cpp
     boost/BoostLogic.cpp
     boost/AudioFocus.cpp

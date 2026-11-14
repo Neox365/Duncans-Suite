@@ -33,6 +33,7 @@ using std::min;
 #include "AudioFocus.h"
 #include "Crosshair.h"
 #include "ClipRec.h"
+#include "Overlay.h"
 #include "Profiles.h"
 #include "LiveStats.h"
 
@@ -56,11 +57,13 @@ const COLORREF kBoost = RGB(255, 150, 50);          // Akzent dieses Programms (
 const wchar_t* kTitle = L"Duncan's Boost";
 const UINT WM_JOB_DONE = WM_APP + 1;
 const UINT WM_CLIP_SAVED = WM_APP + 2;               // wp = 1 gespeichert, lp = new std::wstring (Pfad oder Fehlertext)
+const UINT WM_OVERLAY_ACTION = WM_APP + 3;          // wp = OverlayAction
+const int kOverlayHotkeyId = 12;                    // Strg+Alt+O
 const int kClipHotkeyId = 11;                       // Strg+Alt+F7                // lp = JobResult*
-const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6, kTimerCross = 7, kTimerClip = 8;
+const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6, kTimerCross = 7, kTimerClip = 8, kTimerOverlay = 9;
 
 enum HitId { H_NONE = -1, H_HERO = 1000, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_ROW_BASE = 3000, H_GROUP = 5000 };
-enum RowType { R_CLIP_ON, R_CLIP_LEN, R_CLIP_FOLDER, R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_PROF_NEW, R_PROF, R_GROUP, R_HINT };
+enum RowType { R_OV_ON, R_OV_CORNER, R_OV_STATS, R_CLIP_ON, R_CLIP_LEN, R_CLIP_FOLDER, R_HEAD, R_APP_CLOSE, R_APP_GAME, R_AUTO, R_DUCK, R_MUTE, R_CROSS_ON, R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE, R_PROF_NEW, R_PROF, R_GROUP, R_HINT };
 
 struct Row {
     RowType type = R_HINT;
@@ -89,6 +92,13 @@ struct App {
     bool crossCollapsed = true;                   // "Fadenkreuz (optional)" ebenso
     bool clipCollapsed = true;                    // "Video-Clips (optional)" ebenso
     cliprec::Recorder rec;
+    boostmode::GameOverlay overlay;
+    bool ovCollapsed = true;
+    bool ovHotkeyOn = false;
+    std::wstring ovToast;
+    bool ovToastGood = true;
+    DWORD ovToastUntil = 0;
+    DWORD ovLastSample = 0;
     bool clipHotkeyOn = false;
     bool clipSaving = false;
     DWORD clipRetryAt = 0;
@@ -158,6 +168,8 @@ const wchar_t* kDuckTitle = L"Andere Programme leiser beim Spielen";
 const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Solange ein Spiel im Vordergrund ist, laufen Browser, Musik & Co. auf 40 % und sind sofort wieder normal, wenn du das Spiel verlässt. Discord, TeamSpeak & Co. bleiben unverändert.";
 const wchar_t* kClipTitle = L"Video-Clips: letzte Sekunden speichern";
 const wchar_t* kClipDesc = L"Boost nimmt den Hauptbildschirm im Hintergrund auf und bewahrt nur die letzten Sekunden; Strg+Alt+F7 speichert sie als MP4 in Videos\Boost-Clips. Es läuft nur, solange ein oben angehaktes Spiel vorne ist (ohne angehaktes Spiel immer). Nur Bild, kein Ton; im echten Vollbild bleibt das Bild eventuell schwarz. Kostet etwas Leistung.";
+const wchar_t* kOvTitle = L"Overlay im Spiel anzeigen";
+const wchar_t* kOvDesc = L"Eine kleine Statusleiste in einer Ecke zeigt Zock-Modus, laufende Aufnahme und Auslastung. Mit Strg+Alt+O öffnest du ein Panel: Clip speichern, Aufnahme an oder aus, Zock-Modus beenden, dazu Live-Werte. Es ist ein normales Fenster über dem Spiel (nichts wird in das Spiel eingeklinkt) und erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
 const wchar_t* kCrossTitle = L"Fadenkreuz über dem Spiel anzeigen";
 const wchar_t* kCrossDesc = L"Ein kleines Fadenkreuz in der Bildschirmmitte, nur über den oben angehakten Spielen (ist keines angehakt, immer). Es ist ein normales, durchklickbares Fenster und greift nicht in das Spiel ein. Es erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
 const wchar_t* kMuteTitle = L"Spiel stumm beim Wegschalten";
@@ -209,6 +221,12 @@ void BuildRows(HDC dc) {
     if (!g.crossCollapsed) {
         Row r; r.type = R_CROSS_ON; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kCrossDesc, textW) + S(14));
         for (RowType t : { R_CROSS_STYLE, R_CROSS_COLOR, R_CROSS_SIZE }) { Row c; c.type = t; add(c, S(52)); }
+    }
+
+    { Row r; r.type = R_GROUP; r.idx = 4; r.text = L"Overlay (optional)"; add(r, S(46)); }
+    if (!g.ovCollapsed) {
+        Row r; r.type = R_OV_ON; add(r, S(16) + S(24) + WrappedHeight(dc, g.fSmall, kOvDesc, textW) + S(14));
+        for (RowType t : { R_OV_CORNER, R_OV_STATS }) { Row c; c.type = t; add(c, S(52)); }
     }
 
     { Row r; r.type = R_GROUP; r.idx = 3; r.text = L"Video-Clips (optional)"; add(r, S(46)); }
@@ -566,8 +584,46 @@ void OpenClipFolder() {
     ShellExecuteW(nullptr, L"open", dir.c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 }
 
+void OverlayToast(const std::wstring& t, bool good) {
+    g.ovToast = t; g.ovToastGood = good; g.ovToastUntil = GetTickCount() + 4000;
+}
+
+// Overlay: alle 0,5 s Zustand sammeln und Leiste/Panel aktualisieren
+void OverlayTick() {
+    if (!g.cfg.optOverlay) {
+        if (g.overlay.PanelOpen()) g.overlay.SetPanelOpen(false);
+        boostmode::OverlayState off;
+        g.overlay.Update(false, off, nullptr, g.dpi);
+        if (g.ovHotkeyOn) { UnregisterHotKey(g.hwnd, kOverlayHotkeyId); g.ovHotkeyOn = false; }
+        return;
+    }
+    if (!g.ovHotkeyOn) g.ovHotkeyOn = RegisterHotKey(g.hwnd, kOverlayHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O') != 0;
+    if (!g.ovToast.empty() && GetTickCount() >= g.ovToastUntil) g.ovToast.clear();
+    boostmode::OverlayState st;
+    st.boostActive = g.state.active;
+    st.recording = g.rec.Running();
+    st.clipEnabled = g.cfg.optClip;
+    st.clipSeconds = g.cfg.clipSeconds;
+    st.showStats = g.cfg.overlayStats;
+    st.corner = g.cfg.overlayCorner;
+    st.toast = g.ovToast;
+    st.toastGood = g.ovToastGood;
+    const bool mainVisible = IsWindowVisible(g.hwnd) && !IsIconic(g.hwnd);
+    const bool bar = boostmode::OverlayHudVisible(g.cfg.gameApps, boostmode::ForegroundExe(), st);
+    if (!mainVisible && g.live && (bar || g.overlay.PanelOpen()) && (st.showStats || g.overlay.PanelOpen()) && GetTickCount() - g.ovLastSample >= 1000) {
+        g.cur = g.live->Sample();                      // ist das Boost-Fenster zu sehen, misst dessen eigener Takt
+        g.ovLastSample = GetTickCount();
+    }
+    st.live = g.cur;
+    HWND fgw = GetForegroundWindow();
+    g.overlay.Update(bar, st, MonitorFromWindow(fgw ? fgw : g.hwnd, MONITOR_DEFAULTTOPRIMARY), g.dpi);
+}
+
 void ActivateRow(const Row& r) {
-    if (r.type == R_CLIP_ON) { g.cfg.optClip = !g.cfg.optClip; SaveCfg(); ClipTick(); }
+    if (r.type == R_OV_ON) { g.cfg.optOverlay = !g.cfg.optOverlay; SaveCfg(); OverlayTick(); }
+    else if (r.type == R_OV_CORNER) { g.cfg.overlayCorner = boostmode::NextOverlayCorner(g.cfg.overlayCorner); SaveCfg(); OverlayTick(); }
+    else if (r.type == R_OV_STATS) { g.cfg.overlayStats = !g.cfg.overlayStats; SaveCfg(); OverlayTick(); }
+    else if (r.type == R_CLIP_ON) { g.cfg.optClip = !g.cfg.optClip; SaveCfg(); ClipTick(); }
     else if (r.type == R_CLIP_LEN) { g.cfg.clipSeconds = boostmode::NextClipSeconds(g.cfg.clipSeconds); SaveCfg(); if (g.rec.Running()) g.rec.Stop(); ClipTick(); }
     else if (r.type == R_CLIP_FOLDER) OpenClipFolder();
     else if (r.type == R_APP_CLOSE) { Toggle(g.cfg.closeApps, g.apps[r.idx].exe); SaveCfg(); }
@@ -722,8 +778,8 @@ void Paint(HDC dc, const RECT& cr) {
             continue;
         }
         if (r.type == R_GROUP) {
-            const bool collapsed = r.idx == 0 ? g.autoCollapsed : (r.idx == 1 ? g.crossCollapsed : (r.idx == 3 ? g.clipCollapsed : g.profCollapsed));
-            const bool grpOn = r.idx == 0 ? g.cfg.optAuto : (r.idx == 1 ? g.cfg.optCross : (r.idx == 3 ? g.cfg.optClip : !g.profiles.empty()));
+            const bool collapsed = r.idx == 0 ? g.autoCollapsed : (r.idx == 1 ? g.crossCollapsed : (r.idx == 3 ? g.clipCollapsed : (r.idx == 4 ? g.ovCollapsed : g.profCollapsed)));
+            const bool grpOn = r.idx == 0 ? g.cfg.optAuto : (r.idx == 1 ? g.cfg.optCross : (r.idx == 3 ? g.cfg.optClip : (r.idx == 4 ? g.cfg.optOverlay : !g.profiles.empty())));
             FillRound(dc, card, S(12), hot ? kCardHover : Blend(kCard, kBackground, 40), hot ? kBorderHot : kBorder);
             {
                 Gdiplus::Graphics gr(dc);
@@ -763,6 +819,13 @@ void Paint(HDC dc, const RECT& cr) {
                       std::to_wstring(p.paths.size()) + (p.paths.size() == 1 ? L" Programm" : L" Programme"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
+        if (r.type == R_OV_CORNER || r.type == R_OV_STATS) {
+            FillRound(dc, card, S(14), hot ? kCardHover : kCard, hot ? kBorderHot : kBorder);
+            DrawText2(dc, g.fBold, kText, { card.left + pad, card.top, card.left + pad + S(200), card.bottom }, r.type == R_OV_CORNER ? L"Ecke" : L"Auslastung zeigen", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+            DrawText2(dc, g.fBold, kBoost, { card.left + pad + S(200), card.top, card.right - pad, card.bottom },
+                      r.type == R_OV_CORNER ? std::wstring(boostmode::OverlayCornerName(g.cfg.overlayCorner)) : std::wstring(g.cfg.overlayStats ? L"an" : L"aus"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            continue;
+        }
         if (r.type == R_CLIP_LEN || r.type == R_CLIP_FOLDER) {
             FillRound(dc, card, S(14), hot ? kCardHover : kCard, hot ? kBorderHot : kBorder);
             DrawText2(dc, g.fBold, kText, { card.left + pad, card.top, card.left + pad + S(160), card.bottom }, r.type == R_CLIP_LEN ? L"Rückblick" : L"Clip-Ordner", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
@@ -786,10 +849,10 @@ void Paint(HDC dc, const RECT& cr) {
             DrawText2(dc, g.fBold, kBoost, { card.left + pad + S(120), card.top, right, card.bottom }, val, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
             continue;
         }
-        if (r.type == R_AUTO || r.type == R_DUCK || r.type == R_MUTE || r.type == R_CROSS_ON || r.type == R_CLIP_ON) {
-            const bool v = r.type == R_AUTO ? g.cfg.optAuto : (r.type == R_DUCK ? g.cfg.optDuck : (r.type == R_MUTE ? g.cfg.optMuteGame : (r.type == R_CLIP_ON ? g.cfg.optClip : g.cfg.optCross)));
-            const wchar_t* title = r.type == R_AUTO ? kAutoTitle : (r.type == R_DUCK ? kDuckTitle : (r.type == R_MUTE ? kMuteTitle : (r.type == R_CLIP_ON ? kClipTitle : kCrossTitle)));
-            const wchar_t* desc = r.type == R_AUTO ? kAutoDesc : (r.type == R_DUCK ? kDuckDesc : (r.type == R_MUTE ? kMuteDesc : (r.type == R_CLIP_ON ? kClipDesc : kCrossDesc)));
+        if (r.type == R_AUTO || r.type == R_DUCK || r.type == R_MUTE || r.type == R_CROSS_ON || r.type == R_CLIP_ON || r.type == R_OV_ON) {
+            const bool v = r.type == R_AUTO ? g.cfg.optAuto : (r.type == R_DUCK ? g.cfg.optDuck : (r.type == R_MUTE ? g.cfg.optMuteGame : (r.type == R_CLIP_ON ? g.cfg.optClip : (r.type == R_OV_ON ? g.cfg.optOverlay : g.cfg.optCross))));
+            const wchar_t* title = r.type == R_AUTO ? kAutoTitle : (r.type == R_DUCK ? kDuckTitle : (r.type == R_MUTE ? kMuteTitle : (r.type == R_CLIP_ON ? kClipTitle : (r.type == R_OV_ON ? kOvTitle : kCrossTitle))));
+            const wchar_t* desc = r.type == R_AUTO ? kAutoDesc : (r.type == R_DUCK ? kDuckDesc : (r.type == R_MUTE ? kMuteDesc : (r.type == R_CLIP_ON ? kClipDesc : (r.type == R_OV_ON ? kOvDesc : kCrossDesc))));
             const int textW = cardW - pad * 2 - S(64) - S(16);
             FillRound(dc, card, S(14), hot ? kCardHover : kCard, v ? Blend(kBorder, kBoost, 55) : (hot ? kBorderHot : kBorder));
             DrawText2(dc, g.fBold, kText, { card.left + pad, card.top + S(14), card.left + pad + textW, card.top + S(14) + S(24) }, title);
@@ -860,8 +923,8 @@ void Activate(int id) {
     if (id == H_MODAL_OK) { CloseModal(true); return; }
     if (id == H_MODAL_CANCEL) { CloseModal(false); return; }
     if (g.modal.open) return;
-    if (id >= H_GROUP && id <= H_GROUP + 3) {
-        bool& collapsed = id == H_GROUP ? g.autoCollapsed : (id == H_GROUP + 1 ? g.crossCollapsed : (id == H_GROUP + 3 ? g.clipCollapsed : g.profCollapsed));
+    if (id >= H_GROUP && id <= H_GROUP + 4) {
+        bool& collapsed = id == H_GROUP ? g.autoCollapsed : (id == H_GROUP + 1 ? g.crossCollapsed : (id == H_GROUP + 3 ? g.clipCollapsed : (id == H_GROUP + 4 ? g.ovCollapsed : g.profCollapsed)));
         collapsed = !collapsed;
         g.hover = H_NONE;
         Layout();
@@ -954,12 +1017,21 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         else if (wp == kTimerAudio) AudioTick();
         else if (wp == kTimerCross) CrossTick();
         else if (wp == kTimerClip) ClipTick();
+        else if (wp == kTimerOverlay) OverlayTick();
         return 0;
     case WM_ENDSESSION:
         if (wp) RestoreAudio();
         return 0;
     case WM_HOTKEY:
         if (wp == kClipHotkeyId) SaveClipNow();
+        else if (wp == kOverlayHotkeyId) { g.overlay.SetPanelOpen(!g.overlay.PanelOpen()); OverlayTick(); }
+        return 0;
+    case WM_OVERLAY_ACTION:
+        if (wp == boostmode::OA_CLOSE) g.overlay.SetPanelOpen(false);
+        else if (wp == boostmode::OA_END_BOOST) { if (g.state.active && !g.busy) StartJob(false, false); }
+        else if (wp == boostmode::OA_SAVE_CLIP) SaveClipNow();
+        else if (wp == boostmode::OA_TOGGLE_REC) { g.cfg.optClip = !g.cfg.optClip; SaveCfg(); ClipTick(); }
+        OverlayTick();
         return 0;
     case WM_CLIP_SAVED: {
         std::unique_ptr<std::wstring> text(reinterpret_cast<std::wstring*>(lp));
@@ -968,10 +1040,12 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             MessageBeep(MB_OK);
             const size_t k = text->find_last_of(L"\\");
             SetStatus(L"Clip gespeichert: " + (k == std::wstring::npos ? *text : text->substr(k + 1)), kGreen);
-        } else SetStatus(L"Clip konnte nicht gespeichert werden: " + *text, kRed);
+            OverlayToast(L"Clip gespeichert", true);
+        } else { SetStatus(L"Clip konnte nicht gespeichert werden: " + *text, kRed); OverlayToast(L"Clip nicht gespeichert", false); }
+        OverlayTick();
         return 0;
     }
-    case WM_DESTROY: g.rec.Stop(); if (g.clipHotkeyOn) UnregisterHotKey(hwnd, kClipHotkeyId); RestoreAudio(); g.cross.Destroy(); PostQuitMessage(0); return 0;
+    case WM_DESTROY: g.overlay.Destroy(); if (g.ovHotkeyOn) UnregisterHotKey(hwnd, kOverlayHotkeyId); g.rec.Stop(); if (g.clipHotkeyOn) UnregisterHotKey(hwnd, kClipHotkeyId); RestoreAudio(); g.cross.Destroy(); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
@@ -1027,6 +1101,8 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR, int show) {
     SetTimer(g.hwnd, kTimerAudio, 700, nullptr);
     SetTimer(g.hwnd, kTimerCross, 500, nullptr);
     SetTimer(g.hwnd, kTimerClip, 1500, nullptr);
+    SetTimer(g.hwnd, kTimerOverlay, 500, nullptr);
+    g.overlay.SetActionHandler([](int a) { PostMessageW(g.hwnd, WM_OVERLAY_ACTION, static_cast<WPARAM>(a), 0); });
     ShowWindow(g.hwnd, show);
     UpdateWindow(g.hwnd);
 
