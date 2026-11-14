@@ -356,6 +356,31 @@ std::vector<std::wstring> SuggestedHelpers() {
     return { L"onedrive.exe", L"dropbox.exe", L"googledrivefs.exe", L"teams.exe", L"ms-teams.exe", L"skype.exe", L"slack.exe" };
 }
 
+int ClampClipSeconds(int s)
+{
+    int best = kClipLengths[1];
+    int bestDist = 1 << 30;
+    for (int v : kClipLengths) {
+        const int d = s > v ? s - v : v - s;
+        if (d < bestDist) { bestDist = d; best = v; }
+    }
+    return best;
+}
+
+int NextClipSeconds(int s)
+{
+    s = ClampClipSeconds(s);
+    for (int i = 0; i < 3; ++i)
+        if (kClipLengths[i] == s) return kClipLengths[(i + 1) % 3];
+    return kClipLengths[1];
+}
+
+bool ClipShouldRecord(const std::vector<std::wstring>& gameExes, const std::wstring& foregroundExe)
+{
+    if (gameExes.empty()) return true;
+    return !foregroundExe.empty() && std::find(gameExes.begin(), gameExes.end(), foregroundExe) != gameExes.end();
+}
+
 Settings LoadSettings() {
     Settings s;
     const std::wstring f = IniPath(L"settings.ini");
@@ -371,6 +396,8 @@ Settings LoadSettings() {
     s.crossStyle = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"CrossStyle", L"0").c_str(), nullptr, 10));
     s.crossColor = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"CrossColor", L"0").c_str(), nullptr, 10));
     s.crossSize = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"CrossSize", L"1").c_str(), nullptr, 10));
+    s.optClip = ReadIni(f, L"Settings", L"Clip", L"0") == L"1";
+    s.clipSeconds = ClampClipSeconds(static_cast<int>(wcstol(ReadIni(f, L"Settings", L"ClipSeconds", L"30").c_str(), nullptr, 10)));
     return s;
 }
 
@@ -388,6 +415,8 @@ bool SaveSettings(const Settings& s) {
     ok &= WriteIni(f, L"Settings", L"CrossStyle", std::to_wstring(s.crossStyle));
     ok &= WriteIni(f, L"Settings", L"CrossColor", std::to_wstring(s.crossColor));
     ok &= WriteIni(f, L"Settings", L"CrossSize", std::to_wstring(s.crossSize));
+    ok &= WriteIni(f, L"Settings", L"Clip", s.optClip ? L"1" : L"0");
+    ok &= WriteIni(f, L"Settings", L"ClipSeconds", std::to_wstring(ClampClipSeconds(s.clipSeconds)));
     return ok;
 }
 

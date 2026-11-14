@@ -115,6 +115,8 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.7.0 | 2026-11-14
+- Neu: Video-Clips (Gruppe „Video-Clips (optional)“, standardmäßig aus). Boost nimmt den Hauptbildschirm im Hintergrund auf und behält nur die letzten 15, 30 oder 60 Sekunden; mit Strg+Alt+F7 speicherst du sie als MP4-Datei in „Videos\Boost-Clips“, ein Ton und eine Meldung bestätigen das. Ist oben unter „Automatik“ ein Spiel angehakt, läuft die Aufnahme nur, solange es vorne ist; sonst immer. Das ist die erste Stufe: nur Bild, kein Ton, nur der Hauptbildschirm. Spiele im echten Vollbild können ein schwarzes Bild liefern; im Fenster- oder randlosen Modus geht es. Die Aufnahme kostet Leistung (auf einem Testrechner mit 1440p etwa einen Prozessorkern); der Rest liegt nur kurz im Temp-Ordner und wird laufend gelöscht.
 ## 0.6.2 | 2026-11-14
 - Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 0.6.1 | 2026-11-09

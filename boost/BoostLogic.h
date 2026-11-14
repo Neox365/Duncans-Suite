@@ -74,7 +74,14 @@ struct Settings {
     bool optMuteGame = false;             // Ton: Spiel stumm, solange es nicht im Vordergrund ist
     bool optCross = false;                // Fadenkreuz-Overlay
     int crossStyle = 0, crossColor = 0, crossSize = 1;
+    bool optClip = false;                 // Video-Clips: Rueckblick-Aufnahme (letzte Sekunden per Tastenkuerzel speichern)
+    int clipSeconds = 30;                 // Rueckblick: 15, 30 oder 60 Sekunden
 };
+constexpr int kClipLengths[3] = { 15, 30, 60 };
+int ClampClipSeconds(int s);              // auf den naechsten erlaubten Wert (15/30/60)
+int NextClipSeconds(int s);               // 15 -> 30 -> 60 -> 15
+// Soll gerade aufgenommen werden? Sind Spiele angehakt: nur wenn eines im Vordergrund ist; sonst immer.
+bool ClipShouldRecord(const std::vector<std::wstring>& gameExes, const std::wstring& foregroundExe);
 
 // Zustand waehrend aktivem Zock-Modus (ueberlebt Abstuerze: beim naechsten Start laesst sich alles wiederherstellen)
 struct State {
