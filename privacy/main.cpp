@@ -27,12 +27,13 @@ using std::min;
 #include "../src/Icons.h"
 #include "../src/SuiteSafety.h"
 #include "PrivacyRules.h"
+#include "Connections.h"
 #include "../common/Theme.h"
 #include "../common/Gfx.h"
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.12.1"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.13.0"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -53,7 +54,7 @@ const wchar_t* kTitle = L"Duncan's Privacy Shield";
 const UINT WM_RP_DONE = WM_APP + 1;     // Wiederherstellungspunkt fertig (wp = Erfolg)
 const UINT WM_JOB_DONE = WM_APP + 2;    // Hintergrund-Auftrag fertig (lp = JobResult*)
 
-enum HitId { H_NONE = -1, H_ALL = 1000, H_RESTORE = 1001, H_RP = 1002, H_FOLDER = 1003, H_ABOUT = 1004, H_REC = 1005, H_REAPPLY = 1006, H_WATCH = 1007, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_INFO_BASE = 3000, H_GROUP_BASE = 5000 };
+enum HitId { H_NONE = -1, H_ALL = 1000, H_RESTORE = 1001, H_RP = 1002, H_FOLDER = 1003, H_ABOUT = 1004, H_REC = 1005, H_REAPPLY = 1006, H_WATCH = 1007, H_NET = 1008, H_NET_BACK = 1009, H_MODAL_OK = 2000, H_MODAL_CANCEL = 2001, H_INFO_BASE = 3000, H_GROUP_BASE = 5000 };
 
 struct Row {
     bool group = false;
@@ -81,6 +82,10 @@ struct App {
     int scroll = 0, contentH = 0;
     RECT list{}, btnAll{}, btnRestore{}, btnRp{}, folderLink{}, toolbar{}, footer{}, aboutLink{};
     RECT btnRec{}, banner{}, btnReapply{}, watchRc{}, watchToggle{};
+    bool net = false;                  // Verbindungsuebersicht statt Einstellungsliste
+    std::vector<conn::Group> netGroups;
+    int netScroll = 0, netContentH = 0;
+    RECT netLink{}, netBack{}, netList{};
     std::vector<int> missing;          // Indizes in AllSettings(): gewuenscht, aber von Windows zurueckgesetzt
     bool watchOn = false;              // geplante Aufgabe "Schutz erneuern" ist eingerichtet
     aboutgdi::State about;             // "Ueber"-Kachelansicht im Fenster
@@ -675,6 +680,61 @@ void Paint(HDC dc, RECT cr) {
     }
     RestoreDC(dc, -1);
 
+    if (g.net) {                                          // Verbindungsuebersicht ueber Werkzeugzeile und Liste
+        RECT cover{ 0, S(96), cr.right, g.footer.top - S(2) };
+        HBRUSH nb = CreateSolidBrush(kBackground);
+        FillRect(dc, &cover, nb);
+        DeleteObject(nb);
+        const int m = S(28);
+        const int bw = TextWidth(dc, g.fBold, L"Zurück") + S(36);
+        g.netBack = { cr.right - m - bw, S(104), cr.right - m, S(104) + S(40) };
+        DrawButton(dc, g.netBack, L"Zurück", false, g.hover == H_NET_BACK, g.press == H_NET_BACK && g.hover == H_NET_BACK, true);
+        DrawText2(dc, g.fHead, kText, { m, S(104), g.netBack.left - S(12), S(104) + S(24) }, L"Verbindungen", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        int total = 0, inet = 0;
+        for (const conn::Group& gr : g.netGroups) { total += gr.total; inet += gr.internet; }
+        DrawText2(dc, g.fSmall, kTextDim, { m, S(130), g.netBack.left - S(12), S(104) + S(40) },
+                  std::to_wstring(g.netGroups.size()) + L" Programme, " + std::to_wstring(inet) + L" Verbindungen ins Internet, " + std::to_wstring(total - inet) + L" im Heimnetz",
+                  DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        const int hintTop = S(104) + S(50);
+        const std::wstring hint = L"Nur Anzeige: Das sind die gerade offenen Verbindungen, aktualisiert alle paar Sekunden. Nichts wird blockiert oder verändert. Ein Programm hier zu sehen heißt nicht, dass etwas Schlimmes passiert; Browser, Updates und Spiele sind normal.";
+        const int hh = WrappedHeight(dc, g.fSmall, hint, cr.right - 2 * m);
+        DrawText2(dc, g.fSmall, kTextDim, { m, hintTop, cr.right - m, hintTop + hh }, hint, DT_LEFT | DT_TOP | DT_WORDBREAK);
+        g.netList = { m, hintTop + hh + S(12), cr.right - m, g.footer.top - S(6) };
+        SaveDC(dc);
+        IntersectClipRect(dc, g.netList.left - S(4), g.netList.top, g.netList.right + S(4), g.netList.bottom);
+        const int cardW = g.netList.right - g.netList.left - S(14), rowH = S(62), gap = S(8);
+        int y = 0;
+        if (g.netGroups.empty())
+            DrawText2(dc, g.fBody, kTextDim, { g.netList.left + S(6), g.netList.top + S(6), g.netList.right, g.netList.bottom }, L"Gerade hat kein Programm eine offene Verbindung.", DT_LEFT | DT_TOP | DT_WORDBREAK);
+        for (const conn::Group& gr : g.netGroups) {
+            const int top = g.netList.top + y - g.netScroll;
+            y += rowH + gap;
+            if (top + rowH < g.netList.top || top > g.netList.bottom) continue;
+            RECT card{ g.netList.left, top, g.netList.left + cardW, top + rowH };
+            FillRound(dc, card, S(14), kCard, kBorder);
+            const std::wstring count = gr.internet > 0 ? std::to_wstring(gr.internet) + (gr.internet == 1 ? L" ins Internet" : L" ins Internet")
+                                                       : std::wstring(L"nur Heimnetz");
+            const std::wstring extra = gr.total > gr.internet && gr.internet > 0 ? L" · " + std::to_wstring(gr.total - gr.internet) + L" Heimnetz" : std::wstring();
+            const int cw = TextWidth(dc, g.fSmall, count + extra) + S(8);
+            DrawText2(dc, g.fBold, kText, { card.left + S(18), card.top + S(8), card.right - S(18) - cw, card.top + S(32) }, gr.process, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            DrawText2(dc, g.fSmall, gr.internet > 0 ? kViolet : kTextDim, { card.right - S(18) - cw, card.top + S(8), card.right - S(18), card.top + S(32) }, count + extra, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+            std::wstring samples;
+            for (size_t i = 0; i < gr.samples.size(); ++i) samples += (i ? L"   " : L"") + gr.samples[i];
+            if (gr.total > static_cast<int>(gr.samples.size())) samples += L"   …";
+            DrawText2(dc, g.fSmall, kTextDim, { card.left + S(18), card.top + S(33), card.right - S(18), card.bottom - S(6) }, samples, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        }
+        g.netContentH = std::max(0, y - gap);
+        const int nview = g.netList.bottom - g.netList.top;
+        if (g.netContentH > nview) {
+            const int trackH = nview - S(4);
+            const int thumbH = std::max(S(36), trackH * nview / g.netContentH);
+            const int thumbY = g.netList.top + S(2) + (trackH - thumbH) * g.netScroll / std::max(1, g.netContentH - nview);
+            RECT th{ g.netList.right - S(6), thumbY, g.netList.right - S(2), thumbY + thumbH };
+            FillRound(dc, th, S(4), Blend(kBackground, RGB(255, 255, 255), 24), Blend(kBackground, RGB(255, 255, 255), 24));
+        }
+        RestoreDC(dc, -1);
+    }
+
     // Fusszeile: Urheber/Version links, Status rechts
     {
         const std::wstring base = L"© 2026 Duncan · v" APP_VERSION L"  ·  ";
@@ -682,8 +742,13 @@ void Paint(HDC dc, RECT cr) {
         DrawText2(dc, g.fSmall, kTextDim, { g.footer.left, g.footer.top, g.footer.left + bw, g.footer.bottom }, base, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
         g.aboutLink = { g.footer.left + bw, g.footer.top, g.footer.left + bw + lw + S(2), g.footer.bottom };
         DrawText2(dc, g.fSmall, g.hover == H_ABOUT ? kAccent : kText, g.aboutLink, L"Über", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        const int sw = TextWidth(dc, g.fSmall, L"  ·  ");
+        DrawText2(dc, g.fSmall, kTextDim, { g.aboutLink.right, g.footer.top, g.aboutLink.right + sw, g.footer.bottom }, L"  ·  ", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        const int nw = TextWidth(dc, g.fSmall, L"Verbindungen");
+        g.netLink = { g.aboutLink.right + sw, g.footer.top, g.aboutLink.right + sw + nw + S(2), g.footer.bottom };
+        DrawText2(dc, g.fSmall, g.net || g.hover == H_NET ? kAccent : kText, g.netLink, L"Verbindungen", DT_LEFT | DT_VCENTER | DT_SINGLELINE);
     }
-    DrawText2(dc, g.fSmall, g.statusColor, { g.aboutLink.right + S(24), g.footer.top, g.folderLink.left - S(12), g.footer.bottom }, g.status,
+    DrawText2(dc, g.fSmall, g.statusColor, { g.netLink.right + S(24), g.footer.top, g.folderLink.left - S(12), g.footer.bottom }, g.status,
               DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
     {   // Link "Sicherung / Ordner oeffnen" mit kleinem Ordner-Symbol: oeffnet %ProgramData%\DuncansSuite\Backups im Explorer
         const bool hot = !busy && g.hover == H_FOLDER;
@@ -737,6 +802,8 @@ int HitTest(POINT p) {
         if (g.modalCancel.right > g.modalCancel.left && PtInRect(&g.modalCancel, p)) return H_MODAL_CANCEL;
         return H_NONE;
     }
+    if (g.net && PtInRect(&g.netBack, p)) return H_NET_BACK;
+    if (PtInRect(&g.netLink, p)) return H_NET;
     if (PtInRect(&g.aboutLink, p)) return H_ABOUT;
     if (PtInRect(&g.btnRec, p)) return H_REC;
     if (g.banner.right > g.banner.left && PtInRect(&g.btnReapply, p)) return H_REAPPLY;
@@ -767,8 +834,28 @@ int HitTest(POINT p) {
 }
 
 void Scroll(int delta) {
+    if (g.net) {
+        const int nv = g.netList.bottom - g.netList.top;
+        g.netScroll = std::clamp(g.netScroll + delta, 0, std::max(0, g.netContentH - nv));
+        InvalidateRect(g.hwnd, nullptr, FALSE);
+        return;
+    }
     const int view = g.list.bottom - g.list.top;
     g.scroll = std::clamp(g.scroll + delta, 0, std::max(0, g.contentH - view));
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
+void RefreshNet() {
+    g.netGroups = conn::GroupByProcess(conn::Snapshot());
+    InvalidateRect(g.hwnd, nullptr, FALSE);
+}
+
+void ToggleNet() {
+    g.net = !g.net;
+    g.netScroll = 0;
+    g.hover = H_NONE;
+    if (g.net) { RefreshNet(); SetTimer(g.hwnd, 3, 2500, nullptr); }
+    else KillTimer(g.hwnd, 3);
     InvalidateRect(g.hwnd, nullptr, FALSE);
 }
 
@@ -776,6 +863,8 @@ void Activate(int id) {
     if (id == H_MODAL_OK) CloseModal(true);
     else if (id == H_MODAL_CANCEL) CloseModal(false);
     else if (g.modal.open) return;
+    else if (id == H_NET || id == H_NET_BACK) ToggleNet();
+    else if (g.net && id != H_ABOUT && id != H_FOLDER) return;
     else if (id >= H_GROUP_BASE) {                     // Gruppe auf-/zuklappen
         for (const Row& r : g.rows)
             if (r.group && r.groupIdx == id - H_GROUP_BASE) {
@@ -874,6 +963,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_MOUSEWHEEL: Scroll(-GET_WHEEL_DELTA_WPARAM(wp) * S(60) / 120); return 0;
     case WM_KEYDOWN:
         if (g.modal.open) { if (wp == VK_ESCAPE) CloseModal(false); else if (wp == VK_RETURN) CloseModal(true); return 0; }
+        if (g.net && wp == VK_ESCAPE) { ToggleNet(); return 0; }
+        if (g.net) { const int nv = g.netList.bottom - g.netList.top; if (wp == VK_NEXT) Scroll(nv); else if (wp == VK_PRIOR) Scroll(-nv); }
         if (wp == VK_DOWN) Scroll(S(60)); else if (wp == VK_UP) Scroll(-S(60));
         else if (wp == VK_NEXT) Scroll(g.list.bottom - g.list.top); else if (wp == VK_PRIOR) Scroll(-(g.list.bottom - g.list.top));
         else if (wp == VK_HOME) Scroll(-g.contentH); else if (wp == VK_END) Scroll(g.contentH);
@@ -882,9 +973,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_JOB_DONE: OnJobDone(reinterpret_cast<JobResult*>(lp)); return 0;
     case WM_TIMER:
         if (wp == 1) OnRestorePointDone(false, L"Zeitüberschreitung: Der Systemschutz antwortet nicht.");
+        else if (wp == 3) { if (g.net && !g.about.open) RefreshNet(); }
         else if (wp == 2) { g.spin = (g.spin + 30) % 360; InvalidateRect(hwnd, &g.toolbar, FALSE); }
         return 0;
-    case WM_DESTROY: PostQuitMessage(0); return 0;
+    case WM_DESTROY: KillTimer(hwnd, 3); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
