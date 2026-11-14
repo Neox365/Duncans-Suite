@@ -398,6 +398,10 @@ Settings LoadSettings() {
     s.crossSize = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"CrossSize", L"1").c_str(), nullptr, 10));
     s.optClip = ReadIni(f, L"Settings", L"Clip", L"0") == L"1";
     s.clipSeconds = ClampClipSeconds(static_cast<int>(wcstol(ReadIni(f, L"Settings", L"ClipSeconds", L"30").c_str(), nullptr, 10)));
+    s.optOverlay = ReadIni(f, L"Settings", L"Overlay", L"0") == L"1";
+    s.overlayCorner = static_cast<int>(wcstol(ReadIni(f, L"Settings", L"OverlayCorner", L"1").c_str(), nullptr, 10));
+    if (s.overlayCorner < 0 || s.overlayCorner > 3) s.overlayCorner = 1;
+    s.overlayStats = ReadIni(f, L"Settings", L"OverlayStats", L"1") != L"0";
     return s;
 }
 
@@ -417,6 +421,9 @@ bool SaveSettings(const Settings& s) {
     ok &= WriteIni(f, L"Settings", L"CrossSize", std::to_wstring(s.crossSize));
     ok &= WriteIni(f, L"Settings", L"Clip", s.optClip ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"ClipSeconds", std::to_wstring(ClampClipSeconds(s.clipSeconds)));
+    ok &= WriteIni(f, L"Settings", L"Overlay", s.optOverlay ? L"1" : L"0");
+    ok &= WriteIni(f, L"Settings", L"OverlayCorner", std::to_wstring(s.overlayCorner < 0 || s.overlayCorner > 3 ? 1 : s.overlayCorner));
+    ok &= WriteIni(f, L"Settings", L"OverlayStats", s.overlayStats ? L"1" : L"0");
     return ok;
 }
 

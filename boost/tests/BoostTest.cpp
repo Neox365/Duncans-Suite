@@ -3,6 +3,7 @@
 #include "../BoostLogic.h"
 #include "../AudioFocus.h"
 #include "../Crosshair.h"
+#include "../Overlay.h"
 #include "../Profiles.h"
 
 #include <shellapi.h>
@@ -152,6 +153,29 @@ static void ProfileTests() {
     const std::vector<Profile> back = LoadProfiles();
     CHECK(back.size() == 2 && back[0].name == L"Arbeit" && back[0].paths == all[0].paths && back[1].paths == all[1].paths);
     CHECK(SaveProfiles({}) && LoadProfiles().empty());
+}
+
+static void OverlayTests() {
+    CHECK(ClampOverlayCorner(-1) == 1 && ClampOverlayCorner(9) == 1 && ClampOverlayCorner(0) == 0 && ClampOverlayCorner(3) == 3);
+    CHECK(NextOverlayCorner(0) == 1 && NextOverlayCorner(3) == 0 && NextOverlayCorner(42) == 2);
+    CHECK(std::wstring(OverlayCornerName(0)) == L"oben links" && std::wstring(OverlayCornerName(3)) == L"unten rechts");
+    const std::vector<std::wstring> games = { L"game.exe" };
+    OverlayState s;
+    CHECK(!OverlayHudVisible({}, L"chrome.exe", s));                                   // nichts anzuzeigen
+    s.recording = true;
+    CHECK(OverlayHudVisible({}, L"chrome.exe", s));
+    s.recording = false; s.boostActive = true;
+    CHECK(OverlayHudVisible({}, L"", s) && OverlayHudVisible(games, L"chrome.exe", s));  // Zock-Modus laeuft: immer
+    s.boostActive = false;
+    CHECK(OverlayHudVisible(games, L"game.exe", s) && !OverlayHudVisible(games, L"chrome.exe", s) && !OverlayHudVisible(games, L"", s));
+    s.toast = L"Clip gespeichert";
+    CHECK(OverlayHudVisible(games, L"chrome.exe", s) && OverlayHudVisible({}, L"", s));   // Meldung immer
+    Live l;
+    CHECK(StatsLine(l).empty());
+    l.cpu = 23; l.gpu = 31; l.gpuTemp = 54;
+    CHECK(StatsLine(l) == L"CPU 23 %   GPU 31 %   54 \u00B0C");
+    l.gpuTemp = -1; l.cpu = -1;
+    CHECK(StatsLine(l) == L"GPU 31 %");
 }
 
 static void ClipTests() {
@@ -325,6 +349,7 @@ int main() {
     CrosshairTests();
     ProfileTests();
     ClipTests();
+    OverlayTests();
     std::printf("%d bestanden, %d fehlgeschlagen\n", g_pass, g_fail);
     return g_fail ? 1 : 0;
 }

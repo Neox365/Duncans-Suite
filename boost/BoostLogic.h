@@ -76,6 +76,9 @@ struct Settings {
     int crossStyle = 0, crossColor = 0, crossSize = 1;
     bool optClip = false;                 // Video-Clips: Rueckblick-Aufnahme (letzte Sekunden per Tastenkuerzel speichern)
     int clipSeconds = 30;                 // Rueckblick: 15, 30 oder 60 Sekunden
+    bool optOverlay = false;              // Overlay im Spiel (Statusleiste + Panel)
+    int overlayCorner = 1;                // 0 oben links, 1 oben rechts, 2 unten links, 3 unten rechts
+    bool overlayStats = true;             // Auslastung in der Statusleiste
 };
 constexpr int kClipLengths[3] = { 15, 30, 60 };
 int ClampClipSeconds(int s);              // auf den naechsten erlaubten Wert (15/30/60)
