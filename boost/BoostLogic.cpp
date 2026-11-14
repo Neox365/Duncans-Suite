@@ -356,6 +356,16 @@ std::vector<std::wstring> SuggestedHelpers() {
     return { L"onedrive.exe", L"dropbox.exe", L"googledrivefs.exe", L"teams.exe", L"ms-teams.exe", L"skype.exe", L"slack.exe" };
 }
 
+bool GetMouseAccel(int v[3]) { return SystemParametersInfoW(SPI_GETMOUSE, 0, v, 0) != 0; }
+
+bool SetMouseAccel(const int v[3])
+{
+    int tmp[3] = { v[0], v[1], v[2] };
+    return SystemParametersInfoW(SPI_SETMOUSE, 0, tmp, 0) != 0;        // ohne SPIF_UPDATEINIFILE: gilt nur fuer die laufende Sitzung
+}
+
+void MouseAccelOff(const int cur[3], int out[3]) { out[0] = cur[0]; out[1] = cur[1]; out[2] = 0; }
+
 int ClampClipAudio(int a) { return a < 0 || a > 2 ? 0 : a; }
 
 const wchar_t* ClipAudioName(int a)
@@ -396,6 +406,7 @@ Settings LoadSettings() {
     s.gameApps = Split(ReadIni(f, L"Settings", L"GameApps"));
     s.optPower = ReadIni(f, L"Settings", L"Power", L"1") == L"1";
     s.optToast = ReadIni(f, L"Settings", L"Toast", L"0") == L"1";
+    s.optMouse = ReadIni(f, L"Settings", L"Mouse", L"0") == L"1";
     s.optAuto = ReadIni(f, L"Settings", L"Auto", L"0") == L"1";
     s.optRestart = ReadIni(f, L"Settings", L"Restart", L"1") == L"1";
     s.optDuck = ReadIni(f, L"Settings", L"Duck", L"0") == L"1";
@@ -420,6 +431,7 @@ bool SaveSettings(const Settings& s) {
     ok &= WriteIni(f, L"Settings", L"GameApps", Join(s.gameApps));
     ok &= WriteIni(f, L"Settings", L"Power", s.optPower ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"Toast", s.optToast ? L"1" : L"0");
+    ok &= WriteIni(f, L"Settings", L"Mouse", s.optMouse ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"Auto", s.optAuto ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"Restart", s.optRestart ? L"1" : L"0");
     ok &= WriteIni(f, L"Settings", L"Duck", s.optDuck ? L"1" : L"0");
@@ -444,6 +456,8 @@ State LoadState() {
     s.auto_ = ReadIni(f, L"State", L"Auto", L"0") == L"1";
     s.powerChanged = ReadIni(f, L"State", L"PowerChanged", L"0") == L"1" && GuidFromString(ReadIni(f, L"State", L"PrevScheme"), s.prevScheme);
     s.toastChanged = ReadIni(f, L"State", L"ToastChanged", L"0") == L"1";
+    s.mouseChanged = ReadIni(f, L"State", L"MouseChanged", L"0") == L"1";
+    for (int i = 0; i < 3; ++i) s.prevMouse[i] = static_cast<int>(wcstol(ReadIni(f, L"State", (L"PrevMouse" + std::to_wstring(i)).c_str(), L"0").c_str(), nullptr, 10));
     s.prevToast.exists = ReadIni(f, L"State", L"PrevToastExists", L"0") == L"1";
     s.prevToast.value = static_cast<DWORD>(wcstoul(ReadIni(f, L"State", L"PrevToast", L"1").c_str(), nullptr, 10));
     s.gameMask = static_cast<unsigned>(wcstoul(ReadIni(f, L"State", L"GameMask", L"0").c_str(), nullptr, 10));
@@ -462,6 +476,8 @@ bool SaveState(const State& s) {
     ok &= WriteIni(f, L"State", L"PowerChanged", s.powerChanged ? L"1" : L"0");
     ok &= WriteIni(f, L"State", L"PrevScheme", s.powerChanged ? GuidToString(s.prevScheme) : L"");
     ok &= WriteIni(f, L"State", L"ToastChanged", s.toastChanged ? L"1" : L"0");
+    ok &= WriteIni(f, L"State", L"MouseChanged", s.mouseChanged ? L"1" : L"0");
+    for (int i = 0; i < 3; ++i) ok &= WriteIni(f, L"State", (L"PrevMouse" + std::to_wstring(i)).c_str(), std::to_wstring(s.prevMouse[i]));
     ok &= WriteIni(f, L"State", L"PrevToastExists", s.prevToast.exists ? L"1" : L"0");
     ok &= WriteIni(f, L"State", L"PrevToast", std::to_wstring(s.prevToast.value));
     ok &= WriteIni(f, L"State", L"GameMask", std::to_wstring(s.gameMask));
@@ -513,6 +529,21 @@ bool Activate(const Settings& cfg, bool autoTriggered, std::wstring& note) {
         else if (SetToast({ true, 0 })) { s.toastChanged = true; add(L"Benachrichtigungen aus"); }
         SaveState(s);
     }
+    if (cfg.optMouse) {
+        int cur[3] = { 0, 0, 0 };
+        if (!GetMouseAccel(cur)) add(L"Mausbeschleunigung nicht lesbar");
+        else if (cur[2] == 0) add(L"Mausbeschleunigung war schon aus");
+        else {
+            s.mouseChanged = true;                                  // Marker vor der Aenderung, damit sich der alte Wert immer wiederherstellen laesst
+            for (int i = 0; i < 3; ++i) s.prevMouse[i] = cur[i];
+            SaveState(s);
+            int off[3];
+            MouseAccelOff(cur, off);
+            if (SetMouseAccel(off)) add(L"Mausbeschleunigung aus");
+            else { s.mouseChanged = false; add(L"Mausbeschleunigung nicht geändert"); }
+        }
+        SaveState(s);
+    }
     if (!cfg.closeApps.empty()) {
         const CloseResult r = CloseApps(cfg.closeApps, 8000, true);
         s.closedPaths = r.paths;
@@ -545,6 +576,9 @@ bool Deactivate(const Settings& cfg, std::wstring& note) {
     }
     if (s.toastChanged) {
         if (SetToast(s.prevToast)) add(L"Benachrichtigungen wiederhergestellt"); else { ok = false; add(L"Benachrichtigungen konnten nicht wiederhergestellt werden"); }
+    }
+    if (s.mouseChanged) {
+        if (SetMouseAccel(s.prevMouse)) add(L"Mausbeschleunigung wiederhergestellt"); else { ok = false; add(L"Mausbeschleunigung konnte nicht wiederhergestellt werden"); }
     }
     int started = 0;
     if (cfg.optRestart) {

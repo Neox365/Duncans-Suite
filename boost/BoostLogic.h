@@ -77,11 +77,16 @@ struct Settings {
     bool optClip = false;                 // Video-Clips: Rueckblick-Aufnahme (letzte Sekunden per Tastenkuerzel speichern)
     int clipSeconds = 30;                 // Rueckblick: 15, 30 oder 60 Sekunden
     int clipAudio = 0;                    // Video-Clips: Ton 0 aus, 1 Systemton, 2 Systemton + Mikrofon
+    bool optMouse = false;                // Zock-Modus: Mausbeschleunigung ("Zeigerbeschleunigung verbessern") aus, solange er laeuft
     bool optOverlay = false;              // Overlay im Spiel (Statusleiste + Panel)
     int overlayCorner = 1;                // 0 oben links, 1 oben rechts, 2 unten links, 3 unten rechts
     bool overlayStats = true;             // Auslastung in der Statusleiste
 };
 constexpr int kClipLengths[3] = { 15, 30, 60 };
+// Mausbeschleunigung: Windows-Werte (SPI_GETMOUSE: Schwelle 1, Schwelle 2, Beschleunigung 0/1/2). Nur fuer diese Sitzung, nichts wird dauerhaft geschrieben.
+bool GetMouseAccel(int v[3]);
+bool SetMouseAccel(const int v[3]);
+void MouseAccelOff(const int cur[3], int out[3]);       // gleiche Schwellen, Beschleunigung 0
 int ClampClipAudio(int a);                // 0 ... 2
 const wchar_t* ClipAudioName(int a);      // "aus", "Systemton", "Systemton + Mikrofon"
 int ClampClipSeconds(int s);              // auf den naechsten erlaubten Wert (15/30/60)
@@ -97,6 +102,8 @@ struct State {
     GUID prevScheme{};
     bool toastChanged = false;
     ToastState prevToast;
+    bool mouseChanged = false;            // Mausbeschleunigung wurde ausgeschaltet
+    int prevMouse[3] = { 0, 0, 0 };       // vorherige Maus-Werte (Schwelle 1, Schwelle 2, Beschleunigung)
     unsigned gameMask = 0;                // Bit i gesetzt: Spiel-Einstellung i wurde umgestellt
     RegDword prevGame[kGameTweaks];       // vorheriger Wert je Spiel-Einstellung
     std::vector<std::wstring> closedPaths;

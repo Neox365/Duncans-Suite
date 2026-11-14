@@ -115,6 +115,9 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.10.0 | 2026-11-14
+- Neu: Installierte Spiele finden. In der Gruppe „Automatik“ gibt es jetzt „Installierte Spiele (Steam, Epic)“: ein Klick auf „Suchen“ liest die Steam- und Epic-Bibliotheken (nur lesen) und listet die Spiele zum Anhaken, ohne dass du sie vorher starten musst. Zu jedem Spiel wählt Boost die Haupt-EXE; Hilfsprogramme wie Deinstaller und Anti-Cheat-Dienste werden ausgelassen. Steam-Werkzeuge (Proton, Redistributables) fehlen, aber manche Programme aus der Steam-Bibliothek, die keine Spiele sind (zum Beispiel Blender), erscheinen trotzdem; du hakst einfach nur an, was du willst.
+- Neu: Gruppe „Zock-Extras (optional)“ mit „Mausbeschleunigung im Zock-Modus ausschalten“ (standardmäßig aus). Boost schaltet die Windows-Zeigerbeschleunigung nur solange der Zock-Modus läuft aus und stellt sie danach wieder her; es wird nichts dauerhaft geändert, und der alte Wert wird vor der Änderung gesichert wie bei den anderen Einstellungen.
 ## 0.9.0 | 2026-11-14
 - Neu: Ton für Video-Clips. Im Bereich „Video-Clips“ wählst du bei „Ton“: aus, Systemton (alles, was der PC abspielt, also auch Discord und Musik) oder Systemton plus Mikrofon. Der Ton liegt als AAC-Spur im MP4 und läuft zum Bild synchron. Ist das Mikrofon nicht verfügbar (Windows-Datenschutz), nimmt Boost mit Systemton weiter auf und sagt es. Standard bleibt „aus“.
 - Behoben: Beim Zusammensetzen eines Clips aus mehreren Abschnitten konnten spätere Abschnitte im Bild fehlen, wenn Ton mitlief; das ist behoben.

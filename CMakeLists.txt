@@ -8,7 +8,7 @@ set(DOCS_VER "0.18.0")
 set(VAULT_VER "0.7.1")
 set(OFFICE_VER "0.9.1")
 set(QUICKCONVERT_VER "0.4.3")
-set(BOOST_VER "0.9.0")
+set(BOOST_VER "0.10.0")
 set(CLIP_VER "0.7.1")
 set(EQUALIZER_VER "0.15.1")
 
@@ -232,6 +232,7 @@ target_link_libraries(DuncansQuickConvert PRIVATE gdiplus windowscodecs mfplat m
 add_executable(DuncansBoost WIN32
     boost/ClipRec.cpp
     boost/ClipAudio.cpp
+    boost/GameScan.cpp
     boost/OverlayLogic.cpp
     boost/OverlayWindow.cpp
     boost/main.cpp
