@@ -449,6 +449,89 @@ int main()
         CHECK(BuildConfig(BypassSettings(flat)).find("Preamp") == std::string::npos);
     }
 
+    // Balance, Mono, Impulsantwort
+    {
+        Settings s;
+        s.enabled = true;
+        s.balance = 3;                                                     // rechts lauter: links wird 3 dB leiser
+        std::string t = BuildConfig(s);
+        CHECK(t.find("Channel: L\r\nPreamp: -3 dB\r\nChannel: all\r\n") != std::string::npos);
+        s.balance = -5;                                                    // links lauter: rechts leiser
+        t = BuildConfig(s);
+        CHECK(t.find("Channel: R\r\nPreamp: -5 dB\r\nChannel: all\r\n") != std::string::npos && t.find("Channel: L") == std::string::npos);
+        s.balance = 99;                                                    // begrenzt
+        CHECK(BuildConfig(s).find("Preamp: -12 dB") != std::string::npos);
+        s.balance = 0;
+        CHECK(BuildConfig(s).find("Channel") == std::string::npos && BuildConfig(s).find("Alle Regler stehen auf 0") != std::string::npos);
+        s.mono = true;
+        t = BuildConfig(s);
+        CHECK(t.find("Copy: L=0.5*L+0.5*R R=0.5*L+0.5*R\r\n") != std::string::npos && t.find("Alle Regler") == std::string::npos);
+        const std::string ir = "C:\\Program Files\\EqualizerAPO\\config\\duncans-ir.wav";
+        Settings only; only.enabled = true;
+        t = BuildConfig(only, ir);
+        CHECK(t.find("Convolution: " + ir + "\r\n") != std::string::npos);
+        CHECK(BuildConfig(only, "C:\\x.wav\r\nInclude: evil.txt").find("Convolution") == std::string::npos);   // kein Zeilenumbruch einschmuggeln
+        CHECK(BuildConfig(only, "C:\\a;b.wav").find("Convolution") == std::string::npos);
+        CHECK(BuildConfig(only, "relativ.wav").find("Convolution") == std::string::npos && BuildConfig(only, "C:\\..\\x.wav").find("Convolution") == std::string::npos);
+        Settings off = only; off.enabled = false; off.mono = true;
+        CHECK(BuildConfig(off, ir).find("Convolution") == std::string::npos && BuildConfig(off).find("Copy:") == std::string::npos);   // aus = aus
+        // Die Kurve ignoriert Balance und Mono
+        Settings cb; cb.enabled = true; cb.balance = 6; cb.mono = true; cb.gains[3] = 4;
+        Settings ca; ca.enabled = true; ca.gains[3] = 4;
+        const std::vector<double> fr = { 100, 1000, 8000 };
+        CHECK(ResponseDb(cb, fr, true) == ResponseDb(ca, fr, true));
+
+        // Speichern und Laden, Profile
+        wchar_t tmp3[MAX_PATH] = {};
+        GetTempPathW(MAX_PATH, tmp3);
+        const std::wstring d = std::wstring(tmp3) + L"eqtest_ir" + std::to_wstring(GetCurrentProcessId());
+        CreateDirectoryW(d.c_str(), nullptr);
+        Settings w; w.enabled = true; w.balance = -4; w.mono = true; w.irPath = L"C:\\Users\\M\xFC" L"ller\\R\xE4ume\\Wohnzimmer.wav";
+        CHECK(SaveSettings(w, d + L"/s.txt"));
+        Settings r;
+        CHECK(LoadSettings(r, d + L"/s.txt") && r.balance == -4 && r.mono && r.irPath == w.irPath);
+        Put(d + L"/s2.txt", "balance=500\r\nmono=0\r\n");
+        CHECK(LoadSettings(r, d + L"/s2.txt") && r.balance == kMaxBalance && !r.mono && r.irPath.empty());
+        std::vector<Profile> list(1);
+        list[0].name = L"Wohnzimmer"; list[0].s = w;
+        CHECK(SaveProfiles(list, 0, d + L"/p.txt"));
+        std::vector<Profile> back; int act = 0;
+        CHECK(LoadProfiles(back, act, d + L"/p.txt") && back.size() == 1 && back[0].s.balance == -4 && back[0].s.mono && back[0].s.irPath == w.irPath);
+        const std::string shared = ProfileToText(list[0]);
+        CHECK(shared.find("ir=") == std::string::npos && shared.find("balance=-4") != std::string::npos && shared.find("mono=1") != std::string::npos);
+        Profile imp;
+        CHECK(ProfileFromText(shared + "ir=C:\\geheim.wav\r\n", imp) && imp.s.irPath.empty() && imp.s.balance == -4 && imp.s.mono);
+
+        // Impulsantwort pruefen
+        std::wstring why;
+        CHECK(!CheckImpulseFile(d + L"/fehlt.wav", why) && !why.empty());
+        std::string wav = "RIFF"; wav += std::string(4, '\0'); wav += "WAVEfmt "; wav += std::string(60, '\0');
+        Put(d + L"/ok.wav", wav);
+        CHECK(CheckImpulseFile(d + L"/ok.wav", why));
+        Put(d + L"/nowav.wav", std::string("OggS") + std::string(100, 'x'));
+        CHECK(!CheckImpulseFile(d + L"/nowav.wav", why) && !why.empty());
+        Put(d + L"/klein.wav", "RIFF1234WAVE");
+        CHECK(!CheckImpulseFile(d + L"/klein.wav", why));
+        CHECK(!CheckImpulseFile(d, why));                                  // Ordner
+
+        // Eintragen: Kopie im config-Ordner, Konfiguration zeigt darauf
+        const std::wstring apo2 = d + L"/apo";
+        CreateDirectoryW(apo2.c_str(), nullptr);
+        CreateDirectoryW((apo2 + L"/config").c_str(), nullptr);
+        Settings ap; ap.enabled = true; ap.irPath = d + L"/ok.wav";
+        CHECK(ApplyToDir(apo2, ap) == ApplyResult::Applied);
+        CHECK(Slurp(apo2 + L"/config/duncans-ir.wav") == wav);
+        const std::string cfgText = Slurp(apo2 + L"/config/duncans-equalizer.txt");
+        CHECK(cfgText.find("Convolution: ") != std::string::npos && cfgText.find("duncans-ir.wav\r\n") != std::string::npos);
+        CHECK(ApplyToDir(apo2, ap) == ApplyResult::Applied);               // zweites Mal: unveraendert
+        Settings none; none.enabled = true;
+        CHECK(ApplyToDir(apo2, none) == ApplyResult::Applied && Slurp(apo2 + L"/config/duncans-equalizer.txt").find("Convolution") == std::string::npos);
+        Settings bad; bad.enabled = true; bad.irPath = d + L"/nowav.wav";   // ungueltige Datei: keine Faltung, kein Absturz
+        CHECK(ApplyToDir(apo2, bad) == ApplyResult::Applied && Slurp(apo2 + L"/config/duncans-equalizer.txt").find("Convolution") == std::string::npos);
+        for (const wchar_t* f : { L"/s.txt", L"/s2.txt", L"/p.txt", L"/ok.wav", L"/nowav.wav", L"/klein.wav", L"/apo/config/duncans-ir.wav", L"/apo/config/duncans-equalizer.txt", L"/apo/config/config.txt" }) DeleteFileW((d + f).c_str());
+        RemoveDirectoryW((apo2 + L"/config").c_str()); RemoveDirectoryW(apo2.c_str()); RemoveDirectoryW(d.c_str());
+    }
+
     std::printf("%d Pruefungen, %d Fehler\n", g_n, g_fail);
     return g_fail ? 1 : 0;
 }

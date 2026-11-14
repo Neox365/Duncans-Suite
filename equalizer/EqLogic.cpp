@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <vector>
 
 namespace eq {
@@ -185,7 +186,52 @@ int TotalPreampDb(const Settings& s)
     return std::clamp(PreampDb(s) + std::clamp(s.preamp, -kMaxGain, kMaxGain), -30, 12);
 }
 
-std::string BuildConfig(const Settings& s)
+const wchar_t* const kIrCopyName = L"duncans-ir.wav";
+
+// Absoluter Pfad mit Laufwerk und nur harmlosen Zeichen (kein Zeilenumbruch, kein Semikolon usw.), damit nichts in die Konfiguration gelangt
+static bool IsSafeConfigPath(const std::string& p)
+{
+    if (p.size() < 4 || p.size() > 240 || !std::isalpha(static_cast<unsigned char>(p[0])) || p[1] != ':' || (p[2] != '\\' && p[2] != '/'))
+        return false;
+    for (unsigned char c : p)
+        if (!(std::isalnum(c) || c == ' ' || c == ':' || c == '\\' || c == '/' || c == '.' || c == '_' || c == '-' || c == '(' || c == ')' || c == '~'))
+            return false;
+    return p.find("..") == std::string::npos;
+}
+
+bool CheckImpulseFile(const std::wstring& path, std::wstring& err)
+{
+    WIN32_FILE_ATTRIBUTE_DATA a{};
+    if (path.empty() || !GetFileAttributesExW(path.c_str(), GetFileExInfoStandard, &a) || (a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+    {
+        err = L"Die Datei wurde nicht gefunden.";
+        return false;
+    }
+    const unsigned long long size = (static_cast<unsigned long long>(a.nFileSizeHigh) << 32) | a.nFileSizeLow;
+    if (size > kMaxIrBytes)
+    {
+        err = L"Die Datei ist größer als 24 MB. Bitte eine kürzere Impulsantwort wählen.";
+        return false;
+    }
+    char head[12] = {};
+    DWORD got = 0;
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (h == INVALID_HANDLE_VALUE)
+    {
+        err = L"Die Datei konnte nicht gelesen werden.";
+        return false;
+    }
+    const bool read = ReadFile(h, head, sizeof head, &got, nullptr) != FALSE;
+    CloseHandle(h);
+    if (!read || got < sizeof head || std::memcmp(head, "RIFF", 4) != 0 || std::memcmp(head + 8, "WAVE", 4) != 0 || size < 44)
+    {
+        err = L"Das ist keine WAV-Datei. Erwartet wird eine Impulsantwort als .wav.";
+        return false;
+    }
+    return true;
+}
+
+std::string BuildConfig(const Settings& s, const std::string& irFile)
 {
     std::string t = "# Duncan's Equalizer - wird automatisch erzeugt, bitte nicht von Hand aendern\r\n";
     if (!s.enabled)
@@ -194,7 +240,9 @@ std::string BuildConfig(const Settings& s)
     for (int b = 0; b < kBands; ++b)
         if (s.gains[b] != 0)
             anyBand = true;
-    if (!anyBand && !s.bass && !s.voice && s.extra.empty() && s.preamp == 0)
+    const int balance = std::clamp(s.balance, -kMaxBalance, kMaxBalance);
+    const bool useIr = !irFile.empty() && IsSafeConfigPath(irFile);
+    if (!anyBand && !s.bass && !s.voice && s.extra.empty() && s.preamp == 0 && balance == 0 && !s.mono && !useIr)
         return t + "# Alle Regler stehen auf 0\r\n";
     if (TotalPreampDb(s) != 0)
         t += "Preamp: " + Num(TotalPreampDb(s)) + " dB\r\n";
@@ -223,6 +271,12 @@ std::string BuildConfig(const Settings& s)
             continue;
         t += line + "\r\n";
     }
+    if (useIr)
+        t += "Convolution: " + irFile + "\r\n";                              // Raum-/Kopfhoerer-Korrektur aus der Impulsantwort
+    if (s.mono)
+        t += "Copy: L=0.5*L+0.5*R R=0.5*L+0.5*R\r\n";                       // beide Seiten gleich
+    if (balance != 0)                                                        // die lautere Seite bleibt, die andere wird leiser
+        t += std::string("Channel: ") + (balance < 0 ? "R" : "L") + "\r\nPreamp: -" + Num(std::abs(balance)) + " dB\r\nChannel: all\r\n";
     return t;
 }
 
@@ -243,7 +297,7 @@ std::wstring SettingsPath()
 bool SaveSettings(const Settings& s, const std::wstring& path)
 {
     std::string t = std::string("enabled=") + (s.enabled ? "1" : "0") + "\r\nkeeprunning=" + (s.keepRunning ? "1" : "0") + "\r\nhotkeys=" + (s.hotkeys ? "1" : "0") + "\r\nspectrum=" + (s.spectrum ? "1" : "0") + "\r\nautogain=" + (s.autoGain ? "1" : "0") + "\r\nbass=" + (s.bass ? "1" : "0") +
-                    "\r\nvoice=" + (s.voice ? "1" : "0") + "\r\ngains=";
+                    "\r\nvoice=" + (s.voice ? "1" : "0") + "\r\nbalance=" + Num(std::clamp(s.balance, -kMaxBalance, kMaxBalance)) + "\r\nmono=" + (s.mono ? "1" : "0") + "\r\nir=" + ToUtf8(s.irPath) + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(s.gains[b]));
     t += "\r\n";
@@ -275,6 +329,9 @@ bool LoadSettings(Settings& s, const std::wstring& path)
         else if (key == "autogain") s.autoGain = val == "1";
         else if (key == "bass") s.bass = val == "1";
         else if (key == "voice") s.voice = val == "1";
+        else if (key == "balance") s.balance = std::clamp(std::atoi(val.c_str()), -kMaxBalance, kMaxBalance);
+        else if (key == "mono") s.mono = val == "1";
+        else if (key == "ir") s.irPath = ToWide(val);
         else if (key == "gains")
         {
             size_t p = 0;
@@ -321,8 +378,33 @@ ApplyResult ApplyToDir(const std::wstring& installDir, const Settings& s)
         return ApplyResult::NotInstalled;
     const std::wstring cfgDir = installDir + L"\\config";
 
+    // 0. Impulsantwort: Kopie mit festem ASCII-Namen in den config-Ordner (APO liest sie von dort; Pfade mit Umlauten gehen so auch)
+    std::string irAbs;
+    if (s.enabled && !s.irPath.empty())
+    {
+        std::wstring why;
+        const std::wstring dest = cfgDir + L"\\" + kIrCopyName;
+        if (CheckImpulseFile(s.irPath, why))
+        {
+            WIN32_FILE_ATTRIBUTE_DATA a{}, b{};
+            const bool same = GetFileAttributesExW(s.irPath.c_str(), GetFileExInfoStandard, &a) && GetFileAttributesExW(dest.c_str(), GetFileExInfoStandard, &b) &&
+                              a.nFileSizeHigh == b.nFileSizeHigh && a.nFileSizeLow == b.nFileSizeLow && CompareFileTime(&a.ftLastWriteTime, &b.ftLastWriteTime) == 0;
+            if (!same && !CopyFileW(s.irPath.c_str(), dest.c_str(), FALSE))
+            {
+                const DWORD e = GetLastError();
+                return e == ERROR_ACCESS_DENIED ? ApplyResult::AccessDenied : ApplyResult::Failed;
+            }
+            bool ascii = true;
+            for (wchar_t c : dest)
+                if (c > 126 || c < 32)
+                    ascii = false;
+            if (ascii)
+                irAbs = ToUtf8(dest);
+        }
+    }
+
     // 1. unsere Datei
-    DWORD err = WriteFileBytes(cfgDir + L"\\" + kConfigFile, BuildConfig(s));
+    DWORD err = WriteFileBytes(cfgDir + L"\\" + kConfigFile, BuildConfig(s, irAbs));
     if (err == ERROR_ACCESS_DENIED || err == ERROR_SHARING_VIOLATION)
         return err == ERROR_ACCESS_DENIED ? ApplyResult::AccessDenied : ApplyResult::Failed;
     if (err)
@@ -439,7 +521,8 @@ int ProfileForApps(const std::vector<Profile>& list, const std::vector<std::wstr
 static std::string ProfileBlock(const Profile& p, bool withDevice)
 {
     std::string t = "[profile]\r\nname=" + ToUtf8(p.name) + "\r\ndevice=" + (withDevice ? ToUtf8(p.device) : std::string()) + "\r\napps=" + (withDevice ? AppsLine(p) : std::string()) + "\r\nbass=" + (p.s.bass ? "1" : "0") +
-                    "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\npreamp=" + Num(std::clamp(p.s.preamp, -kMaxGain, kMaxGain)) + "\r\ngains=";
+                    "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\nbalance=" + Num(std::clamp(p.s.balance, -kMaxBalance, kMaxBalance)) + "\r\nmono=" + (p.s.mono ? "1" : "0") +
+                    (withDevice && !p.s.irPath.empty() ? "\r\nir=" + ToUtf8(p.s.irPath) : std::string()) + "\r\npreamp=" + Num(std::clamp(p.s.preamp, -kMaxGain, kMaxGain)) + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(p.s.gains[b]));
     t += "\r\n";
@@ -496,6 +579,7 @@ bool ProfileFromText(const std::string& text, Profile& out)
     out = list[0];
     out.device.clear();
     out.apps.clear();
+    out.s.irPath.clear();           // Dateipfade gehoeren zu diesem PC und werden nie weitergegeben
     return true;
 }
 
@@ -560,6 +644,9 @@ bool ParseProfiles(const std::string& data, std::vector<Profile>& list, int& act
         }
         else if (key == "bass") p.s.bass = val == "1";
         else if (key == "voice") p.s.voice = val == "1";
+        else if (key == "balance") p.s.balance = std::clamp(std::atoi(val.c_str()), -kMaxBalance, kMaxBalance);
+        else if (key == "mono") p.s.mono = val == "1";
+        else if (key == "ir") p.s.irPath = ToWide(val);
         else if (key == "preamp") p.s.preamp = std::clamp(std::atoi(val.c_str()), -kMaxGain, kMaxGain);
         else if (key == "extra") { if (p.s.extra.size() < kMaxExtraLines && IsSafeFilterLine(val)) p.s.extra.push_back(val); }
         else if (key == "gains")

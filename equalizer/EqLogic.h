@@ -14,6 +14,8 @@ namespace eq {
 
 constexpr int kBands = 10;      // 31 Hz ... 16 kHz
 constexpr int kMaxGain = 12;    // Regler: -12 ... +12 dB
+constexpr int kMaxBalance = 12; // Balance: -12 ... +12 dB (negativ: links lauter, positiv: rechts lauter)
+constexpr unsigned kMaxIrBytes = 24u << 20;   // groesste erlaubte Impulsantwort (WAV)
 extern const int kFreqs[kBands];
 const wchar_t* BandName(int band);   // kurzes Wort, z. B. "Waerme"
 const wchar_t* BandHint(int band);   // ein Satz: was der Regler macht und was zu viel/zu wenig bewirkt
@@ -29,6 +31,9 @@ struct Settings {
     bool spectrum = true;       // Live-Spektrum im Frequenzgang-Diagramm
     bool keepRunning = true;    // Fenster schliessen = im Infobereich weiterlaufen (Profilwechsel pro Geraet, Symbol)
     std::vector<std::string> extra;   // eingelesene Filterzeilen (z. B. AutoEq-Kopfhoerer-Korrektur), nur "Preamp:"/"Filter:"
+    int  balance = 0;           // Links/Rechts-Ausgleich in dB: negativ = links lauter (rechts wird leiser), positiv = rechts lauter
+    bool mono = false;          // beide Seiten bekommen denselben Ton (Mittelwert aus links und rechts)
+    std::wstring irPath;        // Impulsantwort (WAV) fuer Raum-/Kopfhoerer-Korrektur per Faltung; leer = keine. Nur auf diesem PC (nicht in weitergegebenen Profilen)
 };
 
 // Ein Profil = ein Satz Einstellungen (Regler, Schalter, Korrektur) mit Namen und optional einem Ausgabegeraet,
@@ -58,8 +63,12 @@ int PreampDb(const Settings& s);
 // Gesamt: automatische Absenkung plus eigener Regler, begrenzt auf -30 ... +12 dB; das schreibt BuildConfig
 int TotalPreampDb(const Settings& s);
 
-// Text der Konfigurationsdatei fuer Equalizer APO (ASCII, Zeilenende CRLF)
-std::string BuildConfig(const Settings& s);
+// Text der Konfigurationsdatei fuer Equalizer APO (ASCII, Zeilenende CRLF). irFile: absoluter Pfad der Impulsantwort, wie APO ihn lesen soll
+// (leer = keine Faltung; unsichere Pfade werden verworfen).
+std::string BuildConfig(const Settings& s, const std::string& irFile = std::string());
+// Prueft eine Impulsantwort: vorhanden, hoechstens kMaxIrBytes, WAV-Kopf. err = Meldung fuer den Nutzer.
+bool CheckImpulseFile(const std::wstring& path, std::wstring& err);
+extern const wchar_t* const kIrCopyName;      // "duncans-ir.wav": Kopie der Impulsantwort im config-Ordner von Equalizer APO
 
 // Profile (%LOCALAPPDATA%\DuncansEqualizer\profiles.txt)
 std::wstring ProfilesPath();

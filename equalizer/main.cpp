@@ -34,7 +34,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.13.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.14.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -153,6 +153,7 @@ void SyncActive() {                                 // aktuelle Regler/Schalter/
     for (int b = 0; b < eq::kBands; ++b) p.s.gains[b] = g.cfg.gains[b];
     p.s.preamp = g.cfg.preamp;
     p.s.bass = g.cfg.bass; p.s.voice = g.cfg.voice; p.s.extra = g.cfg.extra;
+    p.s.balance = g.cfg.balance; p.s.mono = g.cfg.mono; p.s.irPath = g.cfg.irPath;
 }
 
 void LoadActive() {                                 // Einstellungen des aktiven Profils uebernehmen (Ein/Aus bleibt)
@@ -160,6 +161,7 @@ void LoadActive() {                                 // Einstellungen des aktiven
     for (int b = 0; b < eq::kBands; ++b) g.cfg.gains[b] = p.s.gains[b];
     g.cfg.preamp = p.s.preamp;
     g.cfg.bass = p.s.bass; g.cfg.voice = p.s.voice; g.cfg.extra = p.s.extra;
+    g.cfg.balance = p.s.balance; g.cfg.mono = p.s.mono; g.cfg.irPath = p.s.irPath;
 }
 
 void SaveCfg() {
@@ -620,6 +622,71 @@ void EditFilters() {                                // Fenster mit Frequenzkurve
     }
 }
 
+std::wstring BaseName(const std::wstring& path) {
+    const size_t k = path.find_last_of(L"\\/");
+    return k == std::wstring::npos ? path : path.substr(k + 1);
+}
+
+std::wstring BalanceText(int b) {
+    if (b == 0) return L"Mitte";
+    return b < 0 ? L"links lauter (" + std::to_wstring(-b) + L" dB)" : L"rechts lauter (" + std::to_wstring(b) + L" dB)";
+}
+
+void PickImpulse() {                                // Impulsantwort (WAV) fuer Raum-/Kopfhoerer-Korrektur waehlen
+    wchar_t file[MAX_PATH] = {};
+    OPENFILENAMEW ofn{};
+    ofn.lStructSize = sizeof(ofn);
+    ofn.hwndOwner = g.hwnd;
+    ofn.lpstrFilter = L"Impulsantworten (*.wav)\0*.wav\0Alle Dateien\0*.*\0";
+    ofn.lpstrTitle = L"Impulsantwort laden (WAV, höchstens 24 MB)";
+    ofn.lpstrFile = file;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_NOCHANGEDIR;
+    if (!GetOpenFileNameW(&ofn)) return;
+    std::wstring why;
+    if (!eq::CheckImpulseFile(file, why)) { SetStatus(why, kOrange); return; }
+    g.cfg.irPath = file;
+    Changed();
+    SetStatus(L"Impulsantwort „" + BaseName(file) + L"“ geladen (Faltung, kann etwas Rechenzeit brauchen)", kGreen);
+}
+
+void ClearImpulse() {
+    g.cfg.irPath.clear();
+    if (!g.installDir.empty()) DeleteFileW((g.installDir + L"\\config\\" + eq::kIrCopyName).c_str());   // Kopie im APO-Ordner aufraeumen (ohne Rechte bleibt sie, ist aber unbenutzt)
+    Changed();
+    SetStatus(L"Impulsantwort entfernt", kTextDim);
+}
+
+void SoundMenu() {                                  // Knopf "Klang ...": Filter, Impulsantwort, Balance, Mono
+    static const int kSteps[] = { -9, -6, -3, 0, 3, 6, 9 };
+    HMENU bal = CreatePopupMenu();
+    for (int i = 0; i < static_cast<int>(sizeof(kSteps) / sizeof(kSteps[0])); ++i) {
+        const std::wstring label = kSteps[i] == 0 ? L"Mitte" : (kSteps[i] < 0 ? L"Links lauter um " + std::to_wstring(-kSteps[i]) + L" dB" : L"Rechts lauter um " + std::to_wstring(kSteps[i]) + L" dB");
+        AppendMenuW(bal, MF_STRING | (g.cfg.balance == kSteps[i] ? MF_CHECKED : 0), static_cast<UINT_PTR>(100 + i), label.c_str());
+    }
+    HMENU menu = CreatePopupMenu();
+    AppendMenuW(menu, MF_STRING, 1, L"Filter und Korrektur bearbeiten …");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_STRING, 2, g.cfg.irPath.empty() ? L"Impulsantwort laden … (Raum-/Kopfhörerkorrektur aus WAV)" : (L"Impulsantwort ändern … (" + BaseName(g.cfg.irPath) + L")").c_str());
+    if (!g.cfg.irPath.empty()) AppendMenuW(menu, MF_STRING, 3, L"Impulsantwort entfernen");
+    AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
+    AppendMenuW(menu, MF_POPUP | (g.cfg.balance != 0 ? MF_CHECKED : 0), reinterpret_cast<UINT_PTR>(bal), (L"Balance: " + BalanceText(g.cfg.balance)).c_str());
+    AppendMenuW(menu, MF_STRING | (g.cfg.mono ? MF_CHECKED : 0), 4, L"Mono (beide Seiten gleich)");
+    POINT pt{ g.btnImport.left, g.btnImport.bottom };
+    ClientToScreen(g.hwnd, &pt);
+    const int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_RIGHTBUTTON | TPM_TOPALIGN | TPM_LEFTALIGN, pt.x, pt.y, 0, g.hwnd, nullptr);
+    DestroyMenu(menu);                              // zerstoert auch das Untermenue
+    if (cmd == 1) EditFilters();
+    else if (cmd == 2) PickImpulse();
+    else if (cmd == 3) ClearImpulse();
+    else if (cmd == 4) { g.cfg.mono = !g.cfg.mono; Changed(); SetStatus(g.cfg.mono ? L"Mono an: beide Seiten bekommen denselben Ton" : L"Mono aus", kTextDim); }
+    else if (cmd >= 100 && cmd < 100 + static_cast<int>(sizeof(kSteps) / sizeof(kSteps[0]))) {
+        g.cfg.balance = kSteps[cmd - 100];
+        Changed();
+        SetStatus(L"Balance: " + BalanceText(g.cfg.balance), kTextDim);
+    }
+}
+
 void DeleteProfile() {
     if (g.profiles.size() <= 1) { SetStatus(L"Das letzte Profil bleibt erhalten", kOrange); return; }
     if (!g.delArmed) { g.delArmed = true; SetTimer(g.hwnd, kTimerDisarm, 3000, nullptr); return; }
@@ -764,7 +831,7 @@ void Layout() {
     g.nameRect = { ix, row1, ir, row1 + h1 };
     const int row2 = g.profCard.top + S(76), h2 = S(32);
     const int bw1 = TextWidth(dc, g.fBold, L"Binden …") + S(28);
-    const int bw2 = TextWidth(dc, g.fBold, L"Korrektur …") + S(28);
+    const int bw2 = TextWidth(dc, g.fBold, L"Klang …") + S(28);
     const int bwS = TextWidth(dc, g.fBold, L"Teilen …") + S(28);
     const int bw3 = TextWidth(dc, g.fBold, g.delArmed ? L"Wirklich?" : L"Löschen") + S(28);
     g.btnBind = { ix, row2, ix + bw1, row2 + h2 };
@@ -1025,7 +1092,15 @@ void Paint(HDC dc, const RECT& cr) {
             row(L"Stärkste Absenkung", lo > -0.05 ? std::wstring(L"keine") : num(lo, L"%+.1f") + L" dB bei " + freqText(loF));
             row(L"Vorverstärkung", std::to_wstring(eq::PreampDb(g.cfg)) + L" dB automatisch" + (g.autoExtra > 0 ? L", +" + std::to_wstring(g.autoExtra) + L" dB Auto" : std::wstring()) +
                                    L", gesamt " + std::to_wstring(eq::TotalPreampDb(Effective())) + L" dB");
-            row(L"Zusatzfilter", g.cfg.extra.empty() ? std::wstring(L"keine") : std::to_wstring(g.cfg.extra.size()) + (g.cfg.extra.size() == 1 ? L" Zeile" : L" Zeilen"));
+            {   // Zusaetze: Filterzeilen, Impulsantwort, Balance, Mono in einer Zeile
+                std::wstring z;
+                auto add = [&](const std::wstring& t) { z += (z.empty() ? L"" : L"  ·  ") + t; };
+                if (!g.cfg.extra.empty()) add(std::to_wstring(g.cfg.extra.size()) + (g.cfg.extra.size() == 1 ? L" Filterzeile" : L" Filterzeilen"));
+                if (!g.cfg.irPath.empty()) add(L"Faltung");
+                if (g.cfg.balance != 0) add(std::wstring(g.cfg.balance < 0 ? L"Links +" : L"Rechts +") + std::to_wstring(std::abs(g.cfg.balance)));
+                if (g.cfg.mono) add(L"Mono");
+                row(L"Zusätze", z.empty() ? std::wstring(L"keine") : z);
+            }
         }
 
         if (g.autoCard.right > g.autoCard.left) {   // Auto-Lautstaerke: Schalter mit Beschreibung und Live-Anzeige
@@ -1196,7 +1271,12 @@ void Paint(HDC dc, const RECT& cr) {
             DrawText2(dc, g.fBold, warn ? kOrange : kText, r, t, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         };
         smallBtn(g.btnBind, L"Binden …", H_BIND, false);
-        smallBtn(g.btnImport, L"Korrektur …", H_IMPORT, false);
+        {   // "Klang ...": mit Akzentrahmen, solange Balance, Mono oder eine Impulsantwort wirkt
+            const bool active = g.cfg.balance != 0 || g.cfg.mono || !g.cfg.irPath.empty();
+            const bool hot = g.hover == H_IMPORT;
+            FillRound(dc, g.btnImport, S(12), active ? Blend(kCard, kEq, 22) : (hot ? kCardHover : Blend(kCard, kBackground, 25)), active ? kEq : (hot ? kBorderHot : kBorder));
+            DrawText2(dc, g.fBold, kText, g.btnImport, L"Klang …", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
         smallBtn(g.btnShare, L"Teilen …", H_SHARE, false);
         if (g.btnAutoEq.right > g.btnAutoEq.left) smallBtn(g.btnAutoEq, L"AutoEq", H_AUTOEQ, false);
         smallBtn(g.btnDel, g.delArmed ? L"Wirklich?" : L"Löschen", H_PROFDEL, g.delArmed);
@@ -1300,7 +1380,7 @@ void Activate(int id) {
     }
     else if (id == H_PROFNEW) BeginNewProfile();
     else if (id == H_BIND) BindMenu();
-    else if (id == H_IMPORT) EditFilters();
+    else if (id == H_IMPORT) SoundMenu();
     else if (id == H_SHARE) ShareMenu();
     else if (id == H_PROFDEL) { DeleteProfile(); Layout(); }
     else if (id == H_DOWNLOAD) ShellExecuteW(g.hwnd, L"open", L"https://sourceforge.net/projects/equalizerapo/", nullptr, nullptr, SW_SHOWNORMAL);
