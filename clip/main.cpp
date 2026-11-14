@@ -33,7 +33,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.7.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -49,7 +49,7 @@ const COLORREF kCard = kCardRaised;
 const COLORREF kBorderHot = kBorderHover;
 const COLORREF kClip = RGB(34, 211, 238);           // Akzent dieses Programms (Tuerkis)
 
-const wchar_t* kTitle = L"Duncan's Clip";
+const wchar_t* kTitle = L"Duncan's Scratchpad";
 const wchar_t* kMainClass = L"DuncansClip";
 const wchar_t* kPopupClass = L"DuncansClipPopup";
 const UINT WM_TRAY = WM_APP + 10;
@@ -327,12 +327,12 @@ void PositionEditControls() {
 
 // ---------- Anleitung ("Was ist Clip?") und Erklaerzeile zu den Einstellungen ----------
 const wchar_t* const kSetHints[6] = {
-    L"Mit Windows starten: Clip startet beim Anmelden von selbst im Infobereich (ohne Fenster), damit das Kürzel immer bereit ist.",
+    L"Mit Windows starten: Scratchpad startet beim Anmelden von selbst im Infobereich (ohne Fenster), damit das Kürzel immer bereit ist.",
     L"Verlauf speichern: Behält den Verlauf auch nach dem Beenden (verschlüsselt, nur auf diesem PC). Aus: nur im Arbeitsspeicher.",
     L"Kürzel: Mit dieser Tastenkombination öffnest du die Schnellauswahl in jedem Programm. Ein Klick wechselt das Kürzel.",
     L"Verlauf löschen nach: Entfernt kopierte Einträge nach der gewählten Zeit automatisch. Ein Klick wechselt (nie, 1 Stunde, 1 Tag).",
-    L"Markierung übernehmen: Markierten Text übernimmt Clip beim Öffnen der Schnellauswahl und setzt ihn für {clip} ein – ohne vorher Strg+C.",
-    L"Mehr: Prompts als Textdatei sichern oder laden, Links beim Kopieren von Tracking säubern, und Programme sperren – aus gesperrten Programmen nimmt Clip nie etwas auf.",
+    L"Markierung übernehmen: Markierten Text übernimmt Scratchpad beim Öffnen der Schnellauswahl und setzt ihn für {clip} ein – ohne vorher Strg+C.",
+    L"Mehr: Prompts als Textdatei sichern oder laden, Links beim Kopieren von Tracking säubern, und Programme sperren – aus gesperrten Programmen nimmt Scratchpad nie etwas auf.",
 };
 
 std::vector<std::wstring> IntroSteps() {
@@ -343,8 +343,8 @@ std::vector<std::wstring> IntroSteps() {
         L"Im Reiter „Prompts“ legst du Textbausteine an. {clip} wird beim Einfügen durch deinen kopierten oder markierten Text ersetzt, zum Beispiel „Fasse zusammen: {clip}“.",
     };
 }
-const wchar_t* kIntroTop = L"Clip merkt sich, was du kopierst, und fügt es per Tastenkürzel in jedes Programm ein. Dazu gibt es Textbausteine („Prompts“) für alles, was du oft schreibst, etwa Fragen an eine KI.";
-const wchar_t* kIntroPrivacy = L"Privat: Passwörter, Schlüssel und Kartennummern speichert Clip nie. Der Verlauf liegt nur im Arbeitsspeicher, solange du „Verlauf speichern“ nicht einschaltest.";
+const wchar_t* kIntroTop = L"Scratchpad merkt sich, was du kopierst, und fügt es per Tastenkürzel in jedes Programm ein. Dazu gibt es Textbausteine („Prompts“) für alles, was du oft schreibst, etwa Fragen an eine KI. Im Reiter „Zettel“ steht ein freier Notizzettel, der sich von selbst speichert.";
+const wchar_t* kIntroPrivacy = L"Privat: Passwörter, Schlüssel und Kartennummern speichert Scratchpad nie. Der Verlauf liegt nur im Arbeitsspeicher, solange du „Verlauf speichern“ nicht einschaltest.";
 
 int IntroHeight(HDC dc, int width) {                   // Hoehe der Karte bei dieser Breite
     const int tw = width - S(44);
@@ -493,7 +493,7 @@ void ToggleAutostart() {
     wchar_t exe[MAX_PATH * 2] = {};
     GetModuleFileNameW(nullptr, exe, MAX_PATH * 2);
     const bool want = !clip::GetAutostart();
-    if (clip::SetAutostart(want, exe)) { g.cfg.autostart = want; SetStatus(want ? L"Clip startet jetzt mit Windows im Hintergrund." : L"Autostart ausgeschaltet.", kGreen); }
+    if (clip::SetAutostart(want, exe)) { g.cfg.autostart = want; SetStatus(want ? L"Scratchpad startet jetzt mit Windows im Hintergrund." : L"Autostart ausgeschaltet.", kGreen); }
     else SetStatus(L"Der Autostart konnte nicht geändert werden.", kRed);
 }
 
@@ -534,7 +534,7 @@ void TogglePlainText() {
 }
 
 void ExportPromptsToFile() {
-    wchar_t file[MAX_PATH] = L"Clip-Prompts.txt";
+    wchar_t file[MAX_PATH] = L"Scratchpad-Prompts.txt";
     OPENFILENAMEW ofn{};
     ofn.lStructSize = sizeof(ofn); ofn.hwndOwner = g.hwnd;
     ofn.lpstrFilter = L"Textdatei (*.txt)\0*.txt\0\0"; ofn.lpstrFile = file; ofn.nMaxFile = MAX_PATH;
@@ -584,7 +584,7 @@ void ExportImportMenu() {
     else if (cmd == 5) TogglePlainText();
     else if (cmd == 3 && clip::AddExcludedExe(g.cfg.excludedExes, g.lastOwner)) {
         clip::SaveSettings(g.cfg);
-        SetStatus(g.lastOwner + L" ist gesperrt: daraus nimmt Clip nichts mehr auf.", kGreen);
+        SetStatus(g.lastOwner + L" ist gesperrt: daraus nimmt Scratchpad nichts mehr auf.", kGreen);
     } else if (cmd >= 100 && static_cast<size_t>(cmd - 100) < g.cfg.excludedExes.size()) {
         const std::wstring name = g.cfg.excludedExes[static_cast<size_t>(cmd - 100)];
         clip::RemoveExcludedExe(g.cfg.excludedExes, name);
@@ -780,7 +780,7 @@ void Paint(HDC dc, const RECT& cr) {
         FillRound(dc, c, S(16), Blend(kCard, kClip, 7), Blend(kBorder, kClip, 45));
         const int pad = S(22), tw = (c.right - c.left) - 2 * pad;
         int y = c.top + S(18);
-        DrawText2(dc, g.fHead, kText, { c.left + pad, y, c.right - pad, y + S(28) }, L"Was ist Clip?");
+        DrawText2(dc, g.fHead, kText, { c.left + pad, y, c.right - pad, y + S(28) }, L"Was ist Scratchpad?");
         y += S(30);
         int h = WrappedHeight(dc, g.fBody, kIntroTop, tw);
         DrawText2(dc, g.fBody, kTextDim, { c.left + pad, y, c.right - pad, y + h }, kIntroTop, DT_LEFT | DT_TOP | DT_WORDBREAK);
@@ -1003,7 +1003,7 @@ void DoPaste(const std::wstring& text, const std::string* png = nullptr) {
         if (g.nid.cbSize) {
             NOTIFYICONDATAW n = g.nid;
             n.uFlags = NIF_INFO;
-            wcscpy_s(n.szInfoTitle, L"Duncan's Clip");
+            wcscpy_s(n.szInfoTitle, L"Duncan's Scratchpad");
             wcscpy_s(n.szInfo, L"Der Text liegt in der Zwischenablage. Bitte Strg+V drücken.");
             n.dwInfoFlags = NIIF_INFO;
             Shell_NotifyIconW(NIM_MODIFY, &n);
@@ -1194,7 +1194,7 @@ void AddTray(HINSTANCE inst) {
     g.nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     g.nid.uCallbackMessage = WM_TRAY;
     g.nid.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
-    wcscpy_s(g.nid.szTip, L"Duncan's Clip");
+    wcscpy_s(g.nid.szTip, L"Duncan's Scratchpad");
     Shell_NotifyIconW(NIM_ADD, &g.nid);
 }
 

@@ -7,8 +7,8 @@
 1 ICON "suite.ico"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 0,7,0,0
-PRODUCTVERSION 0,7,0,0
+FILEVERSION 0,7,1,0
+PRODUCTVERSION 0,7,1,0
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -17,12 +17,12 @@ BEGIN
         BLOCK "040704B0"
         BEGIN
             VALUE "CompanyName", "Duncan"
-            VALUE "FileDescription", "Duncan's Clip"
-            VALUE "FileVersion", "0.7.0"
+            VALUE "FileDescription", "Duncan's Scratchpad"
+            VALUE "FileVersion", "0.7.1"
             VALUE "InternalName", "DuncansClip"
             VALUE "OriginalFilename", "DuncansClip.exe"
-            VALUE "ProductName", "Duncan's Clip"
-            VALUE "ProductVersion", "0.7.0"
+            VALUE "ProductName", "Duncan's Scratchpad"
+            VALUE "ProductVersion", "0.7.1"
         END
     END
     BLOCK "VarFileInfo"
