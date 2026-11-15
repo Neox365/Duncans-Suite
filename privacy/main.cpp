@@ -33,7 +33,7 @@ using std::min;
 #include "../common/AboutCardGdi.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.13.0"   // normalerweise aus CMake (PROJECT_VERSION)
+#define APP_VERSION L"0.13.1"   // normalerweise aus CMake (PROJECT_VERSION)
 #endif
 
 #ifdef _MSC_VER
@@ -560,7 +560,7 @@ void Paint(HDC dc, RECT cr) {
     RECT tile{ S(28), S(22), S(28) + S(64), S(22) + S(64) };
     DrawCategoryTile(dc, tile, CategoryIcon::Shield, kViolet, kBackground);
     DrawText2(dc, g.fTitle, kText, { tile.right + S(18), S(22), cr.right - S(28), S(58) }, kTitle);
-    DrawText2(dc, g.fBody, kTextDim, { tile.right + S(18), S(58), cr.right - S(28), S(82) }, L"Datenschutz- & Telemetrie-Manager für Windows");
+    DrawText2(dc, g.fBody, kTextDim, { tile.right + S(18), S(58), cr.right - S(28), S(82) }, L"Weniger Tracking in Windows – mit Sicherung und Rückgängig");
 
     // Werkzeugzeile
     const bool busy = g.busy || g.modal.open;

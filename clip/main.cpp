@@ -33,7 +33,7 @@ using std::min;
 #include "ClipLogic.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.7.2"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -754,7 +754,7 @@ void Paint(HDC dc, const RECT& cr) {
     DeleteObject(bg);
     DrawText2(dc, g.fTitle, kText, { S(28), S(18), cr.right - S(28), S(56) }, kTitle);
     DrawText2(dc, g.fBody, kTextDim, { S(28), S(54), cr.right - S(28), S(80) },
-              std::wstring(L"Dein Verlauf und deine Textbausteine – in jedem Programm mit ") + clip::HotkeyPreset(g.cfg.hotkey).name + (g.hotkeyOk ? L"" : L"  (Kürzel belegt!)"));
+              std::wstring(L"Verlauf, Textbausteine und Notizzettel – in jedem Programm mit ") + clip::HotkeyPreset(g.cfg.hotkey).name + (g.hotkeyOk ? L"" : L"  (Kürzel belegt!)"));
 
     DrawPill(dc, g.tabHistory, L"Verlauf", g.tab == T_HISTORY, g.hover == H_TAB_HISTORY, kClip);
     DrawPill(dc, g.tabPrompts, L"Prompts", g.tab == T_PROMPTS, g.hover == H_TAB_PROMPTS, kClip);

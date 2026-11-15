@@ -51,7 +51,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.46"
+#define SUITE_VERSION L"1.1.47"
 #endif
 
 namespace
@@ -1062,63 +1062,63 @@ private:
 
     Tool m_tools[kToolCount] = {
         { L"DuncansTidy.exe", L"Duncan's Tidy",
-          L"System-Reinigung: räumt Downloads, Temp-Dateien und Browser-Caches auf.",
+          L"Macht den PC wieder schlank: Downloads, Temp-Dateien und Browser-Caches aufräumen.",
           CategoryIcon::Broom, RGB(251, 191, 36), {}, {}, {},
           L"https://github.com/Neox365/Duncans-Tidy-ToolSet/releases/latest/download/", nullptr,
           L"https://github.com/Neox365/Duncans-Tidy-ToolSet/releases/latest/download/version.txt" },
         { L"DuncansDriverUpdater.exe", L"Duncan's Driver Updater",
-          L"Treiber-Manager: erkennt veraltete Treiber und installiert Updates.",
+          L"Findet veraltete Treiber und aktualisiert sie, mit Sicherung vorab.",
           CategoryIcon::Cpu, RGB(64, 156, 255), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansDriverUpdater.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansPdf.exe", L"Duncan's PDF Reader",
-          L"PDFs öffnen, drehen, zusammenfügen und speichern.",
+          L"PDFs lesen, drucken, zusammenfügen, stempeln und schwärzen.",
           CategoryIcon::Document, RGB(240, 84, 84), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/DuncansPdf.exe",
           L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/version.txt", {},
           L"https://github.com/Neox365/Duncans-PDF-Reader/releases/latest/download/pdfium.dll", L"pdfium.dll" },
         { L"DuncansPrivacy.exe", L"Duncan's Privacy Shield",
-          L"Schaltet Tracking, Telemetrie und Werbung in Windows per Klick ab.",
+          L"Weniger Tracking in Windows: Telemetrie und Werbung per Klick abschalten, jederzeit rückgängig.",
           CategoryIcon::Shield, RGB(167, 139, 250), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPrivacy.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansPhotoCommander.exe", L"Duncan's Photo Commander",
-          L"Fotos verwalten, EXIF lesen, korrigieren, Standortdaten entfernen.",
+          L"Fotos sortieren und verbessern, Standortdaten entfernen, bevor du sie teilst.",
           CategoryIcon::Image, RGB(52, 199, 120), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansPhotoCommander.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"OggysDocsFiles.exe", L"Oggys Docs-Files",
-          L"Rechnungen sortieren und eigene Rechnungen als PDF erstellen.",
+          L"Rechnungen ordnen, Belege ablegen und eigene Rechnungen als PDF schreiben.",
           CategoryIcon::Invoice, RGB(255, 150, 50), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/OggysDocsFiles.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansVault.exe", L"Duncan's Vault",
-          L"Lokaler Tresor für Passwörter, Lizenzen und Notizen (AES-256).",
+          L"Dein Tresor für Passwörter, Lizenzen und Notizen. Verschlüsselt, nur lokal.",
           CategoryIcon::Vault, RGB(34, 211, 238), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansVault.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansOffice.exe", L"Duncan's Office",
-          L"Writer und Sheets: Texte, Tabellen mit Formeln, PDF-Export.",
+          L"Texte schreiben und mit Tabellen rechnen, auch mit Formeln. Speichert als PDF und Excel.",
           CategoryIcon::Office, RGB(129, 140, 248), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansOffice.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansQuickConvert.exe", L"Duncan's QuickConvert",
-          L"Wandelt Bilder, Audio und Video offline in moderne Formate um.",
+          L"Bilder, Audio und Video umwandeln, ohne Upload, auf Wunsch mit Zielgröße.",
           CategoryIcon::Convert, RGB(245, 194, 231), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansQuickConvert.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansBoost.exe", L"Duncan's Boost",
-          L"Zock-Modus: beendet Hintergrundprogramme, stellt Höchstleistung ein.",
+          L"Dein Zock-Werkzeug: Hintergrund aufräumen, Overlay, Clips speichern und Fadenkreuz.",
           CategoryIcon::Boost, RGB(250, 112, 76), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansBoost.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansClip.exe", L"Duncan's Scratchpad",
-          L"Zwischenablage-Verlauf, Textbausteine und Notizzettel, per Tastenkürzel überall.",
+          L"Verlauf der Zwischenablage, Textbausteine und ein Notizzettel, ein Kürzel genügt.",
           CategoryIcon::Clip, RGB(190, 242, 100), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansClip.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
         { L"DuncansEqualizer.exe", L"Duncan's Equalizer",
-          L"Klang für den ganzen PC: Regler, Voreinstellungen, Bass und Stimmen.",
+          L"Klang für den ganzen PC: Regler, Profile pro Programm, Raumkorrektur, Mikrofon.",
           CategoryIcon::Equalizer, RGB(125, 211, 252), {}, {}, {},
           nullptr, L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/DuncansEqualizer.exe",
           L"https://github.com/Neox365/Duncans-Suite/releases/download/modules/modules.txt" },
@@ -1509,7 +1509,7 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
         GetTextExtentPoint32W(dc, L"Duncan's Suite", 14, &sz);
         textW = sz.cx;
         SelectObject(dc, m_fontSmall);
-        GetTextExtentPoint32W(dc, L"System- & Treiber-Optimierung", 29, &sz);
+        GetTextExtentPoint32W(dc, L"Deine Werkzeuge für Windows an einem Ort", 40, &sz);
         textW = std::max<int>(textW, sz.cx);
         SelectObject(dc, oldFont);
     }
@@ -1520,7 +1520,7 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     const int titleX = groupX + iconSize + S(16);
     DrawLabel(dc, m_fontTitle, kText, { titleX, rowTop + S(0), titleX + textW + S(8), rowTop + S(34) }, L"Duncan's Suite");
     DrawLabel(dc, m_fontSmall, kTextDim, { titleX, rowTop + S(34), titleX + textW + S(8), rowTop + S(54) },
-              L"System- & Treiber-Optimierung");
+              L"Deine Werkzeuge für Windows an einem Ort");
 
     // Zahnrad oben rechts im Banner
     {

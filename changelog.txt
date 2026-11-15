@@ -78,6 +78,8 @@
 - Wenn Windows den Ordner von Equalizer APO schützt, lässt sich die Einstellung mit einem Klick mit Administratorrechten übernehmen.
 
 [DuncansClip.exe]
+## 0.7.2 | 2026-11-15
+- Geändert: Neuer Untertitel im Fenster: „Verlauf, Textbausteine und Notizzettel – in jedem Programm mit …“.
 ## 0.7.1 | 2026-11-14
 - Geändert: Das Programm heißt jetzt „Duncan's Scratchpad“ (vorher „Clip“), weil der alte Name nach Videoclips klang. Es kann weiterhin Zwischenablage-Verlauf, Textbausteine und den Notizzettel. Dateien, gespeicherte Daten und der Autostart-Eintrag bleiben unverändert, es geht nichts verloren.
 ## 0.7.0 | 2026-11-14
@@ -115,6 +117,8 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.10.1 | 2026-11-15
+- Geändert: Neuer Untertitel im Fenster: „Zock-Modus, Overlay und Clips – alles an einem Ort“.
 ## 0.10.0 | 2026-11-14
 - Neu: Installierte Spiele finden. In der Gruppe „Automatik“ gibt es jetzt „Installierte Spiele (Steam, Epic)“: ein Klick auf „Suchen“ liest die Steam- und Epic-Bibliotheken (nur lesen) und listet die Spiele zum Anhaken, ohne dass du sie vorher starten musst. Zu jedem Spiel wählt Boost die Haupt-EXE; Hilfsprogramme wie Deinstaller und Anti-Cheat-Dienste werden ausgelassen. Steam-Werkzeuge (Proton, Redistributables) fehlen, aber manche Programme aus der Steam-Bibliothek, die keine Spiele sind (zum Beispiel Blender), erscheinen trotzdem; du hakst einfach nur an, was du willst.
 - Neu: Gruppe „Zock-Extras (optional)“ mit „Mausbeschleunigung im Zock-Modus ausschalten“ (standardmäßig aus). Boost schaltet die Windows-Zeigerbeschleunigung nur solange der Zock-Modus läuft aus und stellt sie danach wieder her; es wird nichts dauerhaft geändert, und der alte Wert wird vor der Änderung gesichert wie bei den anderen Einstellungen.
@@ -364,6 +368,8 @@
 - Der PDF Reader kommt als Programm in die Suite.
 
 [DuncansPrivacy.exe]
+## 0.13.1 | 2026-11-15
+- Geändert: Neuer Untertitel im Fenster: „Weniger Tracking in Windows – mit Sicherung und Rückgängig“.
 ## 0.13.0 | 2026-11-14
 - Neu: „Verbindungen“ in der Fußzeile. Zeigt, welche Programme gerade offene Verbindungen haben, nach Programm geordnet, mit der Zahl der Verbindungen ins Internet und im Heimnetz und ein paar Beispiel-Adressen. Die Ansicht aktualisiert sich alle paar Sekunden und ist nur eine Anzeige: Es wird nichts blockiert oder verändert, und es werden keine Daten gesendet. Mit „Zurück“ oder Esc kommst du zur Einstellungsliste zurück.
 ## 0.12.1 | 2026-11-12
@@ -681,6 +687,8 @@
 - Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
 
 [DuncansSuite.exe]
+## 1.1.47 | 2026-11-15
+- Geändert: Die Beschreibungen auf allen Programmkarten sind neu geschrieben: kürzer, konkreter und mit dem, was die Programme heute können (zum Beispiel Overlay und Clips bei Boost, Profile pro Programm beim Equalizer). Der Untertitel im Kopf heißt jetzt „Deine Werkzeuge für Windows an einem Ort“ statt „System- & Treiber-Optimierung“.
 ## 1.1.46 | 2026-11-14
 - Geändert: Die Karte „Duncan's Clip“ heißt jetzt „Duncan's Scratchpad“ und beschreibt, was das Programm kann (Zwischenablage-Verlauf, Textbausteine, Notizzettel).
 ## 1.1.45 | 2026-11-14
