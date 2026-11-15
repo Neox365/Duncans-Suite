@@ -39,7 +39,7 @@ using std::min;
 #include "LiveStats.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.6.2"   // normalerweise aus CMake
+#define APP_VERSION L"0.10.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -733,7 +733,7 @@ void Paint(HDC dc, const RECT& cr) {
     DeleteObject(bg);
 
     DrawText2(dc, g.fTitle, kText, { S(28), S(18), cr.right - S(28), S(56) }, kTitle);
-    DrawText2(dc, g.fBody, kTextDim, { S(28), S(54), cr.right - S(28), S(78) }, L"Mehr Leistung zum Zocken – ein Schalter, ein Klick zurück");
+    DrawText2(dc, g.fBody, kTextDim, { S(28), S(54), cr.right - S(28), S(78) }, L"Zock-Modus, Overlay und Clips – alles an einem Ort");
 
     // Hero-Karte mit grossem Schalter
     const bool on = g.state.active;
