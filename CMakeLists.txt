@@ -10,7 +10,7 @@ set(OFFICE_VER "0.9.1")
 set(QUICKCONVERT_VER "0.4.3")
 set(BOOST_VER "0.10.1")
 set(CLIP_VER "0.7.2")
-set(EQUALIZER_VER "0.15.1")
+set(EQUALIZER_VER "0.16.0")
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -282,6 +282,7 @@ add_executable(DuncansEqualizer WIN32
     equalizer/main.cpp
     equalizer/EqLogic.cpp
     equalizer/EqCurve.cpp
+    equalizer/Soundstage.cpp
     equalizer/AppMixer.cpp
     equalizer/Spectrum.cpp
     equalizer/FilterEditor.cpp

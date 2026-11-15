@@ -10,6 +10,8 @@
 #include <string>
 #include <vector>
 
+#include "Soundstage.h"
+
 namespace eq {
 
 constexpr int kBands = 10;      // 31 Hz ... 16 kHz
@@ -37,6 +39,7 @@ struct Settings {
     int  delay = 0;             // Laufzeitausgleich in ms: negativ = linke Seite spaeter, positiv = rechte Seite spaeter (z. B. ungleich aufgestellte Lautsprecher)
     int  micMode = 0;           // Mikrofon-Equalizer: 0 aus, 1 Stimme klarer, 2 Rumpeln weg (Hochpass), 3 beides. Gilt nur auf diesem PC, nicht in Profilen
     std::wstring micDevice;     // Anzeigename des Mikrofons, auf das micMode wirkt
+    StageSettings stage;        // Raumklang (Crossfeed, Buehnenbreite, Raum); wird zu einer Impulsantwort gerechnet
     std::wstring irPath;        // Impulsantwort (WAV) fuer Raum-/Kopfhoerer-Korrektur per Faltung; leer = keine. Nur auf diesem PC (nicht in weitergegebenen Profilen)
 };
 
@@ -69,7 +72,8 @@ int TotalPreampDb(const Settings& s);
 
 // Text der Konfigurationsdatei fuer Equalizer APO (ASCII, Zeilenende CRLF). irFile: absoluter Pfad der Impulsantwort, wie APO ihn lesen soll
 // (leer = keine Faltung; unsichere Pfade werden verworfen).
-std::string BuildConfig(const Settings& s, const std::string& irFile = std::string());
+std::string BuildConfig(const Settings& s, const std::string& irFile = std::string(), const std::string& stageFile = std::string());
+extern const wchar_t* const kStageIrName;     // "duncans-room.wav": berechnete Raumklang-Impulsantwort im config-Ordner von Equalizer APO
 // Name des Mikrofons, wie er in die APO-Konfiguration kommt: der laengste Abschnitt aus einfachen ASCII-Zeichen (APO findet Geraete ueber einen Namensteil); leer = unbrauchbar
 std::string MicDeviceKey(const std::wstring& name);
 std::vector<std::wstring> CaptureDeviceNames();   // Anzeigenamen der aktiven Mikrofone

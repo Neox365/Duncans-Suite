@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.16.0 | 2026-11-15
+- Neu: Reiter „Raumklang“ oben rechts. Er macht den Ton auf Kopfhörern räumlicher: „Bühnenbreite“ (50 bis 160 Prozent, die Tiefen bleiben dabei in der Mitte), „Kopfhörer-Crossfeed“ (ein Teil des anderen Kanals kommt wie im Raum leicht verzögert und dumpfer ans Ohr, gegen das Gefühl, der Ton sitze im Kopf) und „Raumtiefe“ mit fünf Räumen: Aus, Gaming / Ortung, Kino, Studio und Konzertsaal. Eine kleine Bühnenansicht zeigt, wie breit und tief die Einstellung wirkt.
+- Der Raumklang gehört zum Profil, wird mit ihm gespeichert und weitergegeben und wirkt wie der Equalizer für alle Programme. Dahinter steckt eine selbst berechnete Impulsantwort, die Equalizer APO per Faltung anwendet (Datei duncans-room.wav im config-Ordner). Es wird nichts zusätzlich installiert.
 ## 0.15.1 | 2026-11-14
 - Geändert: Rechtsklick- und Auswahlmenüs erscheinen jetzt im dunklen Design statt hell.
 ## 0.15.0 | 2026-11-14
