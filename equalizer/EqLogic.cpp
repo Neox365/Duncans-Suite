@@ -187,6 +187,7 @@ int TotalPreampDb(const Settings& s)
 }
 
 const wchar_t* const kIrCopyName = L"duncans-ir.wav";
+const wchar_t* const kStageIrName = L"duncans-room.wav";
 
 // Absoluter Pfad mit Laufwerk und nur harmlosen Zeichen (kein Zeilenumbruch, kein Semikolon usw.), damit nichts in die Konfiguration gelangt
 static bool IsSafeConfigPath(const std::string& p)
@@ -252,11 +253,35 @@ std::string MicDeviceKey(const std::wstring& name)
     return best.size() >= 3 && best.size() <= 64 ? best : std::string();
 }
 
-static std::string BuildMain(const Settings& s, const std::string& irFile);
+static std::string BuildMain(const Settings& s, const std::string& irFile, const std::string& stageFile);
 
-std::string BuildConfig(const Settings& s, const std::string& irFile)
+// "an,raum,breite,crossfeed,tiefe" als Text speichern und wieder lesen (falsche Werte werden begrenzt)
+static std::string StageText(const StageSettings& in)
 {
-    std::string t = BuildMain(s, irFile);
+    StageSettings s = in;
+    ClampStage(s);
+    return std::string(s.on ? "1" : "0") + "," + Num(s.room) + "," + Num(s.width) + "," + Num(s.cross) + "," + Num(s.depth);
+}
+
+static void ParseStage(const std::string& val, StageSettings& out)
+{
+    int v[5] = { 0, 0, 100, 0, 0 };
+    size_t p = 0;
+    for (int i = 0; i < 5 && p <= val.size(); ++i)
+    {
+        size_t c = val.find(',', p);
+        if (c == std::string::npos)
+            c = val.size();
+        v[i] = std::atoi(val.substr(p, c - p).c_str());
+        p = c + 1;
+    }
+    out.on = v[0] == 1; out.room = v[1]; out.width = v[2]; out.cross = v[3]; out.depth = v[4];
+    ClampStage(out);
+}
+
+std::string BuildConfig(const Settings& s, const std::string& irFile, const std::string& stageFile)
+{
+    std::string t = BuildMain(s, irFile, stageFile);
     const std::string key = MicDeviceKey(s.micDevice);
     if (s.micMode >= 1 && s.micMode <= 3 && !key.empty())          // eigener Abschnitt nur fuer das Mikrofon; "Device: all" beendet ihn
     {
@@ -305,7 +330,7 @@ std::vector<std::wstring> CaptureDeviceNames()
     return out;
 }
 
-static std::string BuildMain(const Settings& s, const std::string& irFile)
+static std::string BuildMain(const Settings& s, const std::string& irFile, const std::string& stageFile)
 {
     std::string t = "# Duncan's Equalizer - wird automatisch erzeugt, bitte nicht von Hand aendern\r\n";
     if (!s.enabled)
@@ -317,7 +342,8 @@ static std::string BuildMain(const Settings& s, const std::string& irFile)
     const int balance = std::clamp(s.balance, -kMaxBalance, kMaxBalance);
     const int delay = std::clamp(s.delay, -kMaxDelay, kMaxDelay);
     const bool useIr = !irFile.empty() && IsSafeConfigPath(irFile);
-    if (!anyBand && !s.bass && !s.voice && s.extra.empty() && s.preamp == 0 && balance == 0 && delay == 0 && !s.mono && !useIr)
+    const bool useStage = !stageFile.empty() && IsSafeConfigPath(stageFile) && StageActive(s.stage);
+    if (!anyBand && !s.bass && !s.voice && s.extra.empty() && s.preamp == 0 && balance == 0 && delay == 0 && !s.mono && !useIr && !useStage)
         return t + "# Alle Regler stehen auf 0\r\n";
     if (TotalPreampDb(s) != 0)
         t += "Preamp: " + Num(TotalPreampDb(s)) + " dB\r\n";
@@ -350,6 +376,8 @@ static std::string BuildMain(const Settings& s, const std::string& irFile)
         t += "Convolution: " + irFile + "\r\n";                              // Raum-/Kopfhoerer-Korrektur aus der Impulsantwort
     if (s.mono)
         t += "Copy: L=0.5*L+0.5*R R=0.5*L+0.5*R\r\n";                       // beide Seiten gleich
+    if (useStage)
+        t += "Convolution: " + stageFile + "\r\n";                           // Raumklang: 4-Kanal-Impulsantwort (L->L, L->R, R->L, R->R)
     if (balance != 0)                                                        // die lautere Seite bleibt, die andere wird leiser
         t += std::string("Channel: ") + (balance < 0 ? "R" : "L") + "\r\nPreamp: -" + Num(std::abs(balance)) + " dB\r\nChannel: all\r\n";
     if (delay != 0)                                                          // die Seite, die spaeter kommen soll, wird verzoegert
@@ -374,7 +402,7 @@ std::wstring SettingsPath()
 bool SaveSettings(const Settings& s, const std::wstring& path)
 {
     std::string t = std::string("enabled=") + (s.enabled ? "1" : "0") + "\r\nkeeprunning=" + (s.keepRunning ? "1" : "0") + "\r\nhotkeys=" + (s.hotkeys ? "1" : "0") + "\r\nspectrum=" + (s.spectrum ? "1" : "0") + "\r\nautogain=" + (s.autoGain ? "1" : "0") + "\r\nbass=" + (s.bass ? "1" : "0") +
-                    "\r\nvoice=" + (s.voice ? "1" : "0") + "\r\nbalance=" + Num(std::clamp(s.balance, -kMaxBalance, kMaxBalance)) + "\r\nmono=" + (s.mono ? "1" : "0") + "\r\ndelay=" + Num(std::clamp(s.delay, -kMaxDelay, kMaxDelay)) + "\r\nmic=" + Num(s.micMode) + "\r\nmicdevice=" + ToUtf8(s.micDevice) + "\r\nir=" + ToUtf8(s.irPath) + "\r\ngains=";
+                    "\r\nvoice=" + (s.voice ? "1" : "0") + "\r\nbalance=" + Num(std::clamp(s.balance, -kMaxBalance, kMaxBalance)) + "\r\nmono=" + (s.mono ? "1" : "0") + "\r\ndelay=" + Num(std::clamp(s.delay, -kMaxDelay, kMaxDelay)) + "\r\nmic=" + Num(s.micMode) + "\r\nmicdevice=" + ToUtf8(s.micDevice) + "\r\nir=" + ToUtf8(s.irPath) + "\r\nstage=" + StageText(s.stage) + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(s.gains[b]));
     t += "\r\n";
@@ -412,6 +440,7 @@ bool LoadSettings(Settings& s, const std::wstring& path)
         else if (key == "mic") s.micMode = std::clamp(std::atoi(val.c_str()), 0, 3);
         else if (key == "micdevice") s.micDevice = ToWide(val);
         else if (key == "ir") s.irPath = ToWide(val);
+        else if (key == "stage") ParseStage(val, s.stage);
         else if (key == "gains")
         {
             size_t p = 0;
@@ -483,8 +512,33 @@ ApplyResult ApplyToDir(const std::wstring& installDir, const Settings& s)
         }
     }
 
+    // 0b. Raumklang: Impulsantwort berechnen und in den config-Ordner schreiben (nur, wenn sie sich geaendert hat)
+    std::string stageAbs;
+    {
+        const std::wstring dest = cfgDir + L"\\" + kStageIrName;
+        if (s.enabled && StageActive(s.stage))
+        {
+            const std::string wav = StageIrWav(BuildStageIr(s.stage));
+            std::string have;
+            if (!ReadFileBytes(dest, have) || have != wav)
+            {
+                const DWORD e = WriteFileBytes(dest, wav);
+                if (e)
+                    return e == ERROR_ACCESS_DENIED ? ApplyResult::AccessDenied : ApplyResult::Failed;
+            }
+            bool ascii = true;
+            for (wchar_t c : dest)
+                if (c > 126 || c < 32)
+                    ascii = false;
+            if (ascii)
+                stageAbs = ToUtf8(dest);
+        }
+        else
+            DeleteFileW(dest.c_str());          // nicht mehr gebraucht (ohne Rechte bleibt sie, wird aber nicht benutzt)
+    }
+
     // 1. unsere Datei
-    DWORD err = WriteFileBytes(cfgDir + L"\\" + kConfigFile, BuildConfig(s, irAbs));
+    DWORD err = WriteFileBytes(cfgDir + L"\\" + kConfigFile, BuildConfig(s, irAbs, stageAbs));
     if (err == ERROR_ACCESS_DENIED || err == ERROR_SHARING_VIOLATION)
         return err == ERROR_ACCESS_DENIED ? ApplyResult::AccessDenied : ApplyResult::Failed;
     if (err)
@@ -602,7 +656,7 @@ static std::string ProfileBlock(const Profile& p, bool withDevice)
 {
     std::string t = "[profile]\r\nname=" + ToUtf8(p.name) + "\r\ndevice=" + (withDevice ? ToUtf8(p.device) : std::string()) + "\r\napps=" + (withDevice ? AppsLine(p) : std::string()) + "\r\nbass=" + (p.s.bass ? "1" : "0") +
                     "\r\nvoice=" + (p.s.voice ? "1" : "0") + "\r\nbalance=" + Num(std::clamp(p.s.balance, -kMaxBalance, kMaxBalance)) + "\r\nmono=" + (p.s.mono ? "1" : "0") + "\r\ndelay=" + Num(std::clamp(p.s.delay, -kMaxDelay, kMaxDelay)) +
-                    (withDevice && !p.s.irPath.empty() ? "\r\nir=" + ToUtf8(p.s.irPath) : std::string()) + "\r\npreamp=" + Num(std::clamp(p.s.preamp, -kMaxGain, kMaxGain)) + "\r\ngains=";
+                    (withDevice && !p.s.irPath.empty() ? "\r\nir=" + ToUtf8(p.s.irPath) : std::string()) + "\r\nstage=" + StageText(p.s.stage) + "\r\npreamp=" + Num(std::clamp(p.s.preamp, -kMaxGain, kMaxGain)) + "\r\ngains=";
     for (int b = 0; b < kBands; ++b)
         t += (b ? "," : "") + Num(ClampGain(p.s.gains[b]));
     t += "\r\n";
@@ -728,6 +782,7 @@ bool ParseProfiles(const std::string& data, std::vector<Profile>& list, int& act
         else if (key == "mono") p.s.mono = val == "1";
         else if (key == "delay") p.s.delay = std::clamp(std::atoi(val.c_str()), -kMaxDelay, kMaxDelay);
         else if (key == "ir") p.s.irPath = ToWide(val);
+        else if (key == "stage") ParseStage(val, p.s.stage);
         else if (key == "preamp") p.s.preamp = std::clamp(std::atoi(val.c_str()), -kMaxGain, kMaxGain);
         else if (key == "extra") { if (p.s.extra.size() < kMaxExtraLines && IsSafeFilterLine(val)) p.s.extra.push_back(val); }
         else if (key == "gains")

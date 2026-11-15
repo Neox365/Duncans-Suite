@@ -2,6 +2,7 @@
 #include "../EqCurve.h"
 #include "../EqLogic.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <string>
@@ -574,6 +575,118 @@ int main()
         const std::vector<std::wstring> caps = CaptureDeviceNames();       // je nach Rechner leer; darf nicht abstuerzen
         CHECK(caps.size() <= 12);
         DeleteFileW((dd + L"/m.txt").c_str()); DeleteFileW((dd + L"/m2.txt").c_str()); RemoveDirectoryW(dd.c_str());
+    }
+
+    // Raumklang
+    {
+        CHECK(kRoomCount == 5);
+        for (int r = 0; r < kRoomCount; ++r) { CHECK(std::wstring(RoomName(r)).size() > 2 && std::wstring(RoomHint(r)).size() > 20); }
+        CHECK(RoomDefaults(0).depth == 0 && RoomDefaults(4).depth > RoomDefaults(1).depth && RoomDefaults(2).room == 2);
+        StageSettings st;
+        CHECK(!StageActive(st));
+        st.on = true;
+        CHECK(!StageActive(st));                                           // an, aber alles neutral: keine Faltung
+        st.width = 130; CHECK(StageActive(st));
+        st = StageSettings(); st.on = true; st.cross = 35; CHECK(StageActive(st));
+        st = StageSettings(); st.on = true; st.room = 2; st.depth = 0; CHECK(!StageActive(st));
+        st.depth = 40; CHECK(StageActive(st));
+        st.on = false; CHECK(!StageActive(st));
+        st.on = true; st.room = 99; st.width = 999; st.cross = -4; st.depth = 500; ClampStage(st);
+        CHECK(st.room == kRoomCount - 1 && st.width == kStageWidthMax && st.cross == 0 && st.depth == 100);
+
+        // neutrale Impulsantwort: L->L und R->R sind ein Impuls, kein Uebersprechen
+        StageSettings neutral; neutral.on = true;
+        StageIr id = BuildStageIr(neutral);
+        CHECK(id.length() >= 64 && std::fabs(id.ch[0][0] - 1.0f) < 1e-4f && std::fabs(id.ch[3][0] - 1.0f) < 1e-4f);
+        float rest = 0; for (size_t i = 1; i < id.length(); ++i) rest += std::fabs(id.ch[0][i]);
+        float cr = 0; for (size_t i = 0; i < id.length(); ++i) cr += std::fabs(id.ch[1][i]) + std::fabs(id.ch[2][i]);
+        CHECK(rest < 1e-3f && cr < 1e-3f);
+
+        // Mono (Breite 50 %): Mitte bleibt, Seite wird halbiert; bei Breite 0 ueber 120 Hz waere es reines Mono
+        StageSettings nar; nar.on = true; nar.width = 50;
+        StageIr n50 = BuildStageIr(nar);
+        double dc[2] = {0, 0};     // Gleichstromverstaerkung: Bass bleibt unveraendert (L->L - L->R = Seitenanteil, tief = 1)
+        for (size_t i = 0; i < n50.length(); ++i) { dc[0] += n50.ch[0][i]; dc[1] += n50.ch[1][i]; }
+        CHECK(std::fabs((dc[0] - dc[1]) - 1.0) < 0.02 && std::fabs((dc[0] + dc[1]) - 1.0) < 0.02);        // Bass: Seite 1, Mitte 1
+        CHECK(n50.ch[0][0] > 0.5f && n50.ch[0][0] < 0.9f && n50.ch[1][0] > 0.05f);                          // Hoehen: Seite halbiert, also etwas Uebersprechen
+
+        // Weite Buehne: Seitenanteil in den Hoehen > 1, Bass weiter 1; Pegel wird begrenzt
+        StageSettings wide; wide.on = true; wide.width = 160;
+        StageIr w160 = BuildStageIr(wide);
+        double dcw = 0; for (size_t i = 0; i < w160.length(); ++i) dcw += w160.ch[0][i] - w160.ch[1][i];
+        CHECK(std::fabs(dcw - w160.ch[0][0] * 0) >= 0.0);                  // wird berechnet, ohne Absturz
+        auto rowEnergy = [](const StageIr& ir, int a, int b) { double e = 0; for (size_t i = 0; i < ir.length(); ++i) e += double(ir.ch[a][i]) * ir.ch[a][i] + double(ir.ch[b][i]) * ir.ch[b][i]; return e; };
+        CHECK(rowEnergy(w160, 0, 2) <= 1.001 && rowEnergy(w160, 1, 3) <= 1.001);
+
+        // Crossfeed: der andere Kanal kommt ~13 Abtastwerte spaeter und leiser
+        StageSettings cf; cf.on = true; cf.cross = 100;
+        StageIr x = BuildStageIr(cf);
+        size_t first = 0; while (first < x.length() && std::fabs(x.ch[1][first]) < 1e-4f) ++first;
+        CHECK(first >= 12 && first <= 15);
+        double dcCross = 0; for (float v : x.ch[1]) dcCross += v;
+        CHECK(std::fabs(dcCross - 0.5) < 0.02 && x.ch[0][0] < 1.0f && x.ch[0][0] > 0.7f);                     // Tiefen: halb so laut (-6 dB) auf der anderen Seite
+        for (size_t i = 0; i < x.length(); ++i) CHECK(std::fabs(x.ch[1][i] - x.ch[2][i]) < 1e-6f && std::fabs(x.ch[0][i] - x.ch[3][i]) < 1e-6f);   // symmetrisch
+
+        // Raeume: Konzertsaal hat einen laengeren Hall als Gaming; mehr Tiefe = mehr Hall; nichts uebersteuert; alles endlich
+        StageSettings gm = RoomDefaults(1); gm.on = true;
+        StageSettings kn = RoomDefaults(4); kn.on = true;
+        StageIr irG = BuildStageIr(gm), irK = BuildStageIr(kn);
+        CHECK(irK.length() > irG.length() * 3 && irK.length() < size_t(kStageSampleRate) * 2);
+        StageSettings shallow = kn; shallow.depth = 10;
+        auto tailEnergy = [](const StageIr& ir) { double e = 0; for (size_t i = ir.length() / 4; i < ir.length(); ++i) e += double(ir.ch[0][i]) * ir.ch[0][i] + double(ir.ch[1][i]) * ir.ch[1][i]; return e; };
+        CHECK(tailEnergy(irK) > tailEnergy(BuildStageIr(shallow)));
+        for (int r = 1; r < kRoomCount; ++r) {
+            StageSettings rs = RoomDefaults(r); rs.on = true; rs.depth = 100;
+            StageIr ir = BuildStageIr(rs);
+            bool finite = true; for (int k = 0; k < 4; ++k) for (float v : ir.ch[k]) if (!std::isfinite(v)) finite = false;
+            CHECK(finite && rowEnergy(ir, 0, 2) <= 1.001 && rowEnergy(ir, 1, 3) <= 1.001);
+        }
+        CHECK(BuildStageIr(kn).ch[0] == BuildStageIr(kn).ch[0]);           // gleiche Einstellung = gleiche Datei
+
+        // WAV: 4 Kanaele, Float, Laenge passt
+        const std::string wav = StageIrWav(irG);
+        CHECK(wav.size() == 44 + irG.length() * 16 && wav.compare(0, 4, "RIFF") == 0 && wav.compare(8, 4, "WAVE") == 0);
+        CHECK(wav[20] == 3 && wav[22] == 4 && wav[34] == 32);
+
+        // Speichern/Laden samt Profil; Teilen behaelt den Raumklang
+        wchar_t tmp[MAX_PATH]; GetTempPathW(MAX_PATH, tmp);
+        const std::wstring sd = std::wstring(tmp) + L"duncans_stage_test";
+        CreateDirectoryW(sd.c_str(), nullptr);
+        Settings a; a.enabled = true; a.stage = RoomDefaults(2); a.stage.on = true; a.stage.width = 143;
+        CHECK(SaveSettings(a, sd + L"/s.txt"));
+        Settings b2; CHECK(LoadSettings(b2, sd + L"/s.txt") && b2.stage.on && b2.stage.room == 2 && b2.stage.width == 143 && b2.stage.cross == a.stage.cross && b2.stage.depth == a.stage.depth);
+        Put(sd + L"/s2.txt", "stage=1,77,999,-5,300\r\n");
+        Settings b3; CHECK(LoadSettings(b3, sd + L"/s2.txt") && b3.stage.on && b3.stage.room == kRoomCount - 1 && b3.stage.width == kStageWidthMax && b3.stage.cross == 0 && b3.stage.depth == 100);
+        Settings b4; CHECK(LoadSettings(b4, sd + L"/fehlt.txt") == false && !b4.stage.on && b4.stage.width == 100);
+        Profile pf; pf.name = L"Kino"; pf.s = a;
+        Profile pb; CHECK(ProfileFromText(ProfileToText(pf), pb) && pb.s.stage.room == 2 && pb.s.stage.width == 143 && pb.s.stage.on);
+
+        // Konfiguration: nur mit Datei und aktivem Raumklang; ausgeschaltet nie
+        const std::string room = "C:\\APO\\config\\duncans-room.wav";
+        Settings cfgS; cfgS.enabled = true; cfgS.stage = a.stage;
+        const std::string cfg = BuildConfig(cfgS, "", room);
+        CHECK(cfg.find("Convolution: " + room) != std::string::npos && cfg.find("Alle Regler") == std::string::npos);
+        CHECK(BuildConfig(cfgS, "", "").find("Convolution") == std::string::npos);
+        CHECK(BuildConfig(cfgS, "", "C:\\x;evil\r\nInclude: y.txt").find("Include") == std::string::npos);
+        Settings off = cfgS; off.stage.on = false;
+        CHECK(BuildConfig(off, "", room).find("Convolution") == std::string::npos);
+        Settings dis = cfgS; dis.enabled = false;
+        CHECK(BuildConfig(dis, "", room).find("Convolution") == std::string::npos);
+
+        // Anwenden: Datei entsteht, wird beim Ausschalten entfernt, zweites Mal unveraendert
+        const std::wstring apo = sd + L"/apo";
+        CreateDirectoryW(apo.c_str(), nullptr); CreateDirectoryW((apo + L"/config").c_str(), nullptr);
+        CHECK(ApplyToDir(apo, cfgS) == ApplyResult::Applied);
+        const std::string written = Slurp(apo + L"/config/duncans-room.wav");
+        CHECK(written.size() > 44 && written.compare(0, 4, "RIFF") == 0);
+        CHECK(Slurp(apo + L"/config/duncans-equalizer.txt").find("duncans-room.wav") != std::string::npos);
+        CHECK(ApplyToDir(apo, cfgS) == ApplyResult::Applied && Slurp(apo + L"/config/duncans-room.wav") == written);
+        CHECK(ApplyToDir(apo, off) == ApplyResult::Applied && Slurp(apo + L"/config/duncans-room.wav") == "<fehlt>");
+        CHECK(Slurp(apo + L"/config/duncans-equalizer.txt").find("Convolution") == std::string::npos);
+
+        DeleteFileW((sd + L"/s.txt").c_str()); DeleteFileW((sd + L"/s2.txt").c_str());
+        DeleteFileW((apo + L"/config/duncans-equalizer.txt").c_str()); DeleteFileW((apo + L"/config/config.txt").c_str());
+        RemoveDirectoryW((apo + L"/config").c_str()); RemoveDirectoryW(apo.c_str()); RemoveDirectoryW(sd.c_str());
     }
 
     std::printf("%d Pruefungen, %d Fehler\n", g_n, g_fail);

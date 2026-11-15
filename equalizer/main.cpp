@@ -35,7 +35,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.15.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.16.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -70,7 +70,11 @@ enum HitId {
     H_SPECTRUM = 330,   // Schalter "Spektrum" im Diagramm
     H_MIXSLIDER = 310,  // 310 .. 314: Lautstaerke-Regler je Programm
     H_MIXMUTE = 320,    // 320 .. 324: Stumm-Knopf je Programm
-    H_RESET = 121
+    H_RESET = 121,
+    H_TAB = 340,        // 340 Equalizer, 341 Raumklang
+    H_STAGEON = 345,    // Schalter "Raumklang aktivieren"
+    H_ROOM = 350,       // 350 .. 354: Raum-Voreinstellungen
+    H_SLIDER = 360      // 360 .. 362: Buehnenbreite, Crossfeed, Raumtiefe
 };
 
 struct App {
@@ -107,6 +111,9 @@ struct App {
     RECT mix{}, mixName[kMixRows]{}, mixSlider[kMixRows]{}, mixPct[kMixRows]{}, mixMute[kMixRows]{};   // Karte "Programme"
     std::vector<mixer::Entry> mixEntries;          // Programme, die gerade Ton ausgeben
     int mixDrag = -1;                              // Regler, der gerade gezogen wird
+    int page = 0;                                  // 0 = Equalizer, 1 = Raumklang
+    RECT tabRect[2]{}, stageCard{}, stageOn{}, roomChip[eq::kRoomCount]{}, sliderRect[3]{}, sliderCard{}, stagePrev{};
+    int stageDrag = -1;                            // Raumklang-Regler, der gerade gezogen wird
     NOTIFYICONDATAW nid{};
     bool autostartOn = false, quitting = false, balloonShown = false;
     bool delArmed = false;                         // "Loeschen" wurde einmal geklickt, zweiter Klick loescht
@@ -154,7 +161,7 @@ void SyncActive() {                                 // aktuelle Regler/Schalter/
     for (int b = 0; b < eq::kBands; ++b) p.s.gains[b] = g.cfg.gains[b];
     p.s.preamp = g.cfg.preamp;
     p.s.bass = g.cfg.bass; p.s.voice = g.cfg.voice; p.s.extra = g.cfg.extra;
-    p.s.balance = g.cfg.balance; p.s.mono = g.cfg.mono; p.s.delay = g.cfg.delay; p.s.irPath = g.cfg.irPath;
+    p.s.balance = g.cfg.balance; p.s.mono = g.cfg.mono; p.s.delay = g.cfg.delay; p.s.irPath = g.cfg.irPath; p.s.stage = g.cfg.stage;
 }
 
 void LoadActive() {                                 // Einstellungen des aktiven Profils uebernehmen (Ein/Aus bleibt)
@@ -162,7 +169,7 @@ void LoadActive() {                                 // Einstellungen des aktiven
     for (int b = 0; b < eq::kBands; ++b) g.cfg.gains[b] = p.s.gains[b];
     g.cfg.preamp = p.s.preamp;
     g.cfg.bass = p.s.bass; g.cfg.voice = p.s.voice; g.cfg.extra = p.s.extra;
-    g.cfg.balance = p.s.balance; g.cfg.mono = p.s.mono; g.cfg.delay = p.s.delay; g.cfg.irPath = p.s.irPath;
+    g.cfg.balance = p.s.balance; g.cfg.mono = p.s.mono; g.cfg.delay = p.s.delay; g.cfg.irPath = p.s.irPath; g.cfg.stage = p.s.stage;
 }
 
 void SaveCfg() {
@@ -803,10 +810,14 @@ void Layout() {
     const int R = wide ? S(640) : static_cast<int>(cr.right);          // rechter Rand der linken Spalte
     const int m = S(28);
     g.footer = { m, cr.bottom - S(34), cr.right - m, cr.bottom - S(8) };
-    g.hero = { m, S(84), R - m, S(84) + S(96) };
-    g.heroToggle = { g.hero.right - S(18) - S(64), g.hero.top + (S(96) - S(34)) / 2, g.hero.right - S(18), g.hero.top + (S(96) - S(34)) / 2 + S(34) };
+    const int heroH = g.page == 1 ? 0 : S(96);
+    g.hero = { m, S(84), R - m, S(84) + heroH };
+    g.heroToggle = heroH ? RECT{ g.hero.right - S(18) - S(64), g.hero.top + (S(96) - S(34)) / 2, g.hero.right - S(18), g.hero.top + (S(96) - S(34)) / 2 + S(34) } : RECT{};
     int y = g.hero.bottom + S(14);
     g.adminBar = g.adminBtn = RECT{};
+    g.tabRect[0] = g.tabRect[1] = g.stageCard = g.stageOn = g.sliderCard = g.stagePrev = RECT{};
+    for (RECT& r : g.roomChip) r = RECT{};
+    for (RECT& r : g.sliderRect) r = RECT{};
     HDC dc = GetDC(g.hwnd);
     if (g.installDir.empty()) {
         g.setup = { m, y, R - m, y + S(292) };
@@ -900,6 +911,33 @@ void Layout() {
         g.graph = { x0, g.hero.top, x1, g.autoCard.top - S(14) };
         g.specBtn = { g.graph.right - S(138), g.graph.top + S(10), g.graph.right - S(20), g.graph.top + S(36) };
     } else g.mix = RECT{};
+    {   // Reiter "Equalizer" | "Raumklang" oben rechts neben dem Titel und die Seite "Raumklang"
+        HDC tdc = GetDC(g.hwnd);
+        const int w1 = TextWidth(tdc, g.fBold, L"Equalizer") + S(34), w2 = TextWidth(tdc, g.fBold, L"Raumklang") + S(34);
+        ReleaseDC(g.hwnd, tdc);
+        g.tabRect[1] = { cr.right - m - w2, S(26), cr.right - m, S(26) + S(34) };
+        g.tabRect[0] = { g.tabRect[1].left - S(8) - w1, S(26), g.tabRect[1].left - S(8), S(26) + S(34) };
+        if (g.page == 1) {
+            const int ys = g.needAdmin ? g.adminBar.bottom + S(14) : g.hero.top;
+            g.stageCard = { m, ys, R - m, ys + S(174) };
+            g.stageOn = { g.stageCard.right - S(18) - S(64), g.stageCard.top + S(14), g.stageCard.right - S(18), g.stageCard.top + S(14) + S(34) };
+            HDC cdc = GetDC(g.hwnd);
+            int cx = g.stageCard.left + S(18);
+            for (int i = 0; i < eq::kRoomCount; ++i) {
+                const int w = TextWidth(cdc, g.fBold, eq::RoomName(i)) + S(30);
+                g.roomChip[i] = { cx, g.stageCard.top + S(66), cx + w, g.stageCard.top + S(66) + S(36) };
+                cx += w + S(8);
+            }
+            ReleaseDC(g.hwnd, cdc);
+            g.sliderCard = { m, g.stageCard.bottom + S(14), R - m, g.stageCard.bottom + S(14) + S(192) };
+            for (int i = 0; i < 3; ++i) {
+                const int top = g.sliderCard.top + S(10) + i * S(60);
+                g.sliderRect[i] = { g.sliderCard.left + S(26), top + S(26), g.sliderCard.right - S(26), top + S(50) };
+            }
+            g.stagePrev = wide ? RECT{ R + S(2), g.hero.top, cr.right - m, g.sliderCard.bottom }
+                               : RECT{ m, g.sliderCard.bottom + S(14), R - m, g.sliderCard.bottom + S(14) + S(172) };
+        }
+    }
     LayoutMixerRows();
 }
 
@@ -945,6 +983,8 @@ void DrawSwitchCard(HDC dc, const RECT& card, const wchar_t* title, const wchar_
     DrawToggle(dc, { card.right - pad - S(52), card.top + (card.bottom - card.top - S(28)) / 2, card.right - pad, card.top + (card.bottom - card.top - S(28)) / 2 + S(28) }, on, hot);
 }
 
+void PaintStage(HDC dc);
+void DrawTabs(HDC dc);
 void Paint(HDC dc, const RECT& cr) {
     HBRUSH bg = CreateSolidBrush(kBackground);
     FillRect(dc, &cr, bg);
@@ -956,6 +996,7 @@ void Paint(HDC dc, const RECT& cr) {
     // Hero-Karte mit grossem Schalter
     const bool on = g.cfg.enabled;
     const bool heroHot = g.hover == H_HERO;
+    if (g.page == 0 || g.installDir.empty()) {
     FillRound(dc, g.hero, S(16), heroHot ? kCardHover : kCard, on ? Blend(kBorder, kEq, 70) : (heroHot ? kBorderHot : kBorder));
     DrawText2(dc, g.fHead, kText, { g.hero.left + S(22), g.hero.top + S(18), g.heroToggle.left - S(30), g.hero.top + S(46) },
               on ? L"Equalizer ist an" : L"Equalizer ist aus");
@@ -964,6 +1005,7 @@ void Paint(HDC dc, const RECT& cr) {
                             : L"Stelle die Regler ein und schalte den Equalizer dann an.";
     DrawText2(dc, g.fSmall, kTextDim, { g.hero.left + S(22), g.hero.top + S(48), g.heroToggle.left - S(30), g.hero.bottom - S(10) }, sub, DT_LEFT | DT_TOP | DT_WORDBREAK);
     DrawToggle(dc, g.heroToggle, on, heroHot);
+    }
 
     if (g.installDir.empty()) {
         FillRound(dc, g.setup, S(16), kCard, kBorder);
@@ -983,6 +1025,8 @@ void Paint(HDC dc, const RECT& cr) {
                       L"Windows schützt den Ordner von Equalizer APO. Einmal mit Administratorrechten übernehmen:", DT_LEFT | DT_VCENTER | DT_WORDBREAK);
             DrawButton(dc, g.adminBtn, L"Mit Administratorrechten übernehmen", true, g.hover == H_ADMIN, g.press == H_ADMIN && g.hover == H_ADMIN);
         }
+        if (g.page == 1) PaintStage(dc);
+        else {
         const int match = eq::MatchPreset(g.cfg);
         for (int i = 0; i < eq::PresetCount() && i < 8; ++i) {
             const bool active = i == match, hot = g.hover == H_PRESET + i;
@@ -1333,6 +1377,8 @@ void Paint(HDC dc, const RECT& cr) {
             pill(g.btnAuto, std::wstring(L"Mit Windows starten: ") + (g.autostartOn ? L"an" : L"aus"), g.autostartOn, H_AUTOSTART);
             pill(g.btnKeep, std::wstring(L"Im Hintergrund: ") + (g.cfg.keepRunning ? L"an" : L"aus"), g.cfg.keepRunning, H_KEEP);
         }
+        }
+        DrawTabs(dc);
     }
 
     const std::wstring base = L"© 2026 Duncan · v" APP_VERSION;
@@ -1340,15 +1386,124 @@ void Paint(HDC dc, const RECT& cr) {
     DrawText2(dc, g.fSmall, g.statusColor, { g.footer.left + S(210), g.footer.top, g.footer.right, g.footer.bottom }, g.status, DT_RIGHT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
+// ---------- Raumklang ----------
+void DrawTabs(HDC dc) {
+    const wchar_t* names[2] = { L"Equalizer", L"Raumklang" };
+    for (int i = 0; i < 2; ++i) {
+        const bool act = g.page == i, hot = g.hover == H_TAB + i;
+        FillRound(dc, g.tabRect[i], S(17), act ? kEq : (hot ? kCardHover : kCard), act ? kEq : (hot ? kBorderHot : kBorder));
+        DrawText2(dc, g.fBold, act ? kOnEq : kText, g.tabRect[i], names[i], DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+}
+
+// Kleine Bühnenansicht: Kopfhörer in der Mitte, Klangbögen je nach Breite und Raumtiefe, Linien für das Crossfeed
+void DrawStageView(HDC dc, const RECT& r, const eq::StageSettings& st, bool live) {
+    FillRound(dc, r, S(16), kCard, kBorder);
+    DrawText2(dc, g.fHead, kText, { r.left + S(20), r.top + S(12), r.right - S(20), r.top + S(38) }, L"So wirkt die Bühne");
+    Gdiplus::Graphics gr(dc);
+    gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    const float cx = (r.left + r.right) / 2.0f, cy = r.top + (r.bottom - r.top) * 0.62f;
+    const float halfW = (r.right - r.left) / 2.0f - S(26), halfH = (cy - r.top) - S(46);
+    const float wf = static_cast<float>(st.width) / eq::kStageWidthMax;                  // 0,31 ... 1
+    const float df = static_cast<float>(st.depth) / 100.0f;
+    const int a = live ? 255 : 90;
+    auto col = [&](int alpha) { return Gdiplus::Color(static_cast<BYTE>(alpha * a / 255), GetRValue(kEq), GetGValue(kEq), GetBValue(kEq)); };
+    // Klangbögen: je tiefer der Raum, desto mehr und höhere Bögen; je breiter die Bühne, desto weiter außen
+    const int rings = 2 + static_cast<int>(std::lround(df * 2));
+    for (int k = 0; k < rings; ++k) {
+        const float f = (k + 1.0f) / rings;
+        const float rx = halfW * wf * (0.45f + 0.55f * f), ry = halfH * (0.35f + 0.65f * f * (0.35f + 0.65f * df));
+        Gdiplus::Pen pen(col(static_cast<int>(220 - 120 * f)), 2.0f * g.dpi / 96.0f);
+        gr.DrawArc(&pen, cx - rx, cy - ry, 2 * rx, 2 * ry, 180.0f, 180.0f);
+    }
+    // Kopf und Kopfhörer
+    const float hr = static_cast<float>(S(22));
+    Gdiplus::SolidBrush head(Gdiplus::Color(static_cast<BYTE>(a), 64, 68, 92));
+    gr.FillEllipse(&head, cx - hr, cy - hr, 2 * hr, 2 * hr);
+    Gdiplus::Pen band(Gdiplus::Color(static_cast<BYTE>(a), 232, 234, 240), 3.0f * g.dpi / 96.0f);
+    const float br = hr + S(5);
+    gr.DrawArc(&band, cx - br, cy - br, 2 * br, 2 * br, 180.0f, 180.0f);
+    Gdiplus::SolidBrush cup(Gdiplus::Color(static_cast<BYTE>(a), 232, 234, 240));
+    gr.FillRectangle(&cup, cx - hr - S(9), cy - S(9), static_cast<float>(S(9)), static_cast<float>(S(18)));
+    gr.FillRectangle(&cup, cx + hr, cy - S(9), static_cast<float>(S(9)), static_cast<float>(S(18)));
+    // Crossfeed: gestrichelter Bogen von einem Ohr zum anderen, je stärker, desto deutlicher
+    if (st.cross > 0) {
+        Gdiplus::Pen x(col(40 + st.cross * 2), 1.5f * g.dpi / 96.0f);
+        x.SetDashStyle(Gdiplus::DashStyleDash);
+        gr.DrawArc(&x, cx - hr - S(4), cy - S(14), 2 * hr + S(8), static_cast<float>(S(28)), 0.0f, 180.0f);
+    }
+    // Lautsprecher-Punkte links und rechts
+    Gdiplus::SolidBrush dot(col(255));
+    const float ex = halfW * wf * 0.95f;
+    gr.FillEllipse(&dot, cx - ex - S(5), cy - S(5), static_cast<float>(S(10)), static_cast<float>(S(10)));
+    gr.FillEllipse(&dot, cx + ex - S(5), cy - S(5), static_cast<float>(S(10)), static_cast<float>(S(10)));
+    DrawText2(dc, g.fSmall, kTextDim, { r.left + S(20), r.bottom - S(30), r.right - S(20), r.bottom - S(8) },
+              live ? L"Breite: " + std::to_wstring(st.width) + L" %   ·   Crossfeed: " + std::to_wstring(st.cross) + L" %   ·   Tiefe: " + std::to_wstring(st.depth) + L" %"
+                   : std::wstring(L"Raumklang ist aus"), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+}
+
+void PaintStage(HDC dc) {
+    const eq::StageSettings& st = g.cfg.stage;
+    FillRound(dc, g.stageCard, S(16), kCard, st.on ? Blend(kBorder, kEq, 70) : kBorder);
+    DrawText2(dc, g.fHead, kText, { g.stageCard.left + S(20), g.stageCard.top + S(12), g.stageOn.left - S(14), g.stageCard.top + S(36) }, L"Soundstage-Engine");
+    DrawText2(dc, g.fSmall, kTextDim, { g.stageCard.left + S(20), g.stageCard.top + S(36), g.stageOn.left - S(14), g.stageCard.top + S(58) },
+              st.on && !g.cfg.enabled ? L"Der Equalizer ist ausgeschaltet – dann wirkt auch der Raumklang nicht." : st.on ? L"Virtueller Raumklang ist an." : L"Virtuellen Raumklang aktivieren", DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
+    DrawToggle(dc, g.stageOn, st.on, g.hover == H_STAGEON);
+    for (int i = 0; i < eq::kRoomCount; ++i) {
+        const bool act = st.room == i, hot = g.hover == H_ROOM + i;
+        FillRound(dc, g.roomChip[i], S(12), act ? kEq : (hot ? kCardHover : Blend(kCard, kBackground, 25)), act ? kEq : (hot ? kBorderHot : kBorder));
+        DrawText2(dc, g.fBold, act ? kOnEq : kText, g.roomChip[i], eq::RoomName(i), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
+    DrawText2(dc, g.fSmall, kTextDim, { g.stageCard.left + S(20), g.stageCard.top + S(112), g.stageCard.right - S(20), g.stageCard.bottom - S(8) },
+              std::wstring(eq::RoomHint(st.room)) + L"\n\nAm besten mit Kopfhörern. Wirkt wie der Equalizer für alle Programme.", DT_LEFT | DT_TOP | DT_WORDBREAK);
+
+    FillRound(dc, g.sliderCard, S(16), kCard, kBorder);
+    const wchar_t* labels[3] = { L"Bühnenbreite", L"Kopfhörer-Crossfeed (Natürlichkeit)", L"Raumtiefe (Ambience)" };
+    const int vals[3] = { st.width, st.cross, st.depth };
+    for (int i = 0; i < 3; ++i) {
+        const RECT& tr = g.sliderRect[i];
+        const bool hot = g.hover == H_SLIDER + i || g.stageDrag == i;
+        DrawText2(dc, g.fBody, kText, { tr.left, tr.top - S(26), tr.right - S(70), tr.top }, labels[i], DT_LEFT | DT_VCENTER | DT_SINGLELINE);
+        DrawText2(dc, g.fBold, kEq, { tr.right - S(70), tr.top - S(26), tr.right, tr.top }, std::to_wstring(vals[i]) + L" %", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        const int lo = i == 0 ? eq::kStageWidthMin : 0, hi = i == 0 ? eq::kStageWidthMax : 100;
+        const float f = static_cast<float>(vals[i] - lo) / (hi - lo);
+        const float ty = (tr.top + tr.bottom) / 2.0f, x0 = static_cast<float>(tr.left), x1 = static_cast<float>(tr.right), kx = x0 + f * (x1 - x0);
+        Gdiplus::Graphics gr(dc);
+        gr.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+        Gdiplus::Pen back(Gdiplus::Color(255, GetRValue(kBorder), GetGValue(kBorder), GetBValue(kBorder)), 5.0f * g.dpi / 96.0f);
+        back.SetStartCap(Gdiplus::LineCapRound); back.SetEndCap(Gdiplus::LineCapRound);
+        gr.DrawLine(&back, x0, ty, x1, ty);
+        Gdiplus::Pen fill(Gdiplus::Color(255, GetRValue(kEq), GetGValue(kEq), GetBValue(kEq)), 5.0f * g.dpi / 96.0f);
+        fill.SetStartCap(Gdiplus::LineCapRound); fill.SetEndCap(Gdiplus::LineCapRound);
+        gr.DrawLine(&fill, x0, ty, kx, ty);
+        if (i == 0) {   // Marke bei 100 % (Original)
+            const float m100 = x0 + (100.0f - lo) / (hi - lo) * (x1 - x0);
+            Gdiplus::Pen mk(Gdiplus::Color(160, 200, 205, 220), 1.5f);
+            gr.DrawLine(&mk, m100, ty - S(9), m100, ty + S(9));
+        }
+        const float kr = (hot ? 9.0f : 8.0f) * g.dpi / 96.0f;
+        Gdiplus::SolidBrush kb(Gdiplus::Color(255, 240, 242, 248));
+        gr.FillEllipse(&kb, kx - kr, ty - kr, 2 * kr, 2 * kr);
+    }
+    if (g.stagePrev.right > g.stagePrev.left) DrawStageView(dc, g.stagePrev, st, st.on);
+}
+
 // ---------- Eingabe ----------
 int HitTest(POINT p) {
-    if (PtInRect(&g.hero, p)) return H_HERO;
+    if (g.page == 0 || g.installDir.empty()) if (PtInRect(&g.hero, p)) return H_HERO;
     if (g.installDir.empty()) {
         if (PtInRect(&g.dlBtn, p)) return H_DOWNLOAD;
         if (PtInRect(&g.recheckBtn, p)) return H_RECHECK;
         return H_NONE;
     }
     if (g.needAdmin && PtInRect(&g.adminBtn, p)) return H_ADMIN;
+    for (int i = 0; i < 2; ++i) if (PtInRect(&g.tabRect[i], p)) return H_TAB + i;
+    if (g.page == 1) {
+        if (PtInRect(&g.stageOn, p)) return H_STAGEON;
+        for (int i = 0; i < eq::kRoomCount; ++i) if (PtInRect(&g.roomChip[i], p)) return H_ROOM + i;
+        for (int i = 0; i < 3; ++i) if (PtInRect(&g.sliderRect[i], p)) return H_SLIDER + i;
+        return H_NONE;
+    }
     for (int i = 0; i < eq::PresetCount() && i < 8; ++i) if (PtInRect(&g.presetRect[i], p)) return H_PRESET + i;
     if (PtInRect(&g.btnReset, p)) return H_RESET;
     if (PtInRect(&g.specBtn, p)) return H_SPECTRUM;
@@ -1376,6 +1531,17 @@ int HitTest(POINT p) {
     return H_NONE;
 }
 
+void SetStageSlider(int i, int x) {                 // Regler per Mausposition setzen (ganze Prozent)
+    const RECT& r = g.sliderRect[i];
+    const double f = std::clamp(static_cast<double>(x - r.left) / std::max<LONG>(1, r.right - r.left), 0.0, 1.0);
+    int& v = i == 0 ? g.cfg.stage.width : i == 1 ? g.cfg.stage.cross : g.cfg.stage.depth;
+    const int lo = i == 0 ? eq::kStageWidthMin : 0, hi = i == 0 ? eq::kStageWidthMax : 100;
+    const int nv = lo + static_cast<int>(std::lround(f * (hi - lo)));
+    if (nv == v) return;
+    v = nv;
+    Changed();
+}
+
 void SetBand(int b, int db) {                       // b == kBands: der Preamp-Regler
     db = eq::ClampGain(db);
     int& target = b == eq::kBands ? g.cfg.preamp : g.cfg.gains[b];
@@ -1391,6 +1557,14 @@ void Activate(int id) {
         return;
     }
     if (id == H_HERO) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
+    else if (id == H_TAB || id == H_TAB + 1) { g.page = id - H_TAB; g.stageDrag = -1; Layout(); }
+    else if (id == H_STAGEON) { g.cfg.stage.on = !g.cfg.stage.on; if (g.cfg.stage.on && !g.cfg.enabled) g.cfg.enabled = true; Changed(); }
+    else if (id >= H_ROOM && id < H_ROOM + eq::kRoomCount) {
+        const bool on = g.cfg.stage.on;
+        g.cfg.stage = eq::RoomDefaults(id - H_ROOM);        // Raum wählen setzt die empfohlenen Regler; danach lässt sich alles feinstellen
+        g.cfg.stage.on = on;
+        Changed();
+    }
     else if (id == H_AUTOEQ) ImportAutoEq();
     else if (id == H_AUTOGAIN) {
         g.cfg.autoGain = !g.cfg.autoGain;
@@ -1483,6 +1657,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             g.mx = now ? p.x : -1; g.my = now ? p.y : -1;
             if (was || now) InvalidateRect(hwnd, &g.graph, FALSE);
         }
+        if (g.stageDrag >= 0) { SetStageSlider(g.stageDrag, p.x); return 0; }
         if (g.mixDrag >= 0) { SetMixVolume(g.mixDrag, MixFromX(g.mixDrag, p.x)); return 0; }
         if (g.drag >= 0) { SetBand(g.drag, YToGain(p.y)); return 0; }
         const int h = HitTest(p);
@@ -1506,6 +1681,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g.press = HitTest(p);
         if (g.press >= H_BAND && g.press <= H_BAND + eq::kBands) { g.drag = g.press - H_BAND; SetBand(g.drag, YToGain(p.y)); }
         if (g.press == H_AB && g.cfg.enabled && !g.installDir.empty()) { g.abBypass = true; ApplyNow(); }
+        if (g.press >= H_SLIDER && g.press < H_SLIDER + 3) { g.stageDrag = g.press - H_SLIDER; SetStageSlider(g.stageDrag, p.x); }
         if (g.press >= H_MIXSLIDER && g.press < H_MIXSLIDER + kMixRows) { g.mixDrag = g.press - H_MIXSLIDER; SetMixVolume(g.mixDrag, MixFromX(g.mixDrag, p.x)); }
         SetCapture(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -1516,8 +1692,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         if (g.abBypass) { g.abBypass = false; ApplyNow(); }                       // A/B: losgelassen = wieder der Equalizer
         const int h = HitTest({ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
         const int pressed = g.press;
-        const bool wasDrag = g.drag >= 0 || g.mixDrag >= 0;
-        g.press = H_NONE; g.drag = -1; g.mixDrag = -1;
+        const bool wasDrag = g.drag >= 0 || g.mixDrag >= 0 || g.stageDrag >= 0;
+        g.press = H_NONE; g.drag = -1; g.mixDrag = -1; g.stageDrag = -1;
         InvalidateRect(hwnd, nullptr, FALSE);
         if (!wasDrag && pressed != H_NONE && pressed == h) Activate(h);
         return 0;
