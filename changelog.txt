@@ -122,6 +122,8 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.11.0 | 2026-11-16
+- Neu: Das Overlay zeigt jetzt den Ping, in der Statusleiste („Ping 24 ms“) und im Panel als eigene Zeile, orange ab 70 und rot ab 150 Millisekunden. Gemessen wird die Antwortzeit ins Internet zu einem öffentlichen Server (nicht zum Spielserver), und nur, solange das Overlay sichtbar ist.
 ## 0.10.1 | 2026-11-15
 - Geändert: Neuer Untertitel im Fenster: „Zock-Modus, Overlay und Clips – alles an einem Ort“.
 ## 0.10.0 | 2026-11-14

@@ -28,6 +28,7 @@ std::wstring StatsLine(const Live& l)
     if (l.cpu >= 0) add(L"CPU " + std::to_wstring(l.cpu) + L" %");
     if (l.gpu >= 0) add(L"GPU " + std::to_wstring(l.gpu) + L" %");
     if (l.gpuTemp >= 0) add(std::to_wstring(l.gpuTemp) + L" °C");
+    if (l.ping >= 0) add(L"Ping " + std::to_wstring(l.ping) + L" ms");
     return t;
 }
 

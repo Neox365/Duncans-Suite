@@ -180,7 +180,7 @@ void GameOverlay::Render()
         H = (segs.empty() ? 0 : row) + (st_.toast.empty() ? 0 : row + (segs.empty() ? 0 : Sc(6, dpi))) + 2;
     } else {
         W = Sc(360, dpi);
-        H = Sc(318, dpi);
+        H = Sc(340, dpi);
     }
     if (W < 8 || H < 8) { if (shown_) { ShowWindow(hwnd_, SW_HIDE); shown_ = false; } return; }
 
@@ -300,6 +300,7 @@ void GameOverlay::Render()
             meter(L"CPU", std::max(0, l.cpu), l.cpu >= 0 ? std::to_wstring(l.cpu) + L" %" : L"–", LoadLevel(l.cpu));
             meter(L"GPU", std::max(0, l.gpu), l.gpu >= 0 ? std::to_wstring(l.gpu) + L" %" + (l.gpuTemp >= 0 ? L"  " + std::to_wstring(l.gpuTemp) + L"°" : L"") : L"–", std::max(LoadLevel(l.gpu), TempLevel(l.gpuTemp)));
             meter(L"RAM", std::max(0, l.ram), l.ram >= 0 ? std::to_wstring(l.ram) + L" %" : L"–", LoadLevel(l.ram));
+            meter(L"Ping", l.ping >= 0 ? std::min(100, l.ping * 100 / 200) : 0, l.ping >= 0 ? std::to_wstring(l.ping) + L" ms" : L"–", PingLevel(l.ping));
             y += Sc(4, dpi);
             Text(g, *fo.fsm, kDim, L"Strg+Alt+O schließt  ·  Strg+Alt+F7 speichert den Clip", p, y, static_cast<float>(Sc(18, dpi)));
         }
@@ -341,7 +342,7 @@ void GameOverlay::Update(bool visible, const OverlayState& st, HMONITOR monitor,
     // Nur neu zeichnen, wenn sich etwas Sichtbares geaendert hat
     const Live& l = st.live;
     const std::wstring key = std::to_wstring(panel_) + L"|" + std::to_wstring(st.boostActive) + std::to_wstring(st.recording) + std::to_wstring(st.clipEnabled) + L"|" + std::to_wstring(st.clipSeconds) + L"|" +
-                             std::to_wstring(st.showStats) + std::to_wstring(st.corner) + L"|" + std::to_wstring(l.cpu) + L"," + std::to_wstring(l.gpu) + L"," + std::to_wstring(l.gpuTemp) + L"," + std::to_wstring(l.ram) + L"|" +
+                             std::to_wstring(st.showStats) + std::to_wstring(st.corner) + L"|" + std::to_wstring(l.cpu) + L"," + std::to_wstring(l.gpu) + L"," + std::to_wstring(l.gpuTemp) + L"," + std::to_wstring(l.ram) + L"," + std::to_wstring(l.ping) + L"|" +
                              st.toast + (st.toastGood ? L"g" : L"b") + L"|" + std::to_wstring(hover_) + L"|" + std::to_wstring(dpi) + L"|" + std::to_wstring(reinterpret_cast<uintptr_t>(monitor));
     st_ = st;
     mon_ = monitor;
