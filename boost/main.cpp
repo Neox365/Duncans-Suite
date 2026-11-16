@@ -39,7 +39,7 @@ using std::min;
 #include "LiveStats.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.10.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.11.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -173,7 +173,7 @@ const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Solange ein Spiel
 const wchar_t* kClipTitle = L"Video-Clips: letzte Sekunden speichern";
 const wchar_t* kClipDesc = L"Boost nimmt den Hauptbildschirm im Hintergrund auf und bewahrt nur die letzten Sekunden; Strg+Alt+F7 speichert sie als MP4 in Videos\Boost-Clips. Es läuft nur, solange ein oben angehaktes Spiel vorne ist (ohne angehaktes Spiel immer). Ton ist wählbar (Systemton = alles, was der PC abspielt, auch Discord; optional mit Mikrofon). Im echten Vollbild bleibt das Bild eventuell schwarz. Kostet etwas Leistung.";
 const wchar_t* kOvTitle = L"Overlay im Spiel anzeigen";
-const wchar_t* kOvDesc = L"Eine kleine Statusleiste in einer Ecke zeigt Zock-Modus, laufende Aufnahme und Auslastung. Mit Strg+Alt+O öffnest du ein Panel: Clip speichern, Aufnahme an oder aus, Zock-Modus beenden, dazu Live-Werte. Es ist ein normales Fenster über dem Spiel (nichts wird in das Spiel eingeklinkt) und erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
+const wchar_t* kOvDesc = L"Eine kleine Statusleiste in einer Ecke zeigt Zock-Modus, laufende Aufnahme, Auslastung und den Ping (Antwortzeit ins Internet, gemessen zu einem öffentlichen Server, nicht zum Spielserver). Mit Strg+Alt+O öffnest du ein Panel: Clip speichern, Aufnahme an oder aus, Zock-Modus beenden, dazu Live-Werte. Es ist ein normales Fenster über dem Spiel (nichts wird in das Spiel eingeklinkt) und erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
 const wchar_t* kMouseTitle = L"Mausbeschleunigung im Zock-Modus ausschalten";
 const wchar_t* kMouseDesc = L"Windows beschleunigt die Maus, wenn du sie schnell bewegst („Zeigerbeschleunigung verbessern“). Viele Spieler wollen das beim Zielen aus haben, weil die Maus dann immer gleich weit läuft. Boost schaltet es nur solange der Zock-Modus läuft aus und stellt es danach wieder her; es wird nichts dauerhaft geändert.";
 const wchar_t* kCrossTitle = L"Fadenkreuz über dem Spiel anzeigen";
@@ -635,6 +635,7 @@ void OverlayTick() {
         g.cur = g.live->Sample();                      // ist das Boost-Fenster zu sehen, misst dessen eigener Takt
         g.ovLastSample = GetTickCount();
     }
+    if (g.live && (bar || g.overlay.PanelOpen()) && (st.showStats || g.overlay.PanelOpen())) g.live->WantPing();
     st.live = g.cur;
     HWND fgw = GetForegroundWindow();
     g.overlay.Update(bar, st, MonitorFromWindow(fgw ? fgw : g.hwnd, MONITOR_DEFAULTTOPRIMARY), g.dpi);

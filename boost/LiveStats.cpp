@@ -1,9 +1,15 @@
+#include <winsock2.h>
+#include <iphlpapi.h>
+#include <icmpapi.h>
+
 #include "LiveStats.h"
 
 #include <pdh.h>
 #include <pdhmsg.h>
 
 #include <algorithm>
+#include <atomic>
+#include <thread>
 
 namespace boostmode {
 
@@ -55,10 +61,39 @@ struct LiveStats::Impl {
     NvmlTemp getTemp = nullptr;
     void* device = nullptr;
     std::wstring gpuName;
+    // Ping: eigener Faden, sendet nur, solange WantPing() in den letzten Sekunden aufgerufen wurde (ein Echo alle 2 s an einen oeffentlichen Server)
+    std::atomic<int> ping{ -1 };
+    std::atomic<DWORD> wantTick{ 0 };
+    HANDLE stopEvt = nullptr;
+    std::thread pinger;
+
+    void PingLoop() {
+        HANDLE icmp = IcmpCreateFile();
+        const IPAddr targets[2] = { 0x01010101, 0x08080808 };      // 1.1.1.1, 8.8.8.8
+        while (WaitForSingleObject(stopEvt, 0) != WAIT_OBJECT_0) {
+            const DWORD w = wantTick.load();
+            int result = -1;
+            if (icmp != INVALID_HANDLE_VALUE && w != 0 && GetTickCount() - w < 4000) {
+                char data[8] = { 'D', 'u', 'n', 'c', 'a', 'n', 0, 0 };
+                alignas(8) unsigned char reply[sizeof(ICMP_ECHO_REPLY) + 32] = {};
+                for (IPAddr t : targets) {
+                    if (IcmpSendEcho(icmp, t, data, sizeof(data), nullptr, reply, sizeof(reply), 1000) > 0) {
+                        const auto* r = reinterpret_cast<const ICMP_ECHO_REPLY*>(reply);
+                        if (r->Status == IP_SUCCESS) { result = static_cast<int>(std::min<ULONG>(r->RoundTripTime, 999)); break; }
+                    }
+                }
+            }
+            ping = result;
+            if (WaitForSingleObject(stopEvt, 2000) == WAIT_OBJECT_0) break;
+        }
+        if (icmp != INVALID_HANDLE_VALUE) IcmpCloseHandle(icmp);
+    }
 
     static unsigned long long Ft(const FILETIME& f) { return (static_cast<unsigned long long>(f.dwHighDateTime) << 32) | f.dwLowDateTime; }
 
     Impl() {
+        stopEvt = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        pinger = std::thread([this] { PingLoop(); });
         FILETIME i, k, u;
         if (GetSystemTimes(&i, &k, &u)) { idle0 = Ft(i); kernel0 = Ft(k); user0 = Ft(u); haveCpu = true; }
         if (PdhOpenQueryW(nullptr, 0, &query) == ERROR_SUCCESS) {
@@ -90,6 +125,9 @@ struct LiveStats::Impl {
         }
     }
     ~Impl() {
+        if (stopEvt) SetEvent(stopEvt);
+        if (pinger.joinable()) pinger.join();
+        if (stopEvt) CloseHandle(stopEvt);
         if (query) PdhCloseQuery(query);
         if (nvml) {
             if (shutdown && device) shutdown();
@@ -100,6 +138,7 @@ struct LiveStats::Impl {
 
 LiveStats::LiveStats() : m(new Impl) {}
 LiveStats::~LiveStats() { delete m; }
+void LiveStats::WantPing() { m->wantTick = GetTickCount() | 1; }
 
 Live LiveStats::Sample()
 {
@@ -137,6 +176,7 @@ Live LiveStats::Sample()
             }
         }
     }
+    r.ping = m->ping.load();
     // GPU-Temperatur (NVIDIA)
     if (m->getTemp && m->device) {
         unsigned t = 0;

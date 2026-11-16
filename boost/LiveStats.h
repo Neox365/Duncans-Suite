@@ -20,6 +20,7 @@ struct Live {
     unsigned long long ramUsedMb = 0, ramTotalMb = 0;
     int gpu = -1;                 // 0..100, -1 = nicht verfuegbar
     int gpuTemp = -1;             // Grad Celsius, -1 = nicht verfuegbar
+    int ping = -1;                // Antwortzeit ins Internet in ms (nur wenn WantPing() aufgerufen wird), -1 = kein Wert
     std::wstring gpuName;         // z. B. "NVIDIA GeForce RTX ..." (nur mit NVML)
 };
 
@@ -32,6 +33,7 @@ int GpuPercent(const std::vector<std::wstring>& instances, const std::vector<dou
 // Bewertung fuer die Farbe: 0 = normal, 1 = hoch (orange), 2 = sehr hoch (rot)
 int LoadLevel(int percent);
 int TempLevel(int celsius);
+inline int PingLevel(int ms) { return ms >= 150 ? 2 : (ms >= 70 ? 1 : 0); }
 
 class LiveStats {
 public:
@@ -39,6 +41,7 @@ public:
     ~LiveStats();
     LiveStats(const LiveStats&) = delete;
     LiveStats& operator=(const LiveStats&) = delete;
+    void WantPing();              // Ping-Messung fuer die naechsten Sekunden anfordern (ohne Aufruf wird nichts gesendet)
     Live Sample();                // alle ~1 s aufrufen; die erste Messung hat noch keine CPU-/GPU-Auslastung
 private:
     struct Impl;

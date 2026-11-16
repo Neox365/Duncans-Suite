@@ -223,6 +223,9 @@ static void OverlayTests() {
     CHECK(StatsLine(l) == L"CPU 23 %   GPU 31 %   54 \u00B0C");
     l.gpuTemp = -1; l.cpu = -1;
     CHECK(StatsLine(l) == L"GPU 31 %");
+    l.ping = 24;
+    CHECK(StatsLine(l) == L"GPU 31 %   Ping 24 ms");
+    CHECK(PingLevel(24) == 0 && PingLevel(70) == 1 && PingLevel(149) == 1 && PingLevel(150) == 2 && PingLevel(-1) == 0);
 }
 
 static void ClipTests() {
