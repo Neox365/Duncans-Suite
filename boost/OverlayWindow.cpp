@@ -105,7 +105,7 @@ LRESULT GameOverlay::OnMessage(HWND h, UINT m, WPARAM w, LPARAM l)
         if (!tracking_) { TRACKMOUSEEVENT t{ sizeof(t), TME_LEAVE, h, 0 }; TrackMouseEvent(&t); tracking_ = true; }
         const POINT p{ GET_X_LPARAM(l), GET_Y_LPARAM(l) };
         int hv = 0;
-        for (int i = 1; i < 5; ++i) if (btn_[i].right > btn_[i].left && PtInRect(&btn_[i], p)) hv = i;
+        for (int i = 1; i < 6; ++i) if (btn_[i].right > btn_[i].left && PtInRect(&btn_[i], p)) hv = i;
         if (hv != hover_) { hover_ = hv; lastKey_.clear(); Render(); }
         return 0;
     }
@@ -116,7 +116,7 @@ LRESULT GameOverlay::OnMessage(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_LBUTTONUP: {
         if (!panel_ || !onAction_) return 0;
         const POINT p{ GET_X_LPARAM(l), GET_Y_LPARAM(l) };       // Treffer an der Klickstelle bestimmen, nicht aus dem letzten Hover
-        for (int i = 1; i < 5; ++i)
+        for (int i = 1; i < 6; ++i)
             if (btn_[i].right > btn_[i].left && PtInRect(&btn_[i], p)) { onAction_(i); break; }
         return 0;
     }
@@ -180,7 +180,7 @@ void GameOverlay::Render()
         H = (segs.empty() ? 0 : row) + (st_.toast.empty() ? 0 : row + (segs.empty() ? 0 : Sc(6, dpi))) + 2;
     } else {
         W = Sc(360, dpi);
-        H = Sc(340, dpi);
+        H = Sc(384, dpi);
     }
     if (W < 8 || H < 8) { if (shown_) { ShowWindow(hwnd_, SW_HIDE); shown_ = false; } return; }
 
@@ -282,6 +282,8 @@ void GameOverlay::Render()
             y += Sc(32, dpi);
             button(OA_SAVE_CLIP, L"Clip speichern", p, half, st_.recording);
             button(OA_TOGGLE_REC, st_.clipEnabled ? L"Aufnahme aus" : L"Aufnahme an", p + half + Sc(8, dpi), half, false);
+            y += Sc(44, dpi);
+            button(OA_SCREENSHOT, L"Screenshot  (Strg+Alt+F6)", p, full, false);
             y += Sc(48, dpi);
 
             // Leistung

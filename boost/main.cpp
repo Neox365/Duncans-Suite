@@ -37,9 +37,10 @@ using std::min;
 #include "GameScan.h"
 #include "Profiles.h"
 #include "LiveStats.h"
+#include "Screenshot.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.11.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.12.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -60,6 +61,7 @@ const UINT WM_JOB_DONE = WM_APP + 1;
 const UINT WM_CLIP_SAVED = WM_APP + 2;               // wp = 1 gespeichert, lp = new std::wstring (Pfad oder Fehlertext)
 const UINT WM_OVERLAY_ACTION = WM_APP + 3;          // wp = OverlayAction
 const int kOverlayHotkeyId = 12;                    // Strg+Alt+O
+const int kShotHotkeyId = 13;                      // Strg+Alt+F6
 const int kClipHotkeyId = 11;                       // Strg+Alt+F7                // lp = JobResult*
 const UINT_PTR kTimerSpin = 2, kTimerAuto = 3, kTimerList = 4, kTimerLive = 5, kTimerAudio = 6, kTimerCross = 7, kTimerClip = 8, kTimerOverlay = 9;
 
@@ -103,6 +105,7 @@ struct App {
     DWORD ovToastUntil = 0;
     DWORD ovLastSample = 0;
     bool clipHotkeyOn = false;
+    bool shotHotkeyOn = false;
     bool clipSaving = false;
     DWORD clipRetryAt = 0;
     std::wstring clipErr;
@@ -173,7 +176,7 @@ const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Solange ein Spiel
 const wchar_t* kClipTitle = L"Video-Clips: letzte Sekunden speichern";
 const wchar_t* kClipDesc = L"Boost nimmt den Hauptbildschirm im Hintergrund auf und bewahrt nur die letzten Sekunden; Strg+Alt+F7 speichert sie als MP4 in Videos\Boost-Clips. Es läuft nur, solange ein oben angehaktes Spiel vorne ist (ohne angehaktes Spiel immer). Ton ist wählbar (Systemton = alles, was der PC abspielt, auch Discord; optional mit Mikrofon). Im echten Vollbild bleibt das Bild eventuell schwarz. Kostet etwas Leistung.";
 const wchar_t* kOvTitle = L"Overlay im Spiel anzeigen";
-const wchar_t* kOvDesc = L"Eine kleine Statusleiste in einer Ecke zeigt Zock-Modus, laufende Aufnahme, Auslastung und den Ping (Antwortzeit ins Internet, gemessen zu einem öffentlichen Server, nicht zum Spielserver). Mit Strg+Alt+O öffnest du ein Panel: Clip speichern, Aufnahme an oder aus, Zock-Modus beenden, dazu Live-Werte. Es ist ein normales Fenster über dem Spiel (nichts wird in das Spiel eingeklinkt) und erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
+const wchar_t* kOvDesc = L"Eine kleine Statusleiste in einer Ecke zeigt Zock-Modus, laufende Aufnahme, Auslastung und den Ping (Antwortzeit ins Internet, gemessen zu einem öffentlichen Server, nicht zum Spielserver). Mit Strg+Alt+O öffnest du ein Panel: Clip speichern, Aufnahme an oder aus, Screenshot (auch Strg+Alt+F6), Zock-Modus beenden, dazu Live-Werte. Es ist ein normales Fenster über dem Spiel (nichts wird in das Spiel eingeklinkt) und erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
 const wchar_t* kMouseTitle = L"Mausbeschleunigung im Zock-Modus ausschalten";
 const wchar_t* kMouseDesc = L"Windows beschleunigt die Maus, wenn du sie schnell bewegst („Zeigerbeschleunigung verbessern“). Viele Spieler wollen das beim Zielen aus haben, weil die Maus dann immer gleich weit läuft. Boost schaltet es nur solange der Zock-Modus läuft aus und stellt es danach wieder her; es wird nichts dauerhaft geändert.";
 const wchar_t* kCrossTitle = L"Fadenkreuz über dem Spiel anzeigen";
@@ -563,6 +566,7 @@ void CrossTick() {
 }
 
 // Video-Clips: Aufnahme laeuft nur, wenn die Funktion an ist und (bei angehakten Spielen) eines vorne ist
+void ShotHotkeyTick();
 void ClipTick() {
     const bool want = g.cfg.optClip && boostmode::ClipShouldRecord(g.cfg.gameApps, boostmode::ForegroundExe());
     if (want && !g.rec.Running() && GetTickCount() >= g.clipRetryAt) {
@@ -583,6 +587,29 @@ void ClipTick() {
     const bool hk = g.cfg.optClip;
     if (hk && !g.clipHotkeyOn) g.clipHotkeyOn = RegisterHotKey(g.hwnd, kClipHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_F7) != 0;
     else if (!hk && g.clipHotkeyOn) { UnregisterHotKey(g.hwnd, kClipHotkeyId); g.clipHotkeyOn = false; }
+    ShotHotkeyTick();
+}
+
+// Screenshot-Kuerzel gilt, solange Clips oder Overlay eingeschaltet sind
+void ShotHotkeyTick() {
+    const bool want = g.cfg.optClip || g.cfg.optOverlay;
+    if (want && !g.shotHotkeyOn) g.shotHotkeyOn = RegisterHotKey(g.hwnd, kShotHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_F6) != 0;
+    else if (!want && g.shotHotkeyOn) { UnregisterHotKey(g.hwnd, kShotHotkeyId); g.shotHotkeyOn = false; }
+}
+
+void OverlayToast(const std::wstring& t, bool good);
+void OverlayTick();
+void TakeScreenshot() {
+    HWND fg = GetForegroundWindow();
+    std::wstring file, err;
+    const bool ok = shot::Save(MonitorFromWindow(fg ? fg : g.hwnd, MONITOR_DEFAULTTOPRIMARY), shot::Folder(), file, err);
+    if (ok) {
+        MessageBeep(MB_OK);
+        const size_t k = file.find_last_of(L"\\");
+        SetStatus(L"Screenshot gespeichert: " + (k == std::wstring::npos ? file : file.substr(k + 1)), kGreen);
+        OverlayToast(L"Screenshot gespeichert", true);
+    } else { SetStatus(L"Screenshot nicht gespeichert: " + err, kRed); OverlayToast(L"Screenshot nicht gespeichert", false); }
+    OverlayTick();
 }
 
 void SaveClipNow() {
@@ -616,8 +643,10 @@ void OverlayTick() {
         boostmode::OverlayState off;
         g.overlay.Update(false, off, nullptr, g.dpi);
         if (g.ovHotkeyOn) { UnregisterHotKey(g.hwnd, kOverlayHotkeyId); g.ovHotkeyOn = false; }
+        ShotHotkeyTick();
         return;
     }
+    ShotHotkeyTick();
     if (!g.ovHotkeyOn) g.ovHotkeyOn = RegisterHotKey(g.hwnd, kOverlayHotkeyId, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, 'O') != 0;
     if (!g.ovToast.empty() && GetTickCount() >= g.ovToastUntil) g.ovToast.clear();
     boostmode::OverlayState st;
@@ -1072,12 +1101,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_HOTKEY:
         if (wp == kClipHotkeyId) SaveClipNow();
+        else if (wp == kShotHotkeyId) TakeScreenshot();
         else if (wp == kOverlayHotkeyId) { g.overlay.SetPanelOpen(!g.overlay.PanelOpen()); OverlayTick(); }
         return 0;
     case WM_OVERLAY_ACTION:
         if (wp == boostmode::OA_CLOSE) g.overlay.SetPanelOpen(false);
         else if (wp == boostmode::OA_END_BOOST) { if (g.state.active && !g.busy) StartJob(false, false); }
         else if (wp == boostmode::OA_SAVE_CLIP) SaveClipNow();
+        else if (wp == boostmode::OA_SCREENSHOT) TakeScreenshot();
         else if (wp == boostmode::OA_TOGGLE_REC) { g.cfg.optClip = !g.cfg.optClip; SaveCfg(); ClipTick(); }
         OverlayTick();
         return 0;
@@ -1093,7 +1124,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         OverlayTick();
         return 0;
     }
-    case WM_DESTROY: g.overlay.Destroy(); if (g.ovHotkeyOn) UnregisterHotKey(hwnd, kOverlayHotkeyId); g.rec.Stop(); if (g.clipHotkeyOn) UnregisterHotKey(hwnd, kClipHotkeyId); RestoreAudio(); g.cross.Destroy(); PostQuitMessage(0); return 0;
+    case WM_DESTROY: g.overlay.Destroy(); if (g.ovHotkeyOn) UnregisterHotKey(hwnd, kOverlayHotkeyId); g.rec.Stop(); if (g.clipHotkeyOn) UnregisterHotKey(hwnd, kClipHotkeyId); if (g.shotHotkeyOn) UnregisterHotKey(hwnd, kShotHotkeyId); RestoreAudio(); g.cross.Destroy(); PostQuitMessage(0); return 0;
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
