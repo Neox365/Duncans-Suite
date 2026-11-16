@@ -43,7 +43,7 @@ bool OverlayHudVisible(const std::vector<std::wstring>& gameExes, const std::wst
 // Text der Leiste "CPU 23 %  GPU 31 %  54 °C" (fehlende Werte werden weggelassen; leer, wenn gar nichts da ist)
 std::wstring StatsLine(const Live& l);
 
-enum OverlayAction { OA_NONE = 0, OA_CLOSE = 1, OA_END_BOOST = 2, OA_SAVE_CLIP = 3, OA_TOGGLE_REC = 4 };
+enum OverlayAction { OA_NONE = 0, OA_CLOSE = 1, OA_END_BOOST = 2, OA_SAVE_CLIP = 3, OA_TOGGLE_REC = 4, OA_SCREENSHOT = 5 };
 
 class GameOverlay {
 public:
@@ -72,7 +72,7 @@ private:
     bool visible_ = false;
     int hover_ = 0;                          // OverlayAction unter der Maus
     bool tracking_ = false;
-    RECT btn_[5]{};                          // Knopf-Rechtecke im Panel (Index = OverlayAction), in Fenster-Koordinaten
+    RECT btn_[6]{};                          // Knopf-Rechtecke im Panel (Index = OverlayAction), in Fenster-Koordinaten
     std::wstring lastKey_;                   // zuletzt gezeichneter Zustand: nur bei Aenderung neu zeichnen
     std::function<void(int)> onAction_;
 };

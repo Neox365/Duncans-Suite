@@ -5,6 +5,7 @@
 #include "../Crosshair.h"
 #include "../Overlay.h"
 #include "../GameScan.h"
+#include "../Screenshot.h"
 #include <cwctype>
 #include "../Profiles.h"
 
@@ -225,6 +226,7 @@ static void OverlayTests() {
     CHECK(StatsLine(l) == L"GPU 31 %");
     l.ping = 24;
     CHECK(StatsLine(l) == L"GPU 31 %   Ping 24 ms");
+    { SYSTEMTIME t{}; t.wYear = 2026; t.wMonth = 3; t.wDay = 7; t.wHour = 9; t.wMinute = 5; t.wSecond = 2; CHECK(shot::FileName(t) == L"Screenshot_2026-03-07_09-05-02.png"); }
     CHECK(PingLevel(24) == 0 && PingLevel(70) == 1 && PingLevel(149) == 1 && PingLevel(150) == 2 && PingLevel(-1) == 0);
 }
 
