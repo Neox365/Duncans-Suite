@@ -176,7 +176,7 @@ StageIr BuildStageIr(const StageSettings& in)
                 const double side = (i % 2 == 0) ? 1.0 : -1.0;               // abwechselnd links/rechts einfallend
                 const double t = r.erMs[i] * (inp == 0 ? 1.0 : 1.06);
                 const double g = r.er * wet * std::pow(0.78, i);
-                const bool toSame = (side > 0) == (inp == 0);
+                const bool toSame = side > 0;                                  // fuer beide Eingaenge gleich, sonst waere ein Ohr lauter
                 const double gNear = toSame ? 1.0 : 0.55, gFar = toSame ? 0.55 : 1.0;
                 AddAt(W[same], { 1.0 }, MsToSamples(t), g * gNear);
                 AddAt(W[other], head, MsToSamples(t) + MsToSamples(0.25), g * gFar);

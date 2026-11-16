@@ -640,6 +640,8 @@ int main()
             StageIr ir = BuildStageIr(rs);
             bool finite = true; for (int k = 0; k < 4; ++k) for (float v : ir.ch[k]) if (!std::isfinite(v)) finite = false;
             CHECK(finite && rowEnergy(ir, 0, 2) <= 1.001 && rowEnergy(ir, 1, 3) <= 1.001);
+            const double eL = rowEnergy(ir, 0, 2), eR = rowEnergy(ir, 1, 3);   // links und rechts gleich laut
+            CHECK(std::fabs(eL - eR) < 0.05 * std::max(eL, eR));
         }
         CHECK(BuildStageIr(kn).ch[0] == BuildStageIr(kn).ch[0]);           // gleiche Einstellung = gleiche Datei
 
