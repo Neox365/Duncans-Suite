@@ -7,7 +7,7 @@
 
 namespace eq {
 
-constexpr int kRoomCount = 5;                       // 0 Aus, 1 Gaming, 2 Kino, 3 Studio, 4 Konzertsaal
+constexpr int kRoomCount = 8;                       // 0 Aus, 1 Gaming, 2 Kino, 3 Studio, 4 Konzertsaal, 5 Wohnzimmer, 6 Kathedrale, 7 Badezimmer
 constexpr int kStageWidthMin = 50, kStageWidthMax = 160;
 constexpr int kStageSampleRate = 48000;
 constexpr int kStageLevelMax = 8;                   // Lautstaerke-Ausgleich in dB
@@ -35,5 +35,7 @@ struct StageIr {
 StageIr BuildStageIr(const StageSettings& s);
 // WAV-Datei (IEEE-Float, 4 Kanaele) als Bytes
 std::string StageIrWav(const StageIr& ir);
+// Hoerprobe: kurze Rauschimpulse wandern von links nach rechts und zurueck zur Mitte (Stereo, 16 Bit, 48 kHz), danach Stille fuer den Nachhall
+std::string StageTestWav();
 
 }  // namespace eq

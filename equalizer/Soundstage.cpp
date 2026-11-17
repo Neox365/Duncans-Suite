@@ -30,6 +30,9 @@ const RoomSpec kRooms[kRoomCount] = {
     { L"Kino", L"Warmer, breiter Raum mit viel Tiefe, wie ein Heimkino.", 130, 30, 45, 0.55, 12.0, 0.55, 0.80, 0.60, 6, { 8.5, 13.9, 21.7, 30.6, 42.8, 56.1 } },
     { L"Studio", L"Trocken und neutral, wie vor Nahfeld-Monitoren.", 100, 15, 10, 0.18, 3.0, 0.45, 0.45, 0.50, 4, { 2.9, 4.8, 7.6, 11.3 } },
     { L"Konzertsaal", L"Große räumliche Tiefe für Musik und Live-Streams.", 140, 35, 70, 1.60, 28.0, 0.70, 1.00, 0.55, 7, { 17.0, 25.6, 37.9, 52.4, 70.8, 92.7, 118.0 } },
+    { L"Wohnzimmer", L"Gemütlich und leicht gedämpft, wie Musik im Wohnzimmer.", 110, 25, 25, 0.38, 6.0, 0.60, 0.55, 0.60, 5, { 2.4, 4.1, 6.6, 9.8, 13.5 } },
+    { L"Kathedrale", L"Riesiger, langer Nachhall mit weichen Höhen. Für Orgel, Chor und Ambient.", 150, 30, 80, 2.80, 45.0, 0.75, 1.00, 0.45, 7, { 26.0, 41.0, 58.0, 79.0, 103.0, 131.0, 160.0 } },
+    { L"Badezimmer", L"Kleiner, harter, heller Raum, wie Singen unter der Dusche.", 105, 20, 40, 0.90, 1.5, 0.05, 0.70, 0.90, 7, { 1.6, 2.7, 3.9, 5.3, 6.8, 8.6, 10.7 } },
 };
 
 struct Rng {
@@ -226,6 +229,42 @@ std::string StageIrWav(const StageIr& ir)
     o.reserve(o.size() + bytes);
     for (uint32_t i = 0; i < n; ++i)
         for (int k = 0; k < 4; ++k) o.append(reinterpret_cast<const char*>(&ir.ch[k][i]), 4);
+    return o;
+}
+
+std::string StageTestWav()
+{
+    const int rate = kStageSampleRate;
+    const double pans[] = { -1.0, -0.5, 0.0, 0.5, 1.0, 0.5, 0.0, -0.5, -1.0, 0.0 };       // links ... rechts ... zurueck ... Mitte
+    const size_t burst = rate * 22 / 100, gap = rate * 10 / 100, tail = rate * 15 / 10;
+    const size_t n = sizeof(pans) / sizeof(pans[0]) * (burst + gap) + tail;
+    std::vector<int16_t> pcm(n * 2, 0);
+    Rng rng(4711u);
+    size_t pos = 0;
+    for (double pan : pans)
+    {
+        std::vector<double> b(burst);
+        for (double& v : b) v = rng.next();
+        LowpassInPlace(b, 6000.0);
+        const double th = (pan + 1.0) * kPi / 4.0, gl = std::cos(th), gr = std::sin(th);
+        for (size_t i = 0; i < burst; ++i)
+        {
+            const double edge = static_cast<double>(std::min(i, burst - 1 - i));
+            const double env = std::min(1.0, edge / (0.012 * rate));                       // weicher Ein- und Ausklang
+            const double v = b[i] * env * 0.45;
+            pcm[(pos + i) * 2] = static_cast<int16_t>(std::lround(std::clamp(v * gl, -1.0, 1.0) * 32767.0));
+            pcm[(pos + i) * 2 + 1] = static_cast<int16_t>(std::lround(std::clamp(v * gr, -1.0, 1.0) * 32767.0));
+        }
+        pos += burst + gap;
+    }
+    const uint32_t bytes = static_cast<uint32_t>(pcm.size() * 2);
+    std::string o;
+    auto u32 = [&](uint32_t v) { o.append(reinterpret_cast<const char*>(&v), 4); };
+    auto u16 = [&](uint16_t v) { o.append(reinterpret_cast<const char*>(&v), 2); };
+    o += "RIFF"; u32(36 + bytes); o += "WAVEfmt "; u32(16);
+    u16(1); u16(2); u32(rate); u32(rate * 4); u16(4); u16(16);
+    o += "data"; u32(bytes);
+    o.append(reinterpret_cast<const char*>(pcm.data()), bytes);
     return o;
 }
 
