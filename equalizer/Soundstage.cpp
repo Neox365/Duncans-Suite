@@ -228,6 +228,14 @@ StageIr BuildSurroundFxIr(const StageSettings& in)
     StageSettings s = in;
     ClampStage(s);
     s.surround = false; s.cross = 0; s.head = false;           // Kopfmodell steckt schon im Surround
+    return BuildStereoFxIr(s);
+}
+
+StageIr BuildStereoFxIr(const StageSettings& in)
+{
+    StageSettings s = in;
+    ClampStage(s);
+    s.surround = false;
     const StageIr st = BuildStageIr(s);                        // symmetrisch: LL = ch[0], LR = ch[1]
     StageIr ir;
     ir.channels = 2;

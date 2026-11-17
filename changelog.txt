@@ -5,6 +5,8 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.22.1 | 2026-11-17
+- Behoben: Wenn Windows auf 7.1 stand, kam bei den Räumen (Gaming, Studio, Kino ...) ohne Surround nur Ton auf dem linken Ohr an. Die Raumklang-Datei war für zwei Kanäle gebaut und wurde auf acht verteilt. Jetzt gilt bei mehr als zwei Kanälen dieselbe Wirkung nur auf links und rechts. Bei einem Stereo-Gerät ändert sich nichts.
 ## 0.22.0 | 2026-11-17
 - Neu: Im Surround wirken jetzt auch Raum, Hall und Bühnenbreite. Sie werden nach dem Surround auf beide Ohren gelegt.
 - Neu: Regler „Hochmischen (Stereo auf 7.1)“ (0 bis 100 %). Normale Stereo-Musik und -Videos haben nichts hinten und seitlich. Der Regler schickt den Raumanteil des Tons auf die Seiten- und Hinterlautsprecher. Bei echtem 7.1-Ton lässt du ihn auf 0 %.
