@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.22.2 | 2026-11-17
+- Behoben: Bei den Räumen (Gaming, Studio, Kino ...) kam der Ton nur auf dem linken Ohr an. Der Raumklang wurde als 4-Kanal-Datei geschrieben, und Equalizer APO hat sie nicht als echte Stereo-Faltung gelesen, sondern nur die ersten zwei Kanäle benutzt. Jetzt wird er als Mitte/Seite-Paar auf links und rechts gerechnet. Das gilt für jedes Gerät, egal ob Stereo oder 7.1.
+- Hinweis: Surround wirkt nur, wenn Windows dem Gerät wirklich 8 Kanäle gibt (Sound-Einstellungen, Lautsprecher einrichten, 7.1). Bei einem Stereo-Gerät bleibt der Surround-Schalter ohne Wirkung. Dann nimm Kopfmodell statt Surround.
 ## 0.22.1 | 2026-11-17
 - Behoben: Wenn Windows auf 7.1 stand, kam bei den Räumen (Gaming, Studio, Kino ...) ohne Surround nur Ton auf dem linken Ohr an. Die Raumklang-Datei war für zwei Kanäle gebaut und wurde auf acht verteilt. Jetzt gilt bei mehr als zwei Kanälen dieselbe Wirkung nur auf links und rechts. Bei einem Stereo-Gerät ändert sich nichts.
 ## 0.22.0 | 2026-11-17

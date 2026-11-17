@@ -415,15 +415,11 @@ static std::string BuildMain(const Settings& s, const std::string& irFile, const
     }
     else if (useStage && !fxFile.empty() && IsSafeConfigPath(fxFile))
     {
-        // Stereo-Geraet: 4-Kanal-Datei (wahre Stereo-Faltung). Mehr Kanaele (z. B. Windows auf 7.1): dieselbe Wirkung als Mitte/Seite-Paar nur auf L und R,
-        // sonst wuerde die 4-Kanal-Datei reihum auf acht Kanaele verteilt und nur ein Ohr bekaeme Ton.
-        t += "If: inputChannelCount == 2\r\n";
-        t += "Convolution: " + stageFile + "\r\n";
-        t += "Else:\r\n";
-        t += "Copy: LFE=0.5*L+-0.5*R\r\nCopy: L=0.5*L+0.5*R\r\nCopy: R=LFE\r\n";
+        // Raumklang als Mitte/Seite-Paar nur auf L und R: M=(L+R)/2, S=(L-R)/2, je ein Mono-Kanal gefaltet, danach L=M+S, R=M-S.
+        // Das gilt fuer jede Kanalzahl (Stereo, 7.1) und kommt ohne Zwischenkanal aus. Jede Zeile schreibt nur einen Kanal, die Reihenfolge ist also egal.
+        t += "Copy: L=L+R\r\nCopy: R=0.5*L+-1.0*R\r\nCopy: L=0.5*L\r\n";
         t += "Channel: L R\r\nConvolution: " + fxFile + "\r\nChannel: all\r\n";
-        t += "Copy: LFE=L+-1.0*R\r\nCopy: L=L+R\r\nCopy: R=LFE\r\nCopy: LFE=0.0\r\n";
-        t += "EndIf:\r\n";
+        t += "Copy: L=L+R\r\nCopy: R=L+-2.0*R\r\n";
     }
     else if (useStage)
         t += "Convolution: " + stageFile + "\r\n";                           // Raumklang: 4-Kanal-Impulsantwort (L->L, L->R, R->L, R->R)
