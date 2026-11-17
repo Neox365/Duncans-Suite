@@ -5,6 +5,8 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.17.0 | 2026-11-17
+- Neu: Im Raumklang gibt es einen Regler „Lautstärke-Ausgleich“ (0 bis +8 dB). Räume machen den Ton etwas leiser, damit nichts übersteuert. Mit dem Regler holst du den Pegel zurück, bis „an“ und „aus“ gleich laut klingen. Er wird mit dem Profil gespeichert.
 ## 0.16.1 | 2026-11-16
 - Behoben: Im Raumklang war bei den Räumen (Gaming, Kino, Studio, Konzertsaal) der linke Kanal lauter als der rechte. Beide Seiten sind jetzt gleich laut.
 ## 0.16.0 | 2026-11-15

@@ -122,6 +122,7 @@ void ClampStage(StageSettings& s)
     s.width = std::clamp(s.width, kStageWidthMin, kStageWidthMax);
     s.cross = std::clamp(s.cross, 0, 100);
     s.depth = std::clamp(s.depth, 0, 100);
+    s.level = std::clamp(s.level, 0, kStageLevelMax);
 }
 
 bool StageActive(const StageSettings& in)

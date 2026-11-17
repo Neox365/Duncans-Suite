@@ -10,6 +10,7 @@ namespace eq {
 constexpr int kRoomCount = 5;                       // 0 Aus, 1 Gaming, 2 Kino, 3 Studio, 4 Konzertsaal
 constexpr int kStageWidthMin = 50, kStageWidthMax = 160;
 constexpr int kStageSampleRate = 48000;
+constexpr int kStageLevelMax = 8;                   // Lautstaerke-Ausgleich in dB
 
 struct StageSettings {
     bool on = false;            // Raumklang an
@@ -17,6 +18,7 @@ struct StageSettings {
     int width = 100;            // Buehnenbreite in %: 0..100 enger, 100 unveraendert, bis 160 weiter
     int cross = 0;              // Kopfhoerer-Crossfeed 0..100 %
     int depth = 0;              // Raumtiefe (Anteil Hall) 0..100 %
+    int level = 0;              // Lautstaerke-Ausgleich 0..8 dB (Raeume machen den Ton leiser)
 };
 
 const wchar_t* RoomName(int room);
