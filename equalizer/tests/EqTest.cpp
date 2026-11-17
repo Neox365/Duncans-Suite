@@ -663,6 +663,26 @@ int main()
             CHECK(SaveSettings(hs, hp)); Settings hl; CHECK(LoadSettings(hl, hp) && hl.stage.head && hl.stage.cross == 100);
             DeleteFileW(hp.c_str());
         }
+        {   // Winkel, Bass und Dialog
+            StageSettings w1; w1.on = true; w1.head = true; w1.cross = 100; w1.angle = 15;
+            StageSettings w2 = w1; w2.angle = 60;
+            StageIr i1 = BuildStageIr(w1), i2 = BuildStageIr(w2);
+            auto peak = [](const std::vector<float>& v) { size_t pk = 0; for (size_t i = 0; i < v.size(); ++i) if (std::fabs(v[i]) > std::fabs(v[pk])) pk = i; return pk; };
+            CHECK(peak(i1.ch[1]) < peak(i2.ch[1]));                                    // weiterer Winkel = groessere Laufzeit
+            StageSettings cl = w1; cl.angle = 999; cl.bass = 50; cl.voice = -50; ClampStage(cl);
+            CHECK(cl.angle == kStageAngleMax && cl.bass == kStageToneMax && cl.voice == -kStageToneMax);
+            StageSettings lo = w1; lo.angle = -4; ClampStage(lo); CHECK(lo.angle == kStageAngleMin);
+            Settings ts; ts.enabled = true; ts.stage = w1; ts.stage.bass = 3; ts.stage.voice = -2;
+            const std::string c2 = BuildConfig(ts, "", "C:\\APO\\config\\duncans-room.wav");
+            CHECK(c2.find("Filter: ON LSC Fc 100 Hz Gain 3 dB") != std::string::npos && c2.find("Filter: ON PK Fc 2500 Hz Gain -2 dB Q 0.8") != std::string::npos);
+            CHECK(BuildConfig(ts, "", "").find("Fc 2500") == std::string::npos);        // ohne Raumdatei keine Zusatzfilter
+            wchar_t tq[MAX_PATH]; GetTempPathW(MAX_PATH, tq);
+            const std::wstring tf = std::wstring(tq) + L"duncans_tone_test.txt";
+            CHECK(SaveSettings(ts, tf)); Settings tl; CHECK(LoadSettings(tl, tf) && tl.stage.angle == 15 && tl.stage.bass == 3 && tl.stage.voice == -2);
+            DeleteFileW(tf.c_str());
+            Settings old; Put(tf, "stage=1,2,100,30,40,0,1\r\n"); CHECK(LoadSettings(old, tf) && old.stage.angle == 30 && old.stage.bass == 0);   // alte Dateien ohne die neuen Felder
+            DeleteFileW(tf.c_str());
+        }
         {   // neue Raeume und Hoerprobe
             CHECK(kRoomCount == 8 && std::wstring(RoomName(5)) == L"Wohnzimmer" && std::wstring(RoomName(6)) == L"Kathedrale" && std::wstring(RoomName(7)) == L"Badezimmer");
             StageSettings ka = RoomDefaults(6); ka.on = true;

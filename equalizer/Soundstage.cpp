@@ -154,6 +154,9 @@ void ClampStage(StageSettings& s)
     s.cross = std::clamp(s.cross, 0, 100);
     s.depth = std::clamp(s.depth, 0, 100);
     s.level = std::clamp(s.level, 0, kStageLevelMax);
+    s.angle = std::clamp(s.angle, kStageAngleMin, kStageAngleMax);
+    s.bass = std::clamp(s.bass, -kStageToneMax, kStageToneMax);
+    s.voice = std::clamp(s.voice, -kStageToneMax, kStageToneMax);
 }
 
 bool StageActive(const StageSettings& in)
@@ -188,11 +191,13 @@ StageIr BuildStageIr(const StageSettings& in)
         // Weg zum eigenen Ohr (ipsi) und zum anderen Ohr (contra) je Lautsprecher
         std::vector<double> ipsi(kBase, 0.0), contra(kBase, 0.0);
         if (s.head) {
-            // Kopfmodell: Lautsprecher bei +-30 Grad, Ohren bei +-100 Grad -> Einfallswinkel 70 Grad (nah) und 130 Grad (fern)
+            // Kopfmodell: Lautsprecher bei +-Winkel (Standard 30 Grad), Ohren bei +-100 Grad -> Einfallswinkel 100-w (nah) und 100+w (fern)
+            const double wr = s.angle * kPi / 180.0;
+            const size_t itd = static_cast<size_t>(std::lround(0.0875 / 343.0 * (wr + std::sin(wr)) * kStageSampleRate));   // Woodworth: 30 Grad = 13 Abtastwerte = 0,27 ms
             std::vector<double> hi(kBase, 0.0), hc(kBase, 0.0);
-            hi[0] = 1.0; hc[13] = 1.0;                                  // ferneres Ohr: 13 Abtastwerte bei 48 kHz = 0,27 ms spaeter
-            HeadShadowInPlace(hi, 70.0);
-            HeadShadowInPlace(hc, 130.0);
+            hi[0] = 1.0; hc[itd] = 1.0;
+            HeadShadowInPlace(hi, 100.0 - s.angle);
+            HeadShadowInPlace(hc, 100.0 + s.angle);
             PeakInPlace(hi, 3200.0, 3.0, 1.0);                          // Ohrmuschel: Betonung um 3 kHz am nahen Ohr
             PeakInPlace(hi, 8500.0, -5.0, 3.0);                         // und eine Kerbe um 8,5 kHz (Richtungshinweis)
             PeakInPlace(hc, 8500.0, -5.0, 3.0);

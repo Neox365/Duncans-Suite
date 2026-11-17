@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.20.0 | 2026-11-17
+- Neu: Im Raumklang drei weitere Regler. „Lautsprecher-Winkel“ (10 bis 60 Grad) stellt beim Kopfmodell ein, wie weit die virtuellen Lautsprecher auseinanderstehen. „Bass“ und „Dialog (Stimmen)“ (je -6 bis +6 dB) heben die Tiefen und den Stimmbereich nur im Raumklang an oder ab.
+- Behoben: Wer einen anderen Raum gewählt hat, verlor dabei das Kopfmodell und den Lautstärke-Ausgleich. Beides bleibt jetzt erhalten, ebenso Winkel, Bass und Dialog.
 ## 0.19.0 | 2026-11-17
 - Neu: Schalter „Kopfmodell“ im Raumklang. Er ersetzt das einfache Crossfeed durch ein berechnetes Kopfmodell (Kugelkopf nach Brown/Duda): Laufzeitunterschied zwischen den Ohren, Kopfschatten für die Höhen am abgewandten Ohr und eine Ohrmuschel-Betonung um 3 kHz mit einer Kerbe bei 8,5 kHz. Das verbessert die Ortung, vor allem links und rechts. Der Regler „Kopfmodell-Stärke“ blendet den Effekt stufenlos ein.
 - Hinweis: Das Kopfmodell ist eine Näherung und kein gemessener Kopf. Es ordnet Stereo-Ton wie zwei Lautsprecher vor dir an. Echten Raumklang von hinten gibt es nur, wenn das Programm selbst Surround ausgibt.
