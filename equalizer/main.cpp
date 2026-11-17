@@ -36,7 +36,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.18.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.19.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -75,6 +75,7 @@ enum HitId {
     H_TAB = 340,        // 340 Equalizer, 341 Raumklang
     H_STAGEON = 345,    // Schalter "Raumklang aktivieren"
     H_STAGETEST = 346,  // Knopf "Hoerprobe"
+    H_STAGEHEAD = 347,  // Schalter "Kopfmodell"
     H_ROOM = 350,       // 350 .. 357: Raum-Voreinstellungen
     H_SLIDER = 360      // 360 .. 363: Buehnenbreite, Crossfeed, Raumtiefe, Lautstaerke-Ausgleich
 };
@@ -114,7 +115,7 @@ struct App {
     std::vector<mixer::Entry> mixEntries;          // Programme, die gerade Ton ausgeben
     int mixDrag = -1;                              // Regler, der gerade gezogen wird
     int page = 0;                                  // 0 = Equalizer, 1 = Raumklang
-    RECT tabRect[2]{}, stageCard{}, stageOn{}, stageTest{}, roomChip[eq::kRoomCount]{}, sliderRect[4]{}, sliderCard{}, stagePrev{};
+    RECT tabRect[2]{}, stageCard{}, stageOn{}, stageTest{}, stageHead{}, roomChip[eq::kRoomCount]{}, sliderRect[4]{}, sliderCard{}, stagePrev{};
     int stageDrag = -1;                            // Raumklang-Regler, der gerade gezogen wird
     NOTIFYICONDATAW nid{};
     bool autostartOn = false, quitting = false, balloonShown = false;
@@ -817,7 +818,7 @@ void Layout() {
     g.heroToggle = heroH ? RECT{ g.hero.right - S(18) - S(64), g.hero.top + (S(96) - S(34)) / 2, g.hero.right - S(18), g.hero.top + (S(96) - S(34)) / 2 + S(34) } : RECT{};
     int y = g.hero.bottom + S(14);
     g.adminBar = g.adminBtn = RECT{};
-    g.tabRect[0] = g.tabRect[1] = g.stageCard = g.stageOn = g.stageTest = g.sliderCard = g.stagePrev = RECT{};
+    g.tabRect[0] = g.tabRect[1] = g.stageCard = g.stageOn = g.stageTest = g.stageHead = g.sliderCard = g.stagePrev = RECT{};
     for (RECT& r : g.roomChip) r = RECT{};
     for (RECT& r : g.sliderRect) r = RECT{};
     HDC dc = GetDC(g.hwnd);
@@ -925,6 +926,10 @@ void Layout() {
             g.stageOn = { g.stageCard.right - S(18) - S(64), g.stageCard.top + S(14), g.stageCard.right - S(18), g.stageCard.top + S(14) + S(34) };
             HDC cdc = GetDC(g.hwnd);
             g.stageTest = { g.stageOn.left - S(12) - TextWidth(cdc, g.fBold, L"Hörprobe") - S(30), g.stageOn.top, g.stageOn.left - S(12), g.stageOn.bottom };
+            {
+                const int hw = std::max(TextWidth(cdc, g.fBold, L"Kopfmodell: an"), TextWidth(cdc, g.fBold, L"Kopfmodell: aus")) + S(30);
+                g.stageHead = { g.stageTest.left - S(10) - hw, g.stageOn.top, g.stageTest.left - S(10), g.stageOn.bottom };
+            }
             int cx = g.stageCard.left + S(18), row = 0;
             for (int i = 0; i < eq::kRoomCount; ++i) {
                 const int w = TextWidth(cdc, g.fBold, eq::RoomName(i)) + S(30);
@@ -1451,10 +1456,15 @@ void DrawStageView(HDC dc, const RECT& r, const eq::StageSettings& st, bool live
 void PaintStage(HDC dc) {
     const eq::StageSettings& st = g.cfg.stage;
     FillRound(dc, g.stageCard, S(16), kCard, st.on ? Blend(kBorder, kEq, 70) : kBorder);
-    DrawText2(dc, g.fHead, kText, { g.stageCard.left + S(20), g.stageCard.top + S(12), g.stageTest.left - S(14), g.stageCard.top + S(36) }, L"Soundstage-Engine");
-    DrawText2(dc, g.fSmall, kTextDim, { g.stageCard.left + S(20), g.stageCard.top + S(36), g.stageTest.left - S(14), g.stageCard.top + S(58) },
+    DrawText2(dc, g.fHead, kText, { g.stageCard.left + S(20), g.stageCard.top + S(12), g.stageHead.left - S(14), g.stageCard.top + S(36) }, L"Soundstage-Engine");
+    DrawText2(dc, g.fSmall, kTextDim, { g.stageCard.left + S(20), g.stageCard.top + S(36), g.stageHead.left - S(14), g.stageCard.top + S(58) },
               st.on && !g.cfg.enabled ? L"Der Equalizer ist ausgeschaltet – dann wirkt auch der Raumklang nicht." : st.on ? L"Virtueller Raumklang ist an." : L"Virtuellen Raumklang aktivieren", DT_LEFT | DT_TOP | DT_SINGLELINE | DT_END_ELLIPSIS);
     DrawToggle(dc, g.stageOn, st.on, g.hover == H_STAGEON);
+    {
+        const bool hot = g.hover == H_STAGEHEAD, act = st.head;
+        FillRound(dc, g.stageHead, S(12), act ? kEq : (hot ? kCardHover : Blend(kCard, kBackground, 25)), act ? kEq : (hot ? kBorderHot : kBorder));
+        DrawText2(dc, g.fBold, act ? kOnEq : kText, g.stageHead, act ? L"Kopfmodell: an" : L"Kopfmodell: aus", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
     {
         const bool hot = g.hover == H_STAGETEST;
         FillRound(dc, g.stageTest, S(12), hot ? kCardHover : Blend(kCard, kBackground, 25), hot ? kBorderHot : kBorder);
@@ -1469,7 +1479,7 @@ void PaintStage(HDC dc) {
               std::wstring(eq::RoomHint(st.room)) + L"\nAm besten mit Kopfhörern. Mit „Hörprobe“ vergleichst du An und Aus: Rauschimpulse wandern von links nach rechts.", DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     FillRound(dc, g.sliderCard, S(16), kCard, kBorder);
-    const wchar_t* labels[4] = { L"Bühnenbreite", L"Kopfhörer-Crossfeed (Natürlichkeit)", L"Raumtiefe (Ambience)", L"Lautstärke-Ausgleich" };
+    const wchar_t* labels[4] = { L"Bühnenbreite", st.head ? L"Kopfmodell-Stärke (Ortung)" : L"Kopfhörer-Crossfeed (Natürlichkeit)", L"Raumtiefe (Ambience)", L"Lautstärke-Ausgleich" };
     const int vals[4] = { st.width, st.cross, st.depth, st.level };
     for (int i = 0; i < 4; ++i) {
         const RECT& tr = g.sliderRect[i];
@@ -1512,6 +1522,7 @@ int HitTest(POINT p) {
     if (g.page == 1) {
         if (PtInRect(&g.stageOn, p)) return H_STAGEON;
         if (PtInRect(&g.stageTest, p)) return H_STAGETEST;
+        if (PtInRect(&g.stageHead, p)) return H_STAGEHEAD;
         for (int i = 0; i < eq::kRoomCount; ++i) if (PtInRect(&g.roomChip[i], p)) return H_ROOM + i;
         for (int i = 0; i < 4; ++i) if (PtInRect(&g.sliderRect[i], p)) return H_SLIDER + i;
         return H_NONE;
@@ -1570,6 +1581,11 @@ void Activate(int id) {
     }
     if (id == H_HERO) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
     else if (id == H_TAB || id == H_TAB + 1) { g.page = id - H_TAB; g.stageDrag = -1; Layout(); }
+    else if (id == H_STAGEHEAD) {
+        g.cfg.stage.head = !g.cfg.stage.head;
+        if (g.cfg.stage.head && g.cfg.stage.cross == 0) g.cfg.stage.cross = 60;       // sonst wuerde das Kopfmodell nichts aendern
+        Changed();
+    }
     else if (id == H_STAGETEST) {
         static std::string wav;                              // muss waehrend der Wiedergabe im Speicher bleiben
         if (wav.empty()) wav = eq::StageTestWav();

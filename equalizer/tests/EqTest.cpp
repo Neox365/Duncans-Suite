@@ -644,6 +644,25 @@ int main()
             const double eL = rowEnergy(ir, 0, 2), eR = rowEnergy(ir, 1, 3);   // links und rechts gleich laut
             CHECK(std::fabs(eL - eR) < 0.05 * std::max(eL, eR));
         }
+        {   // Kopfmodell (HRTF-Naeherung)
+            StageSettings hd; hd.on = true; hd.head = true; hd.cross = 100;
+            StageIr h = BuildStageIr(hd);
+            auto en = [](const std::vector<float>& v) { double e = 0; for (float x : v) e += double(x) * x; return e; };
+            CHECK(StageActive(hd) && h.length() >= 64);
+            CHECK(en(h.ch[0]) > en(h.ch[1]) * 2.0);                                    // naher Weg deutlich lauter als ferner
+            CHECK(std::fabs(en(h.ch[0]) - en(h.ch[3])) < 1e-9 && std::fabs(en(h.ch[1]) - en(h.ch[2])) < 1e-9);
+            size_t peakC = 0; for (size_t i = 0; i < h.ch[1].size(); ++i) if (std::fabs(h.ch[1][i]) > std::fabs(h.ch[1][peakC])) peakC = i;
+            CHECK(peakC >= 12 && peakC < 30);                                          // Laufzeitunterschied ca. 0,27 ms
+            bool fin = true; for (int k = 0; k < 4; ++k) for (float v : h.ch[k]) if (!std::isfinite(v)) fin = false;
+            double rowL = en(h.ch[0]) + en(h.ch[2]);
+            CHECK(fin && rowL <= 1.001);
+            StageSettings sc = hd; sc.head = false;
+            CHECK(BuildStageIr(sc).ch[0] != h.ch[0]);                                  // anderes Filter als das einfache Crossfeed
+            Settings hs; hs.stage = hd; wchar_t tp[MAX_PATH]; GetTempPathW(MAX_PATH, tp);
+            const std::wstring hp = std::wstring(tp) + L"duncans_head_test.txt";
+            CHECK(SaveSettings(hs, hp)); Settings hl; CHECK(LoadSettings(hl, hp) && hl.stage.head && hl.stage.cross == 100);
+            DeleteFileW(hp.c_str());
+        }
         {   // neue Raeume und Hoerprobe
             CHECK(kRoomCount == 8 && std::wstring(RoomName(5)) == L"Wohnzimmer" && std::wstring(RoomName(6)) == L"Kathedrale" && std::wstring(RoomName(7)) == L"Badezimmer");
             StageSettings ka = RoomDefaults(6); ka.on = true;
