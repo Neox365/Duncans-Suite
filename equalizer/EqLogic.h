@@ -72,7 +72,8 @@ int TotalPreampDb(const Settings& s);
 
 // Text der Konfigurationsdatei fuer Equalizer APO (ASCII, Zeilenende CRLF). irFile: absoluter Pfad der Impulsantwort, wie APO ihn lesen soll
 // (leer = keine Faltung; unsichere Pfade werden verworfen).
-std::string BuildConfig(const Settings& s, const std::string& irFile = std::string(), const std::string& stageFile = std::string());
+std::string BuildConfig(const Settings& s, const std::string& irFile = std::string(), const std::string& stageFile = std::string(), const std::string& fxFile = std::string());
+extern const wchar_t* const kStageFxName;     // "duncans-room-fx.wav": Raum/Buehnenbreite fuer den Surround (2 Kanaele, Mitte/Seite)
 extern const wchar_t* const kStageIrName;     // "duncans-room.wav": berechnete Raumklang-Impulsantwort im config-Ordner von Equalizer APO
 // Name des Mikrofons, wie er in die APO-Konfiguration kommt: der laengste Abschnitt aus einfachen ASCII-Zeichen (APO findet Geraete ueber einen Namensteil); leer = unbrauchbar
 std::string MicDeviceKey(const std::wstring& name);

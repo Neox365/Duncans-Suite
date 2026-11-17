@@ -36,7 +36,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.21.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.22.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -81,7 +81,7 @@ enum HitId {
     H_SLIDER = 360      // 360 .. 366: Buehnenbreite, Crossfeed, Raumtiefe, Lautstaerke-Ausgleich, Winkel, Bass, Dialog
 };
 
-constexpr int kStageSliders = 7;
+constexpr int kStageSliders = 8;
 int& StageSliderInfo(int i, int& lo, int& hi, int& neutral, const wchar_t*& unit);
 
 struct App {
@@ -1487,11 +1487,11 @@ void PaintStage(HDC dc) {
         DrawText2(dc, g.fBold, act ? kOnEq : kText, g.roomChip[i], eq::RoomName(i), DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     }
     DrawText2(dc, g.fSmall, kTextDim, { g.stageCard.left + S(20), g.roomChip[eq::kRoomCount - 1].bottom + S(10), g.stageCard.right - S(20), g.stageCard.bottom - S(8) },
-              (st.surround ? std::wstring(L"Surround: virtuelles 7.1 mit Kopfmodell. Windows muss dafür auf 7.1 stehen (Sound-Einstellungen, Lautsprecher einrichten); Spiele und Filme liefern dann alle Kanäle. Raum und Bühnenbreite wirken dabei nicht.") : std::wstring(eq::RoomHint(st.room))) + L"\nAm besten mit Kopfhörern. Mit „Hörprobe“ vergleichst du An und Aus: Rauschimpulse wandern von links nach rechts.", DT_LEFT | DT_TOP | DT_WORDBREAK);
+              (st.surround ? std::wstring(L"Surround: virtuelles 7.1 mit Kopfmodell. Windows muss dafür auf 7.1 stehen (Sound-Einstellungen, Lautsprecher einrichten); Spiele und Filme liefern dann alle Kanäle. Raum und Bühnenbreite wirken zusätzlich, der Crossfeed-Regler gilt hier nicht.") : std::wstring(eq::RoomHint(st.room))) + L"\nAm besten mit Kopfhörern. Mit „Hörprobe“ vergleichst du An und Aus: Rauschimpulse wandern von links nach rechts.", DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     FillRound(dc, g.sliderCard, S(16), kCard, kBorder);
     const wchar_t* labels[kStageSliders] = { L"Bühnenbreite", st.head ? L"Kopfmodell-Stärke (Ortung)" : L"Kopfhörer-Crossfeed (Natürlichkeit)", L"Raumtiefe (Ambience)", L"Lautstärke-Ausgleich",
-                                             L"Lautsprecher-Winkel (Kopfmodell, Surround)", L"Bass", L"Dialog (Stimmen)" };
+                                             L"Lautsprecher-Winkel (Kopfmodell, Surround)", L"Bass", L"Dialog (Stimmen)", L"Hochmischen (Stereo auf 7.1, nur Surround)" };
     for (int i = 0; i < kStageSliders; ++i) {
         int lo = 0, hi = 100, neutral = -1;
         const wchar_t* unit = L" %";
@@ -1499,7 +1499,7 @@ void PaintStage(HDC dc) {
         const RECT& tr = g.sliderRect[i];
         const bool hot = g.hover == H_SLIDER + i || g.stageDrag == i;
         DrawText2(dc, g.fBody, kText, { tr.left, tr.top - S(26), tr.right - S(70), tr.top }, labels[i], DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        DrawText2(dc, g.fBold, kEq, { tr.right - S(70), tr.top - S(26), tr.right, tr.top }, (i >= 5 && val > 0 ? L"+" : L"") + std::to_wstring(val) + unit, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        DrawText2(dc, g.fBold, kEq, { tr.right - S(70), tr.top - S(26), tr.right, tr.top }, ((i == 5 || i == 6) && val > 0 ? L"+" : L"") + std::to_wstring(val) + unit, DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
         const float f = static_cast<float>(val - lo) / (hi - lo);
         const float ty = (tr.top + tr.bottom) / 2.0f, x0 = static_cast<float>(tr.left), x1 = static_cast<float>(tr.right), kx = x0 + f * (x1 - x0);
         Gdiplus::Graphics gr(dc);
@@ -1510,8 +1510,8 @@ void PaintStage(HDC dc) {
         Gdiplus::Pen fill(Gdiplus::Color(255, GetRValue(kEq), GetGValue(kEq), GetBValue(kEq)), 5.0f * g.dpi / 96.0f);
         fill.SetStartCap(Gdiplus::LineCapRound); fill.SetEndCap(Gdiplus::LineCapRound);
         gr.DrawLine(&fill, x0, ty, kx, ty);
-        if (neutral >= 0 || i >= 5) {   // Marke beim Ausgangswert (Original)
-            const float m100 = x0 + (static_cast<float>(i >= 5 ? 0 : neutral) - lo) / (hi - lo) * (x1 - x0);
+        if (neutral >= 0 || i == 5 || i == 6) {   // Marke beim Ausgangswert (Original)
+            const float m100 = x0 + (static_cast<float>(i == 5 || i == 6 ? 0 : neutral) - lo) / (hi - lo) * (x1 - x0);
             Gdiplus::Pen mk(Gdiplus::Color(160, 200, 205, 220), 1.5f);
             gr.DrawLine(&mk, m100, ty - S(9), m100, ty + S(9));
         }
@@ -1577,7 +1577,8 @@ int& StageSliderInfo(int i, int& lo, int& hi, int& neutral, const wchar_t*& unit
     case 3: lo = 0; hi = eq::kStageLevelMax; neutral = -1; unit = L" dB"; return st.level;
     case 4: lo = eq::kStageAngleMin; hi = eq::kStageAngleMax; neutral = 30; unit = L"°"; return st.angle;
     case 5: lo = -eq::kStageToneMax; hi = eq::kStageToneMax; neutral = 0; unit = L" dB"; return st.bass;
-    default: lo = -eq::kStageToneMax; hi = eq::kStageToneMax; neutral = 0; unit = L" dB"; return st.voice;
+    case 6: lo = -eq::kStageToneMax; hi = eq::kStageToneMax; neutral = 0; unit = L" dB"; return st.voice;
+    default: lo = 0; hi = 100; neutral = -1; unit = L" %"; return st.upmix;
     }
 }
 
@@ -1627,7 +1628,7 @@ void Activate(int id) {
     else if (id >= H_ROOM && id < H_ROOM + eq::kRoomCount) {
         const eq::StageSettings keep = g.cfg.stage;
         g.cfg.stage = eq::RoomDefaults(id - H_ROOM);        // Raum wählen setzt die empfohlenen Regler; danach lässt sich alles feinstellen
-        g.cfg.stage.on = keep.on; g.cfg.stage.head = keep.head; g.cfg.stage.level = keep.level; g.cfg.stage.surround = keep.surround;   // Kopfmodell, Ausgleich, Winkel, Bass und Dialog bleiben
+        g.cfg.stage.on = keep.on; g.cfg.stage.head = keep.head; g.cfg.stage.level = keep.level; g.cfg.stage.surround = keep.surround; g.cfg.stage.upmix = keep.upmix;   // Kopfmodell, Ausgleich, Winkel, Bass und Dialog bleiben
         g.cfg.stage.angle = keep.angle; g.cfg.stage.bass = keep.bass; g.cfg.stage.voice = keep.voice;
         Changed();
     }
