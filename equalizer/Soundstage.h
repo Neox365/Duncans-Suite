@@ -25,6 +25,7 @@ struct StageSettings {
     int voice = 0;              // Dialog im Raumklang -6..+6 dB (Stimmbereich um 2,5 kHz)
     bool head = false;          // Kopfmodell (HRTF-Naeherung) statt einfachem Crossfeed
     int level = 0;              // Lautstaerke-Ausgleich 0..8 dB (Raeume machen den Ton leiser)
+    bool surround = false;      // virtuelles 7.1-Surround ueber Kopfhoerer (Windows muss auf 7.1 stehen)
 };
 
 const wchar_t* RoomName(int room);
@@ -33,9 +34,12 @@ StageSettings RoomDefaults(int room);               // empfohlene Regler zur Vor
 void ClampStage(StageSettings& s);
 // true, wenn die Faltung etwas aendern wuerde (an, und mindestens Breite != 100, Crossfeed > 0 oder Raum mit Tiefe > 0)
 bool StageActive(const StageSettings& s);
-// Mehrkanal-Impulsantwort: 4 Kanaele (L->L, L->R, R->L, R->R), kStageSampleRate, 32 Bit Float
+// Mehrkanal-Impulsantwort: 4 Kanaele (L->L, L->R, R->L, R->R), kStageSampleRate, 32 Bit Float.
+// Mit surround: 8 Kanaele fuer die Mitte/Seiten-Paare (vorn, Mitte, leer, hinten, seitlich), siehe BuildMain
+constexpr int kSurroundChannels = 8;
 struct StageIr {
-    std::vector<float> ch[4];
+    int channels = 4;                       // 4 = Stereo-Raumklang, 8 = Surround
+    std::vector<float> ch[8];
     size_t length() const { return ch[0].size(); }
 };
 StageIr BuildStageIr(const StageSettings& s);

@@ -700,6 +700,41 @@ int main()
         }
         CHECK(BuildStageIr(kn).ch[0] == BuildStageIr(kn).ch[0]);           // gleiche Einstellung = gleiche Datei
 
+        // Surround 7.1: 8 Mono-Kanaele (Mitte/Seite je Paar), Config mit Bedingung, Speichern
+        {
+            StageSettings sr; sr.on = true; sr.surround = true;
+            CHECK(StageActive(sr));
+            StageSettings off = sr; off.on = false;
+            CHECK(!StageActive(off));
+            StageIr si = BuildStageIr(sr);
+            CHECK(si.channels == 8 && si.length() == 512);
+            bool finite = true, zeroLfe = true, anyMid = false;
+            for (int k = 0; k < 8; ++k)
+                for (float v : si.ch[k]) { if (!std::isfinite(v)) finite = false; if (k == 3 && v != 0.0f) zeroLfe = false; if (k != 3 && v != 0.0f) anyMid = true; }
+            CHECK(finite && zeroLfe && anyMid);
+            double eM = 0, eS = 0;                                             // Seite hat Anteil (Ohrunterschied), Mitte ist staerker
+            for (float v : si.ch[0]) eM += v * v;
+            for (float v : si.ch[1]) eS += v * v;
+            CHECK(eM > eS && eS > 0.0);
+            StageSettings wide = sr; wide.angle = 60;
+            CHECK(BuildStageIr(wide).ch[1] != si.ch[1]);                        // Winkel wirkt auf das vordere Paar
+            const std::string sw = StageIrWav(si);
+            CHECK(sw.size() == 44 + si.length() * 8 * 4 && sw[22] == 8 && sw[20] == 3);
+            Settings ss; ss.enabled = true; ss.stage = sr;
+            const std::string cfg = BuildConfig(ss, "", "C:\\APO\\config\\duncans-room.wav");
+            CHECK(cfg.find("If: inputChannelCount == 8") != std::string::npos && cfg.find("EndIf:") != std::string::npos);
+            CHECK(cfg.find("Copy: LFE=0.5*L+-0.5*R") != std::string::npos && cfg.find("Copy: R=LFE") != std::string::npos);
+            CHECK(cfg.find("Convolution: C:\\APO\\config\\duncans-room.wav") != std::string::npos);
+            CHECK(cfg.find("If:") < cfg.find("Convolution:") && cfg.find("Convolution:") < cfg.find("EndIf:"));
+            Settings st2 = ss; st2.stage.surround = false; st2.stage.cross = 50;
+            CHECK(BuildConfig(st2, "", "C:\\APO\\config\\duncans-room.wav").find("inputChannelCount") == std::string::npos);
+            wchar_t tp[MAX_PATH]; GetTempPathW(MAX_PATH, tp);
+            const std::wstring sp = std::wstring(tp) + L"duncans_surr_test.txt";
+            CHECK(SaveSettings(ss, sp));
+            Settings ls; CHECK(LoadSettings(ls, sp) && ls.stage.surround && ls.stage.on);
+            DeleteFileW(sp.c_str());
+        }
+
         // WAV: 4 Kanaele, Float, Laenge passt
         const std::string wav = StageIrWav(irG);
         CHECK(wav.size() == 44 + irG.length() * 16 && wav.compare(0, 4, "RIFF") == 0 && wav.compare(8, 4, "WAVE") == 0);
