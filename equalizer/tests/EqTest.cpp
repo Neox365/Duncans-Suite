@@ -2,6 +2,7 @@
 #include "../EqCurve.h"
 #include "../EqLogic.h"
 
+#include <cstring>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -579,7 +580,7 @@ int main()
 
     // Raumklang
     {
-        CHECK(kRoomCount == 5);
+        CHECK(kRoomCount == 8);
         for (int r = 0; r < kRoomCount; ++r) { CHECK(std::wstring(RoomName(r)).size() > 2 && std::wstring(RoomHint(r)).size() > 20); }
         CHECK(RoomDefaults(0).depth == 0 && RoomDefaults(4).depth > RoomDefaults(1).depth && RoomDefaults(2).room == 2);
         StageSettings st;
@@ -642,6 +643,21 @@ int main()
             CHECK(finite && rowEnergy(ir, 0, 2) <= 1.001 && rowEnergy(ir, 1, 3) <= 1.001);
             const double eL = rowEnergy(ir, 0, 2), eR = rowEnergy(ir, 1, 3);   // links und rechts gleich laut
             CHECK(std::fabs(eL - eR) < 0.05 * std::max(eL, eR));
+        }
+        {   // neue Raeume und Hoerprobe
+            CHECK(kRoomCount == 8 && std::wstring(RoomName(5)) == L"Wohnzimmer" && std::wstring(RoomName(6)) == L"Kathedrale" && std::wstring(RoomName(7)) == L"Badezimmer");
+            StageSettings ka = RoomDefaults(6); ka.on = true;
+            CHECK(BuildStageIr(ka).length() > BuildStageIr(kn).length() && BuildStageIr(ka).length() < size_t(kStageSampleRate) * 4);
+            const std::string tw = StageTestWav();
+            CHECK(tw.size() > 44 && tw.compare(0, 4, "RIFF") == 0 && tw.compare(8, 4, "WAVE") == 0);
+            auto s16 = [&](size_t i) { short v; std::memcpy(&v, tw.data() + 44 + i * 2, 2); return int(v); };
+            const size_t frames = (tw.size() - 44) / 4;
+            CHECK(frames > size_t(kStageSampleRate) * 3 && frames < size_t(kStageSampleRate) * 6);
+            long long l0 = 0, r0 = 0, l4 = 0, r4 = 0;                     // erster Impuls links, fuenfter rechts
+            for (size_t i = 0; i < 10000; ++i) { l0 += std::llabs(s16(i * 2)); r0 += std::llabs(s16(i * 2 + 1)); }
+            const size_t st4 = size_t(kStageSampleRate) * 32 / 100 * 4;
+            for (size_t i = 0; i < 10000; ++i) { l4 += std::llabs(s16((st4 + i) * 2)); r4 += std::llabs(s16((st4 + i) * 2 + 1)); }
+            CHECK(l0 > r0 * 20 && r4 > l4 * 20);
         }
         CHECK(BuildStageIr(kn).ch[0] == BuildStageIr(kn).ch[0]);           // gleiche Einstellung = gleiche Datei
 
