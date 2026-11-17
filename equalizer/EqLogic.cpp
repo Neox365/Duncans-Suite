@@ -260,14 +260,14 @@ static std::string StageText(const StageSettings& in)
 {
     StageSettings s = in;
     ClampStage(s);
-    return std::string(s.on ? "1" : "0") + "," + Num(s.room) + "," + Num(s.width) + "," + Num(s.cross) + "," + Num(s.depth) + "," + Num(s.level) + "," + (s.head ? "1" : "0") + "," + Num(s.angle) + "," + Num(s.bass) + "," + Num(s.voice);
+    return std::string(s.on ? "1" : "0") + "," + Num(s.room) + "," + Num(s.width) + "," + Num(s.cross) + "," + Num(s.depth) + "," + Num(s.level) + "," + (s.head ? "1" : "0") + "," + Num(s.angle) + "," + Num(s.bass) + "," + Num(s.voice) + "," + (s.surround ? "1" : "0");
 }
 
 static void ParseStage(const std::string& val, StageSettings& out)
 {
-    int v[10] = { 0, 0, 100, 0, 0, 0, 0, 30, 0, 0 };
+    int v[11] = { 0, 0, 100, 0, 0, 0, 0, 30, 0, 0, 0 };
     size_t p = 0;
-    for (int i = 0; i < 10 && p <= val.size(); ++i)
+    for (int i = 0; i < 11 && p <= val.size(); ++i)
     {
         size_t c = val.find(',', p);
         if (c == std::string::npos)
@@ -275,7 +275,7 @@ static void ParseStage(const std::string& val, StageSettings& out)
         v[i] = std::atoi(val.substr(p, c - p).c_str());
         p = c + 1;
     }
-    out.on = v[0] == 1; out.room = v[1]; out.width = v[2]; out.cross = v[3]; out.depth = v[4]; out.level = v[5]; out.head = v[6] == 1; out.angle = v[7]; out.bass = v[8]; out.voice = v[9];
+    out.on = v[0] == 1; out.room = v[1]; out.width = v[2]; out.cross = v[3]; out.depth = v[4]; out.level = v[5]; out.head = v[6] == 1; out.angle = v[7]; out.bass = v[8]; out.voice = v[9]; out.surround = v[10] == 1;
     ClampStage(out);
 }
 
@@ -376,7 +376,28 @@ static std::string BuildMain(const Settings& s, const std::string& irFile, const
         t += "Convolution: " + irFile + "\r\n";                              // Raum-/Kopfhoerer-Korrektur aus der Impulsantwort
     if (s.mono)
         t += "Copy: L=0.5*L+0.5*R R=0.5*L+0.5*R\r\n";                       // beide Seiten gleich
-    if (useStage)
+    if (useStage && s.stage.surround)
+    {
+        // Virtuelles 7.1: nur wenn Windows 8 Kanaele liefert. Paare (L/R, RL/RR, SL/SR) werden zu Mitte/Seite, mit je einem Mono-Kanal der Impulsantwort gefaltet
+        // und danach als Ohrsignale auf L und R gemischt. LFE dient als Zwischenspeicher. Jede Zeile liest nur Kanaele, die in derselben Zeile nicht geschrieben werden.
+        t += "If: inputChannelCount == 8\r\n";
+        t += "Copy: C=C+LFE\r\n";
+        const char* pairs[3][2] = { { "L", "R" }, { "RL", "RR" }, { "SL", "SR" } };
+        for (const auto& p : pairs)
+        {
+            const std::string x = p[0], y = p[1];
+            t += "Copy: LFE=0.5*" + x + "+-0.5*" + y + "\r\n";
+            t += "Copy: " + x + "=0.5*" + x + "+0.5*" + y + "\r\n";
+            t += "Copy: " + y + "=LFE\r\n";
+        }
+        t += "Convolution: " + stageFile + "\r\n";                           // 8 Kanaele: Mitte vorn, Seite vorn, Center, leer, Mitte hinten, Seite hinten, Mitte seitlich, Seite seitlich
+        t += "Copy: LFE=L+-1.0*R+RL+-1.0*RR+SL+-1.0*SR+C\r\n";
+        t += "Copy: L=L+R+RL+RR+SL+SR+C\r\n";
+        t += "Copy: R=LFE\r\n";
+        t += "Copy: C=0.0 LFE=0.0 RL=0.0 RR=0.0 SL=0.0 SR=0.0\r\n";
+        t += "EndIf:\r\n";
+    }
+    else if (useStage)
         t += "Convolution: " + stageFile + "\r\n";                           // Raumklang: 4-Kanal-Impulsantwort (L->L, L->R, R->L, R->R)
     if (useStage && s.stage.level > 0)
         t += "Preamp: " + Num(std::clamp(s.stage.level, 0, kStageLevelMax)) + " dB\r\n";   // Ausgleich fuer den Pegelverlust des Raums

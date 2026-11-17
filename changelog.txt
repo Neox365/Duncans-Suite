@@ -5,6 +5,9 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.21.0 | 2026-11-17
+- Neu: Schalter „Surround“ im Raumklang. Er macht aus 7.1-Ton virtuelles Surround für Kopfhörer: Vorn, Mitte, Seite und Hinten werden mit dem Kopfmodell auf die Ohren gerechnet, hinten mit gedämpften Höhen. Das hilft vor allem in Spielen und Filmen mit Surround-Ton. Der Winkel der vorderen Lautsprecher, Lautstärke-Ausgleich, Bass und Dialog wirken dabei weiter.
+- Wichtig: Windows muss dafür auf 7.1 stehen (Sound-Einstellungen, Wiedergabegerät, Lautsprecher einrichten, 7.1). Bei einem normalen Stereo-Gerät bleibt der Surround-Schalter ohne Wirkung. Raum, Hall und Bühnenbreite gelten im Surround noch nicht.
 ## 0.20.0 | 2026-11-17
 - Neu: Im Raumklang drei weitere Regler. „Lautsprecher-Winkel“ (10 bis 60 Grad) stellt beim Kopfmodell ein, wie weit die virtuellen Lautsprecher auseinanderstehen. „Bass“ und „Dialog (Stimmen)“ (je -6 bis +6 dB) heben die Tiefen und den Stimmbereich nur im Raumklang an oder ab.
 - Behoben: Wer einen anderen Raum gewählt hat, verlor dabei das Kopfmodell und den Lautstärke-Ausgleich. Beides bleibt jetzt erhalten, ebenso Winkel, Bass und Dialog.

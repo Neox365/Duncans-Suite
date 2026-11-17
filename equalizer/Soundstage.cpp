@@ -163,13 +163,63 @@ bool StageActive(const StageSettings& in)
 {
     StageSettings s = in;
     ClampStage(s);
-    return s.on && (s.width != 100 || s.cross > 0 || (s.room > 0 && s.depth > 0));
+    return s.on && (s.surround || s.width != 100 || s.cross > 0 || (s.room > 0 && s.depth > 0));
+}
+
+// Weg einer virtuellen Box (Winkel az in Grad, + = rechts, 0 = vorn) zu einem Ohr: Kopfschatten, Laufzeit, Ohrmuschel
+std::vector<double> SpeakerToEar(double az, bool rightEar, size_t n)
+{
+    const double earAz = rightEar ? 100.0 : -100.0;
+    double theta = std::fabs(az - earAz);
+    if (theta > 180.0) theta = 360.0 - theta;
+    const double sa = std::sin(az * kPi / 180.0), lat = std::asin(std::fabs(sa));
+    const bool nearEar = std::fabs(sa) > 0.05 && (sa > 0.0) == rightEar;
+    const size_t itd = (nearEar || std::fabs(sa) <= 0.05) ? 0 : static_cast<size_t>(std::lround(0.0875 / 343.0 * (lat + std::sin(lat)) * kStageSampleRate));
+    std::vector<double> h(n, 0.0);
+    h[std::min(itd, n - 1)] = 1.0;
+    HeadShadowInPlace(h, theta);
+    if (nearEar) PeakInPlace(h, 3200.0, 3.0, 1.0);
+    PeakInPlace(h, 8500.0, -5.0, 3.0);
+    if (std::fabs(az) > 110.0) PeakInPlace(h, 6500.0, -4.0, 0.7);       // hinten: Hoehen gedaempft (Richtungshinweis)
+    return h;
+}
+
+StageIr BuildSurroundIr(const StageSettings& s)
+{
+    const size_t n = 512;
+    // Paar bei +-az: Mitte-Anteil (nah + fern) und Seiten-Anteil (nah - fern); ein Lautsprecherpaar braucht so nur zwei Kanaele
+    auto pair = [&](double az, std::vector<double>& mid, std::vector<double>& side, double& energy) {
+        const std::vector<double> a = SpeakerToEar(az, true, n), b = SpeakerToEar(az, false, n);   // naher (rechts) und ferner Ohrweg der rechten Box
+        mid.assign(n, 0.0); side.assign(n, 0.0);
+        energy = 0.0;
+        for (size_t i = 0; i < n; ++i) { mid[i] = a[i] + b[i]; side[i] = a[i] - b[i]; energy += a[i] * a[i]; }
+    };
+    std::vector<double> m[3], d[3], c(n, 0.0);
+    double e[3] = { 0, 0, 0 };
+    pair(s.angle, m[0], d[0], e[0]);          // vorn
+    pair(150.0, m[1], d[1], e[1]);            // hinten (RL/RR)
+    pair(90.0, m[2], d[2], e[2]);             // seitlich (SL/SR)
+    {   // Mitte: gleicher Weg zu beiden Ohren
+        c = SpeakerToEar(0.0, true, n);
+        for (double& v : c) v *= 0.7071;
+    }
+    double eFront = e[0];
+    const double scale = 1.0 / std::sqrt(std::max(1.0, eFront * 1.2));    // wie beim Stereo-Raumklang: nie lauter als das Original
+    StageIr ir;
+    ir.channels = kSurroundChannels;
+    const std::vector<double>* order[8] = { &m[0], &d[0], &c, nullptr, &m[1], &d[1], &m[2], &d[2] };   // Reihenfolge der Kanaele im Mixformat 7.1
+    for (int k = 0; k < 8; ++k) {
+        ir.ch[k].assign(n, 0.0f);
+        if (order[k]) for (size_t i = 0; i < n; ++i) ir.ch[k][i] = static_cast<float>((*order[k])[i] * scale);
+    }
+    return ir;
 }
 
 StageIr BuildStageIr(const StageSettings& in)
 {
     StageSettings s = in;
     ClampStage(s);
+    if (s.surround) return BuildSurroundIr(s);
     const size_t kBase = 1024;
 
     // 1. Buehnenbreite: Seitensignal ueber 120 Hz mit Faktor w, darunter unveraendert (Bass bleibt in der Mitte)
@@ -266,7 +316,7 @@ StageIr BuildStageIr(const StageSettings& in)
 
 std::string StageIrWav(const StageIr& ir)
 {
-    const uint32_t n = static_cast<uint32_t>(ir.length()), ch = 4, bytes = n * ch * 4;
+    const uint32_t n = static_cast<uint32_t>(ir.length()), ch = static_cast<uint32_t>(ir.channels), bytes = n * ch * 4;
     std::string o;
     auto u32 = [&](uint32_t v) { o.append(reinterpret_cast<const char*>(&v), 4); };
     auto u16 = [&](uint16_t v) { o.append(reinterpret_cast<const char*>(&v), 2); };
@@ -275,7 +325,7 @@ std::string StageIrWav(const StageIr& ir)
     o += "data"; u32(bytes);
     o.reserve(o.size() + bytes);
     for (uint32_t i = 0; i < n; ++i)
-        for (int k = 0; k < 4; ++k) o.append(reinterpret_cast<const char*>(&ir.ch[k][i]), 4);
+        for (int k = 0; k < ir.channels; ++k) o.append(reinterpret_cast<const char*>(&ir.ch[k][i]), 4);
     return o;
 }
 
