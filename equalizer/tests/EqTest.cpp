@@ -757,8 +757,9 @@ int main()
             // Stereo-Raumklang bei Windows-Geraet mit mehr als 2 Kanaelen (7.1): Fallback als Mitte/Seite-Paar nur auf L und R
             {
                 const std::string c4 = BuildConfig(st2, "", "C:\\APO\\config\\duncans-room.wav", "C:\\APO\\config\\duncans-room-fx.wav");
-                CHECK(c4.find("If: inputChannelCount == 2") != std::string::npos && c4.find("Else:") != std::string::npos && c4.find("EndIf:") != std::string::npos);
-                CHECK(c4.find("If:") < c4.find("duncans-room.wav") && c4.find("duncans-room.wav") < c4.find("Else:") && c4.find("Else:") < c4.find("Channel: L R") && c4.find("Channel: L R") < c4.find("duncans-room-fx.wav"));
+                CHECK(c4.find("inputChannelCount") == std::string::npos && c4.find("LFE") == std::string::npos);        // gilt fuer jede Kanalzahl, ohne Zwischenkanal
+                CHECK(c4.find("Copy: L=L+R\r\nCopy: R=0.5*L+-1.0*R\r\nCopy: L=0.5*L\r\n") != std::string::npos && c4.find("Copy: L=L+R\r\nCopy: R=L+-2.0*R\r\n") != std::string::npos);
+                CHECK(c4.find("Channel: L R") < c4.find("duncans-room-fx.wav") && c4.find("duncans-room-fx.wav") < c4.find("Channel: all") && c4.find("duncans-room.wav") == std::string::npos);
                 StageIr f4 = BuildStereoFxIr(st2.stage), r4 = BuildStageIr(st2.stage);
                 CHECK(f4.channels == 2 && f4.length() == r4.length());
                 bool same = true;                                              // Mitte = LL + LR, Seite = LL - LR
@@ -818,9 +819,11 @@ int main()
         CHECK(ApplyToDir(apo, cfgS) == ApplyResult::Applied);
         const std::string written = Slurp(apo + L"/config/duncans-room.wav");
         CHECK(written.size() > 44 && written.compare(0, 4, "RIFF") == 0);
-        CHECK(Slurp(apo + L"/config/duncans-equalizer.txt").find("duncans-room.wav") != std::string::npos);
-        CHECK(ApplyToDir(apo, cfgS) == ApplyResult::Applied && Slurp(apo + L"/config/duncans-room.wav") == written);
-        CHECK(ApplyToDir(apo, off) == ApplyResult::Applied && Slurp(apo + L"/config/duncans-room.wav") == "<fehlt>");
+        CHECK(Slurp(apo + L"/config/duncans-equalizer.txt").find("duncans-room-fx.wav") != std::string::npos);      // Stereo-Raumklang laeuft ueber die Mitte/Seite-Datei
+        const std::string writtenFx = Slurp(apo + L"/config/duncans-room-fx.wav");
+        CHECK(writtenFx.size() > 44 && writtenFx.compare(0, 4, "RIFF") == 0 && writtenFx[22] == 2);
+        CHECK(ApplyToDir(apo, cfgS) == ApplyResult::Applied && Slurp(apo + L"/config/duncans-room.wav") == written && Slurp(apo + L"/config/duncans-room-fx.wav") == writtenFx);
+        CHECK(ApplyToDir(apo, off) == ApplyResult::Applied && Slurp(apo + L"/config/duncans-room.wav") == "<fehlt>" && Slurp(apo + L"/config/duncans-room-fx.wav") == "<fehlt>");
         CHECK(Slurp(apo + L"/config/duncans-equalizer.txt").find("Convolution") == std::string::npos);
 
         DeleteFileW((sd + L"/s.txt").c_str()); DeleteFileW((sd + L"/s2.txt").c_str());
