@@ -18,6 +18,7 @@ struct StageSettings {
     int width = 100;            // Buehnenbreite in %: 0..100 enger, 100 unveraendert, bis 160 weiter
     int cross = 0;              // Kopfhoerer-Crossfeed 0..100 %
     int depth = 0;              // Raumtiefe (Anteil Hall) 0..100 %
+    bool head = false;          // Kopfmodell (HRTF-Naeherung) statt einfachem Crossfeed
     int level = 0;              // Lautstaerke-Ausgleich 0..8 dB (Raeume machen den Ton leiser)
 };
 

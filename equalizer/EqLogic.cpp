@@ -260,14 +260,14 @@ static std::string StageText(const StageSettings& in)
 {
     StageSettings s = in;
     ClampStage(s);
-    return std::string(s.on ? "1" : "0") + "," + Num(s.room) + "," + Num(s.width) + "," + Num(s.cross) + "," + Num(s.depth) + "," + Num(s.level);
+    return std::string(s.on ? "1" : "0") + "," + Num(s.room) + "," + Num(s.width) + "," + Num(s.cross) + "," + Num(s.depth) + "," + Num(s.level) + "," + (s.head ? "1" : "0");
 }
 
 static void ParseStage(const std::string& val, StageSettings& out)
 {
-    int v[6] = { 0, 0, 100, 0, 0, 0 };
+    int v[7] = { 0, 0, 100, 0, 0, 0, 0 };
     size_t p = 0;
-    for (int i = 0; i < 6 && p <= val.size(); ++i)
+    for (int i = 0; i < 7 && p <= val.size(); ++i)
     {
         size_t c = val.find(',', p);
         if (c == std::string::npos)
@@ -275,7 +275,7 @@ static void ParseStage(const std::string& val, StageSettings& out)
         v[i] = std::atoi(val.substr(p, c - p).c_str());
         p = c + 1;
     }
-    out.on = v[0] == 1; out.room = v[1]; out.width = v[2]; out.cross = v[3]; out.depth = v[4]; out.level = v[5];
+    out.on = v[0] == 1; out.room = v[1]; out.width = v[2]; out.cross = v[3]; out.depth = v[4]; out.level = v[5]; out.head = v[6] == 1;
     ClampStage(out);
 }
 

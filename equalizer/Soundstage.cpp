@@ -58,6 +58,34 @@ void LowpassInPlace(std::vector<double>& x, double fc)
     }
 }
 
+// Peak-/Kerbfilter (RBJ), angewendet auf eine Folge
+void PeakInPlace(std::vector<double>& x, double fc, double dB, double q)
+{
+    const double A = std::pow(10.0, dB / 40.0), w0 = 2.0 * kPi * fc / kStageSampleRate, c = std::cos(w0), al = std::sin(w0) / (2.0 * q);
+    const double a0 = 1.0 + al / A, b0 = (1.0 + al * A) / a0, b1 = -2.0 * c / a0, b2 = (1.0 - al * A) / a0, a1 = -2.0 * c / a0, a2 = (1.0 - al / A) / a0;
+    double x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+    for (double& v : x) {
+        const double y = b0 * v + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+        x2 = x1; x1 = v; y2 = y1; y1 = y;
+        v = y;
+    }
+}
+
+// Kopfschatten nach Brown/Duda (Kugelkopf, Radius 8,75 cm): Filter 1. Ordnung, Staerke haengt vom Einfallswinkel zum Ohr ab
+void HeadShadowInPlace(std::vector<double>& x, double thetaDeg)
+{
+    const double alphaMin = 0.1, thetaMin = 150.0;
+    const double alpha = 1.0 + alphaMin / 2.0 + (1.0 - alphaMin / 2.0) * std::cos(thetaDeg / thetaMin * kPi);
+    const double w0 = 343.0 / 0.0875, tauK = (1.0 / (2.0 * w0)) * 2.0 * kStageSampleRate;      // Bilinear-Transformation
+    const double d = 1.0 + tauK, b0 = (1.0 + alpha * tauK) / d, b1 = (1.0 - alpha * tauK) / d, a1 = (1.0 - tauK) / d;
+    double x1 = 0, y1 = 0;
+    for (double& v : x) {
+        const double y = b0 * v + b1 * x1 - a1 * y1;
+        x1 = v; y1 = y;
+        v = y;
+    }
+}
+
 std::vector<double> Lowpass(size_t n, double fc)    // Impulsantwort des Tiefpasses
 {
     std::vector<double> d(n, 0.0);
@@ -157,14 +185,28 @@ StageIr BuildStageIr(const StageSettings& in)
     const double c = s.cross / 100.0;
     std::vector<double> LL = A, LR = B;
     if (c > 0.0) {
-        const double direct = 1.0 - 0.25 * c, k = 0.5 * c;
-        std::vector<double> z(kBase, 0.0), lp = Lowpass(kBase - 13, 700.0);
-        for (size_t i = 0; i < lp.size(); ++i) z[i + 13] = lp[i];     // 13 Abtastwerte bei 48 kHz = 0,27 ms
-        std::vector<double> zA = Conv(z, A), zB = Conv(z, B);
-        LL.assign(zA.size(), 0.0);
-        LR.assign(zA.size(), 0.0);
-        for (size_t i = 0; i < A.size(); ++i) { LL[i] += direct * A[i]; LR[i] += direct * B[i]; }
-        for (size_t i = 0; i < zA.size(); ++i) { LL[i] += k * zB[i]; LR[i] += k * zA[i]; }
+        // Weg zum eigenen Ohr (ipsi) und zum anderen Ohr (contra) je Lautsprecher
+        std::vector<double> ipsi(kBase, 0.0), contra(kBase, 0.0);
+        if (s.head) {
+            // Kopfmodell: Lautsprecher bei +-30 Grad, Ohren bei +-100 Grad -> Einfallswinkel 70 Grad (nah) und 130 Grad (fern)
+            std::vector<double> hi(kBase, 0.0), hc(kBase, 0.0);
+            hi[0] = 1.0; hc[13] = 1.0;                                  // ferneres Ohr: 13 Abtastwerte bei 48 kHz = 0,27 ms spaeter
+            HeadShadowInPlace(hi, 70.0);
+            HeadShadowInPlace(hc, 130.0);
+            PeakInPlace(hi, 3200.0, 3.0, 1.0);                          // Ohrmuschel: Betonung um 3 kHz am nahen Ohr
+            PeakInPlace(hi, 8500.0, -5.0, 3.0);                         // und eine Kerbe um 8,5 kHz (Richtungshinweis)
+            PeakInPlace(hc, 8500.0, -5.0, 3.0);
+            for (size_t i = 0; i < kBase; ++i) { ipsi[i] = (i == 0 ? 1.0 - c : 0.0) + c * hi[i]; contra[i] = c * hc[i]; }
+        } else {
+            const double direct = 1.0 - 0.25 * c, k = 0.5 * c;
+            std::vector<double> lp = Lowpass(kBase - 13, 700.0);
+            for (size_t i = 0; i < lp.size(); ++i) contra[i + 13] = k * lp[i];     // 13 Abtastwerte bei 48 kHz = 0,27 ms
+            ipsi[0] = direct;
+        }
+        std::vector<double> iA = Conv(ipsi, A), iB = Conv(ipsi, B), cA = Conv(contra, A), cB = Conv(contra, B);
+        LL.assign(iA.size(), 0.0);
+        LR.assign(iA.size(), 0.0);
+        for (size_t i = 0; i < iA.size(); ++i) { LL[i] = iA[i] + cB[i]; LR[i] = iB[i] + cA[i]; }
     }
     std::vector<double> T[4] = { LL, LR, LR, LL };    // L->L, L->R, R->L, R->R (symmetrisch)
 
