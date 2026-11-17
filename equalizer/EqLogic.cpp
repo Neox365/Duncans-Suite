@@ -413,6 +413,18 @@ static std::string BuildMain(const Settings& s, const std::string& irFile, const
         }
         t += "EndIf:\r\n";
     }
+    else if (useStage && !fxFile.empty() && IsSafeConfigPath(fxFile))
+    {
+        // Stereo-Geraet: 4-Kanal-Datei (wahre Stereo-Faltung). Mehr Kanaele (z. B. Windows auf 7.1): dieselbe Wirkung als Mitte/Seite-Paar nur auf L und R,
+        // sonst wuerde die 4-Kanal-Datei reihum auf acht Kanaele verteilt und nur ein Ohr bekaeme Ton.
+        t += "If: inputChannelCount == 2\r\n";
+        t += "Convolution: " + stageFile + "\r\n";
+        t += "Else:\r\n";
+        t += "Copy: LFE=0.5*L+-0.5*R\r\nCopy: L=0.5*L+0.5*R\r\nCopy: R=LFE\r\n";
+        t += "Channel: L R\r\nConvolution: " + fxFile + "\r\nChannel: all\r\n";
+        t += "Copy: LFE=L+-1.0*R\r\nCopy: L=L+R\r\nCopy: R=LFE\r\nCopy: LFE=0.0\r\n";
+        t += "EndIf:\r\n";
+    }
     else if (useStage)
         t += "Convolution: " + stageFile + "\r\n";                           // Raumklang: 4-Kanal-Impulsantwort (L->L, L->R, R->L, R->R)
     if (useStage && s.stage.level > 0)
@@ -584,9 +596,10 @@ ApplyResult ApplyToDir(const std::wstring& installDir, const Settings& s)
     std::string fxAbs;
     {
         const std::wstring dest = cfgDir + L"\\" + kStageFxName;
-        if (s.enabled && SurroundFxActive(s.stage))
+        const bool fxSurround = s.enabled && SurroundFxActive(s.stage), fxStereo = s.enabled && !s.stage.surround && StageActive(s.stage);
+        if (fxSurround || fxStereo)
         {
-            const std::string wav = StageIrWav(BuildSurroundFxIr(s.stage));
+            const std::string wav = StageIrWav(fxSurround ? BuildSurroundFxIr(s.stage) : BuildStereoFxIr(s.stage));
             std::string have;
             if (!ReadFileBytes(dest, have) || have != wav)
             {

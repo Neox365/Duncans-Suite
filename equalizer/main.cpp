@@ -36,7 +36,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.22.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.22.1"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER

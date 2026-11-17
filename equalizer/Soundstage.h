@@ -47,6 +47,8 @@ StageIr BuildStageIr(const StageSettings& s);
 // Surround: Raum, Hall und Buehnenbreite als Mitte/Seite-Paar (2 Mono-Kanaele), wirkt nach dem Surround auf beide Ohren
 bool SurroundFxActive(const StageSettings& s);
 StageIr BuildSurroundFxIr(const StageSettings& s);
+// Stereo-Raumklang als Mitte/Seite-Paar (2 Mono-Kanaele): fuer Geraete mit mehr als 2 Kanaelen (z. B. 7.1), wo die 4-Kanal-Datei nicht passt
+StageIr BuildStereoFxIr(const StageSettings& s);
 // WAV-Datei (IEEE-Float, 4 Kanaele) als Bytes
 std::string StageIrWav(const StageIr& ir);
 // Hoerprobe: kurze Rauschimpulse wandern von links nach rechts und zurueck zur Mitte (Stereo, 16 Bit, 48 kHz), danach Stille fuer den Nachhall

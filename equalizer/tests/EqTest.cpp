@@ -754,6 +754,23 @@ int main()
             DeleteFileW(sq.c_str());
             StageSettings clampU = sr; clampU.upmix = 500; ClampStage(clampU);
             CHECK(clampU.upmix == 100);
+            // Stereo-Raumklang bei Windows-Geraet mit mehr als 2 Kanaelen (7.1): Fallback als Mitte/Seite-Paar nur auf L und R
+            {
+                const std::string c4 = BuildConfig(st2, "", "C:\\APO\\config\\duncans-room.wav", "C:\\APO\\config\\duncans-room-fx.wav");
+                CHECK(c4.find("If: inputChannelCount == 2") != std::string::npos && c4.find("Else:") != std::string::npos && c4.find("EndIf:") != std::string::npos);
+                CHECK(c4.find("If:") < c4.find("duncans-room.wav") && c4.find("duncans-room.wav") < c4.find("Else:") && c4.find("Else:") < c4.find("Channel: L R") && c4.find("Channel: L R") < c4.find("duncans-room-fx.wav"));
+                StageIr f4 = BuildStereoFxIr(st2.stage), r4 = BuildStageIr(st2.stage);
+                CHECK(f4.channels == 2 && f4.length() == r4.length());
+                bool same = true;                                              // Mitte = LL + LR, Seite = LL - LR
+                for (size_t i = 0; i < r4.length(); ++i)
+                    if (std::fabs(f4.ch[0][i] - (r4.ch[0][i] + r4.ch[1][i])) > 1e-6f || std::fabs(f4.ch[1][i] - (r4.ch[0][i] - r4.ch[1][i])) > 1e-6f) same = false;
+                CHECK(same);
+                StageSettings studio = RoomDefaults(3); studio.on = true;       // Studio ohne Surround: beide Seiten haben Ton
+                StageIr sf = BuildStereoFxIr(studio);
+                double em = 0, es = 0;
+                for (size_t i = 0; i < sf.length(); ++i) { em += sf.ch[0][i] * sf.ch[0][i]; es += sf.ch[1][i] * sf.ch[1][i]; }
+                CHECK(em > 0 && es > 0);
+            }
             wchar_t tp[MAX_PATH]; GetTempPathW(MAX_PATH, tp);
             const std::wstring sp =std::wstring(tp) + L"duncans_surr_test.txt";
             CHECK(SaveSettings(ss, sp));
