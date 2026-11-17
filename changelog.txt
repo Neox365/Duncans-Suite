@@ -5,6 +5,10 @@
 # (tools\PublishModule.ps1 lädt diese Datei bei jedem Programm-Release hoch).
 
 [DuncansEqualizer.exe]
+## 0.22.0 | 2026-11-17
+- Neu: Im Surround wirken jetzt auch Raum, Hall und Bühnenbreite. Sie werden nach dem Surround auf beide Ohren gelegt.
+- Neu: Regler „Hochmischen (Stereo auf 7.1)“ (0 bis 100 %). Normale Stereo-Musik und -Videos haben nichts hinten und seitlich. Der Regler schickt den Raumanteil des Tons auf die Seiten- und Hinterlautsprecher. Bei echtem 7.1-Ton lässt du ihn auf 0 %.
+- Hinweis: Der Crossfeed-Regler gilt im Surround nicht, das Kopfmodell steckt schon in den Lautsprecher-Wegen.
 ## 0.21.0 | 2026-11-17
 - Neu: Schalter „Surround“ im Raumklang. Er macht aus 7.1-Ton virtuelles Surround für Kopfhörer: Vorn, Mitte, Seite und Hinten werden mit dem Kopfmodell auf die Ohren gerechnet, hinten mit gedämpften Höhen. Das hilft vor allem in Spielen und Filmen mit Surround-Ton. Der Winkel der vorderen Lautsprecher, Lautstärke-Ausgleich, Bass und Dialog wirken dabei weiter.
 - Wichtig: Windows muss dafür auf 7.1 stehen (Sound-Einstellungen, Wiedergabegerät, Lautsprecher einrichten, 7.1). Bei einem normalen Stereo-Gerät bleibt der Surround-Schalter ohne Wirkung. Raum, Hall und Bühnenbreite gelten im Surround noch nicht.

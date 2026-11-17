@@ -157,6 +157,7 @@ void ClampStage(StageSettings& s)
     s.angle = std::clamp(s.angle, kStageAngleMin, kStageAngleMax);
     s.bass = std::clamp(s.bass, -kStageToneMax, kStageToneMax);
     s.voice = std::clamp(s.voice, -kStageToneMax, kStageToneMax);
+    s.upmix = std::clamp(s.upmix, 0, 100);
 }
 
 bool StageActive(const StageSettings& in)
@@ -211,6 +212,29 @@ StageIr BuildSurroundIr(const StageSettings& s)
     for (int k = 0; k < 8; ++k) {
         ir.ch[k].assign(n, 0.0f);
         if (order[k]) for (size_t i = 0; i < n; ++i) ir.ch[k][i] = static_cast<float>((*order[k])[i] * scale);
+    }
+    return ir;
+}
+
+bool SurroundFxActive(const StageSettings& in)
+{
+    StageSettings s = in;
+    ClampStage(s);
+    return s.on && s.surround && (s.width != 100 || (s.room > 0 && s.depth > 0));
+}
+
+StageIr BuildSurroundFxIr(const StageSettings& in)
+{
+    StageSettings s = in;
+    ClampStage(s);
+    s.surround = false; s.cross = 0; s.head = false;           // Kopfmodell steckt schon im Surround
+    const StageIr st = BuildStageIr(s);                        // symmetrisch: LL = ch[0], LR = ch[1]
+    StageIr ir;
+    ir.channels = 2;
+    ir.ch[0].resize(st.length()); ir.ch[1].resize(st.length());
+    for (size_t i = 0; i < st.length(); ++i) {
+        ir.ch[0][i] = st.ch[0][i] + st.ch[1][i];               // Mitte: LL + LR
+        ir.ch[1][i] = st.ch[0][i] - st.ch[1][i];               // Seite: LL - LR
     }
     return ir;
 }

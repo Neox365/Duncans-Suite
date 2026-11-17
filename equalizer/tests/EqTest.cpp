@@ -728,8 +728,34 @@ int main()
             CHECK(cfg.find("If:") < cfg.find("Convolution:") && cfg.find("Convolution:") < cfg.find("EndIf:"));
             Settings st2 = ss; st2.stage.surround = false; st2.stage.cross = 50;
             CHECK(BuildConfig(st2, "", "C:\\APO\\config\\duncans-room.wav").find("inputChannelCount") == std::string::npos);
+            // Hochmischen und Raum im Surround
+            CHECK(cfg.find("SL=SL+") == std::string::npos && !SurroundFxActive(sr));
+            Settings up = ss; up.stage.upmix = 100;
+            const std::string cu = BuildConfig(up, "", "C:\\APO\\config\\duncans-room.wav");
+            CHECK(cu.find("Copy: SL=SL+0.500*L+-0.500*R SR=SR+0.500*R+-0.500*L") != std::string::npos && cu.find("RL=RL+0.350*L+-0.350*R") != std::string::npos);
+            CHECK(cu.find("SL=SL+") < cu.find("Convolution:"));
+            StageSettings rf = sr; rf.room = 2; rf.depth = 45; rf.width = 130;
+            CHECK(SurroundFxActive(rf) && !SurroundFxActive(off));
+            StageIr fx = BuildSurroundFxIr(rf);
+            CHECK(fx.channels == 2 && fx.length() > 1000 && fx.ch[0].size() == fx.ch[1].size());
+            double eFm = 0, eFs = 0; bool fxFinite = true;
+            for (size_t i = 0; i < fx.length(); ++i) { eFm += fx.ch[0][i] * fx.ch[0][i]; eFs += fx.ch[1][i] * fx.ch[1][i]; if (!std::isfinite(fx.ch[0][i]) || !std::isfinite(fx.ch[1][i])) fxFinite = false; }
+            CHECK(fxFinite && eFm > 0 && eFs > 0);
+            Settings rs2; rs2.enabled = true; rs2.stage = rf;
+            const std::string cr = BuildConfig(rs2, "", "C:\\APO\\config\\duncans-room.wav", "C:\\APO\\config\\duncans-room-fx.wav");
+            CHECK(cr.find("Channel: L R") != std::string::npos && cr.find("Convolution: C:\\APO\\config\\duncans-room-fx.wav") != std::string::npos);
+            CHECK(cr.find("Convolution: C:\\APO\\config\\duncans-room.wav") < cr.find("duncans-room-fx.wav") && cr.find("duncans-room-fx.wav") < cr.find("EndIf:"));
+            CHECK(BuildConfig(rs2, "", "C:\\APO\\config\\duncans-room.wav").find("duncans-room-fx") == std::string::npos);     // ohne Datei keine Zeile
+            Settings ur = rs2; ur.stage.upmix = 40;
+            wchar_t tq[MAX_PATH]; GetTempPathW(MAX_PATH, tq);
+            const std::wstring sq = std::wstring(tq) + L"duncans_upmix_test.txt";
+            CHECK(SaveSettings(ur, sq));
+            Settings lq; CHECK(LoadSettings(lq, sq) && lq.stage.upmix == 40 && lq.stage.surround && lq.stage.room == 2 && lq.stage.width == 130);
+            DeleteFileW(sq.c_str());
+            StageSettings clampU = sr; clampU.upmix = 500; ClampStage(clampU);
+            CHECK(clampU.upmix == 100);
             wchar_t tp[MAX_PATH]; GetTempPathW(MAX_PATH, tp);
-            const std::wstring sp = std::wstring(tp) + L"duncans_surr_test.txt";
+            const std::wstring sp =std::wstring(tp) + L"duncans_surr_test.txt";
             CHECK(SaveSettings(ss, sp));
             Settings ls; CHECK(LoadSettings(ls, sp) && ls.stage.surround && ls.stage.on);
             DeleteFileW(sp.c_str());

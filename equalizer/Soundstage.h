@@ -25,6 +25,7 @@ struct StageSettings {
     int voice = 0;              // Dialog im Raumklang -6..+6 dB (Stimmbereich um 2,5 kHz)
     bool head = false;          // Kopfmodell (HRTF-Naeherung) statt einfachem Crossfeed
     int level = 0;              // Lautstaerke-Ausgleich 0..8 dB (Raeume machen den Ton leiser)
+    int upmix = 0;              // Surround: Stereo auf die hinteren und seitlichen Lautsprecher hochmischen 0..100 %
     bool surround = false;      // virtuelles 7.1-Surround ueber Kopfhoerer (Windows muss auf 7.1 stehen)
 };
 
@@ -43,6 +44,9 @@ struct StageIr {
     size_t length() const { return ch[0].size(); }
 };
 StageIr BuildStageIr(const StageSettings& s);
+// Surround: Raum, Hall und Buehnenbreite als Mitte/Seite-Paar (2 Mono-Kanaele), wirkt nach dem Surround auf beide Ohren
+bool SurroundFxActive(const StageSettings& s);
+StageIr BuildSurroundFxIr(const StageSettings& s);
 // WAV-Datei (IEEE-Float, 4 Kanaele) als Bytes
 std::string StageIrWav(const StageIr& ir);
 // Hoerprobe: kurze Rauschimpulse wandern von links nach rechts und zurueck zur Mitte (Stereo, 16 Bit, 48 kHz), danach Stille fuer den Nachhall

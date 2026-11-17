@@ -188,6 +188,7 @@ int TotalPreampDb(const Settings& s)
 
 const wchar_t* const kIrCopyName = L"duncans-ir.wav";
 const wchar_t* const kStageIrName = L"duncans-room.wav";
+const wchar_t* const kStageFxName = L"duncans-room-fx.wav";
 
 // Absoluter Pfad mit Laufwerk und nur harmlosen Zeichen (kein Zeilenumbruch, kein Semikolon usw.), damit nichts in die Konfiguration gelangt
 static bool IsSafeConfigPath(const std::string& p)
@@ -253,21 +254,21 @@ std::string MicDeviceKey(const std::wstring& name)
     return best.size() >= 3 && best.size() <= 64 ? best : std::string();
 }
 
-static std::string BuildMain(const Settings& s, const std::string& irFile, const std::string& stageFile);
+static std::string BuildMain(const Settings& s, const std::string& irFile, const std::string& stageFile, const std::string& fxFile);
 
 // "an,raum,breite,crossfeed,tiefe" als Text speichern und wieder lesen (falsche Werte werden begrenzt)
 static std::string StageText(const StageSettings& in)
 {
     StageSettings s = in;
     ClampStage(s);
-    return std::string(s.on ? "1" : "0") + "," + Num(s.room) + "," + Num(s.width) + "," + Num(s.cross) + "," + Num(s.depth) + "," + Num(s.level) + "," + (s.head ? "1" : "0") + "," + Num(s.angle) + "," + Num(s.bass) + "," + Num(s.voice) + "," + (s.surround ? "1" : "0");
+    return std::string(s.on ? "1" : "0") + "," + Num(s.room) + "," + Num(s.width) + "," + Num(s.cross) + "," + Num(s.depth) + "," + Num(s.level) + "," + (s.head ? "1" : "0") + "," + Num(s.angle) + "," + Num(s.bass) + "," + Num(s.voice) + "," + (s.surround ? "1" : "0") + "," + Num(s.upmix);
 }
 
 static void ParseStage(const std::string& val, StageSettings& out)
 {
-    int v[11] = { 0, 0, 100, 0, 0, 0, 0, 30, 0, 0, 0 };
+    int v[12] = { 0, 0, 100, 0, 0, 0, 0, 30, 0, 0, 0, 0 };
     size_t p = 0;
-    for (int i = 0; i < 11 && p <= val.size(); ++i)
+    for (int i = 0; i < 12 && p <= val.size(); ++i)
     {
         size_t c = val.find(',', p);
         if (c == std::string::npos)
@@ -275,13 +276,13 @@ static void ParseStage(const std::string& val, StageSettings& out)
         v[i] = std::atoi(val.substr(p, c - p).c_str());
         p = c + 1;
     }
-    out.on = v[0] == 1; out.room = v[1]; out.width = v[2]; out.cross = v[3]; out.depth = v[4]; out.level = v[5]; out.head = v[6] == 1; out.angle = v[7]; out.bass = v[8]; out.voice = v[9]; out.surround = v[10] == 1;
+    out.on = v[0] == 1; out.room = v[1]; out.width = v[2]; out.cross = v[3]; out.depth = v[4]; out.level = v[5]; out.head = v[6] == 1; out.angle = v[7]; out.bass = v[8]; out.voice = v[9]; out.surround = v[10] == 1; out.upmix = v[11];
     ClampStage(out);
 }
 
-std::string BuildConfig(const Settings& s, const std::string& irFile, const std::string& stageFile)
+std::string BuildConfig(const Settings& s, const std::string& irFile, const std::string& stageFile, const std::string& fxFile)
 {
-    std::string t = BuildMain(s, irFile, stageFile);
+    std::string t = BuildMain(s, irFile, stageFile, fxFile);
     const std::string key = MicDeviceKey(s.micDevice);
     if (s.micMode >= 1 && s.micMode <= 3 && !key.empty())          // eigener Abschnitt nur fuer das Mikrofon; "Device: all" beendet ihn
     {
@@ -330,7 +331,7 @@ std::vector<std::wstring> CaptureDeviceNames()
     return out;
 }
 
-static std::string BuildMain(const Settings& s, const std::string& irFile, const std::string& stageFile)
+static std::string BuildMain(const Settings& s, const std::string& irFile, const std::string& stageFile, const std::string& fxFile)
 {
     std::string t = "# Duncan's Equalizer - wird automatisch erzeugt, bitte nicht von Hand aendern\r\n";
     if (!s.enabled)
@@ -382,6 +383,14 @@ static std::string BuildMain(const Settings& s, const std::string& irFile, const
         // und danach als Ohrsignale auf L und R gemischt. LFE dient als Zwischenspeicher. Jede Zeile liest nur Kanaele, die in derselben Zeile nicht geschrieben werden.
         t += "If: inputChannelCount == 8\r\n";
         t += "Copy: C=C+LFE\r\n";
+        if (s.stage.upmix > 0)
+        {
+            // Stereo hochmischen: der Unterschied zwischen L und R (Raumanteil) geht auf die Seiten- und Hinterkanaele
+            auto f = [](double v) { char b[32]; snprintf(b, sizeof b, "%.3f", v); return std::string(b); };
+            const double u = std::clamp(s.stage.upmix, 0, 100) / 100.0;
+            t += "Copy: SL=SL+" + f(0.5 * u) + "*L+-" + f(0.5 * u) + "*R SR=SR+" + f(0.5 * u) + "*R+-" + f(0.5 * u) + "*L\r\n";
+            t += "Copy: RL=RL+" + f(0.35 * u) + "*L+-" + f(0.35 * u) + "*R RR=RR+" + f(0.35 * u) + "*R+-" + f(0.35 * u) + "*L\r\n";
+        }
         const char* pairs[3][2] = { { "L", "R" }, { "RL", "RR" }, { "SL", "SR" } };
         for (const auto& p : pairs)
         {
@@ -395,6 +404,13 @@ static std::string BuildMain(const Settings& s, const std::string& irFile, const
         t += "Copy: L=L+R+RL+RR+SL+SR+C\r\n";
         t += "Copy: R=LFE\r\n";
         t += "Copy: C=0.0 LFE=0.0 RL=0.0 RR=0.0 SL=0.0 SR=0.0\r\n";
+        if (!fxFile.empty() && IsSafeConfigPath(fxFile) && SurroundFxActive(s.stage))
+        {
+            // Raum und Buehnenbreite: L/R (jetzt die Ohrsignale) zu Mitte/Seite, mit den zwei Mono-Kanaelen gefaltet, zurueck zu L/R
+            t += "Copy: LFE=0.5*L+-0.5*R\r\nCopy: L=0.5*L+0.5*R\r\nCopy: R=LFE\r\n";
+            t += "Channel: L R\r\nConvolution: " + fxFile + "\r\nChannel: all\r\n";
+            t += "Copy: LFE=L+-1.0*R\r\nCopy: L=L+R\r\nCopy: R=LFE\r\nCopy: LFE=0.0\r\n";
+        }
         t += "EndIf:\r\n";
     }
     else if (useStage)
@@ -564,8 +580,33 @@ ApplyResult ApplyToDir(const std::wstring& installDir, const Settings& s)
             DeleteFileW(dest.c_str());          // nicht mehr gebraucht (ohne Rechte bleibt sie, wird aber nicht benutzt)
     }
 
+    // 0c. Surround: Raum/Buehnenbreite als zweite Datei
+    std::string fxAbs;
+    {
+        const std::wstring dest = cfgDir + L"\\" + kStageFxName;
+        if (s.enabled && SurroundFxActive(s.stage))
+        {
+            const std::string wav = StageIrWav(BuildSurroundFxIr(s.stage));
+            std::string have;
+            if (!ReadFileBytes(dest, have) || have != wav)
+            {
+                const DWORD e = WriteFileBytes(dest, wav);
+                if (e)
+                    return e == ERROR_ACCESS_DENIED ? ApplyResult::AccessDenied : ApplyResult::Failed;
+            }
+            bool ascii = true;
+            for (wchar_t c : dest)
+                if (c > 126 || c < 32)
+                    ascii = false;
+            if (ascii)
+                fxAbs = ToUtf8(dest);
+        }
+        else
+            DeleteFileW(dest.c_str());
+    }
+
     // 1. unsere Datei
-    DWORD err = WriteFileBytes(cfgDir + L"\\" + kConfigFile, BuildConfig(s, irAbs, stageAbs));
+    DWORD err = WriteFileBytes(cfgDir + L"\\" + kConfigFile, BuildConfig(s, irAbs, stageAbs, fxAbs));
     if (err == ERROR_ACCESS_DENIED || err == ERROR_SHARING_VIOLATION)
         return err == ERROR_ACCESS_DENIED ? ApplyResult::AccessDenied : ApplyResult::Failed;
     if (err)
