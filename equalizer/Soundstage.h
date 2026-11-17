@@ -10,6 +10,8 @@ namespace eq {
 constexpr int kRoomCount = 8;                       // 0 Aus, 1 Gaming, 2 Kino, 3 Studio, 4 Konzertsaal, 5 Wohnzimmer, 6 Kathedrale, 7 Badezimmer
 constexpr int kStageWidthMin = 50, kStageWidthMax = 160;
 constexpr int kStageSampleRate = 48000;
+constexpr int kStageAngleMin = 10, kStageAngleMax = 60;   // Lautsprecher-Winkel des Kopfmodells in Grad
+constexpr int kStageToneMax = 6;                    // Bass und Dialog: -6 ... +6 dB
 constexpr int kStageLevelMax = 8;                   // Lautstaerke-Ausgleich in dB
 
 struct StageSettings {
@@ -18,6 +20,9 @@ struct StageSettings {
     int width = 100;            // Buehnenbreite in %: 0..100 enger, 100 unveraendert, bis 160 weiter
     int cross = 0;              // Kopfhoerer-Crossfeed 0..100 %
     int depth = 0;              // Raumtiefe (Anteil Hall) 0..100 %
+    int angle = 30;             // Winkel der virtuellen Lautsprecher (nur Kopfmodell): 10 eng ... 60 weit
+    int bass = 0;               // Bass im Raumklang -6..+6 dB (Tiefenregler bei 100 Hz)
+    int voice = 0;              // Dialog im Raumklang -6..+6 dB (Stimmbereich um 2,5 kHz)
     bool head = false;          // Kopfmodell (HRTF-Naeherung) statt einfachem Crossfeed
     int level = 0;              // Lautstaerke-Ausgleich 0..8 dB (Raeume machen den Ton leiser)
 };

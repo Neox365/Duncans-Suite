@@ -260,14 +260,14 @@ static std::string StageText(const StageSettings& in)
 {
     StageSettings s = in;
     ClampStage(s);
-    return std::string(s.on ? "1" : "0") + "," + Num(s.room) + "," + Num(s.width) + "," + Num(s.cross) + "," + Num(s.depth) + "," + Num(s.level) + "," + (s.head ? "1" : "0");
+    return std::string(s.on ? "1" : "0") + "," + Num(s.room) + "," + Num(s.width) + "," + Num(s.cross) + "," + Num(s.depth) + "," + Num(s.level) + "," + (s.head ? "1" : "0") + "," + Num(s.angle) + "," + Num(s.bass) + "," + Num(s.voice);
 }
 
 static void ParseStage(const std::string& val, StageSettings& out)
 {
-    int v[7] = { 0, 0, 100, 0, 0, 0, 0 };
+    int v[10] = { 0, 0, 100, 0, 0, 0, 0, 30, 0, 0 };
     size_t p = 0;
-    for (int i = 0; i < 7 && p <= val.size(); ++i)
+    for (int i = 0; i < 10 && p <= val.size(); ++i)
     {
         size_t c = val.find(',', p);
         if (c == std::string::npos)
@@ -275,7 +275,7 @@ static void ParseStage(const std::string& val, StageSettings& out)
         v[i] = std::atoi(val.substr(p, c - p).c_str());
         p = c + 1;
     }
-    out.on = v[0] == 1; out.room = v[1]; out.width = v[2]; out.cross = v[3]; out.depth = v[4]; out.level = v[5]; out.head = v[6] == 1;
+    out.on = v[0] == 1; out.room = v[1]; out.width = v[2]; out.cross = v[3]; out.depth = v[4]; out.level = v[5]; out.head = v[6] == 1; out.angle = v[7]; out.bass = v[8]; out.voice = v[9];
     ClampStage(out);
 }
 
@@ -380,6 +380,10 @@ static std::string BuildMain(const Settings& s, const std::string& irFile, const
         t += "Convolution: " + stageFile + "\r\n";                           // Raumklang: 4-Kanal-Impulsantwort (L->L, L->R, R->L, R->R)
     if (useStage && s.stage.level > 0)
         t += "Preamp: " + Num(std::clamp(s.stage.level, 0, kStageLevelMax)) + " dB\r\n";   // Ausgleich fuer den Pegelverlust des Raums
+    if (useStage && s.stage.bass != 0)
+        t += "Filter: ON LSC Fc 100 Hz Gain " + Num(std::clamp(s.stage.bass, -kStageToneMax, kStageToneMax)) + " dB\r\n";            // Bass im Raumklang
+    if (useStage && s.stage.voice != 0)
+        t += "Filter: ON PK Fc 2500 Hz Gain " + Num(std::clamp(s.stage.voice, -kStageToneMax, kStageToneMax)) + " dB Q 0.8\r\n";   // Dialog im Raumklang
     if (balance != 0)                                                        // die lautere Seite bleibt, die andere wird leiser
         t += std::string("Channel: ") + (balance < 0 ? "R" : "L") + "\r\nPreamp: -" + Num(std::abs(balance)) + " dB\r\nChannel: all\r\n";
     if (delay != 0)                                                          // die Seite, die spaeter kommen soll, wird verzoegert
