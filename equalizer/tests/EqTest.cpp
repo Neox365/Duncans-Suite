@@ -659,6 +659,7 @@ int main()
         Settings b2; CHECK(LoadSettings(b2, sd + L"/s.txt") && b2.stage.on && b2.stage.room == 2 && b2.stage.width == 143 && b2.stage.cross == a.stage.cross && b2.stage.depth == a.stage.depth);
         Put(sd + L"/s2.txt", "stage=1,77,999,-5,300\r\n");
         Settings b3; CHECK(LoadSettings(b3, sd + L"/s2.txt") && b3.stage.on && b3.stage.room == kRoomCount - 1 && b3.stage.width == kStageWidthMax && b3.stage.cross == 0 && b3.stage.depth == 100);
+        { Settings lv = a; lv.stage.level = 6; CHECK(SaveSettings(lv, sd + L"/lv.txt")); Settings lr; CHECK(LoadSettings(lr, sd + L"/lv.txt") && lr.stage.level == 6); lv.stage.level = 99; ClampStage(lv.stage); CHECK(lv.stage.level == kStageLevelMax); }
         Settings b4; CHECK(LoadSettings(b4, sd + L"/fehlt.txt") == false && !b4.stage.on && b4.stage.width == 100);
         Profile pf; pf.name = L"Kino"; pf.s = a;
         Profile pb; CHECK(ProfileFromText(ProfileToText(pf), pb) && pb.s.stage.room == 2 && pb.s.stage.width == 143 && pb.s.stage.on);
@@ -669,6 +670,9 @@ int main()
         const std::string cfg = BuildConfig(cfgS, "", room);
         CHECK(cfg.find("Convolution: " + room) != std::string::npos && cfg.find("Alle Regler") == std::string::npos);
         CHECK(BuildConfig(cfgS, "", "").find("Convolution") == std::string::npos);
+        CHECK(cfg.find("Preamp") == std::string::npos);                    // Ausgleich standardmaessig 0
+        cfgS.stage.level = 5;
+        CHECK(BuildConfig(cfgS, "", room).find("Preamp: 5 dB") != std::string::npos && BuildConfig(cfgS, "", "").find("Preamp") == std::string::npos);
         CHECK(BuildConfig(cfgS, "", "C:\\x;evil\r\nInclude: y.txt").find("Include") == std::string::npos);
         Settings off = cfgS; off.stage.on = false;
         CHECK(BuildConfig(off, "", room).find("Convolution") == std::string::npos);

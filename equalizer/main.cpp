@@ -35,7 +35,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.16.1"   // normalerweise aus CMake
+#define APP_VERSION L"0.17.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -74,7 +74,7 @@ enum HitId {
     H_TAB = 340,        // 340 Equalizer, 341 Raumklang
     H_STAGEON = 345,    // Schalter "Raumklang aktivieren"
     H_ROOM = 350,       // 350 .. 354: Raum-Voreinstellungen
-    H_SLIDER = 360      // 360 .. 362: Buehnenbreite, Crossfeed, Raumtiefe
+    H_SLIDER = 360      // 360 .. 363: Buehnenbreite, Crossfeed, Raumtiefe, Lautstaerke-Ausgleich
 };
 
 struct App {
@@ -112,7 +112,7 @@ struct App {
     std::vector<mixer::Entry> mixEntries;          // Programme, die gerade Ton ausgeben
     int mixDrag = -1;                              // Regler, der gerade gezogen wird
     int page = 0;                                  // 0 = Equalizer, 1 = Raumklang
-    RECT tabRect[2]{}, stageCard{}, stageOn{}, roomChip[eq::kRoomCount]{}, sliderRect[3]{}, sliderCard{}, stagePrev{};
+    RECT tabRect[2]{}, stageCard{}, stageOn{}, roomChip[eq::kRoomCount]{}, sliderRect[4]{}, sliderCard{}, stagePrev{};
     int stageDrag = -1;                            // Raumklang-Regler, der gerade gezogen wird
     NOTIFYICONDATAW nid{};
     bool autostartOn = false, quitting = false, balloonShown = false;
@@ -929,8 +929,8 @@ void Layout() {
                 cx += w + S(8);
             }
             ReleaseDC(g.hwnd, cdc);
-            g.sliderCard = { m, g.stageCard.bottom + S(14), R - m, g.stageCard.bottom + S(14) + S(192) };
-            for (int i = 0; i < 3; ++i) {
+            g.sliderCard = { m, g.stageCard.bottom + S(14), R - m, g.stageCard.bottom + S(14) + S(252) };
+            for (int i = 0; i < 4; ++i) {
                 const int top = g.sliderCard.top + S(10) + i * S(60);
                 g.sliderRect[i] = { g.sliderCard.left + S(26), top + S(26), g.sliderCard.right - S(26), top + S(50) };
             }
@@ -1458,14 +1458,14 @@ void PaintStage(HDC dc) {
               std::wstring(eq::RoomHint(st.room)) + L"\n\nAm besten mit Kopfhörern. Wirkt wie der Equalizer für alle Programme.", DT_LEFT | DT_TOP | DT_WORDBREAK);
 
     FillRound(dc, g.sliderCard, S(16), kCard, kBorder);
-    const wchar_t* labels[3] = { L"Bühnenbreite", L"Kopfhörer-Crossfeed (Natürlichkeit)", L"Raumtiefe (Ambience)" };
-    const int vals[3] = { st.width, st.cross, st.depth };
-    for (int i = 0; i < 3; ++i) {
+    const wchar_t* labels[4] = { L"Bühnenbreite", L"Kopfhörer-Crossfeed (Natürlichkeit)", L"Raumtiefe (Ambience)", L"Lautstärke-Ausgleich" };
+    const int vals[4] = { st.width, st.cross, st.depth, st.level };
+    for (int i = 0; i < 4; ++i) {
         const RECT& tr = g.sliderRect[i];
         const bool hot = g.hover == H_SLIDER + i || g.stageDrag == i;
         DrawText2(dc, g.fBody, kText, { tr.left, tr.top - S(26), tr.right - S(70), tr.top }, labels[i], DT_LEFT | DT_VCENTER | DT_SINGLELINE);
-        DrawText2(dc, g.fBold, kEq, { tr.right - S(70), tr.top - S(26), tr.right, tr.top }, std::to_wstring(vals[i]) + L" %", DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
-        const int lo = i == 0 ? eq::kStageWidthMin : 0, hi = i == 0 ? eq::kStageWidthMax : 100;
+        DrawText2(dc, g.fBold, kEq, { tr.right - S(70), tr.top - S(26), tr.right, tr.top }, std::to_wstring(vals[i]) + (i == 3 ? L" dB" : L" %"), DT_RIGHT | DT_VCENTER | DT_SINGLELINE);
+        const int lo = i == 0 ? eq::kStageWidthMin : 0, hi = i == 0 ? eq::kStageWidthMax : i == 3 ? eq::kStageLevelMax : 100;
         const float f = static_cast<float>(vals[i] - lo) / (hi - lo);
         const float ty = (tr.top + tr.bottom) / 2.0f, x0 = static_cast<float>(tr.left), x1 = static_cast<float>(tr.right), kx = x0 + f * (x1 - x0);
         Gdiplus::Graphics gr(dc);
@@ -1501,7 +1501,7 @@ int HitTest(POINT p) {
     if (g.page == 1) {
         if (PtInRect(&g.stageOn, p)) return H_STAGEON;
         for (int i = 0; i < eq::kRoomCount; ++i) if (PtInRect(&g.roomChip[i], p)) return H_ROOM + i;
-        for (int i = 0; i < 3; ++i) if (PtInRect(&g.sliderRect[i], p)) return H_SLIDER + i;
+        for (int i = 0; i < 4; ++i) if (PtInRect(&g.sliderRect[i], p)) return H_SLIDER + i;
         return H_NONE;
     }
     for (int i = 0; i < eq::PresetCount() && i < 8; ++i) if (PtInRect(&g.presetRect[i], p)) return H_PRESET + i;
@@ -1534,8 +1534,8 @@ int HitTest(POINT p) {
 void SetStageSlider(int i, int x) {                 // Regler per Mausposition setzen (ganze Prozent)
     const RECT& r = g.sliderRect[i];
     const double f = std::clamp(static_cast<double>(x - r.left) / std::max<LONG>(1, r.right - r.left), 0.0, 1.0);
-    int& v = i == 0 ? g.cfg.stage.width : i == 1 ? g.cfg.stage.cross : g.cfg.stage.depth;
-    const int lo = i == 0 ? eq::kStageWidthMin : 0, hi = i == 0 ? eq::kStageWidthMax : 100;
+    int& v = i == 0 ? g.cfg.stage.width : i == 1 ? g.cfg.stage.cross : i == 2 ? g.cfg.stage.depth : g.cfg.stage.level;
+    const int lo = i == 0 ? eq::kStageWidthMin : 0, hi = i == 0 ? eq::kStageWidthMax : i == 3 ? eq::kStageLevelMax : 100;
     const int nv = lo + static_cast<int>(std::lround(f * (hi - lo)));
     if (nv == v) return;
     v = nv;
@@ -1681,7 +1681,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g.press = HitTest(p);
         if (g.press >= H_BAND && g.press <= H_BAND + eq::kBands) { g.drag = g.press - H_BAND; SetBand(g.drag, YToGain(p.y)); }
         if (g.press == H_AB && g.cfg.enabled && !g.installDir.empty()) { g.abBypass = true; ApplyNow(); }
-        if (g.press >= H_SLIDER && g.press < H_SLIDER + 3) { g.stageDrag = g.press - H_SLIDER; SetStageSlider(g.stageDrag, p.x); }
+        if (g.press >= H_SLIDER && g.press < H_SLIDER + 4) { g.stageDrag = g.press - H_SLIDER; SetStageSlider(g.stageDrag, p.x); }
         if (g.press >= H_MIXSLIDER && g.press < H_MIXSLIDER + kMixRows) { g.mixDrag = g.press - H_MIXSLIDER; SetMixVolume(g.mixDrag, MixFromX(g.mixDrag, p.x)); }
         SetCapture(hwnd);
         InvalidateRect(hwnd, nullptr, FALSE);
