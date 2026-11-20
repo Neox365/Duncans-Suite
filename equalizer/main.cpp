@@ -36,7 +36,7 @@ using std::min;
 #include "Spectrum.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.22.2"   // normalerweise aus CMake
+#define APP_VERSION L"0.23.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -74,6 +74,7 @@ enum HitId {
     H_RESET = 121,
     H_TAB = 340,        // 340 Equalizer, 341 Raumklang
     H_STAGEON = 345,    // Schalter "Raumklang aktivieren"
+    H_ABSTAGE = 347,    // Knopf "Ohne Raumklang" (gedrueckt halten)
     H_STAGETEST = 346,  // Knopf "Hoerprobe"
     H_STAGEHEAD = 347,  // Schalter "Kopfmodell"
     H_STAGESURR = 348,  // Schalter "Surround 7.1"
@@ -114,6 +115,8 @@ struct App {
     int appPrev = -1;                              // Profil davor (dahin geht es zurueck, wenn das Programm aufhoert)
     bool appLocked = false, switchingAuto = false; // von Hand gewaehlt: Automatik ruht, bis sich etwas aendert
     std::wstring appSig, appLockSig;               // welche zugeordneten Programme gerade spielen (zum Erkennen von Aenderungen)
+    bool abStage = false;                          // A/B: gerade wird ohne Raumklang gespielt (Equalizer bleibt)
+    RECT stageAB{};
     bool abBypass = false;                         // A/B: gerade wird das Original (ohne Equalizer) gespielt
     RECT mix{}, mixName[kMixRows]{}, mixSlider[kMixRows]{}, mixPct[kMixRows]{}, mixMute[kMixRows]{};   // Karte "Programme"
     std::vector<mixer::Entry> mixEntries;          // Programme, die gerade Ton ausgeben
@@ -189,6 +192,7 @@ void SaveCfg() {
 eq::Settings Effective() {
     eq::Settings e = g.cfg;
     e.preamp = std::clamp(e.preamp + g.autoExtra, -eq::kMaxGain, eq::kMaxGain);
+    if (g.abStage) e.stage.on = false;             // A/B fuer den Raumklang: Rest bleibt, nur der Raumklang ist kurz aus
     return e;
 }
 
@@ -200,6 +204,7 @@ void ApplyNow() {
     case eq::ApplyResult::Applied:
         g.needAdmin = false;
         if (g.abBypass) SetStatus(L"Original (Lautstärke ungefähr angeglichen) – loslassen für den Equalizer", kOrange);
+        else if (g.abStage) SetStatus(L"Ohne Raumklang – loslassen für den Raumklang", kOrange);
         else SetStatus(g.cfg.enabled ? L"Übernommen – wirkt sofort" : L"Equalizer ist aus", kGreen);
         break;
     case eq::ApplyResult::AccessDenied:
@@ -275,7 +280,7 @@ void UpdateTray() {
 
 // ---------- Globale Tastenkuerzel: Strg+Alt+F9 an/aus, F10 naechstes Profil, F8 voriges Profil ----------
 // F-Tasten statt Buchstaben: Strg+Alt ist auf deutschen Tastaturen AltGr, und AltGr+E (Euro) oder AltGr+Q (@) soll weiter tippbar bleiben.
-constexpr int kHkToggle = 1, kHkNext = 2, kHkPrev = 3;
+constexpr int kHkToggle = 1, kHkNext = 2, kHkPrev = 3, kHkStage = 4;
 
 void Toast(const std::wstring& text) {              // kurze Meldung neben dem Symbol im Infobereich, damit man auch ohne Fenster sieht, was passiert ist
     if (!g.nid.hWnd) return;
@@ -287,7 +292,7 @@ void Toast(const std::wstring& text) {              // kurze Meldung neben dem S
 }
 
 void UnregisterHotkeys() {
-    for (int id : { kHkToggle, kHkNext, kHkPrev }) UnregisterHotKey(g.hwnd, id);
+    for (int id : { kHkToggle, kHkNext, kHkPrev, kHkStage }) UnregisterHotKey(g.hwnd, id);
     g.hotkeysOk = false;
 }
 
@@ -296,7 +301,7 @@ std::wstring RegisterHotkeys() {
     UnregisterHotkeys();
     if (!g.cfg.hotkeys) return L"";
     std::wstring busy;
-    const struct { int id; UINT vk; const wchar_t* name; } keys[] = { { kHkToggle, VK_F9, L"Strg+Alt+F9" }, { kHkNext, VK_F10, L"Strg+Alt+F10" }, { kHkPrev, VK_F8, L"Strg+Alt+F8" } };
+    const struct { int id; UINT vk; const wchar_t* name; } keys[] = { { kHkToggle, VK_F9, L"Strg+Alt+F9" }, { kHkNext, VK_F10, L"Strg+Alt+F10" }, { kHkPrev, VK_F8, L"Strg+Alt+F8" }, { kHkStage, VK_F11, L"Strg+Alt+F11" } };
     for (const auto& k : keys)
         if (!RegisterHotKey(g.hwnd, k.id, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, k.vk)) busy += (busy.empty() ? L"" : L", ") + std::wstring(k.name);
     g.hotkeysOk = busy.empty();
@@ -323,11 +328,12 @@ void TrayMenu() {
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, 1, L"Öffnen");
     AppendMenuW(menu, MF_STRING | (g.cfg.enabled ? MF_CHECKED : 0), 2, L"Equalizer an");
+    AppendMenuW(menu, MF_STRING | (g.cfg.stage.on ? MF_CHECKED : 0), 5, L"Raumklang an");
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
     for (size_t i = 0; i < g.profiles.size(); ++i)
         AppendMenuW(menu, MF_STRING | (static_cast<int>(i) == g.active ? MF_CHECKED : 0), static_cast<UINT_PTR>(100 + i), (L"Profil: " + g.profiles[i].name).c_str());
     AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
-    AppendMenuW(menu, MF_STRING | (g.cfg.hotkeys ? MF_CHECKED : 0), 4, L"Tastenkürzel: Strg+Alt+F9 an/aus, F10/F8 Profil");
+    AppendMenuW(menu, MF_STRING | (g.cfg.hotkeys ? MF_CHECKED : 0), 4, L"Tastenkürzel: Strg+Alt+F9 an/aus, F11 Raumklang, F10/F8 Profil");
     AppendMenuW(menu, MF_STRING, 3, L"Beenden");
     POINT pt; GetCursorPos(&pt);
     SetForegroundWindow(g.hwnd);
@@ -336,6 +342,7 @@ void TrayMenu() {
     DestroyMenu(menu);
     if (cmd == 1) ShowMain();
     else if (cmd == 2) { g.cfg.enabled = !g.cfg.enabled; Changed(); }
+    else if (cmd == 5) { g.cfg.stage.on = !g.cfg.stage.on; if (g.cfg.stage.on && !g.cfg.enabled) g.cfg.enabled = true; Changed(); }
     else if (cmd >= 100 && cmd < 100 + static_cast<int>(g.profiles.size())) SwitchProfile(cmd - 100, L"");
     else if (cmd == 3) { g.quitting = true; DestroyWindow(g.hwnd); }
     else if (cmd == 4) {
@@ -344,7 +351,7 @@ void TrayMenu() {
         const std::wstring busy = RegisterHotkeys();
         if (!g.cfg.hotkeys) SetStatus(L"Tastenkürzel aus", kTextDim);
         else if (!busy.empty()) SetStatus(L"Tastenkürzel schon von einem anderen Programm belegt: " + busy, kOrange);
-        else SetStatus(L"Tastenkürzel an: Strg+Alt+F9 an/aus, F10 nächstes, F8 voriges Profil", kGreen);
+        else SetStatus(L"Tastenkürzel an: Strg+Alt+F9 an/aus, F11 Raumklang, F10 nächstes, F8 voriges Profil", kGreen);
     }
 }
 
@@ -353,6 +360,11 @@ void HandleHotkey(int id) {
         g.cfg.enabled = !g.cfg.enabled;
         Changed();
         Toast(g.cfg.enabled ? L"Equalizer an" : L"Equalizer aus");
+    } else if (id == kHkStage) {
+        g.cfg.stage.on = !g.cfg.stage.on;
+        if (g.cfg.stage.on && !g.cfg.enabled) g.cfg.enabled = true;
+        Changed();
+        Toast(g.cfg.stage.on ? L"Raumklang an" : L"Raumklang aus");
     } else if (id == kHkNext || id == kHkPrev) {
         const int n = static_cast<int>(g.profiles.size());
         if (n < 2) { Toast(L"Es gibt nur ein Profil"); return; }
@@ -822,7 +834,7 @@ void Layout() {
     g.heroToggle = heroH ? RECT{ g.hero.right - S(18) - S(64), g.hero.top + (S(96) - S(34)) / 2, g.hero.right - S(18), g.hero.top + (S(96) - S(34)) / 2 + S(34) } : RECT{};
     int y = g.hero.bottom + S(14);
     g.adminBar = g.adminBtn = RECT{};
-    g.tabRect[0] = g.tabRect[1] = g.stageCard = g.stageOn = g.stageTest = g.stageHead = g.stageSurr = g.sliderCard = g.stagePrev = RECT{};
+    g.tabRect[0] = g.tabRect[1] = g.stageAB = g.stageCard = g.stageOn = g.stageTest = g.stageHead = g.stageSurr = g.sliderCard = g.stagePrev = RECT{};
     for (RECT& r : g.roomChip) r = RECT{};
     for (RECT& r : g.sliderRect) r = RECT{};
     HDC dc = GetDC(g.hwnd);
@@ -944,8 +956,8 @@ void Layout() {
                 g.roomChip[i] = { cx, y, cx + w, y + S(36) };
                 cx += w + S(8);
             }
-            ReleaseDC(g.hwnd, cdc);
             if (row > 0) g.stageCard.bottom += S(44);
+            ReleaseDC(g.hwnd, cdc);
             g.sliderCard = { m, g.stageCard.bottom + S(14), R - m, g.stageCard.bottom + S(14) + S(12) + kStageSliders * S(60) };
             for (int i = 0; i < kStageSliders; ++i) {
                 const int top = g.sliderCard.top + S(10) + i * S(60);
@@ -954,6 +966,12 @@ void Layout() {
             g.stagePrev = wide ? RECT{ R + S(2), g.hero.top, cr.right - m, g.sliderCard.bottom }
                                : RECT{ m, g.sliderCard.bottom + S(14), R - m, g.sliderCard.bottom + S(14) + S(172) };
         }
+    }
+    if (g.stagePrev.right > g.stagePrev.left) {   // "Ohne Raumklang (halten)" oben rechts in der Bühnenansicht
+        HDC bdc = GetDC(g.hwnd);
+        const int bw = TextWidth(bdc, g.fBold, L"Ohne Raumklang") + S(30);
+        ReleaseDC(g.hwnd, bdc);
+        g.stageAB = { g.stagePrev.right - S(14) - bw, g.stagePrev.top + S(10), g.stagePrev.right - S(14), g.stagePrev.top + S(10) + S(34) };
     }
     LayoutMixerRows();
 }
@@ -1520,9 +1538,16 @@ void PaintStage(HDC dc) {
         gr.FillEllipse(&kb, kx - kr, ty - kr, 2 * kr, 2 * kr);
     }
     if (g.stagePrev.right > g.stagePrev.left) DrawStageView(dc, g.stagePrev, st, st.on);
+    if (st.on) {
+        const bool hot = g.hover == H_ABSTAGE, act = g.abStage;
+        FillRound(dc, g.stageAB, S(12), act ? Blend(kCard, kOrange, 22) : (hot ? kCardHover : Blend(kCard, kBackground, 25)), act ? kOrange : (hot ? kBorderHot : kBorder));
+        DrawText2(dc, g.fBold, act ? kOrange : kText, g.stageAB, L"Ohne Raumklang", DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    }
 }
 
 // ---------- Eingabe ----------
+bool st_on_visible() { return g.cfg.stage.on; }
+
 int HitTest(POINT p) {
     if (g.page == 0 || g.installDir.empty()) if (PtInRect(&g.hero, p)) return H_HERO;
     if (g.installDir.empty()) {
@@ -1534,6 +1559,7 @@ int HitTest(POINT p) {
     for (int i = 0; i < 2; ++i) if (PtInRect(&g.tabRect[i], p)) return H_TAB + i;
     if (g.page == 1) {
         if (PtInRect(&g.stageOn, p)) return H_STAGEON;
+        if (st_on_visible() && PtInRect(&g.stageAB, p)) return H_ABSTAGE;
         if (PtInRect(&g.stageTest, p)) return H_STAGETEST;
         if (PtInRect(&g.stageHead, p)) return H_STAGEHEAD;
         if (PtInRect(&g.stageSurr, p)) return H_STAGESURR;
@@ -1732,7 +1758,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_CAPTURECHANGED:
-        if (g.abBypass && reinterpret_cast<HWND>(lp) != hwnd) { g.abBypass = false; ApplyNow(); }   // Fokus weg beim Halten: sicher zurueck
+        if ((g.abBypass || g.abStage) && reinterpret_cast<HWND>(lp) != hwnd) { g.abBypass = false; g.abStage = false; ApplyNow(); }   // Fokus weg beim Halten: sicher zurueck
         return 0;
     case WM_MOUSELEAVE: g.tracking = false; g.hover = H_NONE; g.mx = g.my = -1; InvalidateRect(hwnd, nullptr, FALSE); return 0;
     case WM_SETCURSOR:
@@ -1748,6 +1774,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g.press = HitTest(p);
         if (g.press >= H_BAND && g.press <= H_BAND + eq::kBands) { g.drag = g.press - H_BAND; SetBand(g.drag, YToGain(p.y)); }
         if (g.press == H_AB && g.cfg.enabled && !g.installDir.empty()) { g.abBypass = true; ApplyNow(); }
+        if (g.press == H_ABSTAGE && g.cfg.enabled && !g.installDir.empty()) { g.abStage = true; ApplyNow(); }
         if (g.press >= H_SLIDER && g.press < H_SLIDER + kStageSliders) { g.stageDrag = g.press - H_SLIDER; SetStageSlider(g.stageDrag, p.x); }
         if (g.press >= H_MIXSLIDER && g.press < H_MIXSLIDER + kMixRows) { g.mixDrag = g.press - H_MIXSLIDER; SetMixVolume(g.mixDrag, MixFromX(g.mixDrag, p.x)); }
         SetCapture(hwnd);
@@ -1757,6 +1784,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_LBUTTONUP: {
         if (GetCapture() == hwnd) ReleaseCapture();
         if (g.abBypass) { g.abBypass = false; ApplyNow(); }                       // A/B: losgelassen = wieder der Equalizer
+        if (g.abStage) { g.abStage = false; ApplyNow(); }
         const int h = HitTest({ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) });
         const int pressed = g.press;
         const bool wasDrag = g.drag >= 0 || g.mixDrag >= 0 || g.stageDrag >= 0;
