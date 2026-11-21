@@ -723,6 +723,8 @@
 - Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
 
 [DuncansSuite.exe]
+## 1.1.49 | 2026-11-21
+- Neu: In den Einstellungen der Suite gibt es zwei neue Schalter, „Equalizer mit Windows starten“ und „Scratchpad mit Windows starten“. Sie setzen denselben Autostart-Eintrag (im Hintergrund, nur für dein Konto) wie die Einstellungen in den Programmen selbst, du musst dafür nicht mehr in jedes Programm. Ist ein Programm nicht installiert, sagt die Suite das beim Speichern.
 ## 1.1.48 | 2026-11-21
 - Neu: Suche. Tippe einfach los, und es bleiben nur die Programme übrig, die zu deinem Begriff passen, zum Beispiel „Passwort“ (Vault), „zocken“ (Boost), „Rechnung“ (Docs-Files) oder „Treiber“. Gesucht wird in Name, Beschreibung und Stichwörtern, Umlaute und Groß-/Kleinschreibung sind egal, mehrere Wörter müssen alle passen. Enter startet das erste Programm der Treffer, Esc oder ein Klick auf das Suchfeld oben links zeigt wieder alle. Die Tasten 1 und 2 starten weiter Tidy und Driver Updater, solange nicht gesucht wird.
 ## 1.1.47 | 2026-11-15
