@@ -52,7 +52,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.48"
+#define SUITE_VERSION L"1.1.49"
 #endif
 
 namespace
@@ -115,6 +115,8 @@ namespace
     {
         bool autoCheck = true;        // Update-Pruefung beim Start
         bool autostart = false;       // Suite mit Windows starten
+        bool autostartEq = false;     // Equalizer mit Windows im Hintergrund starten (Registry ist die Wahrheit, wie im Programm selbst)
+        bool autostartClip = false;   // Scratchpad ebenso
         bool trayOnClose = false;     // X = in den Infobereich minimieren statt beenden
         bool trayOnLaunch = false;    // nach dem Start eines Programms in den Infobereich minimieren
         bool ctxPdf = false;          // Explorer-Kontextmenue "Mit Duncan's PDF oeffnen" (Registry ist die Wahrheit)
@@ -153,6 +155,34 @@ namespace
         wchar_t buf[MAX_PATH * 2] = {};
         DWORD size = sizeof(buf) - sizeof(wchar_t);
         return RegGetValueW(HKEY_CURRENT_USER, kRunKey, kRunValue, RRF_RT_REG_SZ, nullptr, buf, &size) == ERROR_SUCCESS;
+    }
+
+    // Autostart anderer Programme: derselbe Run-Eintrag wie in deren eigenen Einstellungen (Start mit --background)
+    bool RunValueOn(const wchar_t* name)
+    {
+        wchar_t buf[MAX_PATH * 2] = {};
+        DWORD size = sizeof(buf) - sizeof(wchar_t);
+        return RegGetValueW(HKEY_CURRENT_USER, kRunKey, name, RRF_RT_REG_SZ, nullptr, buf, &size) == ERROR_SUCCESS;
+    }
+
+    bool SetRunValue(const wchar_t* name, const std::wstring& exe, bool on)
+    {
+        HKEY key = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, kRunKey, 0, nullptr, 0, KEY_SET_VALUE, nullptr, &key, nullptr) != ERROR_SUCCESS)
+            return false;
+        LONG rc;
+        if (on)
+        {
+            const std::wstring value = L"\"" + exe + L"\" --background";
+            rc = RegSetValueExW(key, name, 0, REG_SZ, reinterpret_cast<const BYTE*>(value.c_str()), static_cast<DWORD>((value.size() + 1) * sizeof(wchar_t)));
+        }
+        else
+        {
+            rc = RegDeleteValueW(key, name);
+            if (rc == ERROR_FILE_NOT_FOUND) rc = ERROR_SUCCESS;
+        }
+        RegCloseKey(key);
+        return rc == ERROR_SUCCESS;
     }
 
     bool SetAutostart(bool on)
@@ -1185,7 +1215,7 @@ private:
     Settings m_draft;             // Entwurf im offenen Dialog
     bool m_settingsOpen = false;
     HFONT m_fontSym = nullptr;
-    RECT m_gearRect{}, m_chkAuto{}, m_chkStart{}, m_chkTrayClose{}, m_chkTrayLaunch{}, m_chkCtxPdf{}, m_chkCtxTidy{}, m_chkRestore{}, m_btnPick{}, m_btnReset{}, m_btnSave{}, m_btnCancel{};
+    RECT m_gearRect{}, m_chkAuto{}, m_chkStart{}, m_chkTrayClose{}, m_chkTrayLaunch{}, m_chkCtxPdf{}, m_chkCtxTidy{}, m_chkRestore{}, m_chkEq{}, m_chkClip{}, m_btnPick{}, m_btnReset{}, m_btnSave{}, m_btnCancel{};
     RECT m_btnBackup{}, m_btnLog{}, m_btnCheck{};   // Ids: 18 Wiederherstellungspunkt-Haken, 19 Backup-Ordner, 20 Logdatei, 21 Update-Suche
     bool m_manualCheck = false;                      // Update-Suche per Knopf: Ergebnis als Hinweis melden
 
@@ -1722,7 +1752,7 @@ void SuiteWindow::DrawSettings(HDC dc, int w, int h)
     const int boxW = std::min(S(920), w - S(40));
     const int colW = (boxW - 2 * pad - colGap) / 2;
     const int titleH = S(30), btnH = S(38), rowH = S(40), gap = S(6), sectionH = S(28);
-    const int leftH = 7 * rowH + 6 * gap;
+    const int leftH = 9 * rowH + 8 * gap;
     const int boxH = pad + titleH + S(8) + sectionH + leftH + S(18) + btnH + pad;
     RECT box{ (w - boxW) / 2, (h - boxH) / 2, (w - boxW) / 2 + boxW, (h - boxH) / 2 + boxH };
 
@@ -1747,6 +1777,8 @@ void SuiteWindow::DrawSettings(HDC dc, int w, int h)
     row(m_chkRestore, m_draft.autoRestorePoint, 18, L"Vor kritischen Aktionen Wiederherstellungspunkt anlegen", L"Privacy Shield und Driver Updater sichern das System vorab.");
     row(m_chkAuto, m_draft.autoCheck, 7, L"Beim Start nach Updates suchen", L"Prüft beim Öffnen, ob eine neue Suite-Version vorliegt.");
     row(m_chkTrayLaunch, m_draft.trayOnLaunch, 14, L"Nach dem Start eines Programms minimieren", L"Die Suite zieht sich nach dem Starten in den Infobereich zurück.");
+    row(m_chkEq, m_draft.autostartEq, 70, L"Equalizer mit Windows starten", L"Läuft im Hintergrund (Infobereich), Profile wechseln dann von selbst.");
+    row(m_chkClip, m_draft.autostartClip, 71, L"Scratchpad mit Windows starten", L"Verlauf und Textbausteine sind sofort da, im Hintergrund.");
     row(m_chkCtxPdf, m_draft.ctxPdf, 15, L"Explorer-Kontextmenü für PDFs", L"Rechtsklick auf eine PDF: „Mit Duncan's PDF öffnen“.");
     row(m_chkCtxTidy, m_draft.ctxTidy, 16, L"Explorer-Kontextmenü für Tidy-Analyse", L"Rechtsklick auf Ordner/Laufwerk: „Mit Duncan's Tidy analysieren“.");
 
@@ -1798,6 +1830,8 @@ void SuiteWindow::OpenSettings()
 {
     m_draft = m_settings;
     m_draft.autostart = IsAutostartEnabled();
+    m_draft.autostartEq = RunValueOn(L"DuncansEqualizer");
+    m_draft.autostartClip = RunValueOn(L"DuncansClip");
     m_settingsOpen = true;
     m_hover = m_press = -1;
     InvalidateRect(m_hwnd, nullptr, FALSE);
@@ -1814,6 +1848,24 @@ void SuiteWindow::CloseSettings(bool save)
         {
             problems += L"Der Autostart konnte nicht geändert werden.\n";
             m_draft.autostart = IsAutostartEnabled();
+        }
+        {
+            // Autostart von Equalizer und Scratchpad: nur anfassen, wenn sich etwas geaendert hat; nur mit gefundenem Programm
+            const struct { const wchar_t* exe; const wchar_t* value; const wchar_t* name; bool* draft; } progs[] = {
+                { L"DuncansEqualizer.exe", L"DuncansEqualizer", L"Equalizer", &m_draft.autostartEq },
+                { L"DuncansClip.exe", L"DuncansClip", L"Scratchpad", &m_draft.autostartClip } };
+            for (const auto& pr : progs)
+            {
+                if (*pr.draft == RunValueOn(pr.value)) continue;
+                std::wstring path;
+                for (int i = 0; i < kToolCount; ++i)
+                    if (_wcsicmp(m_tools[i].exe, pr.exe) == 0) path = m_tools[i].path;
+                if (*pr.draft && path.empty())
+                    problems += std::wstring(pr.name) + L" ist nicht installiert, der Autostart wurde nicht gesetzt.\n";
+                else if (!SetRunValue(pr.value, path, *pr.draft))
+                    problems += std::wstring(L"Der Autostart von ") + pr.name + L" konnte nicht geändert werden.\n";
+                *pr.draft = RunValueOn(pr.value);                                                // tatsaechlichen Stand uebernehmen
+            }
         }
         {
             // Explorer-Kontextmenue (HKCU, kein Admin): nur anfassen, wenn sich etwas geaendert hat
@@ -2681,7 +2733,7 @@ void SuiteWindow::OnMouseMove(int x, int y)
         hover = PtInRect(&m_modalOk, pt) ? 3 : -1;
     else if (m_settingsOpen)
     {
-        const struct { const RECT* r; int id; } hits[] = { { &m_chkAuto, 7 }, { &m_chkStart, 8 }, { &m_chkTrayClose, 13 }, { &m_chkTrayLaunch, 14 }, { &m_chkCtxPdf, 15 }, { &m_chkCtxTidy, 16 }, { &m_chkRestore, 18 }, { &m_btnBackup, 19 }, { &m_btnLog, 20 }, { &m_btnCheck, 21 }, { &m_btnPick, 9 },
+        const struct { const RECT* r; int id; } hits[] = { { &m_chkAuto, 7 }, { &m_chkStart, 8 }, { &m_chkTrayClose, 13 }, { &m_chkTrayLaunch, 14 }, { &m_chkCtxPdf, 15 }, { &m_chkCtxTidy, 16 }, { &m_chkRestore, 18 }, { &m_chkEq, 70 }, { &m_chkClip, 71 }, { &m_btnBackup, 19 }, { &m_btnLog, 20 }, { &m_btnCheck, 21 }, { &m_btnPick, 9 },
                                                           { &m_btnReset, 10 }, { &m_btnSave, 11 }, { &m_btnCancel, 12 } };
         for (const auto& hit : hits)
             if (PtInRect(hit.r, pt))
@@ -2773,6 +2825,10 @@ void SuiteWindow::OnClick(int, int)
         m_draft.ctxTidy = !m_draft.ctxTidy;
     else if (pressed == 18)
         m_draft.autoRestorePoint = !m_draft.autoRestorePoint;
+    else if (pressed == 70)
+        m_draft.autostartEq = !m_draft.autostartEq;
+    else if (pressed == 71)
+        m_draft.autostartClip = !m_draft.autostartClip;
     else if (pressed == 19)          // Backup-Ordner im Explorer oeffnen (wird bei Bedarf angelegt)
     {
         const std::wstring dir = suite_safety::BackupsDir();
