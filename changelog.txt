@@ -723,6 +723,8 @@
 - Sheets: Tabelle A–Z × 1–100 mit Formelzeile und den Funktionen SUMME, MITTELWERT, MIN, MAX und ANZAHL; Öffnen und Speichern als .csv.
 
 [DuncansSuite.exe]
+## 1.1.48 | 2026-11-21
+- Neu: Suche. Tippe einfach los, und es bleiben nur die Programme übrig, die zu deinem Begriff passen, zum Beispiel „Passwort“ (Vault), „zocken“ (Boost), „Rechnung“ (Docs-Files) oder „Treiber“. Gesucht wird in Name, Beschreibung und Stichwörtern, Umlaute und Groß-/Kleinschreibung sind egal, mehrere Wörter müssen alle passen. Enter startet das erste Programm der Treffer, Esc oder ein Klick auf das Suchfeld oben links zeigt wieder alle. Die Tasten 1 und 2 starten weiter Tidy und Driver Updater, solange nicht gesucht wird.
 ## 1.1.47 | 2026-11-15
 - Geändert: Die Beschreibungen auf allen Programmkarten sind neu geschrieben: kürzer, konkreter und mit dem, was die Programme heute können (zum Beispiel Overlay und Clips bei Boost, Profile pro Programm beim Equalizer). Der Untertitel im Kopf heißt jetzt „Deine Werkzeuge für Windows an einem Ort“ statt „System- & Treiber-Optimierung“.
 ## 1.1.46 | 2026-11-14

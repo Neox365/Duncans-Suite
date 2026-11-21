@@ -36,6 +36,7 @@
 #include "../common/Gfx.h"
 #include "../common/VersionUtil.h"
 #include "../common/Changelog.h"
+#include "../common/CardSearch.h"
 #include "../common/Crypto.h"
 #include "public_key.inc"        // kSuitePublicKey: Suite-Installer und PDF Reader (erzeugt von tools\MakeSigningKey.ps1)
 #include "tidy_public_key.inc"   // kTidyPublicKey: DuncansTidy.exe
@@ -51,7 +52,7 @@
 #endif
 
 #ifndef SUITE_VERSION
-#define SUITE_VERSION L"1.1.47"
+#define SUITE_VERSION L"1.1.48"
 #endif
 
 namespace
@@ -1002,6 +1003,22 @@ namespace
     }
 }
 
+// Stichwoerter fuer die Suche (Reihenfolge wie die Karten): was man tippen wuerde, wenn man das Programm nicht beim Namen kennt
+const wchar_t* const kToolKeywords[12] = {
+    L"aufraeumen reinigen sauber temp cache downloads speicher platz papierkorb bereinigen",
+    L"treiber update grafikkarte nvidia amd geraete sicherung",
+    L"pdf lesen drucken zusammenfuegen stempel schwaerzen dokument seiten",
+    L"datenschutz tracking telemetrie werbung verbindungen netzwerk privatsphaere",
+    L"fotos bilder exif standort sortieren zeitleiste karte",
+    L"rechnung rechnungen belege quittung steuer buchhaltung ablegen",
+    L"tresor passwort passwoerter lizenz notiz verschluesselt geheim",
+    L"word excel text tabelle formel schreiben sheets writer",
+    L"konvertieren umwandeln bild audio video mp3 mp4 png jpg groesse",
+    L"spiel spiele zocken gaming fps overlay clip aufnahme screenshot fadenkreuz ping",
+    L"zwischenablage verlauf textbausteine notiz zettel kopieren clipboard",
+    L"klang ton sound bass raumklang kopfhoerer mikrofon lautstaerke",
+};
+
 struct Tool
 
 {
@@ -1156,6 +1173,9 @@ private:
     std::wstring m_dlMessage;  // Fehlertext des letzten Downloads (vom Worker gesetzt, vor WM_DL_DONE)
 
     bool m_modal = false;
+    std::wstring m_query;                // Suche: tippen filtert die Karten
+    RECT m_searchRect{};
+    void SetQuery(const std::wstring& q);
     std::wstring m_modalTitle, m_modalText;
     RECT m_modalOk{};
 
@@ -1343,7 +1363,7 @@ void SuiteWindow::Layout()
     int slot = 0;   // ausgeblendete Karten bekommen kein Rechteck und ruecken nicht ins Raster; die uebrigen ruecken auf
     for (int i = 0; i < kToolCount; ++i)
     {
-        if (CardHiddenIn(m_settings.hiddenCards, m_tools[i].exe))
+        if (CardHiddenIn(m_settings.hiddenCards, m_tools[i].exe) || !cardsearch::Matches(m_query, m_tools[i].title, m_tools[i].description, kToolKeywords[i]))
         {
             m_tools[i].rect = {};
             continue;
@@ -1352,6 +1372,14 @@ void SuiteWindow::Layout()
         ++slot;
         m_tools[i].rect = { m + col * (w + gap), top + row * (h + gap), m + col * (w + gap) + w, top + row * (h + gap) + h };
     }
+}
+
+void SuiteWindow::SetQuery(const std::wstring& q)
+{
+    if (q == m_query) return;
+    m_query = q;
+    Layout();
+    InvalidateRect(m_hwnd, nullptr, FALSE);
 }
 
 void SuiteWindow::DrawCard(HDC dc, int index)
@@ -1605,6 +1633,20 @@ void SuiteWindow::Draw(HDC dc, int w, int h)
     for (int i = 0; i < kToolCount; ++i)
         if (RectVisible(dc, &m_tools[i].rect))
             DrawCard(dc, i);
+
+    {   // Suche: Feld oben links im Banner; ohne Eingabe nur ein dezenter Hinweis
+        const std::wstring label = m_query.empty() ? std::wstring(L"Tippen zum Suchen") : std::wstring(L"Suche: ") + m_query + L"  \u00D7";
+        const int w = std::min(static_cast<int>(m_banner.right - m_banner.left) / 2, TextWidth(dc, m_fontSmall, label) + S(32));
+        m_searchRect = { m_banner.left + S(18), m_banner.top + S(14), m_banner.left + S(18) + w, m_banner.top + S(14) + S(30) };
+        if (!m_query.empty())
+            FillRound(dc, m_searchRect, S(15), Blend(kCardRaised, kAccent, 18), kAccent);
+        DrawLabel(dc, m_fontSmall, m_query.empty() ? Blend(kBackground, kTextDim, 80) : kText, { m_searchRect.left + S(14), m_searchRect.top + S(6), m_searchRect.right - S(10), m_searchRect.bottom }, label, DT_LEFT | DT_END_ELLIPSIS);
+        bool any = false;
+        for (int i = 0; i < kToolCount; ++i) if (m_tools[i].rect.right > m_tools[i].rect.left) any = true;
+        if (!m_query.empty() && !any)
+            DrawLabel(dc, m_fontBody, kTextDim, { m_footer.left, m_banner.bottom + S(60), m_footer.right, m_banner.bottom + S(120) },
+                      std::wstring(L"Nichts gefunden zu \u201E") + m_query + L"\u201C. Mit Esc geht es zur\u00FCck.", DT_CENTER);
+    }
 
     // Footer: Version links, Hinweis in der Mitte
     {
@@ -2996,8 +3038,18 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         InvalidateRect(m_hwnd, nullptr, FALSE);
         return 0;
     case WM_LBUTTONUP:
+        if (!m_query.empty() && !m_modal && !m_settingsOpen && !m_infoOpen)
+        {
+            const POINT pt{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+            if (PtInRect(&m_searchRect, pt)) { m_press = -1; SetQuery(L""); return 0; }       // Klick auf das Suchfeld loescht die Suche
+        }
         OnMouseMove(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
         OnClick(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        return 0;
+    case WM_CHAR:
+        if (!m_modal && !m_settingsOpen && !m_infoOpen && wp >= 32 && wp != 127 && m_query.size() < 40 &&
+            !(m_query.empty() && (wp == L'1' || wp == L'2' || wp == L' ')))     // 1 und 2 bleiben Kurztasten, solange nicht gesucht wird
+            SetQuery(m_query + static_cast<wchar_t>(wp));
         return 0;
     case WM_KEYDOWN:
         if (m_modal && (wp == VK_ESCAPE || wp == VK_RETURN || wp == VK_SPACE))
@@ -3023,6 +3075,14 @@ LRESULT SuiteWindow::HandleMessage(UINT msg, WPARAM wp, LPARAM lp)
         }
         else if (m_settingsOpen && !m_modal && (wp == VK_ESCAPE || wp == VK_RETURN))
             CloseSettings(wp == VK_RETURN);
+        else if (!m_modal && !m_settingsOpen && !m_infoOpen && !m_query.empty() && (wp == VK_ESCAPE || wp == VK_BACK || wp == VK_RETURN))
+        {
+            if (wp == VK_ESCAPE) SetQuery(L"");
+            else if (wp == VK_BACK) SetQuery(m_query.substr(0, m_query.size() - 1));
+            else
+                for (int i = 0; i < kToolCount; ++i)             // Enter: das erste Programm der Treffer starten
+                    if (m_tools[i].rect.right > m_tools[i].rect.left) { SetQuery(L""); Launch(i); break; }
+        }
         else if (!m_modal && !m_settingsOpen && wp == '1')
             Launch(0);
         else if (!m_modal && !m_settingsOpen && wp == '2')
