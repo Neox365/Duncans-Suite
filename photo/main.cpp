@@ -37,7 +37,7 @@
 #include "../common/AboutCard.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.7.4"   // normalerweise aus CMake (PHOTO_VER)
+#define APP_VERSION L"0.8.0"   // normalerweise aus CMake (PHOTO_VER)
 #endif
 
 using Microsoft::WRL::ComPtr;
@@ -1571,6 +1571,9 @@ std::wstring App::FolderStatus() const {
     else if (m_gpsOnly) s += L"  ·  nur mit Standortdaten (" + std::to_wstring(m_hidden.size()) + L" ausgeblendet)";
     if (m_minRating > 0 && !m_dupMode) s += L"  ·  ab " + std::to_wstring(m_minRating) + L" Sternen (" + std::to_wstring(m_hidden.size()) + L" ausgeblendet)";
     if (!m_search.empty() && !m_dupMode) s += L"  ·  Suche „" + m_search + L"“ (" + std::to_wstring(m_hidden.size()) + L" ausgeblendet)";
+    if (!imgops::RawCodecAvailable())
+        for (const auto& it : m_items)
+            if (imgops::IsRawImage(it.path)) { s += L"  ·  RAW-Fotos brauchen die kostenlose „Raw-Bilderweiterung“ von Microsoft (Microsoft Store)"; break; }
     return s;
 }
 
@@ -3290,8 +3293,9 @@ void App::DrawSlide() {
 
 namespace {
 struct SliderDef { const wchar_t* label; double lo, hi; };
-const SliderDef kSliders[4] = {{L"Helligkeit", -100, 100}, {L"Kontrast", -100, 100}, {L"Sättigung", -100, 100},
-                               {L"Horizont ausrichten", -45, 45}};
+constexpr int kSliderCount = 6, kSAngle = 5;   // Helligkeit, Kontrast, Sättigung, Wärme, Schärfe, Horizont
+const SliderDef kSliders[kSliderCount] = {{L"Helligkeit", -100, 100}, {L"Kontrast", -100, 100}, {L"Sättigung", -100, 100},
+                                          {L"Wärme", -100, 100}, {L"Schärfe", 0, 100}, {L"Horizont ausrichten", -45, 45}};
 constexpr int kEditMaxEdge = 2000;  // Vorschau-Aufloesung; gespeichert wird immer aus dem Original
 
 std::wstring ExtOf(const std::wstring& path) {
@@ -3329,7 +3333,7 @@ std::wstring PickSavePath(HWND owner, const std::wstring& src, const std::wstrin
 void App::BeginEdit() {
     if (!m_viewer || m_editing || m_sel < 0 || m_sel >= (int)m_items.size()) return;
     if (!imgops::CanReencode(m_items[m_sel].path)) {
-        SetStatus(L"Dieses Format kann nicht bearbeitet werden.");
+        SetStatus(imgops::IsRawImage(m_items[m_sel].path) ? L"RAW-Dateien kannst du ansehen, aber noch nicht bearbeiten." : L"Dieses Format kann nicht bearbeitet werden.");
         return;
     }
     if (m_cropping) CancelCrop();
@@ -3375,6 +3379,7 @@ void App::RebuildEditBitmap() {
     if (!m_editing || !rt || m_editSrc.empty()) return;
     std::vector<BYTE> tmp = m_editSrc;
     imgops::ApplyColor(tmp.data(), (size_t)m_editW * m_editH, m_ep);
+    imgops::ApplySharpen(tmp.data(), m_editW, m_editH, m_ep.sharpness);
     if (m_editHasAlpha) {  // Direct2D erwartet vormultiplizierte Farben
         for (size_t i = 0; i < tmp.size(); i += 4) {
             const unsigned a = tmp[i + 3];
@@ -3391,7 +3396,7 @@ void App::RebuildEditBitmap() {
 }
 
 D2D1_RECT_F App::EditSliderBlock(int i) const {
-    const float top = rcEditPanel.top + 56 * k + i * 74 * k;
+    const float top = rcEditPanel.top + 56 * k + i * 66 * k;
     return {rcEditPanel.left + 16 * k, top, rcEditPanel.right - 16 * k, top + 62 * k};
 }
 
@@ -3403,7 +3408,7 @@ D2D1_RECT_F App::EditSliderTrack(int i) const {
 
 int App::EditSliderAt(float x, float y) const {
     if (!m_editing) return -1;
-    for (int i = 0; i < 4; ++i)
+    for (int i = 0; i < kSliderCount; ++i)
         if (In(EditSliderBlock(i), x, y)) return i;
     return -1;
 }
@@ -3413,6 +3418,8 @@ double App::EditSliderValue(int i) const {
         case 0: return m_ep.brightness;
         case 1: return m_ep.contrast;
         case 2: return m_ep.saturation;
+        case 3: return m_ep.warmth;
+        case 4: return m_ep.sharpness;
         default: return m_ep.angle;
     }
 }
@@ -3420,9 +3427,9 @@ double App::EditSliderValue(int i) const {
 void App::SetEditSlider(int i, double v) {
     const SliderDef& d = kSliders[i];
     v = std::clamp(v, d.lo, d.hi);
-    if (i < 3) {
+    if (i != kSAngle) {
         const int iv = (int)std::lround(v);
-        int& ref = i == 0 ? m_ep.brightness : (i == 1 ? m_ep.contrast : m_ep.saturation);
+        int& ref = i == 0 ? m_ep.brightness : (i == 1 ? m_ep.contrast : (i == 2 ? m_ep.saturation : (i == 3 ? m_ep.warmth : m_ep.sharpness)));
         if (ref == iv) return;
         ref = iv;
         RebuildEditBitmap();
@@ -3439,7 +3446,7 @@ void App::SetEditSliderFromX(int i, float x) {
     const SliderDef& d = kSliders[i];
     const double f = std::clamp((x - t.left) / (t.right - t.left), 0.f, 1.f);
     double v = d.lo + f * (d.hi - d.lo);
-    if (std::fabs(v) < (i < 3 ? 2.0 : 0.3)) v = 0;  // rastet in der Mitte ein
+    if (std::fabs(v) < (i != kSAngle ? 2.0 : 0.3)) v = 0;  // rastet in der Mitte ein (bei Schärfe: am linken Ende)
     SetEditSlider(i, v);
 }
 
@@ -3462,7 +3469,7 @@ void App::DrawEditPreview() {
                      D2D1::Matrix3x2F::Rotation((float)m_ep.angle) * D2D1::Matrix3x2F::Translation(cx, cy));
     rt->DrawBitmap(m_editBmp.Get(), D2D1::RectF(0, 0, w, h), 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
     rt->SetTransform(D2D1::Matrix3x2F::Identity());
-    if (m_dragSlider == 3) {  // Hilfslinien beim Ausrichten
+    if (m_dragSlider == kSAngle) {  // Hilfslinien beim Ausrichten
         SetCol(0xFFFFFF, 0.35f);
         for (int i = 1; i <= 8; ++i) {
             rt->DrawLine({out.left + W(out) * i / 9, out.top}, {out.left + W(out) * i / 9, out.bottom}, brush.Get(), 1.f);
@@ -3478,29 +3485,31 @@ void App::DrawEditPanel() {
     rt->PushAxisAlignedClip(rcEditPanel, D2D1_ANTIALIAS_MODE_ALIASED);
     const float x = rcEditPanel.left + 16 * k, wd = W(rcEditPanel) - 32 * k;
     Txt(L"BILD BEARBEITEN", {x, rcEditPanel.top + 14 * k, x + wd, rcEditPanel.top + 36 * k}, fSmall.Get(), Theme::TextDim);
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < kSliderCount; ++i) {
         const D2D1_RECT_F b = EditSliderBlock(i), t = EditSliderTrack(i);
         const double v = EditSliderValue(i);
         const bool changed = std::fabs(v) > 0.001;
         wchar_t val[24];
         if (!changed) wcscpy_s(val, L"0");
-        else if (i < 3) swprintf_s(val, L"%+d", (int)std::lround(v));
+        else if (i == 4) swprintf_s(val, L"%d", (int)std::lround(v));
+        else if (i != kSAngle) swprintf_s(val, L"%+d", (int)std::lround(v));
         else swprintf_s(val, L"%+.1f°", v);
         Txt(kSliders[i].label, {b.left, b.top + 4 * k, b.right - 70 * k, b.top + 26 * k}, fNormal.Get(), Theme::Text);
         Txt(val, {b.right - 70 * k, b.top + 4 * k, b.right, b.top + 26 * k}, fRight.Get(),
             changed ? Theme::Accent : Theme::TextDim);
         FillRR(t, 2 * k, Theme::Border);
         const double f = (v - kSliders[i].lo) / (kSliders[i].hi - kSliders[i].lo);
-        const float kx = t.left + (float)f * (t.right - t.left), mid = (t.left + t.right) / 2;
+        const bool fromLeft = kSliders[i].lo == 0;   // Schärfe: Füllung von links, keine Mittelmarke
+        const float kx = t.left + (float)f * (t.right - t.left), mid = fromLeft ? t.left : (t.left + t.right) / 2;
         if (changed) FillRR({std::min(kx, mid), t.top, std::max(kx, mid), t.bottom}, 2 * k, Theme::Accent);
-        Fill({mid - 0.5f * k, t.top - 4 * k, mid + 0.5f * k, t.bottom + 4 * k}, Theme::TextDim, 0.7f);
+        if (!fromLeft) Fill({mid - 0.5f * k, t.top - 4 * k, mid + 0.5f * k, t.bottom + 4 * k}, Theme::TextDim, 0.7f);
         const float cy = (t.top + t.bottom) / 2, r = (m_dragSlider == i ? 9.f : 8.f) * k;
         SetCol(0xFFFFFF);
         rt->FillEllipse(D2D1::Ellipse({kx, cy}, r, r), brush.Get());
         SetCol(Theme::Accent);
         rt->DrawEllipse(D2D1::Ellipse({kx, cy}, r, r), brush.Get(), 2 * k);
     }
-    float y = EditSliderBlock(3).bottom + 14 * k;
+    float y = EditSliderBlock(kSliderCount - 1).bottom + 14 * k;
     const double sc = imgops::StraightenScale(1, 1, m_ep.angle);
     if (std::fabs(m_ep.angle) > 0.005) {
         wchar_t cut[96];

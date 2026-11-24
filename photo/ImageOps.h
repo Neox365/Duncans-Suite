@@ -28,6 +28,10 @@ struct ImageInfo {
 };
 
 bool IsSupportedImage(const std::wstring& path);
+// Kamera-RAW-Dateien (CR2, NEF, ARW, DNG ...). Sie werden ueber Windows (WIC) gelesen und gehen nur, wenn die "Raw-Bilderweiterung" von Microsoft
+// (oder ein Kamera-Codec) installiert ist. Nur ansehen: Bearbeiten und Speichern gibt es fuer RAW nicht.
+bool IsRawImage(const std::wstring& path);
+bool RawCodecAvailable();
 
 // Liefert die Quelle auf genau tw x th verkleinert. JPEG wird dabei schon beim Dekodieren auf 1/2, 1/4 oder 1/8
 // gebracht (DCT-Skalierung), das ist bei grossen Fotos um ein Vielfaches schneller als erst voll zu dekodieren.
@@ -94,8 +98,10 @@ bool ResizeImage(const std::wstring& src, const std::wstring& dst, UINT maxEdge,
 // ---- Bildkorrektur (Helligkeit, Kontrast, Saettigung, Horizont) ----
 struct EditParams {
     int brightness = 0, contrast = 0, saturation = 0;  // -100..+100
+    int warmth = 0;                                      // Farbtemperatur -100 (kuehl/blau) .. +100 (warm/gelb)
+    int sharpness = 0;                                   // Schaerfen 0..100
     double angle = 0;                                    // Horizont ausrichten, Grad (-45..+45), positiv = im Uhrzeigersinn
-    bool IsIdentity() const { return !brightness && !contrast && !saturation && angle > -0.005 && angle < 0.005; }
+    bool IsIdentity() const { return !brightness && !contrast && !saturation && !warmth && !sharpness && angle > -0.005 && angle < 0.005; }
 };
 
 // Faktor, mit dem das Bild nach dem Drehen um angleDeg wieder randlos (gleiches Seitenverhaeltnis) zugeschnitten wird.
@@ -103,6 +109,9 @@ double StraightenScale(double w, double h, double angleDeg);
 
 // Farbkorrektur an BGRA-Pixeln (nicht vormultipliziert), Alpha bleibt unveraendert.
 void ApplyColor(BYTE* bgra, size_t pixelCount, const EditParams& p);
+
+// Schaerfen (Unscharf maskieren mit 3x3-Weichzeichner) an BGRA-Pixeln w x h; sharpness 0..100, 0 = nichts. Alpha bleibt unveraendert.
+void ApplySharpen(BYTE* bgra, UINT w, UINT h, int sharpness);
 
 // Dreht px (w x h, BGRA) um p.angle, schneidet randlos zu und wendet die Farbkorrektur an; w/h werden angepasst.
 // Gleiche Funktion fuer Live-Vorschau-Daten und Speichern, damit beides gleich aussieht.

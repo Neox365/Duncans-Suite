@@ -71,6 +71,44 @@ int main() {
         CHECK(px[0] == 100 && px[1] == 150 && px[2] == 200);
     }
 
+    // RAW-Erkennung
+    CHECK(imgops::IsRawImage(L"IMG_0001.CR2") && imgops::IsRawImage(L"a.dng") && imgops::IsRawImage(L"b.NEF") && imgops::IsRawImage(L"c.arw"));
+    CHECK(!imgops::IsRawImage(L"a.jpg") && !imgops::IsRawImage(L"a.png") && !imgops::IsRawImage(L"noext"));
+    CHECK(imgops::IsSupportedImage(L"x.orf") && imgops::IsSupportedImage(L"x.jpg") && !imgops::IsSupportedImage(L"x.txt"));
+    std::printf("Hinweis: RAW-Codec in Windows %s\n", imgops::RawCodecAvailable() ? "vorhanden" : "nicht installiert");
+    CHECK(imgops::RawCodecAvailable() == imgops::RawCodecAvailable());          // zweiter Aufruf aus dem Zwischenspeicher
+
+    // Waerme und Schaerfe
+    {
+        auto px = Solid(2, 2, 100, 150, 200);  // b, g, r
+        EditParams p; p.warmth = 100;
+        imgops::ApplyColor(px.data(), 4, p);
+        CHECK(px[2] > 200 && px[0] < 100 && px[1] == 150);   // wärmer: mehr Rot, weniger Blau, Grün bleibt
+        px = Solid(2, 2, 100, 150, 200);
+        p = EditParams{}; p.warmth = -100;
+        imgops::ApplyColor(px.data(), 4, p);
+        CHECK(px[2] < 200 && px[0] > 100);                   // kühler
+        CHECK(!EditParams{}.IsIdentity() == false);
+        { EditParams q; q.warmth = 5; CHECK(!q.IsIdentity()); EditParams s; s.sharpness = 5; CHECK(!s.IsIdentity()); }
+        // Schärfe: eine senkrechte Kante (links 100, rechts 200) wird steiler, flache Flächen bleiben
+        const UINT W = 8, H = 5;
+        std::vector<BYTE> img(W * H * 4);
+        for (UINT y = 0; y < H; ++y)
+            for (UINT x = 0; x < W; ++x) { BYTE v = x < 4 ? 100 : 200; BYTE* q = &img[((size_t)y * W + x) * 4]; q[0] = q[1] = q[2] = v; q[3] = 255; }
+        std::vector<BYTE> orig = img;
+        imgops::ApplySharpen(img.data(), W, H, 0);
+        CHECK(img == orig);                                 // 0 = nichts
+        imgops::ApplySharpen(img.data(), W, H, 100);
+        const BYTE* mid = &img[((size_t)2 * W + 3) * 4];    // links neben der Kante: dunkler als vorher
+        const BYTE* mid2 = &img[((size_t)2 * W + 4) * 4];   // rechts neben der Kante: heller als vorher
+        CHECK(mid[0] < 100 && mid2[0] > 200);
+        CHECK(img[((size_t)2 * W + 0) * 4] == 100 && img[((size_t)2 * W + 7) * 4] == 200);   // weit weg von der Kante unveraendert
+        CHECK(mid[3] == 255 && mid2[3] == 255);             // Alpha bleibt
+        std::vector<BYTE> tiny(2 * 2 * 4, 77);
+        imgops::ApplySharpen(tiny.data(), 2, 2, 100);      // zu klein: nichts passiert, kein Absturz
+        CHECK(tiny[0] == 77);
+    }
+
     // Horizont: Oberseite weiss, unten schwarz; im Uhrzeigersinn gedreht liegt der Horizont rechts tiefer als links
     {
         const UINT w = 300, h = 200;
@@ -121,11 +159,17 @@ int main() {
         CHECK(w == (UINT)std::lround(120 * s) && h == (UINT)std::lround(80 * s));
         CHECK(!px.empty() && px[(size_t)(h / 2) * w * 4 + (w / 2) * 4 + 1] > 150);
         CHECK(imgops::LoadPixels(dir + L"a.bmp", 60, px, w, h) && w == 60 && h == 40);  // Vorschau verkleinert
+        // Waerme und Schaerfe beim Speichern: gleiche Geometrie, Farbe verschoben (grau wird gelblich/warm)
+        EditParams ws; ws.warmth = 100; ws.sharpness = 50;
+        CHECK(imgops::EditImage(dir + L"a.bmp", dir + L"c.bmp", ws, &err));
+        CHECK(imgops::LoadPixels(dir + L"c.bmp", 0, px, w, h) && w == 120 && h == 80);
+        { const BYTE* m = &px[((size_t)(h / 2) * w + w / 2) * 4]; CHECK(m[2] > m[0] + 40); }   // Rot deutlich ueber Blau
         // In-place (dst == src)
         EditParams q; q.contrast = 30;
         CHECK(imgops::EditImage(dir + L"a.bmp", dir + L"a.bmp", q, &err));
         DeleteFileW((dir + L"a.bmp").c_str());
         DeleteFileW((dir + L"b.bmp").c_str());
+        DeleteFileW((dir + L"c.bmp").c_str());
         RemoveDirectoryW(dir.c_str());
     }
 
