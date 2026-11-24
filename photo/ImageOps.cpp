@@ -355,7 +355,45 @@ bool IsSupportedImage(const std::wstring& path) {
     std::wstring e = LowerExt(path);
     for (auto x : exts)
         if (e == x) return true;
+    return IsRawImage(path);
+}
+
+bool IsRawImage(const std::wstring& path) {
+    static const wchar_t* exts[] = {L"cr2", L"cr3", L"crw", L"nef", L"nrw", L"arw", L"srf", L"sr2", L"dng", L"orf",
+                                    L"rw2", L"raf", L"pef", L"srw", L"3fr", L"erf", L"kdc", L"mrw", L"raw"};
+    const std::wstring e = LowerExt(path);
+    for (auto x : exts)
+        if (e == x) return true;
     return false;
+}
+
+bool RawCodecAvailable() {
+    static int cached = -1;                       // einmal pro Programmstart pruefen
+    if (cached >= 0) return cached == 1;
+    cached = 0;
+    auto f = MakeFactory();
+    if (!f) return false;
+    ComPtr<IEnumUnknown> en;
+    if (FAILED(f->CreateComponentEnumerator(WICDecoder, WICComponentEnumerateDefault, &en)) || !en) return false;
+    ComPtr<IUnknown> u;
+    ULONG got = 0;
+    while (cached == 0 && en->Next(1, &u, &got) == S_OK && got == 1) {
+        ComPtr<IWICBitmapDecoderInfo> info;
+        if (SUCCEEDED(u.As(&info))) {
+            UINT n = 0;
+            if (SUCCEEDED(info->GetFileExtensions(0, nullptr, &n)) && n > 1) {
+                std::wstring ext(n, L'\0');
+                if (SUCCEEDED(info->GetFileExtensions(n, &ext[0], &n))) {
+                    for (auto& c : ext) c = (wchar_t)towlower(c);
+                    if (ext.find(L".dng") != std::wstring::npos || ext.find(L".cr2") != std::wstring::npos || ext.find(L".nef") != std::wstring::npos ||
+                        ext.find(L".arw") != std::wstring::npos)
+                        cached = 1;
+                }
+            }
+        }
+        u.Reset();
+    }
+    return cached == 1;
 }
 
 Microsoft::WRL::ComPtr<IWICBitmapSource> ScaledSource(IWICImagingFactory* f, IWICBitmapFrameDecode* frame, UINT tw,
@@ -538,8 +576,9 @@ double StraightenScale(double w, double h, double angleDeg) {
 }
 
 void ApplyColor(BYTE* px, size_t n, const EditParams& p) {
-    const bool bc = p.brightness != 0 || p.contrast != 0, sat = p.saturation != 0;
-    if (!bc && !sat) return;
+    const bool bc = p.brightness != 0 || p.contrast != 0, sat = p.saturation != 0, warm = p.warmth != 0;
+    if (!bc && !sat && !warm) return;
+    const int wr = 256 + (int)std::lround(p.warmth * 0.30 * 2.56), wb = 256 - (int)std::lround(p.warmth * 0.30 * 2.56);   // Rot/Blau-Verstaerkung (256 = 1,0)
     BYTE lut[256];
     const double f = p.contrast < 0 ? 1.0 + p.contrast / 100.0 : 1.0 + p.contrast / 100.0 * 2.0;  // 0 .. 3
     for (int i = 0; i < 256; ++i) {
@@ -555,7 +594,34 @@ void ApplyColor(BYTE* px, size_t n, const EditParams& p) {
             g = std::clamp(gray + (((g - gray) * sq) >> 8), 0, 255);
             b = std::clamp(gray + (((b - gray) * sq) >> 8), 0, 255);
         }
+        if (warm) {
+            r = std::clamp((r * wr) >> 8, 0, 255);
+            b = std::clamp((b * wb) >> 8, 0, 255);
+        }
         px[0] = (BYTE)b; px[1] = (BYTE)g; px[2] = (BYTE)r;
+    }
+}
+
+void ApplySharpen(BYTE* px, UINT w, UINT h, int sharpness) {
+    if (sharpness <= 0 || w < 3 || h < 3) return;
+    const int amt = (int)std::lround(std::min(sharpness, 100) / 100.0 * 1.5 * 256.0);   // 0 .. 1,5 (in 1/256)
+    const size_t stride = (size_t)w * 4;
+    std::vector<BYTE> prev(px, px + stride), cur(stride);                  // Originalzeilen y-1 und y (px wird zeilenweise ueberschrieben)
+    for (UINT y = 0; y < h; ++y) {
+        BYTE* row = px + y * stride;
+        std::memcpy(cur.data(), row, stride);
+        const BYTE* a = y == 0 ? cur.data() : prev.data();
+        const BYTE* c = cur.data();
+        const BYTE* d = y + 1 < h ? px + (y + 1) * stride : cur.data();
+        for (UINT x = 0; x < w; ++x) {
+            const UINT xl = x == 0 ? 0 : x - 1, xr = x + 1 < w ? x + 1 : x;
+            for (int ch = 0; ch < 3; ++ch) {
+                const int sum = a[xl * 4 + ch] + a[x * 4 + ch] + a[xr * 4 + ch] + c[xl * 4 + ch] + c[x * 4 + ch] + c[xr * 4 + ch] + d[xl * 4 + ch] + d[x * 4 + ch] + d[xr * 4 + ch];
+                const int blur = sum / 9, v = c[x * 4 + ch];
+                row[x * 4 + ch] = (BYTE)std::clamp(v + (((v - blur) * amt) >> 8), 0, 255);
+            }
+        }
+        prev.swap(cur);
     }
 }
 
@@ -596,6 +662,7 @@ bool ApplyEdits(std::vector<BYTE>& px, UINT& w, UINT& h, const EditParams& p) {
         h = oh;
     }
     ApplyColor(px.data(), (size_t)w * h, p);
+    ApplySharpen(px.data(), w, h, p.sharpness);
     return true;
 }
 

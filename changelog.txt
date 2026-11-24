@@ -449,6 +449,9 @@
 - Erste Version: Telemetrie, Startmenü-Suche und Tracking abschalten, mit Wiederherstellungspunkt und Sicherung.
 
 [DuncansPhotoCommander.exe]
+## 0.8.0 | 2026-11-24
+- Neu: Kamera-RAW-Fotos (CR2, CR3, NEF, ARW, DNG, ORF, RW2, RAF und weitere) erscheinen im Ordner und im Betrachter, mit Vorschau und EXIF-Angaben. Windows liest RAW nur mit der kostenlosen „Raw-Bilderweiterung“ von Microsoft (Microsoft Store). Fehlt sie, zeigt die Statuszeile einen Hinweis. RAW-Fotos lassen sich nur ansehen, Bearbeiten und Speichern gibt es dafür noch nicht.
+- Neu: Beim Bild bearbeiten gibt es zwei neue Regler. „Wärme“ macht das Bild wärmer (gelblich) oder kühler (bläulich), „Schärfe“ macht Kanten klarer. Beide wirken in der Vorschau sofort und beim Speichern auf das volle Bild, das Original bleibt wie bisher unverändert, wenn du als Kopie speicherst.
 ## 0.7.4 | 2026-11-14
 - Geändert: Auch in „Karte gestalten“ erscheinen Meldungen und Rückfragen im dunklen Design des Programms statt als Windows-Fenster.
 ## 0.7.3 | 2026-11-12
