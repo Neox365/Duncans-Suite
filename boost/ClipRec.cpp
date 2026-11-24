@@ -2,6 +2,7 @@
 #include "ClipAudio.h"
 
 #include <d3d11.h>
+#include <d3d10.h>
 #include <dxgi1_2.h>
 #include <mfapi.h>
 #include <mferror.h>
@@ -74,13 +75,14 @@ struct SegmentWriter {
     bool ok = false;
 };
 
-bool OpenSegment(SegmentWriter& s, const std::wstring& path, UINT w, UINT h, int fps, int kbps, bool audio)
+bool OpenSegment(SegmentWriter& s, const std::wstring& path, UINT w, UINT h, int fps, int kbps, bool audio, IMFDXGIDeviceManager* mgr = nullptr)
 {
     s = SegmentWriter();
     s.path = path;
     ComPtr<IMFAttributes> at;
-    if (FAILED(MFCreateAttributes(&at, 4))) return false;
+    if (FAILED(MFCreateAttributes(&at, 5))) return false;
     at->SetUINT32(MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, TRUE);
+    if (mgr) at->SetUnknown(MF_SINK_WRITER_D3D_MANAGER, mgr);          // Bilder bleiben auf der Grafikkarte: Umrechnen und Kodieren dort
     at->SetUINT32(MF_SINK_WRITER_DISABLE_THROTTLING, TRUE);
     if (FAILED(MFCreateSinkWriterFromURL(path.c_str(), nullptr, at.Get(), &s.w))) return false;
 
@@ -148,6 +150,24 @@ bool WriteFrame(SegmentWriter& s, const std::vector<BYTE>& bgra, UINT w, UINT h,
     std::memcpy(dst, bgra.data(), len);
     buf->Unlock();
     buf->SetCurrentLength(len);
+    ComPtr<IMFSample> smp;
+    if (FAILED(MFCreateSample(&smp))) return false;
+    smp->AddBuffer(buf.Get());
+    smp->SetSampleTime(now - s.start);
+    smp->SetSampleDuration(frameDur);
+    return SUCCEEDED(s.w->WriteSample(0, smp.Get()));
+}
+
+// Ein Bild, das als Textur auf der Grafikkarte liegt (kein Kopieren in den Arbeitsspeicher)
+bool WriteFrameGpu(SegmentWriter& s, ID3D11Texture2D* tex, LONGLONG now, LONGLONG frameDur)
+{
+    if (!s.ok) return false;
+    if (s.start < 0) s.start = now;
+    ComPtr<IMFMediaBuffer> buf;
+    if (FAILED(MFCreateDXGISurfaceBuffer(__uuidof(ID3D11Texture2D), tex, 0, FALSE, &buf))) return false;
+    ComPtr<IMF2DBuffer> b2;
+    DWORD len = 0;
+    if (SUCCEEDED(buf.As(&b2)) && SUCCEEDED(b2->GetContiguousLength(&len)) && len) buf->SetCurrentLength(len);
     ComPtr<IMFSample> smp;
     if (FAILED(MFCreateSample(&smp))) return false;
     smp->AddBuffer(buf.Get());
@@ -282,6 +302,63 @@ struct Recorder::Impl {
     ComPtr<IDXGIOutputDuplication> dup;
     ComPtr<ID3D11Texture2D> staging;
     UINT stW = 0, stH = 0;
+    // Grafikkarten-Weg: Ring aus Texturen (das Bild wird per CopyResource dorthin kopiert) und Geraete-Verwalter fuer den Kodierer
+    ComPtr<IMFDXGIDeviceManager> mgr;
+    std::vector<ComPtr<ID3D11Texture2D>> ring;
+    size_t ringPos = 0;
+    ComPtr<ID3D11Texture2D> lastTex;
+    bool evenDims = false;
+    bool gpuMode = false;
+    int gpuFails = 0;
+    static constexpr size_t kRing = 8;
+
+    bool InitGpuManager()
+    {
+        mgr.Reset(); ring.clear(); lastTex.Reset(); ringPos = 0;
+        if (!dev || !evenDims) return false;
+        UINT token = 0;
+        if (FAILED(MFCreateDXGIDeviceManager(&token, &mgr))) { mgr.Reset(); return false; }
+        if (FAILED(mgr->ResetDevice(dev.Get(), token))) { mgr.Reset(); return false; }
+        return true;
+    }
+
+    // Neues Bild holen und auf der Grafikkarte in lastTex ablegen. 1 neues Bild, 0 keines, -1 Duplication verloren, -2 Weg nicht moeglich (zurueck zum Arbeitsspeicher)
+    int GrabGpu()
+    {
+        DXGI_OUTDUPL_FRAME_INFO info{};
+        ComPtr<IDXGIResource> res;
+        const HRESULT hr = dup->AcquireNextFrame(0, &info, &res);
+        if (hr == DXGI_ERROR_WAIT_TIMEOUT) return 0;
+        if (FAILED(hr)) return -1;
+        int result = 0;
+        if (info.LastPresentTime.QuadPart != 0) {
+            ComPtr<ID3D11Texture2D> tex;
+            if (SUCCEEDED(res.As(&tex))) {
+                D3D11_TEXTURE2D_DESC td{};
+                tex->GetDesc(&td);
+                if (td.Format != DXGI_FORMAT_B8G8R8A8_UNORM || td.Width != width || td.Height != height) result = -2;
+                else {
+                    if (ring.size() != kRing) {
+                        ring.assign(kRing, nullptr);
+                        D3D11_TEXTURE2D_DESC rd = td;
+                        rd.Usage = D3D11_USAGE_DEFAULT; rd.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET; rd.CPUAccessFlags = 0; rd.MiscFlags = 0; rd.MipLevels = 1; rd.ArraySize = 1;
+                        for (auto& t : ring) if (FAILED(dev->CreateTexture2D(&rd, nullptr, &t))) { ring.clear(); break; }
+                    }
+                    if (ring.size() != kRing) result = -2;
+                    else {
+                        ID3D11Texture2D* slot = ring[ringPos].Get();
+                        ringPos = (ringPos + 1) % kRing;
+                        ctx->CopyResource(slot, tex.Get());
+                        ctx->Flush();                                    // Befehle abschicken, bevor der Kodierer das Bild liest
+                        lastTex = slot;
+                        result = 1;
+                    }
+                }
+            }
+        }
+        dup->ReleaseFrame();
+        return result;
+    }
 
     void SetProblem(const std::wstring& p) { std::lock_guard<std::mutex> l(mu); problem = p; }
 
@@ -303,7 +380,12 @@ struct Recorder::Impl {
                 ComPtr<ID3D11Device> device;
                 ComPtr<ID3D11DeviceContext> context;
                 D3D_FEATURE_LEVEL fl;
-                if (FAILED(D3D11CreateDevice(ad.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device, &fl, &context))) continue;
+                if (FAILED(D3D11CreateDevice(ad.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT | D3D11_CREATE_DEVICE_VIDEO_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device, &fl, &context)) &&
+                    FAILED(D3D11CreateDevice(ad.Get(), D3D_DRIVER_TYPE_UNKNOWN, nullptr, D3D11_CREATE_DEVICE_BGRA_SUPPORT, nullptr, 0, D3D11_SDK_VERSION, &device, &fl, &context))) continue;
+                {   // Kodierer und wir benutzen dasselbe Geraet von verschiedenen Faeden: Mehrfachzugriff absichern
+                    ComPtr<ID3D10Multithread> mt;
+                    if (SUCCEEDED(device.As(&mt)) && mt) mt->SetMultithreadProtected(TRUE);
+                }
                 ComPtr<IDXGIOutput1> o1;
                 if (FAILED(out.As(&o1))) continue;
                 ComPtr<IDXGIOutputDuplication> dd;
@@ -314,6 +396,7 @@ struct Recorder::Impl {
                 dev = device; ctx = context; dup = dd;
                 width = dd2.ModeDesc.Width & ~1u;
                 height = dd2.ModeDesc.Height & ~1u;
+                evenDims = (dd2.ModeDesc.Width & 1u) == 0 && (dd2.ModeDesc.Height & 1u) == 0;
                 return true;
             }
         }
@@ -403,9 +486,18 @@ struct Recorder::Impl {
             kbps = o.bitrateKbps > 0 ? o.bitrateKbps : AutoBitrateKbps(static_cast<int>(width), static_cast<int>(height), fps);
             SegmentWriter probe;
             const std::wstring pp = SegPath();
-            if (!OpenSegment(probe, pp, width, height, fps, kbps, false)) { ok = false; err = L"Es wurde kein Videokodierer gefunden."; }
-            CloseSegment(probe);
-            DeleteFileW(pp.c_str());
+            if (o.gpu && InitGpuManager()) {                                        // erst der Grafikkarten-Weg; klappt der Kodierer so nicht, bleibt der alte Weg
+                if (OpenSegment(probe, pp, width, height, fps, kbps, false, mgr.Get())) gpuMode = true;
+                else mgr.Reset();
+                CloseSegment(probe);
+                DeleteFileW(pp.c_str());
+            }
+            if (!gpuMode) {
+                const std::wstring p2 = SegPath();
+                if (!OpenSegment(probe, p2, width, height, fps, kbps, false)) { ok = false; err = L"Es wurde kein Videokodierer gefunden."; }
+                CloseSegment(probe);
+                DeleteFileW(p2.c_str());
+            }
         }
         if (ok && o.audio >= kAudioSystem) {                                  // Ton ist Zugabe: Fehler hier stoppen die Aufnahme nicht
             std::wstring ae;
@@ -419,7 +511,7 @@ struct Recorder::Impl {
             if (useSys || useMic) {
                 SegmentWriter probe;
                 const std::wstring pp = SegPath();
-                if (!OpenSegment(probe, pp, width, height, fps, kbps, true)) { useSys = useMic = false; SetProblem(L"Der Ton-Kodierer (AAC) fehlt; es wird ohne Ton aufgenommen."); sys.Stop(); mic.Stop(); }
+                if (!OpenSegment(probe, pp, width, height, fps, kbps, true, gpuMode ? mgr.Get() : nullptr)) { useSys = useMic = false; SetProblem(L"Der Ton-Kodierer (AAC) fehlt; es wird ohne Ton aufgenommen."); sys.Stop(); mic.Stop(); }
                 CloseSegment(probe);
                 DeleteFileW(pp.c_str());
             }
@@ -453,22 +545,39 @@ struct Recorder::Impl {
                 continue;
             }
             next = std::max(next + frameDur, t - frameDur * 3);                    // bei Rueckstand nicht aufholen
-            const int g = Grab(last);
+            int g = gpuMode ? GrabGpu() : Grab(last);
+            if (g == -2) {                                                         // Grafikkarten-Weg geht hier nicht (z. B. HDR): zurueck zum Arbeitsspeicher
+                gpuMode = false; mgr.Reset(); ring.clear(); lastTex.Reset();
+                if (seg.ok) FinishSegment(seg);
+                haveFrame = false;
+                continue;
+            }
             if (g < 0) {                                                           // z. B. Aufloesungswechsel: neu verbinden
                 if (seg.ok) FinishSegment(seg);
                 std::wstring e2;
                 if (!InitDuplication(e2)) { SetProblem(e2); Sleep(500); continue; }
                 if ((width & ~1u) == 0) continue;
+                if (gpuMode && !InitGpuManager()) gpuMode = false;                   // neues Geraet: Verwalter und Texturen neu
                 SetProblem(L"");
                 continue;
             }
             if (g > 0) { haveFrame = true; lastNewFrame = t; SetProblem(L""); }
             if (!haveFrame) { if (t > 3 * kSecond) SetProblem(L"Es kommen keine Bilder vom Bildschirm."); continue; }
             if (!seg.ok) {
-                if (!OpenSegment(seg, SegPath(), width, height, fps, kbps, withAudio)) { SetProblem(L"Der Videokodierer konnte nicht gestartet werden."); Sleep(500); continue; }
+                if (!OpenSegment(seg, SegPath(), width, height, fps, kbps, withAudio, gpuMode ? mgr.Get() : nullptr)) { SetProblem(L"Der Videokodierer konnte nicht gestartet werden."); Sleep(500); continue; }
                 if (withAudio) seg.start = std::min(t, audioBoundary);             // Ton schliesst ohne Luecke an den vorigen Abschnitt an
             }
-            if (last.size() == static_cast<size_t>(width) * height * 4 && WriteFrame(seg, last, width, height, t, frameDur)) ++frames;
+            if (gpuMode) {
+                if (lastTex && WriteFrameGpu(seg, lastTex.Get(), t, frameDur)) { ++frames; gpuFails = 0; }
+                else if (lastTex && ++gpuFails >= 5) {                             // der Kodierer nimmt keine Grafikkarten-Bilder an: alter Weg
+                    gpuMode = false; mgr.Reset(); ring.clear(); lastTex.Reset();
+                    if (seg.ok) FinishSegment(seg);
+                    haveFrame = false;
+                    SetProblem(L"");
+                    continue;
+                }
+            }
+            else if (last.size() == static_cast<size_t>(width) * height * 4 && WriteFrame(seg, last, width, height, t, frameDur)) ++frames;
             if (withAudio && seg.ok) {                                              // Ton bis "jetzt" in 10-ms-Bloecken nachliefern (Stille, wenn nichts kommt)
                 const LONGLONG target = t * kAudioRate / kSecond;
                 const size_t blk = kAudioRate / 100;

@@ -21,6 +21,7 @@ struct Options {
     int fps = 30;
     int segmentSeconds = 10;     // Laenge eines Abschnitts
     int bitrateKbps = 0;         // 0 = automatisch nach Bildgroesse
+    bool gpu = true;             // Bilder auf der Grafikkarte lassen (kein Umweg ueber den Prozessor); false oder bei Fehlern: alter Weg ueber den Arbeitsspeicher
     int audio = 0;               // Ton: 0 aus, 1 Systemton (alles, was der PC abspielt), 2 Systemton + Mikrofon
     std::wstring outDir;         // Ordner fuer fertige Clips (leer = Videos\Boost-Clips)
     std::wstring tempDir;        // Ordner fuer die laufenden Abschnitte (leer = Temp\DuncansBoostClips)
