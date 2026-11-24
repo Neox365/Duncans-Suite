@@ -40,7 +40,7 @@ using std::min;
 #include "Screenshot.h"
 
 #ifndef APP_VERSION
-#define APP_VERSION L"0.12.0"   // normalerweise aus CMake
+#define APP_VERSION L"0.13.0"   // normalerweise aus CMake
 #endif
 
 #ifdef _MSC_VER
@@ -174,7 +174,7 @@ const wchar_t* kAutoDesc = L"Hake unten dein Spiel an. Sobald es läuft, schalte
 const wchar_t* kDuckTitle = L"Andere Programme leiser beim Spielen";
 const wchar_t* kDuckDesc = L"Für die unten angehakten Spiele: Solange ein Spiel im Vordergrund ist, laufen Browser, Musik & Co. auf 40 % und sind sofort wieder normal, wenn du das Spiel verlässt. Discord, TeamSpeak & Co. bleiben unverändert.";
 const wchar_t* kClipTitle = L"Video-Clips: letzte Sekunden speichern";
-const wchar_t* kClipDesc = L"Boost nimmt den Hauptbildschirm im Hintergrund auf und bewahrt nur die letzten Sekunden; Strg+Alt+F7 speichert sie als MP4 in Videos\Boost-Clips. Es läuft nur, solange ein oben angehaktes Spiel vorne ist (ohne angehaktes Spiel immer). Ton ist wählbar (Systemton = alles, was der PC abspielt, auch Discord; optional mit Mikrofon). Im echten Vollbild bleibt das Bild eventuell schwarz. Kostet etwas Leistung.";
+const wchar_t* kClipDesc = L"Boost nimmt den Hauptbildschirm im Hintergrund auf und bewahrt nur die letzten Sekunden; Strg+Alt+F7 speichert sie als MP4 in Videos\\Boost-Clips. Es läuft nur, solange ein oben angehaktes Spiel vorne ist (ohne angehaktes Spiel immer). Ton ist wählbar (Systemton = alles, was der PC abspielt, auch Discord; optional mit Mikrofon). Im echten Vollbild bleibt das Bild eventuell schwarz. Kostet etwas Leistung.";
 const wchar_t* kOvTitle = L"Overlay im Spiel anzeigen";
 const wchar_t* kOvDesc = L"Eine kleine Statusleiste in einer Ecke zeigt Zock-Modus, laufende Aufnahme, Auslastung und den Ping (Antwortzeit ins Internet, gemessen zu einem öffentlichen Server, nicht zum Spielserver). Mit Strg+Alt+O öffnest du ein Panel: Clip speichern, Aufnahme an oder aus, Screenshot (auch Strg+Alt+F6), Zock-Modus beenden, dazu Live-Werte. Es ist ein normales Fenster über dem Spiel (nichts wird in das Spiel eingeklinkt) und erscheint im Fenster- oder randlosen Modus, nicht im echten Vollbild. Manche Spiele und Turniere verbieten Overlays.";
 const wchar_t* kMouseTitle = L"Mausbeschleunigung im Zock-Modus ausschalten";

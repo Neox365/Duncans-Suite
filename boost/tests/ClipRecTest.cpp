@@ -63,16 +63,25 @@ int main(int argc, char** argv)
     const std::wstring out = std::wstring(tmp) + L"clipreptest_out";
     const std::wstring seg = std::wstring(tmp) + L"clipreptest_seg";
     Options o; o.seconds = 10; o.segmentSeconds = 2; o.fps = 30; o.audio = kAudioSystem; o.outDir = out; o.tempDir = seg;
+    { wchar_t cpu[8] = {}; if (GetEnvironmentVariableW(L"DUNCANS_CLIP_CPU", cpu, 8) > 0) o.gpu = false; }      // Vergleich: alter Weg ueber den Arbeitsspeicher
     if (argc > 2) o.audio = 0;                                              // zweiter Parameter: ohne Ton (kein Piepen)
     Recorder rec;
     std::wstring err;
     if (!rec.Start(o, err)) { std::printf("Aufnahme nicht moeglich: %ls\n", err.c_str()); std::printf("%d Pruefungen, %d Fehler (Aufnahme uebersprungen)\n", g_n, g_fail); return g_fail ? 1 : 0; }
     CHECK(rec.Running());
     std::wstring none, e0;
+    FILETIME ct, et, kt0, ut0; GetProcessTimes(GetCurrentProcess(), &ct, &et, &kt0, &ut0);
+    const DWORD tick0 = GetTickCount();
     Sleep(500);
     std::thread tone([&]() { if (!o.audio) return; Sleep(1500); Beep(880, 1800); Sleep(500); Beep(1320, 1200); });     // hoerbarer Ton fuer die Systemton-Aufnahme
     for (int i = 0; i < 70; ++i) { Sleep(100); if (i % 10 == 0) SetCursorPos(100 + i * 5, 200); }      // 7 s, mit etwas Bewegung auf dem Bildschirm
     tone.join();
+    {   // Prozessorzeit dieses Prozesses waehrend der Aufnahme (alle Faeden), in Prozent eines Kerns
+        FILETIME kt1, ut1; GetProcessTimes(GetCurrentProcess(), &ct, &et, &kt1, &ut1);
+        auto ms = [](const FILETIME& a, const FILETIME& b) { return static_cast<double>((((ULONGLONG)b.dwHighDateTime << 32) | b.dwLowDateTime) - (((ULONGLONG)a.dwHighDateTime << 32) | a.dwLowDateTime)) / 10000.0; };
+        const double cpuMs = ms(kt0, kt1) + ms(ut0, ut1);
+        std::printf("  Prozessorlast der Aufnahme: %.0f %% eines Kerns (%s)\n", cpuMs * 100.0 / std::max<DWORD>(1, GetTickCount() - tick0), o.gpu ? "Grafikkarten-Weg" : "Arbeitsspeicher-Weg");
+    }
     std::wstring file;
     const bool saved = rec.Save(file, err);
     if (!saved) std::printf("Speichern: %ls\n", err.c_str());

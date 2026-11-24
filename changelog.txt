@@ -148,6 +148,9 @@
 - Läuft im Infobereich ohne Administratorrechte, auf Wunsch mit Windows. In Programmen mit Administratorrechten blockiert Windows das automatische Einfügen; dort liegt der Text in der Zwischenablage.
 
 [DuncansBoost.exe]
+## 0.13.0 | 2026-11-24
+- Geändert: Die Video-Clips belasten den PC deutlich weniger. Bisher wurde jedes Bild von der Grafikkarte in den Arbeitsspeicher kopiert und vom Prozessor umgerechnet (im Test etwa ein ganzer Prozessorkern bei 1440p und 30 Bildern pro Sekunde). Jetzt bleiben die Bilder auf der Grafikkarte und gehen direkt an den Videokodierer (im Test etwa ein Achtel eines Kerns). Klappt das auf einem Rechner nicht, zum Beispiel bei HDR oder ohne passenden Kodierer, nimmt Boost von selbst wieder den alten Weg.
+- Behoben: In der Beschreibung der Video-Clips fehlte im Ordnernamen weiter ein Zeichen („VideosBoost-Clips“). Die Korrektur aus 0.12.0 war nicht im Programm angekommen.
 ## 0.12.0 | 2026-11-16
 - Neu: Screenshot mit Strg+Alt+F6 oder dem Knopf „Screenshot“ im Overlay-Panel. Gespeichert wird der Bildschirm, auf dem das vordere Fenster liegt, als PNG im Ordner Videos\Boost-Clips (neben den Clips). Das Overlay von Boost ist nicht auf dem Bild. Im echten Vollbild bleibt das Bild eventuell schwarz. Das Kürzel gilt, solange Video-Clips oder das Overlay eingeschaltet sind.
 - Behoben: In der Beschreibung der Video-Clips fehlte im Ordnernamen ein Zeichen („VideosBoost-Clips“).
